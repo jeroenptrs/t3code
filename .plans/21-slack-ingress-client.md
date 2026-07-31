@@ -704,6 +704,20 @@ Add one focused adapter-to-runtime integration test covering Slack payload ->
 deterministic T3 commands -> returned deep link. Run targeted tests and typechecks
 for the two new workspaces only; do not run the repo-wide suite.
 
+Disposable-environment verification recorded 2026-07-31:
+
+- a slash invocation created one current-checkout conversation and identical
+  redelivery returned `already-started` with one persisted initial message;
+- mention ingress preserved a separate human mention and persisted
+  `branch: null` plus `worktreePath: null`;
+- a rejected dispatch decoded to `T3TransportError(kind: "internal")`;
+- after the disposable T3 server stopped and restarted, the retained transport
+  reconnected with a fresh usable WebSocket ticket.
+
+This is server/runtime evidence only. Testing in a real Slack workspace is
+deliberately deferred until a later phase has enough product surface to justify
+workspace installation and operational testing.
+
 #### Slice 1 review gates
 
 Implementation starts after reviewers agree on:

@@ -61,7 +61,7 @@ const config = {
       availability: "available",
       status: "ready",
       auth: { status: "authenticated" },
-      models: [{ slug: modelSelection.model }],
+      models: [{ slug: modelSelection.model }, { slug: "gpt-5-integration" }],
     },
   ],
 } as unknown as ServerConfig;
@@ -193,6 +193,30 @@ describe("standard ingress", () => {
         },
       ]
     `);
+    }),
+  );
+
+  it.effect("prefers the integration model over the project default", () =>
+    Effect.gen(function* () {
+      const { commands, transport } = makeTransport();
+      yield* startStandardIngress({
+        request: {
+          ...request,
+          target: {
+            projectId,
+            modelSelection: { ...modelSelection, model: "gpt-5-integration" },
+          },
+        },
+        publicBaseUrl: "https://t3.example",
+        transport,
+      });
+      expect(commands).toHaveLength(2);
+      expect(commands[0]).toMatchObject({
+        modelSelection: { instanceId: modelSelection.instanceId, model: "gpt-5-integration" },
+      });
+      expect(commands[1]).toMatchObject({
+        modelSelection: { instanceId: modelSelection.instanceId, model: "gpt-5-integration" },
+      });
     }),
   );
 
