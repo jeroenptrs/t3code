@@ -462,6 +462,17 @@ payload field remains stable across slash-command redelivery. Do not substitute
 stable slash identity, stop and revise the locked no-durable-state recovery design
 before implementing dispatch.
 
+Implementation evidence (2026-07-31): Socket Mode redelivery assigns the
+transport acknowledgement its own `envelope_id`, while Bolt passes the original
+slash-command payload through as the command body. Slack defines `response_url`
+as part of that invocation payload and redelivers the same payload; unlike the
+short-lived `trigger_id`, it therefore identifies the slash invocation across an
+envelope retry. Slice 1 hashes the complete `response_url` into the versioned
+identity, so its secret token never appears in a T3 identifier. This decision is
+covered by a fixture asserting stable IDs for the same response URL and different
+IDs for different response URLs. References: [Socket Mode envelopes](https://docs.slack.dev/apis/events-api/using-socket-mode/)
+and [slash-command payloads](https://docs.slack.dev/interactivity/implementing-slash-commands/).
+
 Review exit:
 
 - the public package API can describe Slack and a future Jira adapter without a
