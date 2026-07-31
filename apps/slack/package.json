@@ -1,0 +1,21 @@
+{
+  "name": "@t3tools/slack",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --experimental-strip-types src/main.ts",
+    "typecheck": "tsgo --noEmit",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@slack/bolt": "5.0.0",
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/integration-runtime": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
