@@ -74,23 +74,114 @@ export async function handleSlashCommand(input: {
     return;
   }
   await input.ack({ response_type: "ephemeral", text: "Starting in T3 Code..." });
+  let result: Awaited<ReturnType<typeof input.start>>;
   try {
-    const result = await input.start(invocation);
-    await input.respond({
-      replace_original: true,
-      response_type: "ephemeral",
-      text:
-        result.recovery === "unverified"
-          ? `T3 Code could not verify whether the conversation started. Open ${input.publicBaseUrl}`
-          : `<${result.deepLink}|Open in T3 Code>`,
-    });
+    result = await input.start(invocation);
   } catch (error) {
     await input.respond({
       replace_original: true,
       response_type: "ephemeral",
       text: failureText(error, input.publicBaseUrl),
     });
+    return;
   }
+  await input.respond({
+    replace_original: true,
+    response_type: "ephemeral",
+    text:
+      result.recovery === "unverified"
+        ? `T3 Code could not verify whether the conversation started. Open ${input.publicBaseUrl}`
+        : `<${result.deepLink}|Open in T3 Code>`,
+  });
+}
+
+interface MentionMessageBase {
+  readonly channel: string;
+  readonly text: string;
+  readonly metadata?: {
+    readonly event_type: typeof SLACK_METADATA_EVENT_TYPE;
+    readonly event_payload: { readonly thread_id: string; readonly message_id: string };
+  };
+}
+interface MentionPostMessage extends MentionMessageBase {
+  readonly thread_ts: string;
+}
+interface MentionUpdateMessage extends MentionMessageBase {
+  readonly ts: string;
+}
+
+export async function handleMentionEvent(input: {
+  readonly teamId: string;
+  readonly channelId: string;
+  readonly botUserId: string;
+  readonly eventId: string;
+  readonly messageTimestamp: string;
+  readonly parentThreadTimestamp?: string;
+  readonly text: string;
+  readonly publicBaseUrl: string;
+  readonly postMessage: (message: MentionPostMessage) => Promise<{ readonly ts?: string }>;
+  readonly updateMessage: (message: MentionUpdateMessage) => Promise<unknown>;
+  readonly warn: (category: string, threadId?: string) => void;
+  readonly start: (invocation: IngressInvocation) => Promise<{
+    readonly recovery: string;
+    readonly deepLink: string;
+  }>;
+}): Promise<void> {
+  const invocation = normalizeMentionInvocation({
+    teamId: input.teamId,
+    channelId: input.channelId,
+    botUserId: input.botUserId,
+    eventId: input.eventId,
+    messageTimestamp: input.messageTimestamp,
+    text: input.text,
+  });
+  if (!invocation.prompt) {
+    /* oxlint-disable unicorn/require-post-message-target-origin -- Slack Web API callback, not Window.postMessage. */
+    await input.postMessage({
+      channel: input.channelId,
+      thread_ts: input.parentThreadTimestamp ?? input.messageTimestamp,
+      text: "Mention me with a prompt to start a T3 Code conversation.",
+    });
+    /* oxlint-enable unicorn/require-post-message-target-origin */
+    return;
+  }
+  const ids = deriveIngressIds(invocation);
+  const metadata = {
+    event_type: SLACK_METADATA_EVENT_TYPE,
+    event_payload: { thread_id: ids.threadId, message_id: ids.messageId },
+  } as const;
+  /* oxlint-disable unicorn/require-post-message-target-origin -- Slack Web API callback, not Window.postMessage. */
+  const starting = await input.postMessage({
+    channel: input.channelId,
+    thread_ts: input.parentThreadTimestamp ?? input.messageTimestamp,
+    text: "Starting in T3 Code...",
+    metadata,
+  });
+  /* oxlint-enable unicorn/require-post-message-target-origin */
+  if (!starting.ts) {
+    input.warn("starting_message_missing_timestamp", ids.threadId);
+    return;
+  }
+  let result: Awaited<ReturnType<typeof input.start>>;
+  try {
+    result = await input.start(invocation);
+  } catch (error) {
+    await input.updateMessage({
+      channel: input.channelId,
+      ts: starting.ts,
+      text: failureText(error, input.publicBaseUrl),
+    });
+    return;
+  }
+  await input.updateMessage({
+    channel: input.channelId,
+    ts: starting.ts,
+    text:
+      result.recovery === "unverified"
+        ? `T3 Code could not verify whether the conversation started. Open ${input.publicBaseUrl}`
+        : `<${result.deepLink}|Open in T3 Code>`,
+    metadata,
+  });
 }
 
 export function makeSlackApp(input: {
@@ -159,65 +250,24 @@ export function makeSlackApp(input: {
       });
       return;
     }
-    const invocation = normalizeMentionInvocation({
+    await handleMentionEvent({
       teamId: body.team_id,
       channelId: mention.channel,
       botUserId,
       eventId: body.event_id,
       messageTimestamp: mention.ts,
+      ...(mention.thread_ts === undefined ? {} : { parentThreadTimestamp: mention.thread_ts }),
       text: mention.text,
-    });
-    if (!invocation.prompt) {
-      /* oxlint-disable unicorn/require-post-message-target-origin -- Slack Web API method, not Window.postMessage. */
-      await client.chat.postMessage({
-        channel: mention.channel,
-        thread_ts: mention.thread_ts ?? mention.ts,
-        text: "Mention me with a prompt to start a T3 Code conversation.",
-      });
-      /* oxlint-enable unicorn/require-post-message-target-origin */
-      return;
-    }
-    const ids = deriveIngressIds(invocation);
-    /* oxlint-disable unicorn/require-post-message-target-origin -- Slack Web API method, not Window.postMessage. */
-    const starting = await client.chat.postMessage({
-      channel: mention.channel,
-      thread_ts: mention.thread_ts ?? mention.ts,
-      text: "Starting in T3 Code...",
-      metadata: {
-        event_type: SLACK_METADATA_EVENT_TYPE,
-        event_payload: { thread_id: ids.threadId, message_id: ids.messageId },
+      publicBaseUrl: input.config.t3PublicBaseUrl,
+      postMessage: async (message) => {
+        /* oxlint-disable-next-line unicorn/require-post-message-target-origin -- Slack Web API method, not Window.postMessage. */
+        return client.chat.postMessage(message);
       },
+      updateMessage: (message) => client.chat.update(message),
+      warn: (category, threadId) =>
+        app.logger.warn("slack.ingress.rejected", { surface: "mention", category, threadId }),
+      start: startWithLogging,
     });
-    /* oxlint-enable unicorn/require-post-message-target-origin */
-    if (!starting.ts) {
-      app.logger.warn("slack.ingress.rejected", {
-        surface: "mention",
-        category: "starting_message_missing_timestamp",
-        threadId: ids.threadId,
-      });
-      return;
-    }
-    try {
-      const result = await startWithLogging(invocation);
-      await client.chat.update({
-        channel: mention.channel,
-        ts: starting.ts,
-        text:
-          result.recovery === "unverified"
-            ? `T3 Code could not verify whether the conversation started. Open ${input.config.t3PublicBaseUrl}`
-            : `<${result.deepLink}|Open in T3 Code>`,
-        metadata: {
-          event_type: SLACK_METADATA_EVENT_TYPE,
-          event_payload: { thread_id: ids.threadId, message_id: ids.messageId },
-        },
-      });
-    } catch (error) {
-      await client.chat.update({
-        channel: mention.channel,
-        ts: starting.ts,
-        text: failureText(error, input.config.t3PublicBaseUrl),
-      });
-    }
   });
 
   return { app, receiver };
