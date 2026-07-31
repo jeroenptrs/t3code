@@ -379,12 +379,337 @@ not start it against shared developer state during tests.
 
 ### Slice 1: Shared runtime and standard ingress
 
-- Scaffold `packages/integration-runtime` and `apps/slack`.
-- Implement config decoding and health checks.
-- Implement authenticated HTTP/WS T3 client.
-- Implement deterministic IDs and HTTP recovery.
-- Ship `/t3` and ordinary mention standard starts.
-- Return deep links and friendly failures.
+Slice 1 establishes the reusable external-ingress boundary first, then proves it
+with the smallest complete Slack adapter. Slack-specific code translates a Slack
+invocation into a platform-neutral request and renders the result. The shared
+runtime owns every decision and side effect from target resolution through T3
+recovery and deep-link construction.
+
+```text
+Slack slash command / mention
+        |
+        v
+Slack adapter: acknowledge, normalize origin, render status/result
+        |
+        v
+packages/integration-runtime
+  resolve target -> derive IDs -> inspect T3 -> create/start -> reconcile -> link
+        |
+        v
+T3 HTTP/WS APIs
+```
+
+At the end of this slice, `/t3 <prompt>` and an ordinary app mention each start
+exactly one conversation in the configured project's current checkout and return
+a durable T3 deep link. The same invocation delivered again returns the same
+conversation. No Slack SDK type crosses into the shared package.
+
+#### Slice 1 boundaries
+
+Included:
+
+- the platform-neutral request/result model and standard-ingress operation;
+- renewable authenticated HTTP and WS transport primitives usable by later
+  Slack, Jira, custom-setup, and App Home work;
+- live resolution of the configured project and a valid default model selection;
+- deterministic invocation, entity, message, and command identifiers;
+- idempotent HTTP create/start and snapshot-based recovery;
+- Socket Mode process lifecycle, `/t3`, and ordinary mention handling;
+- visible starting, success, configuration-error, and unverified Slack states;
+- configuration decoding, startup validation, readiness, and safe logging.
+
+Deferred:
+
+- selectors, ref queries, branch switching, existing-worktree continuation, and
+  New worktree bootstrap;
+- `ThreadBootstrapService` extraction;
+- custom slash/mention actions and direct-message setup;
+- long-lived shell projection and App Home publication;
+- credential issuance/rotation automation and deployment unit files.
+
+The shared package may define extension points needed by those later slices, but
+Slice 1 does not pre-build their branch, modal, projection, or rendering logic.
+
+#### Work package 1: lock the ingress contract
+
+Add platform-neutral types in `packages/integration-runtime` for:
+
+- `IngressInvocation`: integration kind, versioned stable invocation identity,
+  prompt, and display-safe origin context;
+- `StandardIngressTarget`: configured `ProjectId` plus an optional integration
+  `ModelSelection` override;
+- `IngressRequest`: invocation, target, and request timestamp;
+- `IngressResult`: `created`, `resumed`, `already-started`, or `unverified`, with
+  the deterministic `ThreadId` and deep link when known;
+- typed configuration/validation failures that an adapter can safely present to
+  a user without exposing credentials or internal error detail.
+
+The shared request contains no Slack channel, block, modal, or SDK types. Origin
+fields needed only to post a Slack response stay in `apps/slack`; only the stable
+identity and platform-neutral provenance enter the runtime.
+
+Before implementation, lock and snapshot the readable, versioned identifier
+encoding. Its inputs are:
+
+- Slack team/workspace identity;
+- surface kind (`slash` or `mention`);
+- Slack's stable delivery/invocation identity;
+- phase suffix for thread, initial message, create command, and start command.
+
+The Slack spike for this work package must verify which Socket Mode envelope or
+payload field remains stable across slash-command redelivery. Do not substitute
+`trigger_id`, receipt time, or a generated UUID. If Slack supplies no suitable
+stable slash identity, stop and revise the locked no-durable-state recovery design
+before implementing dispatch.
+
+Review exit:
+
+- the public package API can describe Slack and a future Jira adapter without a
+  Slack/Jira dependency;
+- deterministic ID fixtures are reviewed and versioned;
+- the slash-command retry identity is evidenced against the actual Bolt payload.
+
+#### Work package 2: build the T3 transport boundary
+
+Implement a small transport interface in the shared package and a production
+implementation using existing contracts:
+
+- read the bearer credential from the configured file for each new authenticated
+  session so a replaced credential can be picked up without code changes;
+- call authenticated HTTP endpoints for the shell snapshot, thread snapshot, and
+  orchestration dispatch;
+- request a short-lived WS ticket and connect to `/ws`;
+- call `server.getConfig` for environment identity and live provider
+  capabilities;
+- obtain a fresh WS ticket for every reconnect rather than reusing an expired or
+  consumed ticket;
+- classify authentication, authorization, transport, validation, not-found, and
+  ambiguous dispatch failures without leaking response bodies or tokens.
+
+Slice 1 does not maintain `orchestration.subscribeShell`. It reads
+`GET /api/orchestration/shell` when resolving a standard invocation. The WS
+connection supplies `server.getConfig` and establishes the reconnecting transport
+needed by later slices. Slice 3 adds the long-lived shell subscription and
+projection.
+
+Keep the orchestration operation dependent on an injectable transport interface
+so recovery behavior is tested without Slack or a live server. Reuse narrowly
+applicable authorization/RPC code from `packages/client-runtime` only where it
+does not pull in its supervisor, browser storage, or client state model.
+
+Review exit:
+
+- the transport surface contains only operations required by ingress;
+- HTTP and WS URLs are derived from the internal T3 base URL, while links use only
+  the separately configured public URL;
+- reconnect demonstrably requests a new WS ticket;
+- the package has no React, browser storage, or Slack dependency.
+
+#### Work package 3: resolve a standard target
+
+For every invocation, resolve against fresh T3 data rather than cached Slack
+state:
+
+1. Fetch the shell snapshot and find the configured `ProjectId`.
+2. Reject a missing project. The shell contract proves that the project is
+   registered and supplies its `workspaceRoot`; it does not prove that the path
+   currently exists or is accessible.
+3. Load `server.getConfig` and validate live provider instances/models.
+4. Prefer the integration-wide `ModelSelection` when configured; otherwise use
+   the project's `defaultModelSelection`.
+5. Validate the complete selection against the matching enabled, installed, and
+   usable provider instance and model capability data.
+6. If neither default is valid, return a configuration failure. The Slack adapter
+   may mention that custom setup is coming, but Slice 1 does not render or link a
+   non-existent custom action.
+
+The resolved target is always:
+
+- the configured project;
+- `Current checkout`;
+- `worktreePath: null`, which delegates workspace resolution to T3's existing
+  project-root resolver;
+- `branch: null`; Slice 1 does not make a `vcs.listRefs` call merely to annotate a
+  current-checkout thread;
+- `runtimeMode: "full-access"` and `interactionMode: "default"`, matching T3's
+  new-thread defaults;
+- no branch switch, worktree creation, or setup-script bootstrap.
+
+Build the initial thread title and turn `titleSeed` with the existing T3 client
+rule: trim the prompt and pass it through `@t3tools/shared/String`'s `truncate`
+helper (50 characters plus `...` when truncated). Empty prompts are rejected by
+the Slack adapter before target resolution.
+
+Review exit:
+
+- a stale configured project cannot dispatch;
+- a stale or unavailable model default cannot dispatch;
+- no provider/model is invented as a fallback;
+- the command-shape defaults above are covered by an exact fixture;
+- resolution is pure apart from the injected snapshot/config reads.
+
+#### Work package 4: implement idempotent standard ingress
+
+Implement one shared `startStandardIngress` operation:
+
+1. Derive the deterministic `ThreadId`, initial `MessageId`, and create/start
+   `CommandId`s.
+2. Read `GET /api/orchestration/threads/:threadId`.
+3. If absent, HTTP-dispatch deterministic `thread.create` with the resolved
+   `projectId`, prompt-derived title, selected model, `runtimeMode:
+   "full-access"`, `interactionMode: "default"`, `branch: null`, and
+   `worktreePath: null`. `thread.create` has no `workspaceRoot` field; T3 resolves
+   the registered project root when `worktreePath` is null.
+4. Read/reconcile the thread after an ambiguous create response.
+5. If the deterministic initial message is absent, HTTP-dispatch deterministic
+   `thread.turn.start` without `bootstrap`, with the same selected model,
+   prompt-derived `titleSeed`, `runtimeMode: "full-access"`, and
+   `interactionMode: "default"`.
+6. Read/reconcile the thread after an ambiguous start response.
+7. If the initial message is present, return the existing conversation rather
+   than dispatching another turn.
+8. Build the deep link as
+   `{publicBaseUrl}/{environmentId}/{encodeURIComponent(threadId)}`.
+
+Recovery classification is observable but does not change the user promise:
+
+- `created`: this call completed create and start;
+- `resumed`: a partial prior attempt existed and this call completed it;
+- `already-started`: the deterministic initial message already existed;
+- `unverified`: T3 could not be queried well enough to prove the final state.
+
+The current HTTP endpoint maps every orchestration engine dispatch failure to the
+same `EnvironmentInternalError`; it does not expose a typed known-rejection versus
+ambiguous-outcome distinction. Reconcile after either a transport-level ambiguous
+outcome or dispatch `EnvironmentInternalError`. Return `unverified` only when the
+required snapshot reconciliation is unavailable or inconclusive. Other typed HTTP
+failures, such as authentication, authorization, invalid request, and a snapshot
+404, retain their contract-defined meaning.
+
+Review exit:
+
+- retries cannot create a second thread or initial message;
+- standard ingress never sends a bootstrap payload;
+- create/start fixtures lock title, title seed, model, modes, branch, and
+  `worktreePath`;
+- recovery decisions are made from T3 snapshots, not local memory;
+- the operation has no Slack-aware branches.
+
+#### Work package 5: add the thin Slack adapter
+
+Scaffold `apps/slack` with Bolt in Socket Mode and centralize Slack command,
+event, action, and metadata identifiers.
+
+For `/t3 <prompt>` and an ordinary `app_mention`:
+
+1. Acknowledge within Slack's deadline before any T3 I/O.
+2. Normalize the prompt (including removal of the app mention token).
+3. Reject an empty prompt with usage guidance and no T3 dispatch.
+4. Post a visible `Starting...` response.
+5. Translate the payload into `IngressInvocation` and call the shared operation.
+6. Replace the starting response with `Open in T3 Code`, a safe recoverable
+   failure, or an unverified message containing the public T3 base URL.
+7. Attach only deterministic T3/origin IDs to Slack message metadata; never place
+   prompts, bearer credentials, or Slack tokens there.
+
+An ordinary mention is one explicit `app_mention` event. Its identity comes from
+the event ID or the mention message timestamp, never the surrounding Slack thread
+root. Replies may be posted in the originating channel/thread for Slack UX, but
+that reply location does not participate in T3 identity. Messages that do not
+arrive through the registered slash-command or `app_mention` handlers cannot
+start or steer a conversation in Slice 1.
+
+Before adapter implementation, record the reviewed response placement in the
+Slack manifest/config section. Slash commands cannot be invoked from a Slack
+message thread, so they require only an ephemeral-versus-channel-visible decision.
+For mentions, separately decide whether the response is posted at the channel
+root or in the originating message thread. These choices affect Slack visibility,
+not the shared runtime.
+
+Review exit:
+
+- handlers acknowledge before invoking the runtime;
+- Slack retry delivery produces the same shared request identity;
+- a mention in an existing human thread does not key from that root;
+- follow-up messages have no dispatch handler;
+- all terminal states replace the visible starting state when Slack delivery is
+  available.
+
+#### Work package 6: configuration, health, and observability
+
+Decode startup configuration rather than reading environment variables throughout
+the app. Slice 1 configuration covers:
+
+- internal T3 HTTP/WS base URL;
+- public T3 base URL;
+- bearer credential file path;
+- configured workspace `ProjectId`;
+- optional integration-wide `ModelSelection`;
+- Slack app-level and bot tokens;
+- health/listen configuration required by the deployment environment.
+
+Separate process liveness from readiness:
+
+- live: the process and health endpoint/event loop are running;
+- ready: configuration decoded, credential file is readable, Slack Socket Mode is
+  connected, T3 authentication/scopes were validated, `server.getConfig`
+  succeeded, the configured project is present in the shell snapshot, and the
+  configured/project default model currently resolves;
+- degraded/not ready: retain the process for reconnection and diagnostics, but do
+  not claim it can accept ingress.
+
+Log correlation IDs, phase, recovery classification, and safe error categories.
+Never log prompts by default, bearer credentials, Slack tokens, WS tickets, full
+Slack payloads, or authorization headers.
+
+#### Slice 1 focused verification
+
+`packages/integration-runtime` tests:
+
+- deterministic ID snapshots for slash and mention identities and every phase;
+- public deep-link normalization and thread-ID URL encoding;
+- integration default wins over project default;
+- missing/stale project and invalid/unavailable model selections fail closed;
+- create/start command fixtures use the prompt-derived title/title seed,
+  `full-access`, `default`, `branch: null`, and `worktreePath: null`;
+- absent thread creates then starts;
+- existing thread without the initial message starts only;
+- existing thread with the initial message returns `already-started`;
+- ambiguous create/start reconciles through a successful snapshot;
+- unavailable reconciliation returns `unverified`;
+- reconnect obtains a fresh WS ticket.
+
+`apps/slack` tests with a fake shared runtime:
+
+- acknowledgement occurs before T3 work;
+- slash and mention payloads normalize to the expected stable identity;
+- mention markup is removed and empty prompts are rejected;
+- a mention uses its own event/message identity, not a parent thread root;
+- starting state transitions to success, safe failure, or unverified;
+- Slack metadata contains IDs only;
+- ordinary messages and follow-ups do not dispatch.
+
+Add one focused adapter-to-runtime integration test covering Slack payload ->
+deterministic T3 commands -> returned deep link. Run targeted tests and typechecks
+for the two new workspaces only; do not run the repo-wide suite.
+
+#### Slice 1 review gates
+
+Implementation starts after reviewers agree on:
+
+1. the package name (`packages/integration-runtime` unless repository naming
+   review selects another name);
+2. the exact versioned deterministic-ID encoding;
+3. the evidenced stable slash-command retry identity;
+4. slash-command response visibility and mention response visibility/thread
+   placement;
+5. the decoded configuration keys and readiness contract;
+6. the incremental package boundary: snapshot-based standard ingress now,
+   selectors/bootstrap/projection added only in later slices.
+
+Slice 1 is complete when the standard slash and mention acceptance criterion is
+demonstrated against a disposable T3 environment, focused tests/typechecks pass,
+and the implementation has not modified server orchestration behavior.
 
 ### Slice 2: Bootstrap extraction and custom setup
 
