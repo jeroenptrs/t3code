@@ -22,6 +22,7 @@ import {
   type OrchestrationThreadDetailSnapshot,
   type ServerConfig,
   type ThreadId,
+  WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -82,6 +83,45 @@ export class CredentialReadError extends Error {
   }
 }
 
+export interface ServerConfigConnection {
+  readonly getConfig: Effect.Effect<ServerConfig, T3TransportError>;
+  readonly closed: Effect.Effect<never, Error>;
+  readonly close: Effect.Effect<void>;
+}
+
+export const makeServerConfigConnectionManager = Effect.fn(
+  "integrationRuntime.makeServerConfigConnectionManager",
+)(function* (connect: () => Effect.Effect<ServerConfigConnection, T3TransportError>) {
+  const mutex = yield* Semaphore.make(1);
+  let generation = 0;
+  let current: { readonly generation: number; readonly connection: ServerConfigConnection } | null =
+    null;
+
+  const getConfig = mutex.withPermits(1)(
+    Effect.gen(function* () {
+      if (current !== null) return yield* current.connection.getConfig;
+      const connection = yield* connect();
+      const connectionGeneration = ++generation;
+      current = { generation: connectionGeneration, connection };
+      yield* connection.closed.pipe(
+        Effect.exit,
+        Effect.andThen(
+          mutex.withPermits(1)(
+            Effect.sync(() => {
+              if (current?.generation === connectionGeneration) current = null;
+            }),
+          ),
+        ),
+        Effect.ensuring(connection.close),
+        Effect.forkDetach,
+      );
+      return yield* connection.getConfig;
+    }),
+  );
+
+  return { getConfig } as const;
+});
+
 const transportError = (cause: unknown): T3TransportError => {
   const tag = typeof cause === "object" && cause !== null && "_tag" in cause ? cause._tag : null;
   switch (tag) {
@@ -130,13 +170,6 @@ export const makeLiveT3Transport = Effect.fn("integrationRuntime.makeLiveT3Trans
   const rpcSessions = yield* makeRpcSessionFactory.pipe(
     Effect.provide(Socket.layerWebSocketConstructorGlobal),
   );
-  const configConnectionMutex = yield* Semaphore.make(1);
-  let configConnection: {
-    readonly generation: number;
-    readonly config: ServerConfig;
-    readonly scope: Scope.Closeable;
-  } | null = null;
-  let configConnectionGeneration = 0;
 
   const withCredential = <A>(
     use: (
@@ -220,66 +253,59 @@ export const makeLiveT3Transport = Effect.fn("integrationRuntime.makeLiveT3Trans
       }).pipe(Effect.provide(httpLayer)),
     );
 
-  const getServerConfig = () =>
-    configConnectionMutex.withPermits(1)(
+  const configManager = yield* makeServerConfigConnectionManager(() =>
+    withCredential((credential) =>
       Effect.gen(function* () {
-        if (configConnection !== null) return configConnection.config;
-        return yield* withCredential((credential) =>
-          Effect.gen(function* () {
-            const scope = yield* Scope.make("sequential");
-            const generation = ++configConnectionGeneration;
-            const connect = Effect.gen(function* () {
-              const environment = yield* fetchRemoteEnvironmentDescriptor({
-                httpBaseUrl: options.httpBaseUrl,
-                timeoutMs,
-              });
-              const socketUrl = yield* resolveRemoteWebSocketConnectionUrl({
-                wsBaseUrl: websocketBaseUrl(options.httpBaseUrl),
-                httpBaseUrl: options.httpBaseUrl,
-                bearerToken: credential,
-                timeoutMs,
-              });
-              const connection: PreparedConnection = {
-                environmentId: environment.environmentId,
-                label: environment.label,
-                httpBaseUrl: options.httpBaseUrl,
-                socketUrl,
-                httpAuthorization: { _tag: "Bearer", token: credential },
-                target: {
-                  _tag: "PrimaryConnectionTarget",
-                  environmentId: environment.environmentId,
-                  label: environment.label,
-                  httpBaseUrl: options.httpBaseUrl,
-                  wsBaseUrl: websocketBaseUrl(options.httpBaseUrl),
-                },
-              };
-              const session = yield* rpcSessions
-                .connect(connection)
-                .pipe(Effect.provideService(Scope.Scope, scope));
-              yield* session.ready;
-              const serverConfig = yield* session.initialConfig;
-              configConnection = { generation, config: serverConfig, scope };
-              yield* session.closed.pipe(
-                Effect.exit,
-                Effect.andThen(
-                  configConnectionMutex.withPermits(1)(
-                    Effect.sync(() => {
-                      if (configConnection?.generation === generation) configConnection = null;
-                    }),
-                  ),
-                ),
-                Effect.ensuring(Scope.close(scope, Exit.void)),
-                Effect.forkDetach,
-              );
-              return serverConfig;
-            });
-            return yield* connect.pipe(
-              Effect.onError(() => Scope.close(scope, Exit.void).pipe(Effect.ignore)),
-            );
-          }).pipe(Effect.provide(httpLayer)),
+        const scope = yield* Scope.make("sequential");
+        const connect = Effect.gen(function* () {
+          const environment = yield* fetchRemoteEnvironmentDescriptor({
+            httpBaseUrl: options.httpBaseUrl,
+            timeoutMs,
+          });
+          const socketUrl = yield* resolveRemoteWebSocketConnectionUrl({
+            wsBaseUrl: websocketBaseUrl(options.httpBaseUrl),
+            httpBaseUrl: options.httpBaseUrl,
+            bearerToken: credential,
+            timeoutMs,
+          });
+          const connection: PreparedConnection = {
+            environmentId: environment.environmentId,
+            label: environment.label,
+            httpBaseUrl: options.httpBaseUrl,
+            socketUrl,
+            httpAuthorization: { _tag: "Bearer", token: credential },
+            target: {
+              _tag: "PrimaryConnectionTarget",
+              environmentId: environment.environmentId,
+              label: environment.label,
+              httpBaseUrl: options.httpBaseUrl,
+              wsBaseUrl: websocketBaseUrl(options.httpBaseUrl),
+            },
+          };
+          const session = yield* rpcSessions
+            .connect(connection)
+            .pipe(Effect.provideService(Scope.Scope, scope));
+          yield* session.ready;
+          return {
+            getConfig: session.client[WS_METHODS.serverGetConfig]({}).pipe(
+              Effect.mapError(transportError),
+              Effect.timeout(timeoutMs),
+              Effect.catchTag("TimeoutError", (cause) =>
+                Effect.fail(new T3TransportError("timeout", "The T3 request timed out.", cause)),
+              ),
+            ),
+            closed: session.closed,
+            close: Scope.close(scope, Exit.void),
+          } satisfies ServerConfigConnection;
+        });
+        return yield* connect.pipe(
+          Effect.onError(() => Scope.close(scope, Exit.void).pipe(Effect.ignore)),
         );
-      }),
-    );
+      }).pipe(Effect.provide(httpLayer)),
+    ),
+  );
+
+  const getServerConfig = () => configManager.getConfig;
 
   return {
     validateSession,
