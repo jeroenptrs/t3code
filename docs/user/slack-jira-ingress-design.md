@@ -86,6 +86,7 @@ threads (no worktree, see #6), plain `thread.create` + `thread.turn.start` over
 HTTP is fully idempotent per command** — prefer that shape where possible.
 
 **Resolution by trigger kind** (locked 2026-07-29):
+
 - **External clients** (Slack/Jira sibling process): WS dispatch when full
   bootstrap is needed; plain HTTP commands for workspace-project threads.
 - **Server-internal triggers** (automations, #9): do NOT go through any transport.
@@ -132,7 +133,7 @@ The Slack surface is exactly three things:
 mid-turn, approval/question relays, streamed output, settle mirroring). This was
 considered and deliberately rejected: it means rebuilding a parallel client-runtime
 in Block Kit, and the hosted web UI has strictly better affordances (diffs,
-checkpoints, approvals). Slack's job is to get you *to* the conversation; all
+checkpoints, approvals). Slack's job is to get you _to_ the conversation; all
 interaction past thread-start happens in the web UI via deep link.
 
 **Future (explicitly parked, not descoped):** read-only in-Slack conversation view —
@@ -372,8 +373,8 @@ automation management) is intentionally undesigned beyond the notes below.
 - **The durable state is ONE table, one row per automation** — no job queue, no
   run-history table, no retry state. Sketch:
   `{ id, name, prompt, projectId, modelSelection, runtimeMode, interactionMode,
-  worktreePolicy, setupScriptPolicy, schedule (cron), enabled, lastScheduledFor,
-  lastThreadId, lastOutcome }`. The T3 thread IS the execution record (messages,
+worktreePolicy, setupScriptPolicy, schedule (cron), enabled, lastScheduledFor,
+lastThreadId, lastOutcome }`. The T3 thread IS the execution record (messages,
   activities, turn state all live in the event store); the row only adjudicates
   schedule occurrences and links to what they produced. Loops/graphs later grow
   FROM this row (add chaining/kind fields), not around it.
@@ -400,10 +401,10 @@ automation management) is intentionally undesigned beyond the notes below.
 
 ### 10. Task/agent taxonomy (the 2×2)
 
-| | Short-horizon task | Long-horizon task |
-|---|---|---|
-| **Ephemeral agent** | dep bump, triage | nightly migration, then gone |
-| **Durable agent** | standing debug thread | multi-day feature build |
+|                     | Short-horizon task    | Long-horizon task            |
+| ------------------- | --------------------- | ---------------------------- |
+| **Ephemeral agent** | dep bump, triage      | nightly migration, then gone |
+| **Durable agent**   | standing debug thread | multi-day feature build      |
 
 Durability lives in the THREAD (event log in SQLite), not the checkout — the
 worktree is a scratchpad. Ephemeral agents get worktrees, cleaned up by RETENTION,
@@ -438,36 +439,38 @@ per stack (go, php7, php8, node → ad-hoc dev containers)? repo transport (scp?
 Working assumptions: NO t3 server inside sandboxes (sandbox is a tool the agent
 wields via Daytona MCP, not an environment); with strict worktree cleanup,
 sandboxes aren't really necessary for the current design; sandboxing earns its keep
-as a *trust boundary for ingress* (e.g. dependency-update automation running
+as a _trust boundary for ingress_ (e.g. dependency-update automation running
 `npm install && npm test` on ticket-chosen code), if anywhere.
 
-### 12. Auth: basic auth in front of the VM first; Entra ID later
+### 12. Auth: anonymous portal identity first; edge OIDC later
 
-- **Now**: external basic-auth proxy in front of the VM. Requires ZERO server
-  changes — the existing pairing flow works through a proxy as-is.
-- **Slack sibling process**: use an internal loopback HTTP/WS URL for authenticated
-  T3 API traffic and a separate public URL for deep links. This avoids trying to
-  put proxy Basic credentials and the T3 Bearer credential in the same
-  `Authorization` header.
-- **Slack credential rotation**: T3 bearer sessions currently expire after 30
-  days. A timer script rotates before expiry by using a still-valid
-  `access:write` rotator credential to issue/exchange a narrowly scoped Slack
-  credential, atomically replace the daemon's credential file, and rotate its own
-  credential. Manual pairing is the recovery path if the timer misses the expiry
-  window. This is credential rotation, not a refresh-token flow.
-- **Later — Entra ID (OIDC)**: NOTE: no Entra/OIDC support exists upstream — this
-  is entirely OUR addition. Verified contained: add `"oidc-entra"` to the
-  bootstrap-methods union in `packages/contracts/src/auth.ts`, add one endpoint
-  (`POST /api/auth/oidc-session`) that validates the Entra id_token (JWKS, issuer,
-  audience) then walks the existing `createBrowserSession` codepath (SessionStore +
-  cookie fully reusable), plus a login-button branch in the webapp. Two small
-  contract edits + one handler + one webapp branch.
-- **Parked**: proxy-trusted-header mode (synthesize a session from
-  `X-Forwarded-User` in `authenticateRequest`) — the only option that MODIFIES a hot
-  upstream codepath; not needed while pairing works through basic auth. Revisit only
-  if pairing-through-proxy proves annoying.
-- No per-user distinction inside T3 — team-shared conversations are the norm;
-  proxy/SSO answers "are you on the team", that's sufficient.
+- **Now**: the public reverse proxy injects a shared T3 bearer credential with only
+  `orchestration:read` and `orchestration:operate`. Browsers see no T3 pairing or
+  login prompt, while T3's existing session and RPC scope checks remain active.
+  The T3 listener stays on loopback/private networking; only the HTTPS proxy is
+  public. This requires ZERO server changes.
+- **Slack sibling process**: use an internal loopback HTTP/WS URL and its own narrow
+  T3 bearer credential for API traffic, plus the public proxy URL for deep links.
+  Do not reuse the portal credential: independent credentials keep rotation and
+  revocation boundaries small.
+- **Credential rotation**: T3 bearer sessions currently expire after 30 days.
+  Rotate the Slack and portal credentials before expiry, atomically replace their
+  secret files, reload/reconnect, verify, then revoke the previous sessions.
+  Manual pairing and narrow token exchange over loopback is the recovery path if a
+  timer misses the expiry window. This is credential rotation, not a refresh-token
+  flow.
+- **Later — Entra ID (OIDC)**: enforce OIDC at the same reverse-proxy boundary and
+  continue injecting the narrow shared portal credential after successful login.
+  No T3, Slack, deep-link, or WebSocket changes are required. The gateway can audit
+  the employee identity; T3 deliberately continues to see one team portal
+  principal.
+- **Only if requirements change**: native T3 OIDC or proxy-trusted user headers are
+  needed only if T3 itself must distinguish users for authorization/auditing.
+  Thread-scoped capabilities are optional and only justified if a link recipient
+  must not see other environment conversations; UI filtering alone is not an
+  authorization boundary.
+- Deployment and rotation steps are in
+  [Deploying the Slack conversation portal](slack-conversation-portal-deployment.md).
 
 ### 13. The server serves the webapp itself
 
@@ -494,9 +497,11 @@ scheduler, #9).
    extracting the bootstrap workflow from `ws.ts` into a shared
    `ThreadBootstrapService` (mechanical, behavior-preserving, plausibly
    upstreamable — see #1a).
-3. **Entra ID** — two closed-union contract edits + additive handler/webapp branch.
-4. **Proxy-trusted auth** — modifies `authenticateRequest` (hot upstream path).
-   Parked per #12.
+3. **Anonymous portal + edge OIDC** — proxy-only deployment; zero T3 server-core
+   changes.
+4. **Optional native identity/thread authorization** — modifies T3 auth and read
+   boundaries; deliberately deferred unless per-user or per-thread isolation is
+   required.
 
 ## Boundary summary (the one-paragraph version)
 
@@ -547,7 +552,9 @@ scheduler, #9).
 4. **Automation webapp UI** — folded into #9 as one workstream with the engine;
    scope/refine at implementation start.
 5. **Jira integration** — refine as first step when picked up.
-6. **Authentication** — basic-auth proxy now; Entra later (entirely our addition).
+6. **Authentication** — anonymous shared portal identity now; Entra at the proxy
+   boundary later, with no T3 changes unless per-user authorization becomes a
+   requirement.
 
 Slack implementation details and acceptance criteria live in
 `.plans/21-slack-ingress-client.md`; this document remains the authoritative
