@@ -39,6 +39,10 @@ The T3 credential requires only `orchestration:read` and
 `orchestration:operate`. The process rereads the credential file for every new
 authenticated session so an atomic credential-file replacement is picked up.
 
+To make the linked T3 conversation UI available without a T3 pairing prompt, deploy the public web
+origin behind a reverse proxy that supplies a separate narrow portal credential. See
+[Deploying the Slack conversation portal](../../integrations/slack-conversation-portal-deployment.md).
+
 `/live` reports whether the process is alive. `/ready` becomes successful after
 Slack Socket Mode connects, T3 authentication and scopes validate,
 `server.getConfig` succeeds, and the configured project/default model resolves.
