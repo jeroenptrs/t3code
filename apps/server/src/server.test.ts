@@ -5,6 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
+  ApprovalRequestId,
   AuthAccessTokenType,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
@@ -37,6 +38,8 @@ import {
   ProviderSetupError,
   ResolvedKeybindingRule,
   type ServerLifecycleStreamEvent,
+  SCHEDULED_AUTOMATION_WS_METHODS,
+  ScheduledAutomationId,
   ThreadId,
   TurnId,
   UsageLimitSourceId,
@@ -65,9 +68,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
-import * as Ref from "effect/Ref";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
@@ -120,6 +123,9 @@ import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionRe
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationEventStore } from "./persistence/Services/OrchestrationEventStore.ts";
+import * as ThreadBootstrap from "./orchestration/Services/ThreadBootstrapService.ts";
+import * as WorkspaceMutationCoordinator from "./orchestration/Services/WorkspaceMutationCoordinator.ts";
+import { OrchestrationCommandReceiptRepository } from "./persistence/Services/OrchestrationCommandReceipts.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
@@ -174,6 +180,7 @@ import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+import * as ScheduledAutomation from "./scheduledAutomation/ScheduledAutomationService.ts";
 import * as Data from "effect/Data";
 
 import { makeOrchestrationIntegrationHarness } from "../integration/OrchestrationEngineHarness.integration.ts";
@@ -527,6 +534,7 @@ const buildAppUnderTest = (options?: {
     threadDeletionReactor?: Partial<ThreadDeletionReactor["Service"]>;
     analyticsService?: Partial<AnalyticsService.AnalyticsService["Service"]>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]>;
+    scheduledAutomationService?: Partial<ScheduledAutomation.ScheduledAutomationService["Service"]>;
     checkpointDiffQuery?: Partial<CheckpointDiffQuery.CheckpointDiffQuery["Service"]>;
     browserTraceCollector?: Partial<BrowserTraceCollector.BrowserTraceCollector["Service"]>;
     serverLifecycleEvents?: Partial<ServerLifecycleEvents.ServerLifecycleEvents["Service"]>;
@@ -735,7 +743,9 @@ const buildAppUnderTest = (options?: {
     );
 
     const servedRoutesLayer = HttpRouter.serve(
-      makeRoutesLayer.pipe(Layer.provide(serviceLauncherClientLayer)),
+      makeRoutesLayer.pipe(
+        Layer.provide(Layer.mergeAll(ThreadBootstrap.layer, serviceLauncherClientLayer)),
+      ),
       {
         disableListenLog: true,
         disableLogger: true,
@@ -744,6 +754,7 @@ const buildAppUnderTest = (options?: {
     ).pipe(
       Layer.provide(
         Layer.mergeAll(
+          WorkspaceMutationCoordinator.layer,
           Layer.mock(Keybindings.Keybindings)({
             loadConfigState: Effect.succeed({
               keybindings: [],
@@ -959,61 +970,75 @@ const buildAppUnderTest = (options?: {
         ),
       ),
       Layer.provide(
-        Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-          getUserInputActivity: () => Effect.die("unused"),
-          getCommandReadModel: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
-          getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
-          getShellSnapshot: () =>
-            Effect.succeed({
-              snapshotSequence: 0,
-              projects: [],
-              threads: [],
-              updatedAt: "1970-01-01T00:00:00.000Z",
-            }),
-          getArchivedShellSnapshot: () =>
-            Effect.succeed({
-              snapshotSequence: 0,
-              projects: [],
-              threads: [],
-              updatedAt: "1970-01-01T00:00:00.000Z",
-            }),
-          searchThreads: () => Effect.succeed({ matches: [] }),
-          getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
-          getProjectShellById: () => Effect.succeed(Option.none()),
-          getThreadShellById: () => Effect.succeed(Option.none()),
-          getThreadDetailById: () => Effect.succeed(Option.none()),
-          getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
-          getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
-          getEventReplayStats: ({ fromSequenceExclusive, toSequenceInclusive }) =>
-            Effect.succeed({
-              eventCount: Math.max(0, toSequenceInclusive - fromSequenceExclusive),
-              payloadBytes: 0,
-            }),
-          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
-          getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
-          getImportedAgentSessionSources: () => Effect.succeed([]),
-          getThreadCheckpointContext: () => Effect.succeed(Option.none()),
-          ...options?.layers?.projectionSnapshotQuery,
-        }),
+        Layer.mergeAll(
+          Layer.mock(OrchestrationCommandReceiptRepository)({
+            getByCommandId: () => Effect.succeed(Option.none()),
+          }),
+          Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+            getUserInputActivity: () => Effect.die("unused"),
+            getCommandReadModel: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
+            getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
+            getShellSnapshot: () =>
+              Effect.succeed({
+                snapshotSequence: 0,
+                projects: [],
+                threads: [],
+                updatedAt: "1970-01-01T00:00:00.000Z",
+              }),
+            getArchivedShellSnapshot: () =>
+              Effect.succeed({
+                snapshotSequence: 0,
+                projects: [],
+                threads: [],
+                updatedAt: "1970-01-01T00:00:00.000Z",
+              }),
+            searchThreads: () => Effect.succeed({ matches: [] }),
+            getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
+            getProjectShellById: () => Effect.succeed(Option.none()),
+            getThreadShellById: () => Effect.succeed(Option.none()),
+            getThreadDetailById: () => Effect.succeed(Option.none()),
+            getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+            getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+            getEventReplayStats: ({ fromSequenceExclusive, toSequenceInclusive }) =>
+              Effect.succeed({
+                eventCount: Math.max(0, toSequenceInclusive - fromSequenceExclusive),
+                payloadBytes: 0,
+              }),
+            getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+            getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+            getImportedAgentSessionSources: () => Effect.succeed([]),
+            getThreadCheckpointContext: () => Effect.succeed(Option.none()),
+            ...options?.layers?.projectionSnapshotQuery,
+          }),
+        ),
       ),
       Layer.provide(
-        Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
-          getTurnDiff: () =>
-            Effect.succeed({
-              threadId: defaultThreadId,
-              fromTurnCount: 0,
-              toTurnCount: 0,
-              diff: "",
-            }),
-          getFullThreadDiff: () =>
-            Effect.succeed({
-              threadId: defaultThreadId,
-              fromTurnCount: 0,
-              toTurnCount: 0,
-              diff: "",
-            }),
-          ...options?.layers?.checkpointDiffQuery,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ScheduledAutomation.ScheduledAutomationService)({
+            dispatch: () => Effect.die("ScheduledAutomationService.dispatch not stubbed in test"),
+            list: () => Effect.succeed([]),
+            get: () => Effect.die("ScheduledAutomationService.get not stubbed in test"),
+            subscribe: Effect.succeed(Stream.empty),
+            ...options?.layers?.scheduledAutomationService,
+          }),
+          Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
+            getTurnDiff: () =>
+              Effect.succeed({
+                threadId: defaultThreadId,
+                fromTurnCount: 0,
+                toTurnCount: 0,
+                diff: "",
+              }),
+            getFullThreadDiff: () =>
+              Effect.succeed({
+                threadId: defaultThreadId,
+                fromTurnCount: 0,
+                toTurnCount: 0,
+                diff: "",
+              }),
+            ...options?.layers?.checkpointDiffQuery,
+          }),
+        ),
       ),
     );
 
@@ -1653,6 +1678,146 @@ const NodeHttpServerTestWithWsDeflate = HttpServer.layerTestClient.pipe(
 );
 
 it.layer(NodeServices.layer)("server router seam", (it) => {
+  it.effect("requires read and operate scopes before automation mutations can disclose data", () =>
+    Effect.gen(function* () {
+      const dispatchCalled = yield* Ref.make(false);
+      yield* buildAppUnderTest({
+        layers: {
+          scheduledAutomationService: {
+            dispatch: () => Ref.set(dispatchCalled, true).pipe(Effect.as({ automation: null })),
+          },
+        },
+      });
+
+      for (const [scope, missingScope] of [
+        ["orchestration:operate", "orchestration:read"],
+        ["orchestration:read", "orchestration:operate"],
+      ] as const) {
+        const { response: exchangeResponse, body: tokenBody } = yield* exchangeAccessToken(
+          defaultDesktopBootstrapToken,
+          { scope },
+        );
+        assert.equal(exchangeResponse.status, 200);
+        assert.isDefined(tokenBody.access_token);
+        const wsTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { authorization: `Bearer ${tokenBody.access_token ?? ""}` },
+        });
+        const wsTicketBody = (yield* wsTicketResponse.json) as { readonly ticket: string };
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
+        const rpcError = yield* Effect.flip(
+          Effect.scoped(
+            withWsRpcClient(wsUrl, (client) =>
+              client[SCHEDULED_AUTOMATION_WS_METHODS.dispatchCommand]({
+                type: "scheduledAutomation.create",
+                commandId: CommandId.make(`automation-auth-${scope}`),
+                automationId: ScheduledAutomationId.make("auth-fixture"),
+                definition: {
+                  name: "Sensitive automation",
+                  prompt: "secret prompt must not be disclosed",
+                  projectId: ProjectId.make("project-1"),
+                  modelSelection: {
+                    instanceId: ProviderInstanceId.make("codex-work"),
+                    model: "gpt-5.6",
+                  },
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  worktreePolicy: { kind: "current" },
+                  setupScriptPolicy: "skip",
+                  schedule: { cron: "0 9 * * *", timeZone: "UTC", misfirePolicy: "latest-only" },
+                },
+                createdAt: "2026-08-04T00:00:00.000Z",
+              }),
+            ),
+          ),
+        );
+        assert.equal(rpcError._tag, "EnvironmentAuthorizationError");
+        if (rpcError._tag === "EnvironmentAuthorizationError") {
+          assert.equal(rpcError.requiredScope, missingScope);
+        }
+      }
+      assert.isFalse(yield* Ref.get(dispatchCalled));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("allows addressing but not minting scheduled-automation thread identities", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("t3sa:v1:existing:thread");
+      const dispatched: Array<OrchestrationCommand> = [];
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command);
+                return { sequence: dispatched.length };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.turn.start",
+            commandId: CommandId.make("automation-follow-up"),
+            threadId,
+            message: {
+              messageId: MessageId.make("automation-follow-up-message"),
+              role: "user",
+              text: "Continue",
+              attachments: [],
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.approval.respond",
+            commandId: CommandId.make("automation-approve"),
+            threadId,
+            requestId: ApprovalRequestId.make("automation-approval"),
+            decision: "accept",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ),
+      );
+      const forged = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.create",
+            commandId: CommandId.make("forge-automation-thread"),
+            threadId: ThreadId.make("t3sa:v1:forged:thread"),
+            projectId: ProjectId.make("project-1"),
+            title: "Forged",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5.6",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assert.deepEqual(
+        dispatched.map((command) => command.type),
+        ["thread.turn.start", "thread.approval.respond"],
+      );
+      assert.equal(forged._tag, "Failure");
+      if (forged._tag === "Failure") {
+        assert.include(forged.failure.message, "identity namespace is reserved");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("parks HTTP ingress until command readiness", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -10942,110 +11107,116 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("cleans up created bootstrap threads when worktree creation defects", () =>
-    Effect.gen(function* () {
-      const dispatchedCommands: Array<OrchestrationCommand> = [];
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const createWorktree = vi.fn(
-        (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
-          Effect.die(new Error("worktree exploded")),
-      );
+  it.effect.each([false, true])(
+    "honors retainOnFailure=%s when worktree creation defects",
+    (retainOnFailure) =>
+      Effect.gen(function* () {
+        const dispatchedCommands: Array<OrchestrationCommand> = [];
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const createWorktree = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+            Effect.die(new Error("worktree exploded")),
+        );
 
-      const config = yield* buildAppUnderTest({
-        layers: {
-          gitVcsDriver: {
-            createWorktree,
+        const config = yield* buildAppUnderTest({
+          layers: {
+            gitVcsDriver: {
+              createWorktree,
+            },
+            orchestrationEngine: {
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  dispatchedCommands.push(command);
+                  return { sequence: dispatchedCommands.length };
+                }),
+              readEvents: () => Stream.empty,
+            },
           },
-          orchestrationEngine: {
-            dispatch: (command) =>
-              Effect.sync(() => {
-                dispatchedCommands.push(command);
-                return { sequence: dispatchedCommands.length };
-              }),
-            readEvents: () => Stream.empty,
-          },
-        },
-      });
+        });
 
-      const createdAt = "2026-01-01T00:00:00.000Z";
-      const wsUrl = yield* getWsServerUrl("/ws");
-      let pendingAttachmentId: string | undefined;
-      const result = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          Effect.gen(function* () {
-            const upload = yield* client[WS_METHODS.attachmentsCreateUploadUrl]({
-              name: "screenshot.png",
-              mimeType: "image/png",
-              sizeBytes: 6,
-            });
-            pendingAttachmentId = upload.attachmentId;
-            const uploadResponse = yield* HttpClient.post(upload.relativeUrl, {
-              body: HttpBody.uint8Array(new Uint8Array([1, 2, 3, 4, 5, 6]), "image/png"),
-            });
-            assert.equal(uploadResponse.status, 204);
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        const wsUrl = yield* getWsServerUrl("/ws");
+        let pendingAttachmentId: string | undefined;
+        const result = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const upload = yield* client[WS_METHODS.attachmentsCreateUploadUrl]({
+                name: "screenshot.png",
+                mimeType: "image/png",
+                sizeBytes: 6,
+              });
+              pendingAttachmentId = upload.attachmentId;
+              const uploadResponse = yield* HttpClient.post(upload.relativeUrl, {
+                body: HttpBody.uint8Array(new Uint8Array([1, 2, 3, 4, 5, 6]), "image/png"),
+              });
+              assert.equal(uploadResponse.status, 204);
 
-            return yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
-              type: "thread.turn.start",
-              commandId: CommandId.make("cmd-bootstrap-turn-start-defect"),
-              threadId: ThreadId.make("thread-bootstrap-defect"),
-              message: {
-                messageId: MessageId.make("msg-bootstrap-defect"),
-                role: "user",
-                text: "hello",
-                attachments: [
-                  {
-                    type: "image",
-                    id: upload.attachmentId,
-                    name: "screenshot.png",
-                    mimeType: "image/png",
-                    sizeBytes: 6,
+              return yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                type: "thread.turn.start",
+                commandId: CommandId.make("cmd-bootstrap-turn-start-defect"),
+                threadId: ThreadId.make("thread-bootstrap-defect"),
+                message: {
+                  messageId: MessageId.make("msg-bootstrap-defect"),
+                  role: "user",
+                  text: "hello",
+                  attachments: [
+                    {
+                      type: "image",
+                      id: upload.attachmentId,
+                      name: "screenshot.png",
+                      mimeType: "image/png",
+                      sizeBytes: 6,
+                    },
+                  ],
+                },
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                bootstrap: {
+                  retainOnFailure,
+                  createThread: {
+                    projectId: defaultProjectId,
+                    title: "Bootstrap Thread",
+                    modelSelection: defaultModelSelection,
+                    runtimeMode: "full-access",
+                    interactionMode: "default",
+                    branch: "main",
+                    worktreePath: null,
+                    createdAt,
                   },
-                ],
-              },
-              modelSelection: defaultModelSelection,
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              bootstrap: {
-                createThread: {
-                  projectId: defaultProjectId,
-                  title: "Bootstrap Thread",
-                  modelSelection: defaultModelSelection,
-                  runtimeMode: "full-access",
-                  interactionMode: "default",
-                  branch: "main",
-                  worktreePath: null,
-                  createdAt,
+                  prepareWorktree: {
+                    projectCwd: "/tmp/project",
+                    baseBranch: "main",
+                    branch: "t3code/bootstrap-refName",
+                  },
+                  runSetupScript: false,
                 },
-                prepareWorktree: {
-                  projectCwd: "/tmp/project",
-                  baseBranch: "main",
-                  branch: "t3code/bootstrap-refName",
-                },
-                runSetupScript: false,
-              },
-              createdAt,
-            });
-          }),
-        ).pipe(Effect.result),
-      );
+                createdAt,
+              });
+            }),
+          ).pipe(Effect.result),
+        );
 
-      assertTrue(result._tag === "Failure");
-      assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
-      assert.include(result.failure.message, "worktree exploded");
-      assert.strictEqual(result.failure.bootstrapThreadDisposition, "deleted");
-      assert.deepEqual(
-        dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.delete"],
-      );
-      assert.isDefined(pendingAttachmentId);
-      assert.isTrue(
-        yield* fileSystem.exists(path.join(config.attachmentsDir, `${pendingAttachmentId}.png`)),
-      );
-      assert.deepEqual(yield* fileSystem.readDirectory(config.attachmentsDir), [
-        `${pendingAttachmentId}.png`,
-      ]);
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+        assertTrue(result._tag === "Failure");
+        assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
+        assert.include(result.failure.message, "worktree exploded");
+        assert.strictEqual(
+          result.failure.bootstrapThreadDisposition,
+          retainOnFailure ? undefined : "deleted",
+        );
+        assert.deepEqual(
+          dispatchedCommands.map((command) => command.type),
+          retainOnFailure ? ["thread.create"] : ["thread.create", "thread.delete"],
+        );
+        assert.isDefined(pendingAttachmentId);
+        assert.isTrue(
+          yield* fileSystem.exists(path.join(config.attachmentsDir, `${pendingAttachmentId}.png`)),
+        );
+        assert.deepEqual(yield* fileSystem.readDirectory(config.attachmentsDir), [
+          `${pendingAttachmentId}.png`,
+        ]);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("drains deletion cleanup through the re-created thread event", () =>

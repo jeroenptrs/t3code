@@ -19,6 +19,13 @@ export interface MentionInvocationInput {
   readonly text: string;
 }
 
+export interface DirectMessageInvocationInput {
+  readonly teamId: string;
+  readonly channelId: string;
+  readonly rootTimestamp: string;
+  readonly text: string;
+}
+
 export const normalizeSlashInvocation = (input: SlashInvocationInput): IngressInvocation => ({
   identityVersion: INGRESS_IDENTITY_VERSION,
   integration: "slack",
@@ -38,4 +45,39 @@ export const normalizeMentionInvocation = (input: MentionInvocationInput): Ingre
     .replace(new RegExp(`<@${input.botUserId}(?:\\|[^>]+)?>`, "gi"), " ")
     .replace(/\s+/g, " ")
     .trim(),
+});
+
+export const normalizeCustomSlashInvocation = (input: SlashInvocationInput): IngressInvocation => ({
+  ...normalizeSlashInvocation(input),
+  surface: "custom-slash",
+});
+
+const CUSTOM_MENTION_PREFIX = /^custom(?:\s*:|\s+|$)/i;
+
+export const isCustomMentionPrompt = (prompt: string): boolean =>
+  CUSTOM_MENTION_PREFIX.test(prompt);
+
+export const stripCustomMentionPrefix = (prompt: string): string =>
+  prompt.replace(CUSTOM_MENTION_PREFIX, "").trim();
+
+export const normalizeCustomMentionInvocation = (
+  input: MentionInvocationInput,
+): IngressInvocation => {
+  const invocation = normalizeMentionInvocation(input);
+  return {
+    ...invocation,
+    surface: "custom-mention",
+    prompt: stripCustomMentionPrefix(invocation.prompt),
+  };
+};
+
+export const normalizeDirectMessageInvocation = (
+  input: DirectMessageInvocationInput,
+): IngressInvocation => ({
+  identityVersion: INGRESS_IDENTITY_VERSION,
+  integration: "slack",
+  tenantId: input.teamId,
+  surface: "dm",
+  invocationId: `${input.channelId}:${input.rootTimestamp}`,
+  prompt: input.text.trim(),
 });

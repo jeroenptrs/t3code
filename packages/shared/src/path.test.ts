@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  canonicalPathIdentity,
   isExplicitRelativePath,
   isUncPath,
   isWindowsAbsolutePath,
@@ -42,5 +43,10 @@ describe("path helpers", () => {
     expect(normalizeProjectPathForComparison("C:")).toBe(normalizeProjectPathForComparison("C:/"));
     // Non-root drive paths keep their trailing separator trimmed as before.
     expect(normalizeProjectPathForDispatch("C:\\repo\\")).toBe("C:\\repo");
+  });
+
+  it("canonicalizes lexical aliases for workspace identity comparisons", () => {
+    expect(canonicalPathIdentity("/repo/./worktrees/../")).toBe("/repo");
+    expect(canonicalPathIdentity("C:\\Repo\\.\\worktree\\..")).toBe("c:/repo");
   });
 });

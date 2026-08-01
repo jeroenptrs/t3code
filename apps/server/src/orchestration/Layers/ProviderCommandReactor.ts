@@ -49,6 +49,7 @@ import {
 } from "../Services/ProviderCommandReactor.ts";
 import { forkParked, ServerActivation } from "../../serverActivation.ts";
 import { canReplaceThreadTitle, DEFAULT_THREAD_TITLE } from "../threadTitles.ts";
+import { WorkspaceMutationCoordinator } from "../Services/WorkspaceMutationCoordinator.ts";
 import {
   resolveSourceControlWriterModelSelection,
   ServerSettingsService,
@@ -328,6 +329,7 @@ const make = Effect.gen(function* () {
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
+  const workspaceMutationCoordinator = yield* WorkspaceMutationCoordinator;
   const serverCommandId = (tag: string) =>
     crypto.randomUUIDv4.pipe(Effect.map((uuid) => CommandId.make(`server:${tag}:${uuid}`)));
   const serverEventId = () => crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
@@ -854,7 +856,7 @@ const make = Effect.gen(function* () {
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: true,
-    });
+    }).pipe(Effect.ensuring(workspaceMutationCoordinator.providerStartupSettled(input.threadId)));
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
@@ -1721,7 +1723,11 @@ const make = Effect.gen(function* () {
         return;
       }
       case "thread.turn-start-requested":
-        yield* processTurnStartRequested(event);
+        yield* processTurnStartRequested(event).pipe(
+          Effect.ensuring(
+            workspaceMutationCoordinator.providerStartupSettled(event.payload.threadId),
+          ),
+        );
         return;
       case "thread.turn-interrupt-requested":
         yield* processTurnInterruptRequested(event);

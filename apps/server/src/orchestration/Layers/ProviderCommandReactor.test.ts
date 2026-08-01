@@ -27,6 +27,7 @@ import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
@@ -67,12 +68,17 @@ import {
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
+import * as WorkspaceMutationCoordinator from "../Services/WorkspaceMutationCoordinator.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
+import * as Crypto from "effect/Crypto";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ServerActivation } from "../../serverActivation.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
+import * as ProjectSetupScriptRunner from "../../project/ProjectSetupScriptRunner.ts";
+import { makeThreadBootstrapService } from "../Services/ThreadBootstrapService.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -182,6 +188,7 @@ describe("ProviderCommandReactor", () => {
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderServiceError>;
     readonly tryHandlePromptCommandEffect?: ProviderAuthService["Service"]["tryHandlePromptCommand"];
+    readonly workspaceMutationCoordinator?: WorkspaceMutationCoordinator.WorkspaceMutationCoordinatorShape;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -440,7 +447,9 @@ describe("ProviderCommandReactor", () => {
           get streamDomainEvents() {
             return engine.streamDomainEvents;
           },
-          subscribeDomainEvents: engine.subscribeDomainEvents,
+          get subscribeDomainEvents() {
+            return engine.subscribeDomainEvents;
+          },
           latestSequence: engine.latestSequence,
         } satisfies OrchestrationEngineService["Service"];
       }),
@@ -479,6 +488,14 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
+      Layer.provide(
+        input?.workspaceMutationCoordinator
+          ? Layer.succeed(
+              WorkspaceMutationCoordinator.WorkspaceMutationCoordinator,
+              input.workspaceMutationCoordinator,
+            )
+          : WorkspaceMutationCoordinator.layer,
+      ),
     );
     runtime = ManagedRuntime.make(layer);
 
@@ -1220,6 +1237,99 @@ describe("ProviderCommandReactor", () => {
       expect(runningThread?.session?.status).toBe("running");
     }),
   );
+  effectIt.effect("keeps competing root mutations out until startSession observes HEAD", () =>
+    Effect.gen(function* () {
+      let head = "main";
+      const observedHeads: Array<string> = [];
+      const releaseStartup = yield* Deferred.make<void>();
+      const competingDone = yield* Deferred.make<void>();
+      const workspaceMutationCoordinator = yield* WorkspaceMutationCoordinator.make;
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          workspaceMutationCoordinator,
+          startSessionEffect: (session) =>
+            Effect.sync(() => observedHeads.push(head)).pipe(
+              Effect.andThen(Deferred.await(releaseStartup)),
+              Effect.as(session),
+            ),
+        }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+      const bootstrapService = yield* makeThreadBootstrapService.pipe(
+        Effect.provideService(OrchestrationCommandReceiptRepository, {
+          getByCommandId: () => Effect.succeed(Option.none()),
+        } as unknown as OrchestrationCommandReceiptRepository["Service"]),
+        Effect.provideService(ProjectionSnapshotQuery, {
+          getThreadDetailById: () => Effect.succeed(Option.none()),
+        } as unknown as ProjectionSnapshotQuery["Service"]),
+        Effect.provideService(
+          WorkspaceMutationCoordinator.WorkspaceMutationCoordinator,
+          workspaceMutationCoordinator,
+        ),
+        Effect.provideService(
+          Crypto.Crypto,
+          Crypto.make({
+            randomBytes: (size) => new Uint8Array(size),
+            digest: (_algorithm, data) => Effect.succeed(data),
+          }),
+        ),
+        Effect.provideService(OrchestrationEngineService, harness.engine),
+        Effect.provideService(GitWorkflowService.GitWorkflowService, {
+          switchRef: () =>
+            Effect.sync(() => {
+              head = "feature-a";
+              return { refName: head };
+            }),
+        } as unknown as GitWorkflowService.GitWorkflowService["Service"]),
+        Effect.provideService(ProjectSetupScriptRunner.ProjectSetupScriptRunner, {
+          runForThread: () => Effect.die("not used"),
+        } as unknown as ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]),
+        Effect.provideService(VcsStatusBroadcaster, {
+          refreshStatus: () => Effect.succeed({}),
+        } as unknown as VcsStatusBroadcaster["Service"]),
+      );
+
+      const bootstrapFiber = yield* Effect.forkChild(
+        bootstrapService.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-coordinated"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-coordinated"),
+            role: "user",
+            text: "observe the selected checkout",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          bootstrap: {
+            switchRef: { cwd: "/tmp/provider-project", refName: "feature-a" },
+          },
+          createdAt: now,
+        }),
+        { startImmediately: true },
+      );
+      yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 1));
+
+      yield* Effect.forkChild(
+        workspaceMutationCoordinator.withWorkspace(
+          "/tmp/provider-project/../provider-project",
+          Effect.sync(() => {
+            head = "feature-b";
+          }).pipe(Effect.andThen(Deferred.succeed(competingDone, undefined))),
+        ),
+        { startImmediately: true },
+      );
+      expect(observedHeads).toEqual(["feature-a"]);
+      expect(yield* Deferred.isDone(competingDone)).toBe(false);
+
+      yield* Deferred.succeed(releaseStartup, undefined);
+      yield* Fiber.join(bootstrapFiber);
+      yield* Deferred.await(competingDone);
+      expect(head).toBe("feature-b");
+    }),
+  );
+
   effectIt.effect("projects starting before a slow provider session finishes", () =>
     Effect.gen(function* () {
       const releaseStart = yield* Deferred.make<void>();
@@ -1445,6 +1555,43 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.title).toBe("Generated title");
     expect(attempts).toBe(2);
   });
+
+  effectIt.effect(
+    "preserves an explicit automation title when the first turn omits titleSeed",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const automationTitle = "Automation: Nightly maintenance";
+        yield* harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-automation-title"),
+          threadId: ThreadId.make("thread-1"),
+          title: automationTitle,
+        });
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-automation-turn-start"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("automation-user-message"),
+            role: "user",
+            text: "Inspect the workspace.",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+        const readModel = yield* Effect.promise(() => harness.readModel());
+        expect(
+          readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title,
+        ).toBe(automationTitle);
+      }),
+  );
 
   it("regenerates a thread title from the current conversation", async () => {
     const harness = await createHarness();

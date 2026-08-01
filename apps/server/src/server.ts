@@ -72,6 +72,7 @@ import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.
 import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "./orchestration/ThreadSettlementReactor.ts";
 import * as ThreadPullRequestReactor from "./orchestration/ThreadPullRequestReactor.ts";
+import * as WorkspaceMutationCoordinator from "./orchestration/Services/WorkspaceMutationCoordinator.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
@@ -127,6 +128,7 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import * as ThreadBootstrap from "./orchestration/Services/ThreadBootstrapService.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
@@ -137,6 +139,12 @@ import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 import { forkParked, ServerActivation } from "./serverActivation.ts";
+import { ScheduledAutomationRepositoryLive } from "./scheduledAutomation/ScheduledAutomationRepository.ts";
+import * as ScheduledAutomationBootstrap from "./scheduledAutomation/ScheduledAutomationBootstrap.ts";
+import * as ScheduledAutomationScheduler from "./scheduledAutomation/ScheduledAutomationScheduler.ts";
+import { ScheduledAutomationServiceLive } from "./scheduledAutomation/ScheduledAutomationService.ts";
+import * as ScheduledAutomationValidation from "./scheduledAutomation/ScheduledAutomationValidation.ts";
+import * as ScheduledAutomationWorktreePruner from "./scheduledAutomation/ScheduledAutomationWorktreePruner.ts";
 
 // MCP handoff thread IDs include escaped provenance and can exceed find-my-way's
 // 100-character default for one path segment.
@@ -393,6 +401,7 @@ const WorkspaceLayerLive = Layer.mergeAll(
   WorkspacePaths.layer,
   WorkspaceEntriesLayerLive,
   WorkspaceFileSystemLayerLive,
+  WorkspaceMutationCoordinator.layer,
 );
 
 const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
@@ -453,67 +462,90 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
   }),
 );
 
-const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
-  Layer.provideMerge(AntigravityInstallationRefreshLive),
-  Layer.provideMerge(ProviderAuthServiceLive),
-  // Core Services
-  Layer.provideMerge(ServerSettingsLayerLive),
-  Layer.provideMerge(CheckpointingLayerLive),
-  Layer.provideMerge(
-    Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive),
-  ),
-  Layer.provideMerge(GitLayerLive),
-  Layer.provideMerge(VcsLayerLive),
-  Layer.provideMerge(ProviderRuntimeLayerLive),
-  Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),
-  Layer.provideMerge(PersistenceLayerLive),
-  // Both read a user-owned file out of the state directory and stream changes
-  // to clients; neither depends on the other.
-  Layer.provideMerge(
-    Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
-  ),
-  Layer.provideMerge(ProviderRegistryLive),
-  // The instance registry is the new routing keystone — text generation,
-  // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
-  // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
-  // `providerInstances` hydration merges `settings.providers.<kind>`
-  // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-).pipe(
-  Layer.provideMerge(AntigravityInstallation.layer),
-  // Shared native/canonical NDJSON writers used by both the per-instance
-  // drivers (native stream, written from inside each `<X>Adapter`) and
-  // `ProviderService` (canonical stream, written after event normalization).
-  // Provided once at the runtime level so every consumer sees the same
-  // logger instances.
-  // `ModelManifest.layer` is the legacy-model classification data, refreshed
-  // from the repo's `model-manifest.json` on `main` and applied by the
-  // Codex/Claude drivers.
-  Layer.provideMerge(
-    Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer, CodexResetCredit.layer),
-  ),
-  // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
-  // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
-  // the rewritten registry reads snapshots off the instance registry and
-  // no longer transitively provides it. Exposing it at the runtime level
-  // keeps a single Live for all opencode consumers.
-  Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
-  Layer.provideMerge(WorkspaceLayerLive),
-  Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, ProjectFaviconResolverLayerLive)),
-  Layer.provideMerge(RepositoryIdentityResolver.layer),
-  Layer.provideMerge(ServerEnvironmentLayerLive),
-  Layer.provideMerge(AuthLayerLive),
-  Layer.provideMerge(ServerSecretStore.layer),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      CloudCliTokenManager.layer.pipe(
-        Layer.provide(ServerSecretStore.layer),
-        Layer.provide(ExternalLauncher.layer),
-      ),
-      CloudManagedEndpointRuntimeLive,
-    ),
-  ),
+const ScheduledAutomationBootstrapLive = ScheduledAutomationBootstrap.layer.pipe(
+  Layer.provideMerge(ThreadBootstrap.layer),
 );
+const ScheduledAutomationValidationLive = ScheduledAutomationValidation.layer;
+const ScheduledAutomationSchedulerLive = ScheduledAutomationScheduler.layer.pipe(
+  Layer.provideMerge(ScheduledAutomationBootstrapLive),
+  Layer.provideMerge(ScheduledAutomationValidationLive),
+);
+const ScheduledAutomationLayerLive = ScheduledAutomationServiceLive.pipe(
+  Layer.provideMerge(ScheduledAutomationSchedulerLive),
+  Layer.provideMerge(ScheduledAutomationValidationLive),
+);
+const ScheduledAutomationWorktreePrunerLive = ScheduledAutomationWorktreePruner.layer;
+
+const RuntimeCoreDependenciesLive = Layer.mergeAll(
+  ReactorLayerLive,
+  ScheduledAutomationLayerLive,
+  ScheduledAutomationWorktreePrunerLive,
+)
+  .pipe(
+    Layer.provideMerge(AntigravityInstallationRefreshLive),
+    Layer.provideMerge(ProviderAuthServiceLive),
+    // Core Services
+    Layer.provideMerge(ServerSettingsLayerLive),
+    Layer.provideMerge(CheckpointingLayerLive),
+    Layer.provideMerge(
+      Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive),
+    ),
+    Layer.provideMerge(GitLayerLive),
+    Layer.provideMerge(VcsLayerLive),
+    Layer.provideMerge(ProviderRuntimeLayerLive),
+    Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),
+    Layer.provideMerge(ScheduledAutomationRepositoryLive),
+    Layer.provideMerge(PersistenceLayerLive),
+    // Both read a user-owned file out of the state directory and stream changes
+    // to clients; neither depends on the other.
+    Layer.provideMerge(
+      Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
+    ),
+    Layer.provideMerge(ProviderRegistryLive),
+    // The instance registry is the new routing keystone — text generation,
+    // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
+    // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
+    // `providerInstances` hydration merges `settings.providers.<kind>`
+    // with explicit `providerInstances` entries on boot.
+    Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  )
+  .pipe(
+    Layer.provideMerge(AntigravityInstallation.layer),
+    // Shared native/canonical NDJSON writers used by both the per-instance
+    // drivers (native stream, written from inside each `<X>Adapter`) and
+    // `ProviderService` (canonical stream, written after event normalization).
+    // Provided once at the runtime level so every consumer sees the same
+    // logger instances.
+    // `ModelManifest.layer` is the legacy-model classification data, refreshed
+    // from the repo's `model-manifest.json` on `main` and applied by the
+    // Codex/Claude drivers.
+    Layer.provideMerge(
+      Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer, CodexResetCredit.layer),
+    ),
+    // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
+    // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
+    // the rewritten registry reads snapshots off the instance registry and
+    // no longer transitively provides it. Exposing it at the runtime level
+    // keeps a single Live for all opencode consumers.
+    Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+    Layer.provideMerge(WorkspaceLayerLive),
+    Layer.provideMerge(
+      Layer.mergeAll(NativeAppIconResolver.layer, ProjectFaviconResolverLayerLive),
+    ),
+    Layer.provideMerge(RepositoryIdentityResolver.layer),
+    Layer.provideMerge(ServerEnvironmentLayerLive),
+    Layer.provideMerge(AuthLayerLive),
+    Layer.provideMerge(ServerSecretStore.layer),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        CloudCliTokenManager.layer.pipe(
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provide(ExternalLauncher.layer),
+        ),
+        CloudManagedEndpointRuntimeLive,
+      ),
+    ),
+  );
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   // Misc.
@@ -740,6 +772,10 @@ export const makeServerLayer = Layer.unwrap(
     const runtimeServicesLive = ServerRuntimeStartup.layerWithOptions({
       activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
       abort: (error) => Deferred.die(activation, error).pipe(Effect.asVoid),
+      launchAfterCommandReady: Effect.all(
+        [ScheduledAutomationScheduler.launch, ScheduledAutomationWorktreePruner.launch],
+        { concurrency: "unbounded", discard: true },
+      ),
       awaitAuxiliaryParked: Effect.all(
         [
           Deferred.await(runtimeStateParked),

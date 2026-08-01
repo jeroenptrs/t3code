@@ -43,6 +43,7 @@ import {
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
+  SCHEDULED_AUTOMATION_WS_METHODS,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
@@ -94,6 +95,8 @@ import {
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadDeletionReactor } from "./orchestration/Services/ThreadDeletionReactor.ts";
+import { ThreadBootstrapService } from "./orchestration/Services/ThreadBootstrapService.ts";
+import * as WorkspaceMutationCoordinator from "./orchestration/Services/WorkspaceMutationCoordinator.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -131,7 +134,10 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import { requiredScopeForRpcMethod } from "./auth/RpcAuthorization.ts";
+import {
+  authorizeRpcEffectForScopes,
+  authorizeRpcStreamForScopes,
+} from "./auth/RpcAuthorization.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
@@ -155,6 +161,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import * as ScheduledAutomation from "./scheduledAutomation/ScheduledAutomationService.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -181,7 +188,7 @@ function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
 }
 
-/** Preserve the setup runner's broader pre-refactor message normalization. */
+/** Preserve setup runner error details across bootstrap paths. */
 function legacySetupFailureDescription(cause: unknown): string {
   if (
     typeof cause === "object" &&
@@ -192,6 +199,19 @@ function legacySetupFailureDescription(cause: unknown): string {
     return cause.message;
   }
   return String(cause);
+}
+
+function projectSetupScriptCompatibilityDetail(
+  error: ProjectSetupScriptRunner.ProjectSetupScriptRunnerError,
+): string {
+  switch (error._tag) {
+    case "ProjectSetupScriptOperationError":
+      return legacySetupFailureDescription(error.cause);
+    case "ProjectSetupScriptProjectNotFoundError":
+      return "Project was not found for setup script execution.";
+    default:
+      return unexpectedCompatibilityError(error);
+  }
 }
 
 function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesError): {
@@ -293,19 +313,6 @@ function projectFileFailureContext(
       return { failure: "path_not_file", resolvedPath: error.resolvedPath };
     case "WorkspaceBinaryFileError":
       return { failure: "binary_file", resolvedPath: error.resolvedPath };
-    default:
-      return unexpectedCompatibilityError(error);
-  }
-}
-
-function projectSetupScriptCompatibilityDetail(
-  error: ProjectSetupScriptRunner.ProjectSetupScriptRunnerError,
-): string {
-  switch (error._tag) {
-    case "ProjectSetupScriptOperationError":
-      return legacySetupFailureDescription(error.cause);
-    case "ProjectSetupScriptProjectNotFoundError":
-      return "Project was not found for setup script execution.";
     default:
       return unexpectedCompatibilityError(error);
   }
@@ -470,12 +477,13 @@ const makeWsRpcLayer = (
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  threadBootstrap: ThreadBootstrapService["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
-      const crypto = yield* Crypto.Crypto;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+      const crypto = yield* Crypto.Crypto;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
       const threadDeletionReactor = yield* ThreadDeletionReactor;
       const analytics = yield* AnalyticsService.AnalyticsService;
@@ -506,6 +514,8 @@ const makeWsRpcLayer = (
             return Effect.void;
         }
       };
+      const workspaceMutationCoordinator =
+        yield* WorkspaceMutationCoordinator.WorkspaceMutationCoordinator;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
       const keybindings = yield* Keybindings.Keybindings;
       const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
@@ -610,6 +620,7 @@ const makeWsRpcLayer = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const usage = yield* UsageService.UsageService;
+      const scheduledAutomations = yield* ScheduledAutomation.ScheduledAutomationService;
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
@@ -617,39 +628,25 @@ const makeWsRpcLayer = (
           requiredScope,
         });
       const authorizeEffect = <A, E, R>(
-        requiredScope: AuthEnvironmentScope,
+        method: string,
         effect: Effect.Effect<A, E, R>,
       ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
-        currentSession.scopes.includes(requiredScope)
-          ? effect
-          : Effect.fail(authorizationError(requiredScope));
+        authorizeRpcEffectForScopes(method, currentSession.scopes, effect, authorizationError);
       const authorizeStream = <A, E, R>(
-        requiredScope: AuthEnvironmentScope,
+        method: string,
         stream: Stream.Stream<A, E, R>,
       ): Stream.Stream<A, E | EnvironmentAuthorizationError, R> =>
-        currentSession.scopes.includes(requiredScope)
-          ? stream
-          : Stream.fail(authorizationError(requiredScope));
+        authorizeRpcStreamForScopes(method, currentSession.scopes, stream, authorizationError);
       const observeRpcEffect = <A, E, R>(
         method: string,
         effect: Effect.Effect<A, E, R>,
         traceAttributes?: Readonly<Record<string, unknown>>,
-      ) =>
-        instrumentRpcEffect(
-          method,
-          authorizeEffect(requiredScopeForRpcMethod(method), effect),
-          traceAttributes,
-        );
+      ) => instrumentRpcEffect(method, authorizeEffect(method, effect), traceAttributes);
       const observeRpcStream = <A, E, R>(
         method: string,
         stream: Stream.Stream<A, E, R>,
         traceAttributes?: Readonly<Record<string, unknown>>,
-      ) =>
-        instrumentRpcStream(
-          method,
-          authorizeStream(requiredScopeForRpcMethod(method), stream),
-          traceAttributes,
-        );
+      ) => instrumentRpcStream(method, authorizeStream(method, stream), traceAttributes);
       const observeRpcStreamEffect = <A, StreamError, StreamContext, EffectError, EffectContext>(
         method: string,
         effect: Effect.Effect<
@@ -658,12 +655,7 @@ const makeWsRpcLayer = (
           EffectContext
         >,
         traceAttributes?: Readonly<Record<string, unknown>>,
-      ) =>
-        instrumentRpcStreamEffect(
-          method,
-          authorizeEffect(requiredScopeForRpcMethod(method), effect),
-          traceAttributes,
-        );
+      ) => instrumentRpcStreamEffect(method, authorizeEffect(method, effect), traceAttributes);
       const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
         isOrchestrationDispatchCommandError(cause)
           ? cause
@@ -1203,7 +1195,12 @@ const makeWsRpcLayer = (
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
         const dispatchEffect =
           normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
-            ? dispatchBootstrapTurnStart(normalizedCommand)
+            ? normalizedCommand.bootstrap?.switchRef || normalizedCommand.bootstrap?.retainOnFailure
+              ? threadBootstrap.dispatch(
+                  normalizedCommand,
+                  hasClientOrigin ? { origin: clientOrigin } : undefined,
+                )
+              : dispatchBootstrapTurnStart(normalizedCommand)
             : dispatchFromClient(normalizedCommand).pipe(
                 Effect.tap(({ sequence }) =>
                   // Returning from thread.create is the handoff point at which
@@ -1295,6 +1292,33 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
+        [SCHEDULED_AUTOMATION_WS_METHODS.dispatchCommand]: (command) =>
+          observeRpcEffect(
+            SCHEDULED_AUTOMATION_WS_METHODS.dispatchCommand,
+            scheduledAutomations.dispatch(command),
+            { "rpc.aggregate": "scheduledAutomation" },
+          ),
+        [SCHEDULED_AUTOMATION_WS_METHODS.list]: (_input) =>
+          observeRpcEffect(
+            SCHEDULED_AUTOMATION_WS_METHODS.list,
+            Effect.all({
+              automations: scheduledAutomations.list(),
+              health: scheduledAutomations.health(),
+            }),
+            { "rpc.aggregate": "scheduledAutomation" },
+          ),
+        [SCHEDULED_AUTOMATION_WS_METHODS.get]: (input) =>
+          observeRpcEffect(
+            SCHEDULED_AUTOMATION_WS_METHODS.get,
+            scheduledAutomations.get(input.automationId),
+            { "rpc.aggregate": "scheduledAutomation" },
+          ),
+        [SCHEDULED_AUTOMATION_WS_METHODS.subscribe]: (_input) =>
+          observeRpcStreamEffect(
+            SCHEDULED_AUTOMATION_WS_METHODS.subscribe,
+            scheduledAutomations.subscribe,
+            { "rpc.aggregate": "scheduledAutomation" },
+          ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -2500,6 +2524,7 @@ const makeWsRpcLayer = (
                   },
                 })
                 .pipe(
+                  (effect) => workspaceMutationCoordinator.withWorkspace(input.cwd, effect),
                   Effect.matchCauseEffect({
                     onFailure: (cause) => Queue.failCause(queue, cause),
                     onSuccess: () =>
@@ -2522,9 +2547,13 @@ const makeWsRpcLayer = (
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitPreparePullRequestThread,
-            gitWorkflow
-              .preparePullRequestThread(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            (input.mode === "local"
+              ? workspaceMutationCoordinator.withWorkspace(
+                  input.cwd,
+                  gitWorkflow.preparePullRequestThread(input),
+                )
+              : gitWorkflow.preparePullRequestThread(input)
+            ).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.vcsListRefs]: (input) =>
@@ -2546,13 +2575,19 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsCreateRef]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateRef,
-            gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            (input.switchRef
+              ? workspaceMutationCoordinator.withWorkspace(input.cwd, gitWorkflow.createRef(input))
+              : gitWorkflow.createRef(input)
+            ).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsSwitchRef]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsSwitchRef,
-            gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            workspaceMutationCoordinator.withWorkspace(
+              input.cwd,
+              gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsInit]: (input) =>
@@ -2927,6 +2962,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         ),
     });
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const threadBootstrap = yield* ThreadBootstrapService;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -2959,6 +2995,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientOrigin,
               clientAnalyticsProps,
               previewAutomationBroker,
+              threadBootstrap,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(AgentSessionScanner.layer),
