@@ -674,9 +674,15 @@ const ThreadTurnStartBootstrapPrepareWorktree = Schema.Struct({
   startFromOrigin: Schema.optional(Schema.Boolean),
 });
 
+const ThreadTurnStartBootstrapSwitchRef = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  refName: TrimmedNonEmptyString,
+});
+
 const ThreadTurnStartBootstrap = Schema.Struct({
   createThread: Schema.optional(ThreadTurnStartBootstrapCreateThread),
   prepareWorktree: Schema.optional(ThreadTurnStartBootstrapPrepareWorktree),
+  switchRef: Schema.optional(ThreadTurnStartBootstrapSwitchRef),
   runSetupScript: Schema.optional(Schema.Boolean),
 });
 

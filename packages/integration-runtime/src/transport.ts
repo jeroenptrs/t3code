@@ -22,6 +22,11 @@ import {
   type OrchestrationThreadDetailSnapshot,
   type ServerConfig,
   type ThreadId,
+  type VcsListRefsInput,
+  type VcsListRefsResult,
+  type VcsSwitchRefInput,
+  type VcsSwitchRefResult,
+  ORCHESTRATION_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -31,6 +36,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Socket from "effect/unstable/socket/Socket";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 5 * 60_000;
 
 export type T3TransportErrorKind =
   | "authentication"
@@ -64,12 +70,22 @@ export interface T3Transport {
     command: ClientOrchestrationCommand,
   ) => Effect.Effect<DispatchResult, T3TransportError>;
   readonly getServerConfig: () => Effect.Effect<ServerConfig, T3TransportError>;
+  readonly listRefs: (
+    input: VcsListRefsInput,
+  ) => Effect.Effect<VcsListRefsResult, T3TransportError>;
+  readonly switchRef: (
+    input: VcsSwitchRefInput,
+  ) => Effect.Effect<VcsSwitchRefResult, T3TransportError>;
+  readonly dispatchBootstrap: (
+    command: ClientOrchestrationCommand,
+  ) => Effect.Effect<DispatchResult, T3TransportError>;
 }
 
 export interface LiveT3TransportOptions {
   readonly httpBaseUrl: string;
   readonly readBearerCredential: Effect.Effect<string, CredentialReadError>;
   readonly timeoutMs?: number;
+  readonly bootstrapTimeoutMs?: number;
 }
 
 export class CredentialReadError extends Error {
@@ -85,6 +101,15 @@ export class CredentialReadError extends Error {
 
 export interface ServerConfigConnection {
   readonly getConfig: Effect.Effect<ServerConfig, T3TransportError>;
+  readonly listRefs: (
+    input: VcsListRefsInput,
+  ) => Effect.Effect<VcsListRefsResult, T3TransportError>;
+  readonly switchRef: (
+    input: VcsSwitchRefInput,
+  ) => Effect.Effect<VcsSwitchRefResult, T3TransportError>;
+  readonly dispatchBootstrap: (
+    command: ClientOrchestrationCommand,
+  ) => Effect.Effect<DispatchResult, T3TransportError>;
   readonly closed: Effect.Effect<never, Error>;
   readonly close: Effect.Effect<void>;
 }
@@ -97,9 +122,9 @@ export const makeServerConfigConnectionManager = Effect.fn(
   let current: { readonly generation: number; readonly connection: ServerConfigConnection } | null =
     null;
 
-  const getConfig = mutex.withPermits(1)(
+  const getConnection = mutex.withPermits(1)(
     Effect.gen(function* () {
-      if (current !== null) return yield* current.connection.getConfig;
+      if (current !== null) return current.connection;
       const connection = yield* connect();
       const connectionGeneration = ++generation;
       current = { generation: connectionGeneration, connection };
@@ -115,11 +140,23 @@ export const makeServerConfigConnectionManager = Effect.fn(
         Effect.ensuring(connection.close),
         Effect.forkDetach,
       );
-      return yield* connection.getConfig;
+      return connection;
     }),
   );
 
-  return { getConfig } as const;
+  const withConnection = <A>(
+    use: (connection: ServerConfigConnection) => Effect.Effect<A, T3TransportError>,
+  ) => getConnection.pipe(Effect.flatMap((connection) => use(connection)));
+
+  return {
+    getConfig: withConnection((connection) => connection.getConfig),
+    listRefs: (input: VcsListRefsInput) =>
+      withConnection((connection) => connection.listRefs(input)),
+    switchRef: (input: VcsSwitchRefInput) =>
+      withConnection((connection) => connection.switchRef(input)),
+    dispatchBootstrap: (command: ClientOrchestrationCommand) =>
+      withConnection((connection) => connection.dispatchBootstrap(command)),
+  } as const;
 });
 
 const transportError = (cause: unknown): T3TransportError => {
@@ -166,6 +203,7 @@ export const makeLiveT3Transport = Effect.fn("integrationRuntime.makeLiveT3Trans
   options: LiveT3TransportOptions,
 ) {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const bootstrapTimeoutMs = options.bootstrapTimeoutMs ?? DEFAULT_BOOTSTRAP_TIMEOUT_MS;
   const httpLayer = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
   const rpcSessions = yield* makeRpcSessionFactory.pipe(
     Effect.provide(Socket.layerWebSocketConstructorGlobal),
@@ -286,14 +324,23 @@ export const makeLiveT3Transport = Effect.fn("integrationRuntime.makeLiveT3Trans
             .connect(connection)
             .pipe(Effect.provideService(Scope.Scope, scope));
           yield* session.ready;
-          return {
-            getConfig: session.client[WS_METHODS.serverGetConfig]({}).pipe(
+          const request = <A, E>(effect: Effect.Effect<A, E>, requestTimeoutMs = timeoutMs) =>
+            effect.pipe(
               Effect.mapError(transportError),
-              Effect.timeout(timeoutMs),
+              Effect.timeout(requestTimeoutMs),
               Effect.catchTag("TimeoutError", (cause) =>
                 Effect.fail(new T3TransportError("timeout", "The T3 request timed out.", cause)),
               ),
-            ),
+            );
+          return {
+            getConfig: request(session.client[WS_METHODS.serverGetConfig]({})),
+            listRefs: (input) => request(session.client[WS_METHODS.vcsListRefs](input)),
+            switchRef: (input) => request(session.client[WS_METHODS.vcsSwitchRef](input)),
+            dispatchBootstrap: (command) =>
+              request(
+                session.client[ORCHESTRATION_WS_METHODS.dispatchCommand](command),
+                bootstrapTimeoutMs,
+              ),
             closed: session.closed,
             close: Scope.close(scope, Exit.void),
           } satisfies ServerConfigConnection;
@@ -306,6 +353,10 @@ export const makeLiveT3Transport = Effect.fn("integrationRuntime.makeLiveT3Trans
   );
 
   const getServerConfig = () => configManager.getConfig;
+  const listRefs = (input: VcsListRefsInput) => configManager.listRefs(input);
+  const switchRef = (input: VcsSwitchRefInput) => configManager.switchRef(input);
+  const dispatchBootstrap = (command: ClientOrchestrationCommand) =>
+    configManager.dispatchBootstrap(command);
 
   return {
     validateSession,
@@ -313,6 +364,9 @@ export const makeLiveT3Transport = Effect.fn("integrationRuntime.makeLiveT3Trans
     getThreadSnapshot,
     dispatch,
     getServerConfig,
+    listRefs,
+    switchRef,
+    dispatchBootstrap,
   } satisfies T3Transport;
 });
 

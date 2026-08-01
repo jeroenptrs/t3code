@@ -8,13 +8,20 @@ import {
   type ServerConfig,
 } from "@t3tools/contracts";
 import {
+  IngressFailure,
   startStandardIngress,
   T3TransportError,
   type T3Transport,
 } from "@t3tools/integration-runtime";
 import * as Effect from "effect/Effect";
 
-import { handleMentionEvent, handleSlashCommand } from "./app.ts";
+import { handleMentionEvent, handleSlashCommand, promptValidationMessage } from "./app.ts";
+
+it("rejects empty and oversized custom prompts before Block Kit rendering", () => {
+  expect(promptValidationMessage("   ")).toContain("Include a prompt");
+  expect(promptValidationMessage("x".repeat(3_001))).toContain("3,000");
+  expect(promptValidationMessage("valid prompt")).toBeNull();
+});
 
 describe("Slack slash handler", () => {
   it("passes a Slack payload through the runtime to deterministic commands and a deep link", async () => {
@@ -56,6 +63,9 @@ describe("Slack slash handler", () => {
         commands.push(command);
         return Effect.succeed({ sequence: commands.length });
       },
+      listRefs: () => Effect.die("not used"),
+      switchRef: () => Effect.die("not used"),
+      dispatchBootstrap: () => Effect.die("not used"),
     };
     const responses: Array<string> = [];
 
@@ -172,6 +182,27 @@ describe("Slack slash handler", () => {
     ]);
   });
 
+  it("allows a recoverable standard failure to render Configure controls", async () => {
+    const responses: Array<{ readonly text: string; readonly blocks?: ReadonlyArray<object> }> = [];
+    await handleSlashCommand({
+      teamId: "T123",
+      responseUrl: "https://hooks.slack.com/commands/T123/456/secret",
+      text: "inspect CI",
+      publicBaseUrl: "https://t3.example",
+      ack: async () => undefined,
+      start: async () => {
+        throw new IngressFailure("model_unavailable", "No default model is available.");
+      },
+      failureMessage: () => ({ text: "Configure instead", blocks: [{ type: "actions" }] }),
+      respond: async (message) => {
+        responses.push(message);
+      },
+    });
+    expect(responses).toEqual([
+      expect.objectContaining({ text: "Configure instead", blocks: [{ type: "actions" }] }),
+    ]);
+  });
+
   it("does not reinterpret a Slack success-delivery error as a T3 failure", async () => {
     let responseAttempts = 0;
     await expect(
@@ -274,5 +305,28 @@ describe("Slack mention handler", () => {
       }),
     ).rejects.toThrow("Slack update failed");
     expect(updateAttempts).toBe(1);
+  });
+
+  it("allows a recoverable mention failure to replace Starting with Configure controls", async () => {
+    const updates: Array<object> = [];
+    await handleMentionEvent({
+      teamId: "T123",
+      channelId: "C123",
+      botUserId: "U_T3",
+      eventId: "Ev123",
+      messageTimestamp: "171.002",
+      text: "<@U_T3> inspect CI",
+      publicBaseUrl: "https://t3.example",
+      postMessage: async () => ({ ts: "172.003" }),
+      updateMessage: async (message) => updates.push(message),
+      warn: () => undefined,
+      start: async () => {
+        throw new IngressFailure("model_unavailable", "No default model is available.");
+      },
+      failureMessage: () => ({ text: "Configure instead", blocks: [{ type: "actions" }] }),
+    });
+    expect(updates).toEqual([
+      expect.objectContaining({ text: "Configure instead", blocks: [{ type: "actions" }] }),
+    ]);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  canonicalPathIdentity,
   isExplicitRelativePath,
   isUncPath,
   isWindowsAbsolutePath,
@@ -30,5 +31,10 @@ describe("path helpers", () => {
     expect(isExplicitRelativePath("./repo")).toBe(true);
     expect(isExplicitRelativePath("..\\repo")).toBe(true);
     expect(isExplicitRelativePath("~/repo")).toBe(false);
+  });
+
+  it("canonicalizes lexical aliases for workspace identity comparisons", () => {
+    expect(canonicalPathIdentity("/repo/./worktrees/../")).toBe("/repo");
+    expect(canonicalPathIdentity("C:\\Repo\\.\\worktree\\..")).toBe("c:/repo");
   });
 });

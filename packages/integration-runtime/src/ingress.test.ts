@@ -100,6 +100,9 @@ const makeTransport = (input?: {
       const failure = dispatchResults.shift();
       return failure ? Effect.fail(failure) : Effect.succeed({ sequence: commands.length });
     },
+    listRefs: () => Effect.die("not used"),
+    switchRef: () => Effect.die("not used"),
+    dispatchBootstrap: () => Effect.die("not used"),
   };
   return { commands, transport };
 };
