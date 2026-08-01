@@ -21,20 +21,23 @@ export interface ResolvedStandardIngressTarget {
   readonly environmentId: ServerConfig["environment"]["environmentId"];
 }
 
-const isUsableModelSelection = (
+export const isUsableProviderInstance = (
+  provider: ServerConfig["providers"][number] | undefined,
+): provider is ServerConfig["providers"][number] =>
+  provider !== undefined &&
+  provider.enabled &&
+  provider.installed &&
+  isProviderAvailable(provider) &&
+  provider.status !== "disabled" &&
+  provider.status !== "error" &&
+  provider.auth.status !== "unauthenticated";
+
+export const isUsableModelSelection = (
   selection: ModelSelection,
   providers: ServerConfig["providers"],
 ): boolean => {
   const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
-  if (
-    provider === undefined ||
-    !provider.enabled ||
-    !provider.installed ||
-    !isProviderAvailable(provider) ||
-    provider.status === "disabled" ||
-    provider.status === "error" ||
-    provider.auth.status === "unauthenticated"
-  ) {
+  if (!isUsableProviderInstance(provider)) {
     return false;
   }
   const model = provider.models.find((candidate) => candidate.slug === selection.model);

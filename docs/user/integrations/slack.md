@@ -19,6 +19,26 @@ Slack delivery retries resolve to the same deterministic T3 conversation. A
 mention inside an existing Slack thread is still its own invocation. Ordinary
 follow-up messages cannot add turns to or steer the T3 conversation.
 
+## Custom starts
+
+- `/t3-custom <prompt>` opens setup before starting.
+- Mention the app with `custom:` followed by a prompt to receive a Configure
+  button in that message's thread.
+- Sending the app a direct message also returns a Configure button.
+
+Custom setup always shows Project, Workspace, Branch, and Model / effort. The
+prompt remains visible and editable in the modal. Current workspace mode can
+switch the project root checkout or continue in the exact existing worktree
+shown for a branch. New worktree mode uses the selected branch as its base,
+inherits T3's start-from-origin setting, and runs the project's normal setup
+script policy.
+
+Projects, refs, worktree paths, and model capabilities are read from T3 and
+validated again when the modal is submitted. A stale selection therefore fails
+without creating a conversation. If the project configured for standard starts
+was deleted, custom setup selects the first remaining project; standard starts
+continue to report the configuration error until `T3_PROJECT_ID` is updated.
+
 ## Configuration
 
 The sibling process reads:
@@ -48,7 +68,8 @@ Slack Socket Mode connects, T3 authentication and scopes validate,
 `server.getConfig` succeeds, and the configured project/default model resolves.
 
 The Slack manifest is maintained in `apps/slack/manifest.yaml`. It enables Socket
-Mode, `/t3`, `app_mention`, and only the Slack scopes required by Slice 1.
+Mode, `/t3`, `/t3-custom`, `app_mention`, and direct-message setup with only the
+required Slack scopes.
 
 ## Delivery limitations
 
@@ -56,6 +77,15 @@ Delivery across Slack and T3 is idempotent and best-effort rather than
 transactional. If a dispatch result is ambiguous, the integration checks T3's
 thread snapshot before reporting success. If T3 cannot be reached to verify the
 result, Slack shows an unverified message and the public T3 URL.
+
+New-worktree starts use the server's WebSocket bootstrap workflow. A retry never
+plain-starts a partially prepared worktree thread, so an interrupted bootstrap
+may temporarily report an unverified result while T3 finishes or cleans up. The
+bootstrap can reuse its deterministic branch or worktree on retry, but it does
+not yet provide the HTTP current-workspace path's phase-by-phase replay guarantee.
+Partial Current retries retain the project, model, branch, and exact workspace
+mapping recorded by the deterministic T3 conversation; reopening setup cannot
+retarget that conversation to a different checkout.
 
 A process crash after Slack acknowledges an invocation but before dispatch or
 response update can leave a starting message behind. T3 remains the recovery

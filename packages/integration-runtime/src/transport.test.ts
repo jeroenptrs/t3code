@@ -28,6 +28,9 @@ describe("server config connection manager", () => {
               reads.push(++readNumber);
               return serverConfig(`environment-${number}-config-${readNumber}`);
             }),
+            listRefs: () => Effect.die("not used"),
+            switchRef: () => Effect.die("not used"),
+            dispatchBootstrap: () => Effect.die("not used"),
             closed: Deferred.await(disconnected),
             close: Effect.void,
           } satisfies ServerConfigConnection;

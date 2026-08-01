@@ -11,6 +11,15 @@ import {
 } from "@t3tools/contracts";
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
+const PRIMARY_MODEL_EFFORT_OPTION_IDS = new Set([
+  "reasoningEffort",
+  "effort",
+  "reasoning",
+  "variant",
+]);
+
+export const isPrimaryModelEffortOptionId = (id: string): boolean =>
+  PRIMARY_MODEL_EFFORT_OPTION_IDS.has(id);
 
 export interface SelectableModelOption {
   slug: string;

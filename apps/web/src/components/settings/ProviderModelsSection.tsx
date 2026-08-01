@@ -16,7 +16,7 @@ import {
   type ProviderInstanceId,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { normalizeCustomModelSlug } from "@t3tools/shared/model";
+import { isPrimaryModelEffortOptionId, normalizeCustomModelSlug } from "@t3tools/shared/model";
 
 import { cn } from "../../lib/utils";
 import { sortModelsForProviderInstance } from "../../modelOrdering";
@@ -212,11 +212,7 @@ export function ProviderModelsSection({
           if (
             descriptors.some(
               (descriptor) =>
-                descriptor.type === "select" &&
-                (descriptor.id === "reasoningEffort" ||
-                  descriptor.id === "effort" ||
-                  descriptor.id === "reasoning" ||
-                  descriptor.id === "variant"),
+                descriptor.type === "select" && isPrimaryModelEffortOptionId(descriptor.id),
             )
           ) {
             capLabels.push("Reasoning");
