@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import type { T3Transport } from "@t3tools/integration-runtime";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 const bolt = vi.hoisted(() => {
   const commands = new Map<string, unknown>();
@@ -21,6 +22,7 @@ const bolt = vi.hoisted(() => {
     views: {
       open: vi.fn(async (_input: unknown) => ({ view: { id: "V1" } })),
       update: vi.fn(async (_input: unknown) => ({})),
+      publish: vi.fn(async (_input: unknown) => ({})),
     },
     chat: {
       postMessage: vi.fn(async (_input: unknown) => ({ ts: "100.1" })),
@@ -84,10 +86,12 @@ const modelSelection = {
 };
 
 const makeTransport = (commands: Array<ClientOrchestrationCommand>): T3Transport => ({
+  close: () => Effect.void,
   validateSession: () => Effect.die("not used"),
   getThreadSnapshot: () => Effect.succeed(null),
   getShellSnapshot: () =>
     Effect.succeed({
+      snapshotSequence: 1,
       projects: [
         {
           id: ProjectId.make("project-a"),
@@ -97,7 +101,10 @@ const makeTransport = (commands: Array<ClientOrchestrationCommand>): T3Transport
           scripts: [],
         },
       ],
+      threads: [],
+      updatedAt: "2026-08-02T00:00:00.000Z",
     } as unknown as OrchestrationShellSnapshot),
+  subscribeShell: () => Stream.never,
   getServerConfig: () =>
     Effect.succeed({
       environment: { environmentId: EnvironmentId.make("environment-a") },
@@ -165,6 +172,30 @@ beforeEach(() => {
 });
 
 describe("makeSlackApp Slack handlers", () => {
+  it("publishes a fresh App Home view for app_home_opened", async () => {
+    makeSlackApp({ config, transport: makeTransport([]) });
+
+    await handler(bolt.events, "app_home_opened")({ event: { user: "U1", tab: "home" } } as never);
+
+    expect(bolt.client.views.publish).toHaveBeenCalledWith({
+      user_id: "U1",
+      view: expect.objectContaining({ type: "home", blocks: expect.any(Array) }),
+    });
+  });
+
+  it("ignores app_home_opened events for the Messages tab", async () => {
+    makeSlackApp({ config, transport: makeTransport([]) });
+
+    await handler(
+      bolt.events,
+      "app_home_opened",
+    )({
+      event: { user: "U1", tab: "messages" },
+    } as never);
+
+    expect(bolt.client.views.publish).not.toHaveBeenCalled();
+  });
+
   it("acknowledges /t3 before posting a public link with a threaded prompt trace", async () => {
     makeSlackApp({ config, transport: makeTransport([]) });
     const ack = vi.fn(async () => undefined);

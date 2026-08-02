@@ -2,6 +2,7 @@ import { App, LogLevel, SocketModeReceiver } from "@slack/bolt";
 import {
   deriveIngressIds,
   IngressFailure,
+  makeShellProjection,
   startCustomIngress,
   startStandardIngress,
   T3TransportError,
@@ -17,6 +18,7 @@ import {
 } from "effect/unstable/http";
 
 import type { SlackAppConfig } from "./config.ts";
+import { makeAppHomePublisher, resolveAppHomeOpenSnapshot } from "./appHome.ts";
 import {
   normalizeCustomMentionInvocation,
   normalizeCustomSlashInvocation,
@@ -381,7 +383,11 @@ export function makeSlackApp(
   dependencies: {
     readonly postResponseUrl?: (url: string, payload: object) => Promise<void>;
   } = {},
-): { readonly app: App; readonly receiver: SocketModeReceiver } {
+): {
+  readonly app: App;
+  readonly receiver: SocketModeReceiver;
+  readonly appHome: { readonly start: () => void; readonly stop: () => Promise<void> };
+} {
   const receiver = new SocketModeReceiver({
     appToken: input.config.slackAppToken,
     logLevel: LogLevel.INFO,
@@ -392,6 +398,28 @@ export function makeSlackApp(
     receiver,
     logLevel: LogLevel.INFO,
   });
+  const shellProjection = makeShellProjection({
+    transport: input.transport,
+    onError: (error) =>
+      app.logger.warn("slack.app-home.projection-failed", {
+        category: error instanceof T3TransportError ? error.kind : "unexpected",
+      }),
+  });
+  const appHomePublisher = makeAppHomePublisher({
+    publicBaseUrl: input.config.t3PublicBaseUrl,
+    resolveEnvironmentId: () =>
+      Effect.runPromise(input.transport.getServerConfig()).then(
+        (config) => config.environment.environmentId,
+      ),
+    publish: (userId, view) =>
+      app.client.views.publish({ user_id: userId, view: view as never }).then(() => undefined),
+    onError: (error, userId) =>
+      app.logger.warn("slack.app-home.publish-failed", {
+        ...(userId === null ? {} : { userId }),
+        category: error instanceof T3TransportError ? error.kind : "unexpected",
+      }),
+  });
+  const unsubscribeAppHome = shellProjection.subscribe(appHomePublisher.updated);
   const slashResponseUrls = new Map<string, { readonly url: string; readonly expiresAt: number }>();
   const rememberSlashResponseUrl = (key: string, url: string) => {
     const now = Date.now();
@@ -585,6 +613,7 @@ export function makeSlackApp(
         await respond(message as never);
       },
       postVisible: async (message) => {
+        /* oxlint-disable unicorn/require-post-message-target-origin -- Slack Web API method, not Window.postMessage. */
         const starting = await app.client.chat.postMessage({
           channel: command.channel_id,
           ...message,
@@ -596,6 +625,7 @@ export function makeSlackApp(
             text: `Prompt: ${command.text.trim()}`,
           });
         }
+        /* oxlint-enable unicorn/require-post-message-target-origin */
         return starting;
       },
       updateVisible: (message) =>
@@ -727,6 +757,20 @@ export function makeSlackApp(
       },
       start: startWithLogging,
     });
+  });
+
+  app.event("app_home_opened", async ({ event }) => {
+    if (event.tab !== "home") return;
+    const snapshot = await resolveAppHomeOpenSnapshot({
+      getSnapshot: shellProjection.getSnapshot,
+      refresh: () => Effect.runPromise(shellProjection.refresh()),
+      onRefreshError: (error) => {
+        app.logger.warn("slack.app-home.snapshot-failed", {
+          category: error instanceof T3TransportError ? error.kind : "unexpected",
+        });
+      },
+    });
+    await appHomePublisher.opened(event.user, snapshot);
   });
 
   app.message(async ({ message, body, client }) => {
@@ -1012,5 +1056,17 @@ export function makeSlackApp(
     }
   });
 
-  return { app, receiver };
+  return {
+    app,
+    receiver,
+    appHome: {
+      start: shellProjection.start,
+      stop: async () => {
+        unsubscribeAppHome();
+        const pendingPublications = appHomePublisher.stop();
+        await shellProjection.stop();
+        await pendingPublications;
+      },
+    },
+  };
 }
