@@ -126,7 +126,8 @@ The Slack surface is exactly three things:
 2. **Thread overview in App Home**: a team-wide directory projected from
    `subscribeShell`, split into unsettled and settled conversations, with each row
    deep-linking out. App Home also becomes the place to view running automations
-   later.
+   later. Slice 3 temporarily omits server-explicit settled rows unless a pending
+   approval or user-input blocker must remain visible.
 3. **Deep links everywhere**: every Slack message the bot posts carries "Open in T3".
 
 **Rejected extension — do not build:** making Slack a 2-way live client (steering

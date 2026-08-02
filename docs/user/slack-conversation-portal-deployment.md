@@ -3,6 +3,10 @@
 This deployment exposes the T3 web client without a T3 pairing or login prompt. It is intended for
 a trusted team whose members may see and operate every conversation in the environment.
 
+Slack App Home uses the same environment-wide boundary: it lists active conversations across every
+project and links `View all` to the environment root. Do not install the Slack app in a workspace
+whose members should only discover one configured project.
+
 The public browser is anonymous, but T3 itself does not run without authentication. A reverse proxy
 holds a shared, narrowly scoped bearer credential and adds it to requests sent to T3. This preserves
 T3's existing scope checks and leaves one boundary where OIDC can be enabled later.

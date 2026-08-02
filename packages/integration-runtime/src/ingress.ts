@@ -24,15 +24,29 @@ interface DispatchTarget {
   readonly interactionMode: ProviderInteractionMode;
 }
 
+export const buildEnvironmentDeepLink = (input: {
+  readonly publicBaseUrl: string;
+  readonly environmentId: string;
+}): string => {
+  const url = new URL(input.publicBaseUrl);
+  url.pathname = `${url.pathname.replace(/\/$/, "")}/${encodeURIComponent(input.environmentId)}`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+};
+
 export const buildThreadDeepLink = (input: {
   readonly publicBaseUrl: string;
   readonly environmentId: string;
   readonly threadId: ThreadId;
 }): string => {
-  const url = new URL(input.publicBaseUrl);
-  url.pathname = `${url.pathname.replace(/\/$/, "")}/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.threadId)}`;
-  url.search = "";
-  url.hash = "";
+  const url = new URL(
+    buildEnvironmentDeepLink({
+      publicBaseUrl: input.publicBaseUrl,
+      environmentId: input.environmentId,
+    }),
+  );
+  url.pathname = `${url.pathname.replace(/\/$/, "")}/${encodeURIComponent(input.threadId)}`;
   return url.toString();
 };
 

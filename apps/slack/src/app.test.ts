@@ -14,6 +14,7 @@ import {
   type T3Transport,
 } from "@t3tools/integration-runtime";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import { handleMentionEvent, handleSlashCommand, promptValidationMessage } from "./app.ts";
 
@@ -32,6 +33,7 @@ describe("Slack slash handler", () => {
     };
     const commands: Array<ClientOrchestrationCommand> = [];
     const transport: T3Transport = {
+      close: () => Effect.void,
       validateSession: () => Effect.die("not used"),
       getThreadSnapshot: () => Effect.succeed(null),
       getShellSnapshot: () =>
@@ -44,6 +46,7 @@ describe("Slack slash handler", () => {
             },
           ],
         } as unknown as OrchestrationShellSnapshot),
+      subscribeShell: () => Stream.never,
       getServerConfig: () =>
         Effect.succeed({
           environment: { environmentId: EnvironmentId.make("environment-main") },
