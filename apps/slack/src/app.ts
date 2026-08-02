@@ -183,7 +183,7 @@ export async function handleSlashCommand(input: {
   readonly responseUrl: string;
   readonly text: string;
   readonly publicBaseUrl: string;
-  readonly ack: (message: {
+  readonly ack: (message?: {
     readonly response_type: "ephemeral";
     readonly text: string;
   }) => Promise<void>;
@@ -201,22 +201,59 @@ export async function handleSlashCommand(input: {
     readonly recovery: string;
     readonly deepLink: string;
   }>;
+  readonly postVisible?: (message: {
+    readonly text: string;
+    readonly metadata: {
+      readonly event_type: typeof SLACK_METADATA_EVENT_TYPE;
+      readonly event_payload: { readonly thread_id: string; readonly message_id: string };
+    };
+  }) => Promise<{ readonly ts?: string }>;
+  readonly updateVisible?: (message: {
+    readonly ts: string;
+    readonly text: string;
+    readonly metadata?: {
+      readonly event_type: typeof SLACK_METADATA_EVENT_TYPE;
+      readonly event_payload: { readonly thread_id: string; readonly message_id: string };
+    };
+    readonly blocks?: ReadonlyArray<object>;
+  }) => Promise<unknown>;
 }): Promise<void> {
+  await input.ack();
   const invocation = normalizeSlashInvocation({
     teamId: input.teamId,
     responseUrl: input.responseUrl,
     text: input.text,
   });
   if (!invocation.prompt) {
-    await input.ack({ response_type: "ephemeral", text: "Usage: /t3 <prompt>" });
+    await input.respond({
+      replace_original: true,
+      response_type: "ephemeral",
+      text: "Usage: /t3 <prompt>",
+    });
     return;
   }
-  await input.ack({ response_type: "ephemeral", text: "Starting in T3 Code..." });
+  const ids = deriveIngressIds(invocation);
+  const metadata = {
+    event_type: SLACK_METADATA_EVENT_TYPE,
+    event_payload: { thread_id: ids.threadId, message_id: ids.messageId },
+  } as const;
+  const visibleMessage = await input.postVisible?.({
+    text: "Starting in T3 Code...",
+    metadata,
+  });
   let result: Awaited<ReturnType<typeof input.start>>;
   try {
     result = await input.start(invocation);
   } catch (error) {
     const configuredFailure = input.failureMessage?.(error, invocation);
+    if (visibleMessage?.ts && input.updateVisible) {
+      await input.updateVisible({
+        ts: visibleMessage.ts,
+        text: configuredFailure?.text ?? failureText(error, input.publicBaseUrl),
+        ...(configuredFailure?.blocks ? { blocks: configuredFailure.blocks } : {}),
+      });
+      return;
+    }
     await input.respond({
       replace_original: true,
       response_type: "ephemeral",
@@ -225,13 +262,18 @@ export async function handleSlashCommand(input: {
     });
     return;
   }
+  const terminalText =
+    result.recovery === "unverified"
+      ? `T3 Code could not verify whether the conversation started. Open ${input.publicBaseUrl}`
+      : `Open in T3 Code: ${result.deepLink}`;
+  if (visibleMessage?.ts && input.updateVisible) {
+    await input.updateVisible({ ts: visibleMessage.ts, text: terminalText, metadata });
+    return;
+  }
   await input.respond({
     replace_original: true,
     response_type: "ephemeral",
-    text:
-      result.recovery === "unverified"
-        ? `T3 Code could not verify whether the conversation started. Open ${input.publicBaseUrl}`
-        : `<${result.deepLink}|Open in T3 Code>`,
+    text: terminalText,
   });
 }
 
@@ -326,7 +368,7 @@ export async function handleMentionEvent(input: {
     text:
       result.recovery === "unverified"
         ? `T3 Code could not verify whether the conversation started. Open ${input.publicBaseUrl}`
-        : `<${result.deepLink}|Open in T3 Code>`,
+        : `Open in T3 Code: ${result.deepLink}`,
     metadata,
   });
 }
@@ -442,6 +484,7 @@ export function makeSlackApp(
   const postCustomStarting = async (
     origin: SetupOrigin,
     ids: ReturnType<typeof deriveIngressIds>,
+    prompt: string,
   ) => {
     const metadata = {
       event_type: SLACK_METADATA_EVENT_TYPE,
@@ -474,6 +517,13 @@ export function makeSlackApp(
       text: "Starting in T3 Code...",
       metadata,
     });
+    if (!origin.response.threadTimestamp && starting.ts) {
+      await app.client.chat.postMessage({
+        channel: origin.response.channelId,
+        thread_ts: starting.ts,
+        text: `Prompt: ${prompt}`,
+      });
+    }
     /* oxlint-enable unicorn/require-post-message-target-origin */
     return {
       update: (text: string) =>
@@ -528,11 +578,28 @@ export function makeSlackApp(
       text: command.text,
       publicBaseUrl: input.config.t3PublicBaseUrl,
       ack: async (message) => {
-        await ack(message);
+        if (message) await ack(message);
+        else await ack();
       },
       respond: async (message) => {
         await respond(message as never);
       },
+      postVisible: async (message) => {
+        const starting = await app.client.chat.postMessage({
+          channel: command.channel_id,
+          ...message,
+        });
+        if (starting.ts) {
+          await app.client.chat.postMessage({
+            channel: command.channel_id,
+            thread_ts: starting.ts,
+            text: `Prompt: ${command.text.trim()}`,
+          });
+        }
+        return starting;
+      },
+      updateVisible: (message) =>
+        app.client.chat.update({ channel: command.channel_id, ...message }),
       failureMessage: (error, invocation) => {
         if (!canConfigureFailure(error) || promptValidationMessage(invocation.prompt)) return null;
         rememberSlashResponseUrl(invocation.invocationId, command.response_url);
@@ -553,7 +620,8 @@ export function makeSlackApp(
     });
   });
 
-  app.command(SLACK_CUSTOM_COMMAND, async ({ ack, command, client }) => {
+  app.command(SLACK_CUSTOM_COMMAND, async ({ ack, command, client, respond }) => {
+    await ack();
     const invocation = normalizeCustomSlashInvocation({
       teamId: command.team_id,
       responseUrl: command.response_url,
@@ -561,19 +629,16 @@ export function makeSlackApp(
     });
     const promptError = promptValidationMessage(invocation.prompt);
     if (promptError) {
-      await ack({ response_type: "ephemeral", text: promptError });
+      await respond({ response_type: "ephemeral", text: promptError });
       return;
     }
-    rememberSlashResponseUrl(invocation.invocationId, command.response_url);
-    await ack();
     await openSetup(
       {
         origin: {
           invocation: invocationWithoutPrompt(invocation),
           response: {
-            kind: "response-url",
+            kind: "message",
             channelId: command.channel_id,
-            responseKey: invocation.invocationId,
           },
         },
         prompt: invocation.prompt,
@@ -892,7 +957,7 @@ export function makeSlackApp(
     let starting: Awaited<ReturnType<typeof postCustomStarting>> | null = null;
     let terminalText: string | null = null;
     try {
-      starting = await postCustomStarting(origin, ids);
+      starting = await postCustomStarting(origin, ids, prompt);
       const result = await startCustomWithLogging({
         invocation,
         selection: {
@@ -909,7 +974,7 @@ export function makeSlackApp(
       terminalText =
         result.recovery === "unverified"
           ? `T3 Code could not verify whether the conversation started. Open ${input.config.t3PublicBaseUrl}`
-          : `<${result.deepLink}|Open in T3 Code>`;
+          : `Open in T3 Code: ${result.deepLink}`;
       await starting.update(terminalText);
     } catch (error) {
       const text = terminalText ?? failureText(error, input.config.t3PublicBaseUrl);
