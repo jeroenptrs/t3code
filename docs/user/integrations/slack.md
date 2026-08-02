@@ -6,7 +6,9 @@ starts, continue working in T3 Code.
 
 ## Standard starts
 
-- `/t3 <prompt>` starts a conversation and returns an ephemeral link to the user.
+- `/t3 <prompt>` starts a conversation and posts a channel-visible link. The
+  submitted prompt is posted as a thread reply so the team can trace what started
+  the T3 conversation.
 - Mentioning the app with a prompt starts a conversation and replies in that
   message's thread.
 - Each invocation targets the configured T3 project and its current checkout.
@@ -21,7 +23,8 @@ follow-up messages cannot add turns to or steer the T3 conversation.
 
 ## Custom starts
 
-- `/t3-custom <prompt>` opens setup before starting.
+- `/t3-custom <prompt>` opens setup before starting. Submitting setup posts the
+  same channel-visible link and threaded prompt trace as `/t3`.
 - Mention the app with `custom:` followed by a prompt to receive a Configure
   button in that message's thread.
 - Sending the app a direct message also returns a Configure button.
@@ -69,7 +72,9 @@ Slack Socket Mode connects, T3 authentication and scopes validate,
 
 The Slack manifest is maintained in `apps/slack/manifest.yaml`. It enables Socket
 Mode, `/t3`, `/t3-custom`, `app_mention`, and direct-message setup with only the
-required Slack scopes.
+required Slack scopes. After a slash command is added or changed, apply the updated
+manifest to the Slack app and reinstall it in the workspace; deploying only the T3
+Slack process does not register the command with Slack.
 
 ## Delivery limitations
 

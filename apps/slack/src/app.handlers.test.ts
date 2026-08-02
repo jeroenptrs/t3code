@@ -59,7 +59,7 @@ vi.mock("@slack/bolt", () => ({
   },
 }));
 
-import { makeSlackApp, SLACK_CUSTOM_COMMAND } from "./app.ts";
+import { makeSlackApp, SLACK_COMMAND, SLACK_CUSTOM_COMMAND } from "./app.ts";
 import {
   SETUP_BRANCH_ACTION,
   SETUP_CALLBACK_ID,
@@ -164,7 +164,49 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("makeSlackApp custom handlers", () => {
+describe("makeSlackApp Slack handlers", () => {
+  it("acknowledges /t3 before posting a public link with a threaded prompt trace", async () => {
+    makeSlackApp({ config, transport: makeTransport([]) });
+    const ack = vi.fn(async () => undefined);
+    const respond = vi.fn(async () => undefined);
+
+    await handler(
+      bolt.commands,
+      SLACK_COMMAND,
+    )({
+      ack,
+      respond,
+      command: {
+        team_id: "T1",
+        channel_id: "C1",
+        response_url: "https://hooks.slack.test/standard-response",
+        text: "Inspect CI",
+      },
+    } as never);
+
+    expect(ack).toHaveBeenCalledWith();
+    expect(ack.mock.invocationCallOrder[0]).toBeLessThan(
+      bolt.client.chat.postMessage.mock.invocationCallOrder[0]!,
+    );
+    expect(respond).not.toHaveBeenCalled();
+    expect(bolt.client.chat.postMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ channel: "C1", text: "Starting in T3 Code..." }),
+    );
+    expect(bolt.client.chat.postMessage).toHaveBeenNthCalledWith(2, {
+      channel: "C1",
+      thread_ts: "100.1",
+      text: "Prompt: Inspect CI",
+    });
+    expect(bolt.client.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "C1",
+        ts: "100.1",
+        text: expect.stringMatching(/^Open in T3 Code: https:\/\//),
+      }),
+    );
+  });
+
   it("falls back to a surviving project when the configured project was deleted", async () => {
     makeSlackApp({
       config: { ...config, projectId: ProjectId.make("deleted-project") },
@@ -203,7 +245,37 @@ describe("makeSlackApp custom handlers", () => {
     );
   });
 
-  it("runs the custom command, options, modal update, submission, and response URL path", async () => {
+  it("acknowledges an empty /t3-custom before returning usage guidance", async () => {
+    makeSlackApp({ config, transport: makeTransport([]) });
+    const ack = vi.fn(async () => undefined);
+    const respond = vi.fn(async () => undefined);
+
+    await handler(
+      bolt.commands,
+      SLACK_CUSTOM_COMMAND,
+    )({
+      ack,
+      respond,
+      command: {
+        team_id: "T1",
+        channel_id: "C1",
+        trigger_id: "trigger-empty",
+        response_url: "https://hooks.slack.test/empty-custom",
+        text: "",
+      },
+      client: bolt.client,
+    } as never);
+
+    expect(ack).toHaveBeenCalledWith();
+    expect(respond).toHaveBeenCalledWith({
+      response_type: "ephemeral",
+      text: expect.stringContaining("Include a prompt"),
+    });
+    expect(ack.mock.invocationCallOrder[0]).toBeLessThan(respond.mock.invocationCallOrder[0]!);
+    expect(bolt.client.views.open).not.toHaveBeenCalled();
+  });
+
+  it("runs the custom command, options, modal update, and public channel submission", async () => {
     const commands: Array<ClientOrchestrationCommand> = [];
     const responsePosts: Array<{ readonly url: string; readonly payload: object }> = [];
     makeSlackApp(
@@ -263,10 +335,11 @@ describe("makeSlackApp custom handlers", () => {
       body: { trigger_id: "trigger-missing-prompt" },
       client: bolt.client,
     } as never);
-    expect(responsePosts.at(-1)?.payload).toMatchObject({
+    expect(bolt.client.chat.postMessage).toHaveBeenLastCalledWith({
+      channel: "C1",
       text: expect.stringContaining("prompt is no longer available"),
     });
-    responsePosts.length = 0;
+    vi.clearAllMocks();
 
     const stateValues = {
       prompt: { [SETUP_PROMPT_ACTION]: { value: "Inspect CI" } },
@@ -336,34 +409,27 @@ describe("makeSlackApp custom handlers", () => {
       type: "thread.turn.start",
       bootstrap: { switchRef: { cwd: "/repo", refName: "main" } },
     });
-    expect(responsePosts).toEqual([
+    expect(responsePosts).toEqual([]);
+    expect(bolt.client.chat.postMessage).toHaveBeenNthCalledWith(
+      1,
       expect.objectContaining({
-        url: "https://hooks.slack.test/response",
-        payload: expect.objectContaining({ text: "Starting in T3 Code..." }),
+        channel: "C1",
+        text: "Starting in T3 Code...",
       }),
+    );
+    expect(bolt.client.chat.postMessage).toHaveBeenNthCalledWith(
+      2,
       expect.objectContaining({
-        url: "https://hooks.slack.test/response",
-        payload: expect.objectContaining({ text: expect.stringContaining("Open in T3 Code") }),
+        channel: "C1",
+        thread_ts: "100.1",
+        text: "Prompt: Inspect CI",
       }),
-    ]);
-
-    const expiredAck = vi.fn(async () => undefined);
-    await handler(
-      bolt.views,
-      SETUP_CALLBACK_ID,
-    )({
-      ack: expiredAck,
-      view: {
-        private_metadata: configuredView.private_metadata,
-        state: { values: stateValues },
-      },
-    } as never);
-    expect(expiredAck).toHaveBeenCalledWith(
+    );
+    expect(bolt.client.chat.update).toHaveBeenCalledWith(
       expect.objectContaining({
-        response_action: "errors",
-        errors: expect.objectContaining({
-          t3_setup_prompt_block: expect.stringContaining("expired"),
-        }),
+        channel: "C1",
+        ts: "100.1",
+        text: expect.stringMatching(/^Open in T3 Code: https:\/\//),
       }),
     );
   });

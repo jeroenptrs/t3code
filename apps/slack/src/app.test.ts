@@ -98,7 +98,7 @@ describe("Slack slash handler", () => {
     expect(commands[1]).toMatchObject({ message: { text: "inspect CI" } });
     expect(responses).toHaveLength(1);
     expect(responses[0]).toMatch(
-      /^<https:\/\/t3\.example\/environment-main\/t3i%3Av1%3Aslack%3Aslash%3A.+%3Athread\|Open in T3 Code>$/,
+      /^Open in T3 Code: https:\/\/t3\.example\/environment-main\/t3i%3Av1%3Aslack%3Aslash%3A.+%3Athread$/,
     );
   });
 
@@ -130,18 +130,18 @@ describe("Slack slash handler", () => {
       responseUrl: "https://hooks.slack.com/commands/T123/456/secret",
       text: "  ",
       publicBaseUrl: "https://t3.example",
-      ack: async (message) => {
-        calls.push(message.text);
+      ack: async () => {
+        calls.push("ack");
       },
       start: async () => {
         calls.push("start");
         return { recovery: "created", deepLink: "https://t3.example" };
       },
-      respond: async () => {
-        calls.push("respond");
+      respond: async (message) => {
+        calls.push(message.text);
       },
     });
-    expect(calls).toEqual(["Usage: /t3 <prompt>"]);
+    expect(calls).toEqual(["ack", "Usage: /t3 <prompt>"]);
   });
 
   it("renders an unverified result with the public base URL", async () => {
@@ -273,7 +273,7 @@ describe("Slack mention handler", () => {
     expect(updated).toHaveLength(1);
     expect(updated[0]).toMatchObject({
       ts: "172.003",
-      text: "<https://t3.example/environment-main/thread-main|Open in T3 Code>",
+      text: "Open in T3 Code: https://t3.example/environment-main/thread-main",
       metadata: (posted[0] as { metadata: object }).metadata,
     });
     expect(
