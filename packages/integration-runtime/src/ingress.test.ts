@@ -11,6 +11,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import { buildThreadDeepLink, startStandardIngress } from "./ingress.ts";
 import { INGRESS_IDENTITY_VERSION, type IngressRequest } from "./model.ts";
@@ -91,8 +92,10 @@ const makeTransport = (input?: {
   const snapshots = [...(input?.snapshots ?? [null])];
   const dispatchResults = [...(input?.dispatchResults ?? [])];
   const transport: T3Transport = {
+    close: () => Effect.void,
     validateSession: () => Effect.succeed({ authenticated: true, auth: {} as never, scopes: [] }),
     getShellSnapshot: () => Effect.succeed(shell),
+    subscribeShell: () => Stream.never,
     getServerConfig: () => Effect.succeed(config),
     getThreadSnapshot: () => Effect.succeed(snapshots.shift() ?? null),
     dispatch: (command) => {

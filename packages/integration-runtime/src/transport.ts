@@ -19,6 +19,8 @@ import {
   type DispatchResult,
   type AuthSessionState,
   type OrchestrationShellSnapshot,
+  type OrchestrationShellStreamItem,
+  type OrchestrationSubscribeShellInput,
   type OrchestrationThreadDetailSnapshot,
   type ServerConfig,
   type ThreadId,
@@ -29,10 +31,13 @@ import {
   ORCHESTRATION_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as Socket from "effect/unstable/socket/Socket";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -61,8 +66,12 @@ export class T3TransportError extends Error {
 }
 
 export interface T3Transport {
+  readonly close: () => Effect.Effect<void>;
   readonly validateSession: () => Effect.Effect<AuthSessionState, T3TransportError>;
   readonly getShellSnapshot: () => Effect.Effect<OrchestrationShellSnapshot, T3TransportError>;
+  readonly subscribeShell: (
+    input: OrchestrationSubscribeShellInput,
+  ) => Stream.Stream<OrchestrationShellStreamItem, T3TransportError>;
   readonly getThreadSnapshot: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationThreadDetailSnapshot | null, T3TransportError>;
@@ -101,6 +110,9 @@ export class CredentialReadError extends Error {
 
 export interface ServerConfigConnection {
   readonly getConfig: Effect.Effect<ServerConfig, T3TransportError>;
+  readonly subscribeShell: (
+    input: OrchestrationSubscribeShellInput,
+  ) => Stream.Stream<OrchestrationShellStreamItem, T3TransportError>;
   readonly listRefs: (
     input: VcsListRefsInput,
   ) => Effect.Effect<VcsListRefsResult, T3TransportError>;
@@ -118,38 +130,130 @@ export const makeServerConfigConnectionManager = Effect.fn(
   "integrationRuntime.makeServerConfigConnectionManager",
 )(function* (connect: () => Effect.Effect<ServerConfigConnection, T3TransportError>) {
   const mutex = yield* Semaphore.make(1);
+  const managerClosed = yield* Deferred.make<void>();
   let generation = 0;
-  let current: { readonly generation: number; readonly connection: ServerConfigConnection } | null =
-    null;
+  let terminal = false;
+  let closing = false;
+  let current: {
+    readonly generation: number;
+    readonly connection: ServerConfigConnection;
+    readonly close: Effect.Effect<void>;
+  } | null = null;
+  let pending: {
+    readonly generation: number;
+    readonly result: Deferred.Deferred<ServerConfigConnection, T3TransportError>;
+    readonly fiber: Fiber.Fiber<void>;
+  } | null = null;
 
-  const getConnection = mutex.withPermits(1)(
+  const closedError = (): T3TransportError =>
+    new T3TransportError("unavailable", "T3 transport is closed.", null);
+
+  const finishConnectionAttempt = (
+    connectionGeneration: number,
+    result: Deferred.Deferred<ServerConfigConnection, T3TransportError>,
+    exit: Exit.Exit<ServerConfigConnection, T3TransportError>,
+  ): Effect.Effect<void> =>
     Effect.gen(function* () {
-      if (current !== null) return current.connection;
-      const connection = yield* connect();
-      const connectionGeneration = ++generation;
-      current = { generation: connectionGeneration, connection };
-      yield* connection.closed.pipe(
-        Effect.exit,
-        Effect.andThen(
-          mutex.withPermits(1)(
-            Effect.sync(() => {
-              if (current?.generation === connectionGeneration) current = null;
-            }),
-          ),
-        ),
-        Effect.ensuring(connection.close),
-        Effect.forkDetach,
+      const cleanup: { readonly close: Effect.Effect<void> } | null = yield* mutex.withPermits(1)(
+        Effect.gen(function* () {
+          if (pending?.generation !== connectionGeneration) {
+            return Exit.isSuccess(exit) ? { close: exit.value.close } : null;
+          }
+          pending = null;
+          if (Exit.isFailure(exit)) {
+            yield* Deferred.done(result, exit);
+            return null;
+          }
+          if (terminal) {
+            yield* Deferred.fail(result, closedError());
+            return { close: exit.value.close };
+          }
+
+          const connection = exit.value;
+          let connectionClosed = false;
+          const close = Effect.suspend(() => {
+            if (connectionClosed) return Effect.void;
+            connectionClosed = true;
+            return connection.close;
+          });
+          current = { generation: connectionGeneration, connection, close };
+          yield* connection.closed.pipe(
+            Effect.exit,
+            Effect.andThen(
+              mutex.withPermits(1)(
+                Effect.sync(() => {
+                  if (current?.generation === connectionGeneration) current = null;
+                }),
+              ),
+            ),
+            Effect.ensuring(close),
+            Effect.forkDetach,
+          );
+          yield* Deferred.succeed(result, connection);
+          return null;
+        }),
       );
-      return connection;
-    }),
-  );
+      if (cleanup !== null) yield* cleanup.close;
+    });
+
+  const getConnection = Effect.gen(function* () {
+    const acquired = yield* mutex.withPermits(1)(
+      Effect.gen(function* () {
+        if (terminal) return yield* Effect.fail(closedError());
+        if (current !== null) {
+          return { _tag: "connected" as const, connection: current.connection };
+        }
+        if (pending !== null) return { _tag: "pending" as const, result: pending.result };
+
+        const result = yield* Deferred.make<ServerConfigConnection, T3TransportError>();
+        const connectionGeneration = ++generation;
+        const fiber = yield* Effect.uninterruptibleMask((restore) =>
+          restore(connect()).pipe(
+            Effect.exit,
+            Effect.flatMap((exit) => finishConnectionAttempt(connectionGeneration, result, exit)),
+          ),
+        ).pipe(Effect.forkDetach);
+        pending = { generation: connectionGeneration, result, fiber };
+        return { _tag: "pending" as const, result };
+      }),
+    );
+    return acquired._tag === "connected"
+      ? acquired.connection
+      : yield* Deferred.await(acquired.result);
+  });
 
   const withConnection = <A>(
     use: (connection: ServerConfigConnection) => Effect.Effect<A, T3TransportError>,
   ) => getConnection.pipe(Effect.flatMap((connection) => use(connection)));
 
+  const close = Effect.suspend(() => {
+    if (closing) return Deferred.await(managerClosed);
+    closing = true;
+    terminal = true;
+    return Effect.gen(function* () {
+      const targets = yield* mutex.withPermits(1)(
+        Effect.sync(() => {
+          const targets = { pending, close: current?.close ?? null };
+          pending = null;
+          current = null;
+          return targets;
+        }),
+      );
+      if (targets.pending !== null) {
+        yield* Deferred.fail(targets.pending.result, closedError());
+        yield* Fiber.interrupt(targets.pending.fiber);
+      }
+      if (targets.close !== null) yield* targets.close;
+    }).pipe(Effect.ensuring(Deferred.succeed(managerClosed, undefined)));
+  });
+
   return {
+    close,
     getConfig: withConnection((connection) => connection.getConfig),
+    subscribeShell: (input: OrchestrationSubscribeShellInput) =>
+      Stream.unwrap(
+        getConnection.pipe(Effect.map((connection) => connection.subscribeShell(input))),
+      ),
     listRefs: (input: VcsListRefsInput) =>
       withConnection((connection) => connection.listRefs(input)),
     switchRef: (input: VcsSwitchRefInput) =>
@@ -208,6 +312,16 @@ export const makeLiveT3Transport = Effect.fn("integrationRuntime.makeLiveT3Trans
   const rpcSessions = yield* makeRpcSessionFactory.pipe(
     Effect.provide(Socket.layerWebSocketConstructorGlobal),
   );
+  let closed = false;
+
+  const closedError = (): T3TransportError =>
+    new T3TransportError("unavailable", "T3 transport is closed.", null);
+  const whileOpen = <A>(operation: () => Effect.Effect<A, T3TransportError>) =>
+    Effect.suspend(() => (closed ? Effect.fail(closedError()) : operation()));
+  const streamWhileOpen = <A>(
+    operation: () => Stream.Stream<A, T3TransportError>,
+  ): Stream.Stream<A, T3TransportError> =>
+    Stream.unwrap(whileOpen(() => Effect.succeed(operation())));
 
   const withCredential = <A>(
     use: (
@@ -291,6 +405,9 @@ export const makeLiveT3Transport = Effect.fn("integrationRuntime.makeLiveT3Trans
       }).pipe(Effect.provide(httpLayer)),
     );
 
+  // The entire credential and ticket exchange stays inside the retained
+  // connection factory so every replacement session re-reads renewable
+  // credentials and requests a fresh one-use WebSocket ticket.
   const configManager = yield* makeServerConfigConnectionManager(() =>
     withCredential((credential) =>
       Effect.gen(function* () {
@@ -334,6 +451,10 @@ export const makeLiveT3Transport = Effect.fn("integrationRuntime.makeLiveT3Trans
             );
           return {
             getConfig: request(session.client[WS_METHODS.serverGetConfig]({})),
+            subscribeShell: (input) =>
+              session.client[ORCHESTRATION_WS_METHODS.subscribeShell](input).pipe(
+                Stream.mapError(transportError),
+              ),
             listRefs: (input) => request(session.client[WS_METHODS.vcsListRefs](input)),
             switchRef: (input) => request(session.client[WS_METHODS.vcsSwitchRef](input)),
             dispatchBootstrap: (command) =>
@@ -353,20 +474,27 @@ export const makeLiveT3Transport = Effect.fn("integrationRuntime.makeLiveT3Trans
   );
 
   const getServerConfig = () => configManager.getConfig;
+  const subscribeShell = (input: OrchestrationSubscribeShellInput) =>
+    configManager.subscribeShell(input);
   const listRefs = (input: VcsListRefsInput) => configManager.listRefs(input);
   const switchRef = (input: VcsSwitchRefInput) => configManager.switchRef(input);
   const dispatchBootstrap = (command: ClientOrchestrationCommand) =>
     configManager.dispatchBootstrap(command);
 
   return {
-    validateSession,
-    getShellSnapshot,
-    getThreadSnapshot,
-    dispatch,
-    getServerConfig,
-    listRefs,
-    switchRef,
-    dispatchBootstrap,
+    close: () =>
+      Effect.sync(() => {
+        closed = true;
+      }).pipe(Effect.andThen(configManager.close)),
+    validateSession: () => whileOpen(validateSession),
+    getShellSnapshot: () => whileOpen(getShellSnapshot),
+    subscribeShell: (input) => streamWhileOpen(() => subscribeShell(input)),
+    getThreadSnapshot: (threadId) => whileOpen(() => getThreadSnapshot(threadId)),
+    dispatch: (command) => whileOpen(() => dispatch(command)),
+    getServerConfig: () => whileOpen(getServerConfig),
+    listRefs: (input) => whileOpen(() => listRefs(input)),
+    switchRef: (input) => whileOpen(() => switchRef(input)),
+    dispatchBootstrap: (command) => whileOpen(() => dispatchBootstrap(command)),
   } satisfies T3Transport;
 });
 

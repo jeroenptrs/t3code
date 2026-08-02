@@ -10,6 +10,7 @@ import {
   type VcsListRefsResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import { startCustomIngress } from "./customIngress.ts";
 import { deriveIngressIds } from "./identity.ts";
@@ -112,8 +113,10 @@ const makeTransport = (refResult: VcsListRefsResult) => {
   const switches: Array<string> = [];
   const bootstraps: Array<ClientOrchestrationCommand> = [];
   const transport: T3Transport = {
+    close: () => Effect.void,
     validateSession: () => Effect.die("not used"),
     getShellSnapshot: () => Effect.succeed(shell),
+    subscribeShell: () => Stream.never,
     getServerConfig: () => Effect.succeed(config),
     getThreadSnapshot: () => Effect.succeed(null),
     listRefs: () => Effect.succeed(refResult),

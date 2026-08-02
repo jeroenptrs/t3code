@@ -42,6 +42,23 @@ without creating a conversation. If the project configured for standard starts
 was deleted, custom setup selects the first remaining project; standard starts
 continue to report the configuration error until `T3_PROJECT_ID` is updated.
 
+## App Home
+
+Opening the app's Home tab shows active T3 Code conversations from every project
+in the environment. Rows are ordered newest-first, matching the inbox-based T3
+sidebar, and include status, conversation title, project, and a direct link.
+Archived and effectively snoozed conversations are omitted. A snoozed conversation
+can wake early and reappear when it raises its hand through a blocker, fresh
+failure, or completion. As a temporary scope choice, server-explicit settled
+conversations are also omitted unless they still carry a pending approval or
+user-input blocker. The intended future view adds recent settled work after active
+work.
+
+The app renders as many rows as Slack's Home-tab Block Kit limit permits. If more
+active conversations exist, `View all in T3 Code` opens the environment's main
+URL. The Home view refreshes whenever it is opened and updates live for users who
+have opened it during the current Slack process lifetime.
+
 ## Configuration
 
 The sibling process reads:
@@ -71,10 +88,11 @@ Slack Socket Mode connects, T3 authentication and scopes validate,
 `server.getConfig` succeeds, and the configured project/default model resolves.
 
 The Slack manifest is maintained in `apps/slack/manifest.yaml`. It enables Socket
-Mode, `/t3`, `/t3-custom`, `app_mention`, and direct-message setup with only the
-required Slack scopes. After a slash command is added or changed, apply the updated
+Mode, App Home, `/t3`, `/t3-custom`, `app_home_opened`, `app_mention`, and
+direct-message setup with only the required Slack scopes. After a slash command or
+event subscription is added or changed, apply the updated
 manifest to the Slack app and reinstall it in the workspace; deploying only the T3
-Slack process does not register the command with Slack.
+Slack process does not register the Slack-side configuration.
 
 ## Delivery limitations
 

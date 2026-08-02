@@ -2,10 +2,10 @@
 
 ## Status
 
-Planned. Product and boundary decisions are locked in
-`docs/integrations/slack-jira-ingress-design.md`. This plan begins after that
-design lock and covers the Slack implementation plus the bootstrap extraction
-required by the broader ingress/automation design.
+Slices 1–3 are implemented; Slice 4 operations work remains planned. Product and
+boundary decisions are locked in `docs/integrations/slack-jira-ingress-design.md`.
+This plan begins after that design lock and covers the Slack implementation plus
+the bootstrap extraction required by the broader ingress/automation design.
 
 ## Goal
 
@@ -75,14 +75,22 @@ effort capability contributes one default combination.
 ### App Home
 
 - Content is team-wide and identical, although Slack publishes it per user.
-- Publish a fresh view on every `app_home_opened`.
+- Publish a fresh view on every Home-tab `app_home_opened`; ignore Messages-tab
+  opens.
 - Show a top-level T3 link.
-- Fill capacity `X` with unsettled conversations first.
-- Fill remaining capacity with the newest settled conversations.
-- Filter the oldest settled conversations first.
-- Omit archived conversations and preserve T3's effective lifecycle/visibility
-  semantics.
+- Show conversations from every project in the environment.
+- Order unsettled conversations newest-created-first, matching the inbox-based
+  T3 sidebar.
+- Omit archived and effectively snoozed conversations.
+- **Temporary Slice 3 scope change:** omit server-explicit settled conversations
+  unless a pending approval or user-input blocker must remain visible. The intended
+  later behavior remains an unsettled-first list that fills remaining capacity
+  with the newest settled conversations and filters the oldest settled conversations
+  first.
+- Render as many rows as Slack's App Home Block Kit block limit permits; there
+  is no operator-configured row limit.
 - Link every row directly to its T3 conversation.
+- When rows are truncated, link `View all` to the main environment URL.
 
 ### Authorization and delivery
 
@@ -178,7 +186,6 @@ Configuration distinguishes:
 - T3 bearer credential file;
 - configured workspace ProjectId;
 - optional integration-wide default ModelSelection;
-- Slack App Home capacity `X`;
 - Slack app and bot tokens.
 
 Startup flow:
@@ -195,7 +202,7 @@ Startup flow:
 Deep links use:
 
 ```text
-{publicBaseUrl}/{environmentId}/{encodeURIComponent(threadId)}
+{publicBaseUrl}/{encodeURIComponent(environmentId)}/{encodeURIComponent(threadId)}
 ```
 
 Never build links from a hand-written thread-only path.
@@ -333,28 +340,33 @@ Modal behavior:
 
 ## App Home Projection
 
-Maintain one in-memory shell projection. Build a pure renderer input before
-calling Slack APIs.
+Maintain one sequence-aware in-memory shell projection that resumes
+`orchestration.subscribeShell` after reconnect. Build a pure renderer input
+before calling Slack APIs.
 
-For capacity `X`:
+For Slice 3, select conversations from every project; omit archived and
+effectively snoozed conversations plus server-explicit settled conversations
+without pending approval or user-input blockers; then sort the remaining work
+newest-created-first with deterministic ID ties. This settled-row omission is a
+temporary scope reduction, not a replacement for the intended future
+unsettled-first plus settled-tail design. Slack does not apply a separate
+auto-settle policy.
 
-```ts
-const visibleUnsettled = unsettled.slice(0, X);
-const remaining = X - visibleUnsettled.length;
-const visibleSettled = settledNewestFirst.slice(0, remaining);
-```
-
-Use the same effective settled/snoozed helpers and ordering principles as the T3
-clients. Keep block usage bounded:
+Keep block usage within Slack's 100-block Home-tab limit:
 
 - header/open-app link;
-- one section per list when non-empty;
 - one compact row per conversation;
-- one truncation/footer link when needed.
+- reserve a footer block before selecting rows when truncation is required;
+- link the footer to `{publicBaseUrl}/{encodeURIComponent(environmentId)}`.
 
-On `app_home_opened`, publish for `event.user`. Cache rendered blocks by shell
-revision/content hash. Keep only an in-memory set of users seen during the current
-process for debounced live republishing; reopening always refreshes after restart.
+On Home-tab `app_home_opened`, publish for `event.user`; ignore Messages-tab opens.
+Cache rendered blocks by shell revision/content hash. Serialize publications per
+user and coalesce live updates onto the latest snapshot so an older Slack request
+cannot finish last and strand a stale view. Keep only an in-memory set of users
+seen during the current process for debounced live republishing; reopening always
+refreshes after restart.
+Arm a timer for the earliest snooze wake because timer-based wakes do not emit a
+shell event.
 
 ## Credential Rotation and Deployment
 
@@ -580,7 +592,7 @@ Implement one shared `startStandardIngress` operation:
 7. If the initial message is present, return the existing conversation rather
    than dispatching another turn.
 8. Build the deep link as
-   `{publicBaseUrl}/{environmentId}/{encodeURIComponent(threadId)}`.
+   `{publicBaseUrl}/{encodeURIComponent(environmentId)}/{encodeURIComponent(threadId)}`.
 
 Recovery classification is observable but does not change the user promise:
 
@@ -748,10 +760,128 @@ and the implementation has not modified server orchestration behavior.
 
 ### Slice 3: App Home
 
-- Implement shell projection/reconnect.
-- Implement unsettled-first capacity logic.
-- Implement per-user-on-open publication and in-memory live refresh.
-- Add direct thread links and truncation footer.
+- Implement a sequence-aware shell projection that resumes after reconnect.
+- Select newest-first conversations across every project, omitting archived,
+  effectively snoozed, and—temporarily for this slice—server-explicit settled rows
+  without pending approval or user-input blockers.
+- Render status, title, project, and direct thread link up to the Block Kit Home
+  limit.
+- Implement per-user-on-open publication, content-hashed debounced live refresh,
+  and snooze-wake refresh.
+- Add an environment-root `View all` truncation footer.
+
+#### Slice 3 acceptance criteria
+
+Shell projection and lifecycle:
+
+- Seed from the HTTP shell snapshot, then subscribe through
+  `orchestration.subscribeShell` using the latest projected sequence as
+  `afterSequence`.
+- Apply authoritative replacement snapshots plus project/thread upserts and
+  removals. Ignore duplicate or out-of-order incremental events whose sequence
+  is not newer than the current projection.
+- After a WebSocket disconnect, obtain a fresh short-lived ticket, reconnect,
+  and resume from the last applied sequence. Retry typed failures and defects
+  with bounded backoff rather than terminating the projection or entering a tight
+  reconnect/logging loop.
+- Starting the projection is idempotent. Process shutdown cancels projection and
+  publication timers and closes the retained T3 WebSocket, Slack connection, and
+  health server. Transport closure is terminal: every public HTTP and WebSocket
+  operation invoked after close begins rejects before reading credentials,
+  fetching, or reconnecting. Shutdown during pending Slack startup or readiness
+  cannot subsequently start App Home, install timers, or create another T3
+  connection, and pending lifecycle work is tracked through teardown.
+
+Task selection and ordering:
+
+- Consider conversations from every project in the environment, not only the
+  project configured for standard Slack starts.
+- Omit archived conversations.
+- Omit conversations for which T3's shared `effectiveSnoozed` helper returns
+  true. A timer at the earliest future snooze boundary must make a conversation
+  visible without requiring a shell event.
+- As a temporary Slice 3 scope reduction, omit server-explicit settled
+  conversations (`settledOverride === "settled"`) unless pending approval or
+  user-input blockers must remain visible. Slack must not infer settlement from
+  age, change-request state, or any separate auto-settle policy. The intended
+  future behavior remains unsettled-first followed by the newest settled rows.
+- Sort eligible conversations by `createdAt` descending, matching the inbox-based
+  sidebar's static ordering, and break equal or malformed timestamp ties by
+  thread ID ascending.
+- If a thread temporarily refers to a project absent from the same shell
+  projection, do not publish a misleading project label for it.
+
+Rows, links, and Block Kit limits:
+
+- Every row shows the conversation title followed by status and project title,
+  and links directly to
+  `{publicBaseUrl}/{encodeURIComponent(environmentId)}/{encodeURIComponent(threadId)}`.
+- Status precedence is: pending approval (`Pending approval`), pending user input
+  (`Awaiting input`), starting session (`Connecting`), running session
+  (`Working`), failed session (`Failed`), actionable plan-mode proposal
+  on a settled latest turn (`Plan ready`), then `Ready`.
+- Normalize, escape, and bound user-controlled titles before placing them in
+  Slack mrkdwn.
+- A Slack Home tab permits 100 blocks. Reserve one header block. When all rows
+  fit, publish up to 99 rows with no footer. When rows overflow, reserve one
+  footer block and publish the newest 98 rows, for at most 100 blocks total.
+- The header links to the main environment URL
+  `{publicBaseUrl}/{encodeURIComponent(environmentId)}`. On overflow, the footer
+  reports the visible and total active counts and links `View all in T3 Code` to
+  that same environment URL. Individual row links remain direct conversation links.
+- With no eligible conversations, publish the linked header plus a bounded empty
+  state. If T3 data is unavailable during an open, still publish a safe unavailable
+  view without exposing internal errors or credentials. When environment
+  resolution itself is unavailable, that fallback header links to the raw
+  `publicBaseUrl` because no environment ID is available.
+
+Publication behavior:
+
+- Register and enable Slack App Home in the manifest and subscribe to
+  `app_home_opened`.
+- Every Home-tab `app_home_opened` publishes a fresh view for `event.user`, even
+  when its content matches that user's previously published view. Messages-tab
+  opens do not enroll users in live App Home publication.
+- Keep only an in-memory set of users observed during the current process.
+  Debounce shell-driven live refreshes for those users, compare per-user content
+  hashes, and skip unchanged live publications. Publications for a user are
+  serialized and queued renders use the latest accepted snapshot, so completion
+  order cannot rewind Slack or the stored content hash.
+- An open-time HTTP refresh must re-read the projection after success or failure.
+  Open-time snapshot adoption is sequence- and stream-epoch-aware: it cannot
+  replace a newer live snapshot with `null`, an older snapshot, or a numerically
+  higher HTTP response started before an authoritative stream reset. Authoritative
+  stream replacement snapshots may still reset sequence after a server restart.
+- Isolate publication failures per user so one Slack API failure does not prevent
+  refreshes for other observed users. Logs contain only safe categories and IDs,
+  never prompts, credentials, tickets, tokens, or full Slack payloads.
+- App Home owns no durable Slack user or publication state. After restart, users
+  are republished when they next open App Home.
+
+Verification boundary:
+
+- Focused integration-runtime and Slack tests cover snapshot/replay convergence,
+  reconnect/resume, defect recovery, removals and stale events, filtering and
+  ordering, every projected status and precedence collisions, 99-row exact fit,
+  98-row overflow, URLs, empty/unavailable states,
+  per-open publication, serialized/coalesced publication races, failed and delayed
+  pre-reset refreshes versus live snapshots, live deduplication, failure isolation,
+  snooze wakes, Home-versus-Messages tab handling, manifest wiring, post-close HTTP
+  and WebSocket rejection without network access, pending-connect cancellation,
+  and shutdown during delayed Slack startup and readiness.
+- Targeted lint, formatting, and typechecks pass for the affected packages.
+- A live Slack workspace installation is an operational verification step, not a
+  completion requirement for Slice 3; if it has not been performed, the handoff
+  states that explicitly.
+
+#### Slice 3 implementation evidence (2026-08-02)
+
+- Focused integration-runtime and Slack tests, targeted typechecks, lint,
+  formatting, and diff checks passed after the implementation review.
+- The reconnecting live connection factory re-reads the bearer credential and
+  requests a fresh short-lived WebSocket ticket for every replacement session.
+- No live Slack workspace installation was performed or recorded. That remains an
+  operational verification step outside the Slice 3 completion requirement.
 
 ### Slice 4: Operations
 
@@ -802,13 +932,18 @@ and the implementation has not modified server orchestration behavior.
 
 ### App Home
 
-- unsettled rows always precede/displace settled rows;
-- newest settled rows win remaining capacity;
-- oldest settled rows filter first;
-- no settled rows when unsettled reaches capacity;
-- archived and T3-hidden lifecycle states follow client semantics;
+- conversations from every project are eligible;
+- archived and effectively snoozed conversations are omitted;
+- server-explicit settled conversations without pending approval or user-input
+  blockers are omitted as temporary Slice 3 scope, while preserving the future
+  unsettled-first plus settled-tail behavior;
+- unsettled rows sort newest-created-first with deterministic ID ties;
 - block count stays within Slack limits;
-- identical content is published separately for each opening user.
+- overflow reserves a footer block linked to the main environment URL;
+- identical content is published separately for each Home-tab opening user;
+- per-user writes are serialized and converge on the newest snapshot;
+- unchanged live content is not republished, while snooze timer wakes republish
+  without requiring a shell event.
 
 ### Server bootstrap extraction
 
@@ -834,10 +969,11 @@ repo-wide suite unless explicitly requested.
   worktree's exact path and does not create or switch another checkout.
 - Slack follow-ups cannot steer or add a T3 turn.
 - Retries do not create duplicate T3 threads/messages.
-- App Home shows the latest `X` conversations with unsettled-first capacity and
-  oldest-settled-first filtering.
-- Every App Home open gets a fresh per-user publication of the same team-wide
-  view.
+- App Home shows as many newest-first conversations across all projects as Block
+  Kit permits, temporarily omitting server-explicit settled conversations unless
+  pending approval or user-input blockers must remain visible.
+- Every App Home open on the Home tab gets a fresh per-user publication of the
+  same team-wide view; Messages-tab opens do not publish.
 - Slack owns no durable domain state.
 - The daemon uses only orchestration read/operate scopes.
 - Credential rotation is documented, testable, and warns before expiry.
@@ -851,4 +987,7 @@ repo-wide suite unless explicitly requested.
   guarantee as plain HTTP create/start.
 - App Home users seen before a process restart are not proactively republished
   until they reopen.
+- Server-explicit settled conversations without pending approval or user-input
+  blockers are temporarily absent from App Home; a later slice can restore the
+  intended newest-settled tail after unsettled work.
 - Cost controls are organizational rather than technical in v1.

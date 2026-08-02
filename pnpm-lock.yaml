@@ -513,6 +513,9 @@ importers:
       '@slack/bolt':
         specifier: 5.0.0
         version: 5.0.0(@types/express@5.0.6)(undici@8.9.0)
+      '@t3tools/client-runtime':
+        specifier: workspace:*
+        version: link:../../packages/client-runtime
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
