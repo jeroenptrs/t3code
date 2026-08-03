@@ -229,7 +229,11 @@ describe("App Home Block Kit rendering", () => {
     expect(text).toContain("https://t3.example/root/environment%2Fvalue");
     expect(text).toContain("/thread%2Fvalue");
     expect(text).toContain("Fix &lt;render&gt; ¦ safely");
-    expect(text).toContain("Pending approval · Project A");
+    expect(text).toContain("Welcome to t3 code");
+    expect(text).toContain("View all tasks");
+    expect(text).toContain("*Active conversations*");
+    expect(text).toContain("Status: *Pending approval*    Project: *Project A*");
+    expect(text).not.toContain("Pending approval · Project A");
   });
 
   it("uses the full Home-tab block budget and adds an environment-root footer only on overflow", () => {
@@ -251,18 +255,18 @@ describe("App Home Block Kit rendering", () => {
     });
 
     expect(view.blocks).toHaveLength(SLACK_HOME_MAX_BLOCKS);
-    expect(JSON.stringify(view.blocks.at(-1))).toContain("newest 98 of 100");
+    expect(JSON.stringify(view.blocks.at(-1))).toContain("newest 94 of 100");
     expect(JSON.stringify(view.blocks.at(-1))).toContain(
       "https://t3.example/environment-a|View all in T3 Code",
     );
 
     const exactFit = buildAppHomeView({
-      tasks: tasks.slice(0, 99),
+      tasks: tasks.slice(0, 95),
       publicBaseUrl: "https://t3.example",
       environmentId: "environment-a",
     });
     expect(exactFit.blocks).toHaveLength(SLACK_HOME_MAX_BLOCKS);
-    expect(JSON.stringify(exactFit)).not.toContain("View all");
+    expect(JSON.stringify(exactFit)).not.toContain("View all in T3 Code");
   });
 
   it("renders an empty state without a truncation footer", () => {
@@ -271,9 +275,9 @@ describe("App Home Block Kit rendering", () => {
       publicBaseUrl: "https://t3.example",
       environmentId: "environment-a",
     });
-    expect(view.blocks).toHaveLength(2);
+    expect(view.blocks).toHaveLength(6);
     expect(JSON.stringify(view)).toContain("No active conversations");
-    expect(JSON.stringify(view)).not.toContain("View all");
+    expect(JSON.stringify(view)).not.toContain("View all in T3 Code");
   });
 
   it("bounds titles by Unicode characters without splitting a surrogate pair", () => {
@@ -429,7 +433,7 @@ describe("App Home publication", () => {
     await publisher.opened("U1", null);
     expect(publications).toHaveLength(1);
     expect(JSON.stringify(publications[0])).toContain("temporarily unavailable");
-    expect(JSON.stringify(publications[0])).toContain("<https://t3.example|T3 Code tasks>");
+    expect(JSON.stringify(publications[0])).toContain('"url":"https://t3.example"');
     await publisher.stop();
   });
 

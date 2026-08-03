@@ -18,6 +18,7 @@ export interface SlackAppConfig {
   readonly healthHost: string;
   readonly healthPort: number;
   readonly credentialExpiryWarningDays: number;
+  readonly conversationAuditLogFile: string;
 }
 
 const required = (env: NodeJS.ProcessEnv, name: string): string => {
@@ -63,5 +64,7 @@ export function decodeSlackAppConfig(env: NodeJS.ProcessEnv): SlackAppConfig {
     healthHost: env.SLACK_HEALTH_HOST?.trim() || "127.0.0.1",
     healthPort,
     credentialExpiryWarningDays,
+    conversationAuditLogFile:
+      env.SLACK_CONVERSATION_AUDIT_LOG_FILE?.trim() || ".t3/slack/conversation-starts.jsonl",
   };
 }

@@ -160,6 +160,14 @@ const config = {
   healthHost: "127.0.0.1",
   healthPort: 3210,
   credentialExpiryWarningDays: 10,
+  conversationAuditLogFile: ".t3/slack/test-conversation-starts.jsonl",
+};
+
+const auditRecords: unknown[] = [];
+const conversationAuditLog = {
+  append: async (record: unknown) => {
+    auditRecords.push(record);
+  },
 };
 
 beforeEach(() => {
@@ -170,11 +178,12 @@ beforeEach(() => {
   bolt.views.clear();
   bolt.messages.length = 0;
   vi.clearAllMocks();
+  auditRecords.length = 0;
 });
 
 describe("makeSlackApp Slack handlers", () => {
   it("publishes a fresh App Home view for app_home_opened", async () => {
-    makeSlackApp({ config, transport: makeTransport([]) });
+    makeSlackApp({ config, transport: makeTransport([]) }, { conversationAuditLog });
 
     await handler(bolt.events, "app_home_opened")({ event: { user: "U1", tab: "home" } } as never);
 
@@ -185,7 +194,7 @@ describe("makeSlackApp Slack handlers", () => {
   });
 
   it("ignores app_home_opened events for the Messages tab", async () => {
-    makeSlackApp({ config, transport: makeTransport([]) });
+    makeSlackApp({ config, transport: makeTransport([]) }, { conversationAuditLog });
 
     await handler(
       bolt.events,
@@ -198,7 +207,7 @@ describe("makeSlackApp Slack handlers", () => {
   });
 
   it("acknowledges /t3 before posting a public link with a threaded prompt trace", async () => {
-    makeSlackApp({ config, transport: makeTransport([]) });
+    makeSlackApp({ config, transport: makeTransport([]) }, { conversationAuditLog });
     const ack = vi.fn(async () => undefined);
     const respond = vi.fn(async () => undefined);
 
@@ -210,6 +219,7 @@ describe("makeSlackApp Slack handlers", () => {
       respond,
       command: {
         team_id: "T1",
+        user_id: "U-standard",
         channel_id: "C1",
         response_url: "https://hooks.slack.test/standard-response",
         text: "Inspect CI",
@@ -237,13 +247,57 @@ describe("makeSlackApp Slack handlers", () => {
         text: expect.stringMatching(/^Open in T3 Code: https:\/\//),
       }),
     );
+    expect(auditRecords).toEqual([
+      expect.objectContaining({
+        slack: { teamId: "T1", userId: "U-standard" },
+        prompt: "Inspect CI",
+        configuration: null,
+      }),
+    ]);
+  });
+
+  it("does not dispatch when the conversation audit cannot be appended", async () => {
+    const commands: Array<ClientOrchestrationCommand> = [];
+    makeSlackApp(
+      { config, transport: makeTransport(commands) },
+      {
+        conversationAuditLog: {
+          append: async () => {
+            throw new Error("disk full");
+          },
+        },
+      },
+    );
+
+    await handler(
+      bolt.commands,
+      SLACK_COMMAND,
+    )({
+      ack: vi.fn(async () => undefined),
+      respond: vi.fn(async () => undefined),
+      command: {
+        team_id: "T1",
+        user_id: "U1",
+        channel_id: "C1",
+        response_url: "https://hooks.slack.test/audit-failure",
+        text: "Inspect CI",
+      },
+    } as never);
+
+    expect(commands).toEqual([]);
+    expect(bolt.client.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "T3 Code could not be reached. Open https://t3.example" }),
+    );
   });
 
   it("falls back to a surviving project when the configured project was deleted", async () => {
-    makeSlackApp({
-      config: { ...config, projectId: ProjectId.make("deleted-project") },
-      transport: makeTransport([]),
-    });
+    makeSlackApp(
+      {
+        config: { ...config, projectId: ProjectId.make("deleted-project") },
+        transport: makeTransport([]),
+      },
+      { conversationAuditLog },
+    );
 
     await handler(
       bolt.commands,
@@ -252,6 +306,7 @@ describe("makeSlackApp Slack handlers", () => {
       ack: vi.fn(async () => undefined),
       command: {
         team_id: "T1",
+        user_id: "U-stale",
         channel_id: "C1",
         trigger_id: "trigger-stale-project",
         response_url: "https://hooks.slack.test/response",
@@ -278,7 +333,7 @@ describe("makeSlackApp Slack handlers", () => {
   });
 
   it("acknowledges an empty /t3-custom before returning usage guidance", async () => {
-    makeSlackApp({ config, transport: makeTransport([]) });
+    makeSlackApp({ config, transport: makeTransport([]) }, { conversationAuditLog });
     const ack = vi.fn(async () => undefined);
     const respond = vi.fn(async () => undefined);
 
@@ -290,6 +345,7 @@ describe("makeSlackApp Slack handlers", () => {
       respond,
       command: {
         team_id: "T1",
+        user_id: "U-empty",
         channel_id: "C1",
         trigger_id: "trigger-empty",
         response_url: "https://hooks.slack.test/empty-custom",
@@ -313,6 +369,7 @@ describe("makeSlackApp Slack handlers", () => {
     makeSlackApp(
       { config, transport: makeTransport(commands) },
       {
+        conversationAuditLog,
         postResponseUrl: async (url, payload) => {
           responsePosts.push({ url, payload });
         },
@@ -327,6 +384,7 @@ describe("makeSlackApp Slack handlers", () => {
       ack: ackCommand,
       command: {
         team_id: "T1",
+        user_id: "U-custom",
         channel_id: "C1",
         trigger_id: "trigger-1",
         response_url: "https://hooks.slack.test/response",
@@ -375,13 +433,31 @@ describe("makeSlackApp Slack handlers", () => {
 
     const stateValues = {
       prompt: { [SETUP_PROMPT_ACTION]: { value: "Inspect CI" } },
-      project: { [SETUP_PROJECT_ACTION]: { selected_option: { value: "project-a" } } },
-      workspace: { [SETUP_WORKSPACE_ACTION]: { selected_option: { value: "current" } } },
+      project: {
+        [SETUP_PROJECT_ACTION]: {
+          selected_option: { value: "project-a", text: { text: "Project A" } },
+        },
+      },
+      workspace: {
+        [SETUP_WORKSPACE_ACTION]: {
+          selected_option: { value: "current", text: { text: "Current checkout" } },
+        },
+      },
       branch: {
-        [SETUP_BRANCH_ACTION]: { selected_option: { value: initialValue(SETUP_BRANCH_ACTION)! } },
+        [SETUP_BRANCH_ACTION]: {
+          selected_option: {
+            value: initialValue(SETUP_BRANCH_ACTION)!,
+            text: { text: "main · current" },
+          },
+        },
       },
       model: {
-        [SETUP_MODEL_ACTION]: { selected_option: { value: initialValue(SETUP_MODEL_ACTION)! } },
+        [SETUP_MODEL_ACTION]: {
+          selected_option: {
+            value: initialValue(SETUP_MODEL_ACTION)!,
+            text: { text: "GPT-5" },
+          },
+        },
       },
     };
 
@@ -434,6 +510,7 @@ describe("makeSlackApp Slack handlers", () => {
         private_metadata: configuredView.private_metadata,
         state: { values: stateValues },
       },
+      body: { user: { id: "U-custom" } },
     } as never);
     expect(ackView).toHaveBeenCalledWith();
     expect(commands).toHaveLength(1);
@@ -441,6 +518,21 @@ describe("makeSlackApp Slack handlers", () => {
       type: "thread.turn.start",
       bootstrap: { switchRef: { cwd: "/repo", refName: "main" } },
     });
+    expect(auditRecords).toEqual([
+      expect.objectContaining({
+        slack: { teamId: "T1", userId: "U-custom" },
+        prompt: "Inspect CI",
+        configuration: {
+          projectId: "project-a",
+          projectLabel: "Project A",
+          workspace: "current",
+          branchOption: initialValue(SETUP_BRANCH_ACTION),
+          branchLabel: "main · current",
+          modelOption: initialValue(SETUP_MODEL_ACTION),
+          modelLabel: "GPT-5",
+        },
+      }),
+    ]);
     expect(responsePosts).toEqual([]);
     expect(bolt.client.chat.postMessage).toHaveBeenNthCalledWith(
       1,
@@ -468,7 +560,7 @@ describe("makeSlackApp Slack handlers", () => {
 
   it("routes a real DM handler into the setup action", async () => {
     const commands: Array<ClientOrchestrationCommand> = [];
-    makeSlackApp({ config, transport: makeTransport(commands) });
+    makeSlackApp({ config, transport: makeTransport(commands) }, { conversationAuditLog });
     const dmHandler = bolt.messages[0];
     if (typeof dmHandler !== "function") throw new Error("Missing DM handler");
 
@@ -477,6 +569,7 @@ describe("makeSlackApp Slack handlers", () => {
         channel_type: "im",
         channel: "D1",
         ts: "100.1",
+        user: "U-dm",
         text: "Inspect CI",
       },
       body: { team_id: "T1" },
