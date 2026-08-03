@@ -159,6 +159,7 @@ const config = {
   modelSelection,
   healthHost: "127.0.0.1",
   healthPort: 3210,
+  credentialExpiryWarningDays: 10,
 };
 
 beforeEach(() => {
