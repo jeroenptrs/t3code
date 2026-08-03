@@ -671,6 +671,12 @@ const ThreadTurnStartBootstrapPrepareWorktree = Schema.Struct({
   projectCwd: TrimmedNonEmptyString,
   baseBranch: TrimmedNonEmptyString,
   branch: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Explicit target path for deterministic background worktrees. Server-side
+   * callers reject this field until validation and consumption are introduced
+   * with phase-resumable bootstrap.
+   */
+  targetPath: Schema.optional(TrimmedNonEmptyString),
   startFromOrigin: Schema.optional(Schema.Boolean),
 });
 

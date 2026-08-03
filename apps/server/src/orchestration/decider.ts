@@ -1,5 +1,6 @@
 import {
   EventId,
+  hasQueuedTurnStart,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -23,11 +24,6 @@ import {
 import { projectEvent } from "./projector.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-
-// Session adoption takes seconds; a user message still unadopted after this
-// window is a failed/stale start, not pending work. Mirrors the client's
-// QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts.
-const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
@@ -90,7 +86,7 @@ function hasOpenBlockingRequest(thread: {
  * A queued turn start — a user message no turn has picked up yet — is work
  * in flight even though session is still null (turn.start emits
  * message-sent + turn-start-requested; the session arrives later). Detection
- * mirrors the client's hasQueuedTurnStart: the newest user message is
+ * uses the shared hasQueuedTurnStart truth: the newest user message is
  * strictly newer than every latestTurn timestamp (adoption stamps the new
  * turn's requestedAt with the message time, clearing this), and only within
  * the adoption grace window — historical threads whose last user message
@@ -105,40 +101,27 @@ function hasOpenBlockingRequest(thread: {
  * minutes.
  */
 function threadHasQueuedTurnStart(
-  thread: {
-    readonly messages: ReadonlyArray<{ readonly role: string; readonly createdAt: string }>;
-    readonly latestTurn: {
-      readonly requestedAt: string;
-      readonly startedAt: string | null;
-      readonly completedAt: string | null;
-    } | null;
-    readonly session: { readonly status: string } | null;
-  },
+  thread: Pick<OrchestrationReadModel["threads"][number], "messages" | "latestTurn" | "session">,
   occurredAt: string,
 ): boolean {
-  const latestUserMessageAtMs = thread.messages.reduce(
-    (latest, message) =>
-      message.role === "user" ? Math.max(latest, Date.parse(message.createdAt)) : latest,
-    Number.NEGATIVE_INFINITY,
-  );
-  const latestTurnAtMs =
-    thread.latestTurn === null
-      ? Number.NEGATIVE_INFINITY
-      : Math.max(
-          ...[
-            thread.latestTurn.requestedAt,
-            thread.latestTurn.startedAt,
-            thread.latestTurn.completedAt,
-          ].map((candidate) =>
-            candidate == null ? Number.NEGATIVE_INFINITY : Date.parse(candidate),
-          ),
-        );
-  const queuedAgeMs = Date.parse(occurredAt) - latestUserMessageAtMs;
-  return (
-    thread.session?.status !== "error" &&
-    Number.isFinite(latestUserMessageAtMs) &&
-    latestUserMessageAtMs > latestTurnAtMs &&
-    Math.abs(queuedAgeMs) <= QUEUED_TURN_START_GRACE_MS
+  let latestUserMessageAt: string | null = null;
+  let latestUserMessageAtMs = Number.NEGATIVE_INFINITY;
+  for (const message of thread.messages) {
+    if (message.role !== "user") continue;
+    const timestamp = Date.parse(message.createdAt);
+    if (Number.isNaN(timestamp)) return false;
+    if (timestamp > latestUserMessageAtMs) {
+      latestUserMessageAt = message.createdAt;
+      latestUserMessageAtMs = timestamp;
+    }
+  }
+  return hasQueuedTurnStart(
+    {
+      latestUserMessageAt,
+      latestTurn: thread.latestTurn,
+      session: thread.session,
+    },
+    { now: occurredAt },
   );
 }
 

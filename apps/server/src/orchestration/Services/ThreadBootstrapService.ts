@@ -122,6 +122,12 @@ export const makeThreadBootstrapService = Effect.gen(function* () {
     "ThreadBootstrapService.dispatch",
   )(function* (command) {
     const bootstrap = command.bootstrap;
+    if (bootstrap?.prepareWorktree?.targetPath !== undefined) {
+      return yield* new OrchestrationDispatchCommandError({
+        message:
+          "Explicit bootstrap worktree paths are not supported until deterministic bootstrap validation is enabled.",
+      });
+    }
     const { bootstrap: _bootstrap, ...finalTurnStartCommand } = command;
     let createdThread = false;
     const targetProjectId = bootstrap?.createThread?.projectId;
