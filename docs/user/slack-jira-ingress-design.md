@@ -1,7 +1,7 @@
 # Slack / Jira Ingress & Automations — Design Decisions
 
-Status: **design locked, no code written yet** (as of 2026-07-29; open questions
-re-triaged 2026-07-30 — Slack module confirmed as sibling process).
+Status: **design locked, no code written yet** (as of 2026-07-29; Slack ingress,
+custom setup, delivery posture, and App Home behavior locked 2026-07-31).
 Owner: Jeroen. This document records decisions from the design conversation so future
 sessions/agents don't re-litigate them or re-invent descoped features.
 
@@ -49,8 +49,11 @@ Verified mechanics:
 
 - **Deterministic IDs**: `makeEntityId` is a branded trimmed-non-empty string with
   no format validation — a client MAY choose `ThreadId` / `MessageId` /
-  `CommandId` deterministically (e.g. `ThreadId` from Slack workspace+channel+root
-  ts, or Jira site+issue; `MessageId`/`CommandId` from the platform event ID).
+  `CommandId` deterministically. Slack bot-owned DM/setup roots can key from the
+  root; a mention inside an existing human Slack thread keys from the specific
+  mention event/message, NOT the surrounding thread root; Jira keys from
+  site+issue+invocation. `MessageId`/`CommandId` derive from that stable invocation
+  identity plus a phase suffix.
 - **Command receipts**: re-dispatching a command whose `commandId` has an
   `"accepted"` receipt is deduped by the engine (returns the original sequence, no
   re-execution). T3's receipts + projections ARE the recovery ledger.
@@ -83,6 +86,7 @@ threads (no worktree, see #6), plain `thread.create` + `thread.turn.start` over
 HTTP is fully idempotent per command** — prefer that shape where possible.
 
 **Resolution by trigger kind** (locked 2026-07-29):
+
 - **External clients** (Slack/Jira sibling process): WS dispatch when full
   bootstrap is needed; plain HTTP commands for workspace-project threads.
 - **Server-internal triggers** (automations, #9): do NOT go through any transport.
@@ -116,25 +120,136 @@ settings surface — never a private ingress database.
 
 The Slack surface is exactly three things:
 
-1. **Thread start**: Slack message / slash command → (optional pickers) →
-   `thread.turn.start` with `bootstrap.createThread` → reply with a deep link
-   ("Follow on t3.deltablue.ai/.../{thread}").
-2. **Thread overview in App Home**: Block Kit lists of running / awaiting-input /
-   settled threads (fed by `subscribeShell`), each row deep-linking out. App Home
-   also becomes the place to view running automations later.
+1. **Thread start**: Slack message / slash command → immediate default start OR
+   custom setup → `thread.turn.start` with `bootstrap.createThread` → reply with a
+   deep link ("Follow on t3.deltablue.ai/.../{thread}").
+2. **Thread overview in App Home**: a team-wide directory projected from
+   `subscribeShell`, split into unsettled and settled conversations, with each row
+   deep-linking out. App Home also becomes the place to view running automations
+   later. Slice 3 temporarily omits server-explicit settled rows unless a pending
+   approval or user-input blocker must remain visible.
 3. **Deep links everywhere**: every Slack message the bot posts carries "Open in T3".
 
 **Rejected extension — do not build:** making Slack a 2-way live client (steering
 mid-turn, approval/question relays, streamed output, settle mirroring). This was
 considered and deliberately rejected: it means rebuilding a parallel client-runtime
 in Block Kit, and the hosted web UI has strictly better affordances (diffs,
-checkpoints, approvals). Slack's job is to get you *to* the conversation; all
+checkpoints, approvals). Slack's job is to get you _to_ the conversation; all
 interaction past thread-start happens in the web UI via deep link.
 
 **Future (explicitly parked, not descoped):** read-only in-Slack conversation view —
 a Slack modal (`views.open`) rendering the conversation read-only, Jira-issue-in-Slack
 style. Cheap once App Home exists (same subscribe→render-BlockKit plumbing).
 Steering still happens only via the deep link.
+
+### 2a. Slack invocation modes and custom setup
+
+There are two start modes:
+
+- **Standard slash command / ordinary mention**: start immediately in the
+  configured workspace project, in its current checkout/base available folder,
+  with the configured or project-default model selection. No T3 worktree is
+  created and no setup modal is shown. This is the common team-wide path for
+  cross-repository questions and lightweight work.
+- **Custom slash/mention entry point and direct-message setup**: collect the
+  target before creating the T3 thread. A mention event cannot open a modal
+  directly, so a custom mention may first post a Configure button; this is Slack
+  transport UX, not durable ingress state.
+
+The custom setup has exactly FOUR selectors:
+
+1. **Project**
+2. **Workspace** — `Current` or `New worktree`
+3. **Branch** — always present; for Current, the branch and its existing checkout
+   or worktree location; for New worktree, the base branch
+4. **Model / effort** — one flattened selector containing only valid combinations
+   from each live model's own capability descriptors
+
+The fourth selector is deliberately a ragged Model × Effort matrix, flattened into
+one Slack control. Models are NOT assumed to share an effort set. Models without
+an effort control get one default entry. Other model options retain their T3
+defaults in v1.
+
+Project selection determines which workspace and branch targets are available.
+Workspace and Branch are coupled controls: a branch ref whose `worktreePath`
+points outside the project's root checkout represents an existing worktree.
+With Workspace set to `Current`, selecting that ref continues in its exact
+worktree path rather than trying to check the branch out in the project root. A
+ref without a secondary worktree path targets the project's current checkout.
+Branch options carry `current` / `worktree` badges so the location remains visible
+without adding another Workspace option or changing its label. `New worktree`
+makes Branch the base branch. The selected path is re-resolved from live ref data
+on submission; branch name alone is not sufficient target identity. Workspace
+selection changes the meaning of Branch, but never hides it. The initiating Slack
+text is the prompt; it may be carried into or made editable in setup without
+becoming a T3 turn before submission.
+
+Once the T3 conversation has started, its Slack origin becomes link-only. Ordinary
+follow-up Slack messages MUST NOT dispatch another T3 turn, steer the provider, or
+relay conversation content. Retried delivery of the same invocation returns the
+same T3 link. A new explicit invocation is a new conversation.
+
+### 2b. Slack authorization and cost posture
+
+v1 has NO per-Slack-user, channel, or team authorization layer beyond access to the
+installed Slack app. The backing provider may be a shared cross-team account or
+API-token-funded harness; all authorized Slack app users may invoke it. Cost
+control is initially an organizational agreement/process concern. Add technical
+allowlists, quotas, or role checks only if that proves insufficient.
+
+The T3 service credential remains least-privilege (`orchestration:read` and
+`orchestration:operate`) even though Slack-user authorization is intentionally
+open.
+
+### 2c. Slack delivery guarantee
+
+Delivery is **idempotent and best-effort**, not transactionally guaranteed across
+Slack and T3:
+
+- Acknowledge Slack promptly, then use deterministic T3 IDs and thread snapshots to
+  reconcile absent / partially-started / already-started invocations.
+- Slash commands and bot-owned DM/setup roots correlate naturally to one T3
+  conversation. Mentions inside an existing Slack thread correlate by the specific
+  mention event/message identity, not the parent thread root.
+- If dispatch times out, inspect T3 before reporting uncertainty. If T3 itself is
+  unavailable and the result cannot be verified, reply with a friendly
+  "couldn't verify" message plus the T3 base URL.
+- A process crash after Slack acknowledgement but before dispatch/result posting
+  can still strand a visible starting state because the integration owns no
+  durable inbox/outbox. This is an accepted v1 limitation; T3 remains available as
+  the recovery directory. Re-open the no-durable-client-state decision if
+  guaranteed delivery becomes a requirement.
+
+### 2d. Slack App Home directory
+
+Slack publishes App Home per user, but every user receives the SAME team-wide T3
+directory. On every `app_home_opened`, render and publish a fresh view for that
+event's user ID. An in-memory set of users opened during the current process may
+receive debounced live republishing; it is safe to lose that set on restart.
+
+The view contains:
+
+1. A top-level link to the T3 web app.
+2. **Unsettled conversations** first, because they are ongoing.
+3. **Settled conversations** second, filling only the remaining row budget.
+4. A link to T3 when additional conversations were filtered out.
+
+For configured capacity `X`:
+
+```text
+visible = unsettled.slice(0, X)
+remaining = X - visible.length
+visible += settledNewestFirst.slice(0, remaining)
+```
+
+Therefore unsettled rows always displace settled rows, and the oldest settled rows
+are filtered first. If unsettled alone reaches `X`, no settled rows are shown.
+Archived conversations are omitted. Every displayed conversation deep-links to
+T3; Slack is a concise directory, not a complete archive.
+
+Slack allows 100 blocks in Home and modal views. The setup modal is far below that
+limit. The parked read-only conversation modal will need truncation/pagination if
+implemented later.
 
 ### 3. Slack's Agents View (agent mode): plain bot v1; NOT needed for the read-only view
 
@@ -189,8 +304,10 @@ blocks settle/snooze. (Background only; steering from Slack is descoped per #2.)
   features degrade gracefully to absent).
 - Worktrees are optional at every layer — omit `prepareWorktree` and the thread runs
   directly in `workspaceRoot`.
-- **Jira ingress targets only the workspace project.** Slack defaults to it too but
-  exposes project knobs.
+- **Jira ingress targets only the workspace project.** Standard Slack slash
+  commands/mentions also target it in Current checkout mode. Slack custom/DM setup
+  exposes project, Current/New worktree, branch, and Model/Effort knobs per #2a.
+  An existing worktree is selected through its worktree-backed branch.
 - **Steering rule for workspace threads**: when real work spans repos, the AGENT
   creates branch→worktree per repo it touches (instructed via a workspace-level
   CLAUDE.md/AGENTS.md). T3-level worktree management stays per-repo-project.
@@ -257,8 +374,8 @@ automation management) is intentionally undesigned beyond the notes below.
 - **The durable state is ONE table, one row per automation** — no job queue, no
   run-history table, no retry state. Sketch:
   `{ id, name, prompt, projectId, modelSelection, runtimeMode, interactionMode,
-  worktreePolicy, setupScriptPolicy, schedule (cron), enabled, lastScheduledFor,
-  lastThreadId, lastOutcome }`. The T3 thread IS the execution record (messages,
+worktreePolicy, setupScriptPolicy, schedule (cron), enabled, lastScheduledFor,
+lastThreadId, lastOutcome }`. The T3 thread IS the execution record (messages,
   activities, turn state all live in the event store); the row only adjudicates
   schedule occurrences and links to what they produced. Loops/graphs later grow
   FROM this row (add chaining/kind fields), not around it.
@@ -285,10 +402,10 @@ automation management) is intentionally undesigned beyond the notes below.
 
 ### 10. Task/agent taxonomy (the 2×2)
 
-| | Short-horizon task | Long-horizon task |
-|---|---|---|
-| **Ephemeral agent** | dep bump, triage | nightly migration, then gone |
-| **Durable agent** | standing debug thread | multi-day feature build |
+|                     | Short-horizon task    | Long-horizon task            |
+| ------------------- | --------------------- | ---------------------------- |
+| **Ephemeral agent** | dep bump, triage      | nightly migration, then gone |
+| **Durable agent**   | standing debug thread | multi-day feature build      |
 
 Durability lives in the THREAD (event log in SQLite), not the checkout — the
 worktree is a scratchpad. Ephemeral agents get worktrees, cleaned up by RETENTION,
@@ -323,26 +440,41 @@ per stack (go, php7, php8, node → ad-hoc dev containers)? repo transport (scp?
 Working assumptions: NO t3 server inside sandboxes (sandbox is a tool the agent
 wields via Daytona MCP, not an environment); with strict worktree cleanup,
 sandboxes aren't really necessary for the current design; sandboxing earns its keep
-as a *trust boundary for ingress* (e.g. dependency-update automation running
+as a _trust boundary for ingress_ (e.g. dependency-update automation running
 `npm install && npm test` on ticket-chosen code), if anywhere.
 
-### 12. Auth: basic auth in front of the VM first; Entra ID later
+### 12. Auth: anonymous portal identity in development; edge OIDC for production
 
-- **Now**: external basic-auth proxy in front of the VM. Requires ZERO server
-  changes — the existing pairing flow works through a proxy as-is.
-- **Later — Entra ID (OIDC)**: NOTE: no Entra/OIDC support exists upstream — this
-  is entirely OUR addition. Verified contained: add `"oidc-entra"` to the
-  bootstrap-methods union in `packages/contracts/src/auth.ts`, add one endpoint
-  (`POST /api/auth/oidc-session`) that validates the Entra id_token (JWKS, issuer,
-  audience) then walks the existing `createBrowserSession` codepath (SessionStore +
-  cookie fully reusable), plus a login-button branch in the webapp. Two small
-  contract edits + one handler + one webapp branch.
-- **Parked**: proxy-trusted-header mode (synthesize a session from
-  `X-Forwarded-User` in `authenticateRequest`) — the only option that MODIFIES a hot
-  upstream codepath; not needed while pairing works through basic auth. Revisit only
-  if pairing-through-proxy proves annoying.
-- No per-user distinction inside T3 — team-shared conversations are the norm;
-  proxy/SSO answers "are you on the team", that's sufficient.
+- **Development**: the public reverse proxy injects a shared T3 bearer credential with only
+  `orchestration:read` and `orchestration:operate`. Browsers see no T3 pairing or
+  login prompt, while T3's existing session and RPC scope checks remain active.
+  The T3 listener stays on loopback/private networking; only the HTTPS proxy is
+  public. This requires ZERO server changes and is suitable for the dev-app phase,
+  but it is not the production access policy.
+- **Slack sibling process**: use an internal loopback HTTP/WS URL and its own narrow
+  T3 bearer credential for API traffic, plus the public proxy URL for deep links.
+  Do not reuse the portal credential: independent credentials keep rotation and
+  revocation boundaries small.
+- **Credential rotation**: T3 bearer sessions currently expire after 30 days.
+  Rotate the Slack and portal credentials before expiry, atomically replace their
+  secret files, reload/reconnect, verify, then revoke the previous sessions.
+  Manual pairing and narrow token exchange over loopback is the recovery path if a
+  timer misses the expiry window. This is credential rotation, not a refresh-token
+  flow.
+- **Production graduation gate — Entra ID (OIDC)**: enforce OIDC at the same
+  reverse-proxy boundary before graduating the Slack app and conversation portal
+  from development to production. Continue injecting the narrow shared portal
+  credential after successful login.
+  No T3, Slack, deep-link, or WebSocket changes are required. The gateway can audit
+  the employee identity; T3 deliberately continues to see one team portal
+  principal.
+- **Only if requirements change**: native T3 OIDC or proxy-trusted user headers are
+  needed only if T3 itself must distinguish users for authorization/auditing.
+  Thread-scoped capabilities are optional and only justified if a link recipient
+  must not see other environment conversations; UI filtering alone is not an
+  authorization boundary.
+- Deployment and rotation steps are in
+  [Deploying the Slack conversation portal](slack-conversation-portal-deployment.md).
 
 ### 13. The server serves the webapp itself
 
@@ -369,9 +501,11 @@ scheduler, #9).
    extracting the bootstrap workflow from `ws.ts` into a shared
    `ThreadBootstrapService` (mechanical, behavior-preserving, plausibly
    upstreamable — see #1a).
-3. **Entra ID** — two closed-union contract edits + additive handler/webapp branch.
-4. **Proxy-trusted auth** — modifies `authenticateRequest` (hot upstream path).
-   Parked per #12.
+3. **Anonymous portal + edge OIDC** — proxy-only deployment; zero T3 server-core
+   changes.
+4. **Optional native identity/thread authorization** — modifies T3 auth and read
+   boundaries; deliberately deferred unless per-user or per-thread isolation is
+   required.
 
 ## Boundary summary (the one-paragraph version)
 
@@ -412,36 +546,87 @@ scheduler, #9).
 
 ---
 
-## Delivery shape (Jeroen's priority order, 2026-07-29)
+## Delivery shape (implementation order, updated 2026-08-03)
 
-1. **Slack integration** (highest clarity)
-2. **Automation server engine** (#9 backend half)
-3. **Bootstrap extraction** (`ThreadBootstrapService`, #1a) — minimal upstream
-   touch: ~200 lines move out of `ws.ts` into a new service file, call-site
-   replaced, no contract/decider/behavior changes. **Milestone 1 = 1 + 3.**
-4. **Automation webapp UI** — folded into #9 as one workstream with the engine;
-   scope/refine at implementation start.
-5. **Jira integration** — refine as first step when picked up.
-6. **Authentication** — basic-auth proxy now; Entra later (entirely our addition).
+This is an implementation dependency order, not the chapter order of this design.
+The automation sequence is the fixed next workstream. Its later follow-ons may be
+reordered as implementation evidence changes their cost or value. Jira remains the
+default last feature because its product shape is unresolved and automations or
+loops may absorb much of its value.
+
+0. **Slack ingress foundation — implemented.** Slices 1–4 cover shared ingress,
+   standard and custom starts, App Home, and operations. Updating and exercising
+   the installed dev Slack app is rollout work, not the next feature-development
+   slice.
+1. **Automation definition and management.** Scope the intentionally open product
+   details, then build the automation contracts, single-row durable entity,
+   persistence, CRUD commands, and webapp management UI as one vertical
+   workstream. An automation must explicitly define its prompt, project,
+   provider/effort, cron target, runtime and interaction modes, worktree policy,
+   and setup-script policy before it can be enabled.
+2. **Reliable automation execution foundation.** Harden the already-extracted
+   `ThreadBootstrapService` so new-worktree execution is phase-resumable. A retry
+   after interruption must inspect the existing thread, worktree, setup activity,
+   and command receipts, then continue only the missing phase instead of creating
+   duplicate worktrees, rerunning completed setup, or stranding the turn. Prefer
+   deriving progress from existing durable state over adding another workflow
+   store.
+3. **Automation scheduler and occurrence reconciliation.** Schedule enabled
+   automations in-process, adjudicate each occurrence through `lastScheduledFor`,
+   use deterministic occurrence ThreadIds, recover safely after restart, and
+   implement the locked `skipped-active` overlap policy without a job queue or run
+   table. The T3 thread remains the execution record.
+4. **Automation worktree retention and pruning.** Implement the safety policy in
+   #10a before unattended ephemeral-worktree schedules are considered ready:
+   retention windows, ownership and activity checks, safe path validation, clean
+   worktree enforcement, `git worktree remove`, visible `prune-blocked` outcomes,
+   and preserved thread/branch/checkpoint history.
+5. **Automation visibility and operational controls.** Surface running, completed,
+   failed, and skipped outcomes with links to their threads in the webapp; make
+   enable/disable and failure recovery clear; and let active automation threads
+   appear naturally in Slack App Home. Web and desktop are required, with an
+   explicit mobile-surface decision before completion.
+6. **Automation loops.** Once ordinary scheduled runs are reliable, allow an
+   automation occurrence to seed itself from `lastThreadId`. Define stop,
+   disable, failure, and context-boundary behavior before considering graphs or
+   decision trees.
+7. **Remaining Slack product improvements.** Restore the intended newest-settled
+   App Home tail as a small completion patch, then consider the parked read-only
+   conversation modal. Slack remains ingress + directory; steering, approvals,
+   and live output stay in T3.
+8. **Conditional infrastructure.** Add Daytona or stronger isolation, durable
+   Slack inbox/outbox delivery, or native per-user T3 authorization only when a
+   concrete requirement justifies them.
+9. **Jira integration — last by default.** When it is eventually picked up, first
+   decide whether Jira should remain an explicit symmetric ingress action or
+   become an automation/loop trigger; do not implement an adapter before that
+   product decision.
+
+**Production graduation is a gate, not backlog item 10.** The dev Slack app and
+anonymous shared-credential portal may be used while the work above proceeds, but
+they must not graduate to production until Entra ID/OIDC is enforced at the proxy
+boundary. That work can move earlier whenever production graduation becomes the
+next objective; it does not otherwise block dev feature implementation.
+
+Slack implementation details and acceptance criteria live in
+`.plans/21-slack-ingress-client.md`; this document remains the authoritative
+product/design boundary.
 
 ---
 
-## Open questions (updated 2026-07-30)
+## Open questions (updated 2026-07-31)
 
-1. **Where does the Slack module run?** — RESOLVED (2026-07-30): sibling process on
-   the VM, a plain HTTP/WS client of the server (consistent with the
-   stateless-client model in #1/#1a; zero upstream coupling). WS dispatch when full
-   bootstrap is needed; plain HTTP commands for workspace-project threads (#1a).
-2. **Jira integration shape**: symmetric ingress trigger vs. re-scoped as an
+Slack module placement, invocation modes, setup controls, delivery posture, App
+Home layout, authorization posture, and credential rotation are RESOLVED above.
+Remaining questions belong to later workstreams:
+
+1. **Jira integration shape**: symmetric ingress trigger vs. re-scoped as an
    automation/loop candidate (Jeroen reconsidering). DEFERRED — answer when the
    Jira workstream is picked up; refine as its first step (see Delivery shape).
-3. **Daytona**: DEFERRED — pinned per #11; not part of anything we're delivering
+2. **Daytona**: DEFERRED — pinned per #11; not part of anything we're delivering
    right now.
-4. **Automation webapp UI + engine scoping**: DEFERRED — folded into one workstream
+3. **Automation webapp UI + engine scoping**: DEFERRED — folded into one workstream
    (#9); placement, CRUD flow, and contract commands intentionally undesigned —
    scope at implementation start.
-5. **Workspace-project ergonomics**: prompt template / CLAUDE.md content for the
+4. **Workspace-project ergonomics**: prompt template / CLAUDE.md content for the
    branch→worktree-per-repo steering rule. Still open.
-6. **App Home layout details**: running/awaiting/settled buckets are conceptually
-   settled (the shell stream already carries all three signals). NEXT UP — work out
-   the visual/layout details next.
