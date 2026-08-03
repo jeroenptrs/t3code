@@ -1,7 +1,8 @@
 # Slack / Jira Ingress & Automations — Design Decisions
 
-Status: **design locked, no code written yet** (as of 2026-07-29; Slack ingress,
-custom setup, delivery posture, and App Home behavior locked 2026-07-31).
+Status: **design locked; Slack implemented; automation implementation planned**
+(as of 2026-08-03; Slack ingress, custom setup, delivery posture, and App Home
+behavior locked 2026-07-31).
 Owner: Jeroen. This document records decisions from the design conversation so future
 sessions/agents don't re-litigate them or re-invent descoped features.
 
@@ -365,20 +366,24 @@ are inherited by every thread on that instance.
 No scheduling exists upstream (verified: only internal housekeeping pollers).
 Automations cannot be a pure client (triggers must originate work durably), so
 this is additive server code plus its webapp configuration UI, designed and built
-together. **Status: explicitly flagged for scoping/refinement at implementation
-start** — the webapp surface (placement, CRUD flow, contract commands for
-automation management) is intentionally undesigned beyond the notes below.
+together. **Status: implementation planned** — the webapp surface, CRUD flow,
+contract commands, downstream namespace, and rollout gates are specified in
+`.plans/22-automation-v1.md`.
 
 - v1 automation = **user prompt + project + provider/effort + cron target**, plus
   explicit fields (or locked global defaults) for **runtimeMode, interactionMode,
   worktree policy, and setup-script policy** — the scheduler must not inherit
   ambiguous execution semantics.
-- Shape: `Automation` entity + commands in contracts (new file mirroring
-  orchestration.ts), `AutomationScheduler` layer (Effect `Schedule`, house style),
-  reactor dispatching via the extracted bootstrap service (#1a "Resolution by
-  trigger kind"). No decider changes.
+- Shape: user-facing **Automation**, internally a `ScheduledAutomation` entity +
+  `scheduledAutomation.*` commands in contracts,
+  `ScheduledAutomationScheduler` layer (Effect `Schedule`, house style), reactor
+  dispatching via the extracted bootstrap service (#1a "Resolution by trigger
+  kind"). No decider changes.
 - **The durable state is ONE table, one row per automation** — no job queue, no
-  run-history table, no retry state. Sketch:
+  run-history table, no retry state. The physical downstream-owned table is
+  `local_scheduled_automations_v1`, not a generic `automations` table, so a future
+  upstream automation feature cannot silently collide with an incompatible SQLite
+  schema. Sketch:
   `{ id, name, prompt, projectId, modelSelection, runtimeMode, interactionMode,
 worktreePolicy, setupScriptPolicy, schedule (cron), enabled, lastScheduledFor,
 lastThreadId, lastOutcome }`. The T3 thread IS the execution record (messages,
@@ -403,8 +408,10 @@ lastThreadId, lastOutcome }`. The T3 thread IS the execution record (messages,
 - App Home surfaces running automations (they're just threads; origin is visible
   via the deterministic ThreadId convention per #1a until/unless a contract field
   exists; `lastOutcome` gives skip visibility).
-- **Unlike Slack/Jira ingress, automations DO own durable state** (the
-  `automations` table above) — that state is T3-server-owned, never client-owned.
+- **Unlike Slack/Jira ingress, automations DO own durable state** (the namespaced
+  table above) — that state is T3-server-owned, never client-owned. Persistence is
+  hidden behind `ScheduledAutomationRepository` so a future upstream feature can
+  import/cut over without dual-scheduling definitions.
 
 ### 10. Task/agent taxonomy (the 2×2)
 
@@ -527,10 +534,11 @@ scheduler, #9).
 
 ## Verified codebase facts (for future agents; re-verify before relying on)
 
-- No Slack integration exists anywhere in the repo (only a comment URL in
-  `CursorAcpExtension.ts`); no `@slack/*` deps.
-- Server is Effect-TS; HTTP router in `apps/server/src/http.ts`; WS RPC in
-  `apps/server/src/ws.ts`; orchestration is event-sourced CQRS:
+- Slack ingress now exists in `apps/slack`; shared external-ingress resolution,
+  identity, recovery, and transport live in `packages/integration-runtime`.
+- Server is Effect-TS; orchestration HTTP routes live in
+  `apps/server/src/orchestration/http.ts`; WS RPC lives in `apps/server/src/ws.ts`;
+  orchestration is event-sourced CQRS:
   `OrchestrationEngineService.dispatch` → events (SQLite) → projections.
 - Key contracts: `packages/contracts/src/orchestration.ts` (ThreadTurnStartCommand,
   bootstrap ~L660-706), `auth.ts` (closed unions ~L50, L69), `model.ts`
@@ -539,8 +547,11 @@ scheduler, #9).
   client-chosen deterministic IDs are valid (`packages/contracts/src/baseSchemas.ts`).
 - Command receipts dedupe re-dispatched accepted `commandId`s
   (`OrchestrationEngine.ts` + `OrchestrationCommandReceipts`).
-- Bootstrap workflow (`thread.create`→worktree→setup→turn) exists ONLY in the WS
-  dispatcher; HTTP dispatch passes commands raw and ignores `bootstrap`.
+- Bootstrap workflow (`thread.create`→worktree→setup→turn) has been extracted to
+  `ThreadBootstrapService` and the WS dispatcher delegates to it. HTTP dispatch
+  still passes commands raw and ignores `bootstrap`. The extracted service is not
+  yet phase-resumable: it uses random phase command IDs and can delete a partial
+  thread after a later bootstrap failure.
 - `thread.create`/`thread.created` have NO metadata/origin field.
 - `GET /api/orchestration/threads/:threadId` → `OrchestrationThreadDetailSnapshot`
   incl. messages; 404 `thread_not_found` when absent.
@@ -615,8 +626,9 @@ boundary. That work can move earlier whenever production graduation becomes the
 next objective; it does not otherwise block dev feature implementation.
 
 Slack implementation details and acceptance criteria live in
-`.plans/21-slack-ingress-client.md`; this document remains the authoritative
-product/design boundary.
+`.plans/21-slack-ingress-client.md`. The sequential automation plan and its
+truth-based acceptance criteria live in `.plans/22-automation-v1.md`; this
+document remains the authoritative product/design boundary.
 
 ---
 
@@ -631,8 +643,10 @@ Remaining questions belong to later workstreams:
    Jira workstream is picked up; refine as its first step (see Delivery shape).
 2. **Daytona**: DEFERRED — pinned per #11; not part of anything we're delivering
    right now.
-3. **Automation webapp UI + engine scoping**: DEFERRED — folded into one workstream
-   (#9); placement, CRUD flow, and contract commands intentionally undesigned —
-   scope at implementation start.
+3. **Automation webapp UI + engine scoping**: PLANNED — the recommended v1
+   placement, CRUD flow, contract commands, scheduler reconciliation, and rollout
+   gates are specified in `.plans/22-automation-v1.md`. Re-open the setup-script,
+   active/active, mobile-management, or run-history exclusions explicitly if they
+   become first-release requirements.
 4. **Workspace-project ergonomics**: prompt template / CLAUDE.md content for the
    branch→worktree-per-repo steering rule. Still open.

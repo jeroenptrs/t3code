@@ -13,3 +13,4 @@
 19. `19-version-control-phase-1-vcs-driver-foundation.md`
 20. `20-version-control-phase-2-source-control-provider-foundation.md`
 21. `21-slack-ingress-client.md`
+22. `22-automation-v1.md`
