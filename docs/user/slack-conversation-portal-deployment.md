@@ -7,9 +7,10 @@ Slack App Home uses the same environment-wide boundary: it lists active conversa
 project and links `View all` to the environment root. Do not install the Slack app in a workspace
 whose members should only discover one configured project.
 
-The public browser is anonymous, but T3 itself does not run without authentication. A reverse proxy
-holds a shared, narrowly scoped bearer credential and adds it to requests sent to T3. This preserves
-T3's existing scope checks and leaves one boundary where OIDC can be enabled later.
+During dev-app testing the public browser may be anonymous, but T3 itself does not run without
+authentication. A reverse proxy holds a shared, narrowly scoped bearer credential and adds it to
+requests sent to T3. This preserves T3's existing scope checks. Before production graduation, Entra
+ID/OIDC must be enforced at this same proxy boundary.
 
 ```text
 browser -> HTTPS reverse proxy -> T3 on 127.0.0.1:3773
@@ -245,12 +246,13 @@ Portal sessions currently expire after 30 days. Rotate before expiry:
 Keep a reminder or system timer ahead of expiry. Manual pairing and exchange over loopback is the
 recovery path if rotation is missed.
 
-## Add OIDC later
+## Require OIDC for production graduation
 
-Add Entra ID or another OIDC provider at the reverse-proxy boundary. `oauth2-proxy`, nginx
-`auth_request`, or an equivalent gateway can require the organization login before requests reach
-the locations above. After successful OIDC authentication, continue injecting the same narrow T3
-portal credential.
+The anonymous portal configuration above is for dev-app testing. Before graduating the Slack app
+and conversation portal to production, add Entra ID/OIDC at the reverse-proxy boundary.
+`oauth2-proxy`, nginx `auth_request`, or an equivalent gateway can require the organization login
+before requests reach the locations above. After successful OIDC authentication, continue injecting
+the same narrow T3 portal credential.
 
 This transition changes the public access policy without changing T3, Slack, deep links, or the
 browser/WebSocket flow. The gateway can log the authenticated employee, while T3 continues to see
