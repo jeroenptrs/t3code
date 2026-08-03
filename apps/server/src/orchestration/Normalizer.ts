@@ -47,6 +47,15 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
   Effect.gen(function* () {
     const receivedAt = DateTime.formatIso(yield* DateTime.now);
     const canonicalCommand = canonicalizeClientCommandTimestamps(command, receivedAt);
+    if (
+      canonicalCommand.type === "thread.turn.start" &&
+      canonicalCommand.bootstrap?.prepareWorktree?.targetPath !== undefined
+    ) {
+      return yield* new OrchestrationDispatchCommandError({
+        message:
+          "Explicit bootstrap worktree paths are not supported until deterministic bootstrap validation is enabled.",
+      });
+    }
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const serverConfig = yield* ServerConfig;

@@ -2,10 +2,18 @@
 
 ## Status
 
-Implementation plan. No automation contracts, persistence, scheduler, or UI exist
-yet. The shared `ThreadBootstrapService` required by this workstream already
-exists, but it is not phase-resumable and must be hardened before a scheduler can
-use it safely.
+Implementation in progress. Work package 0 is implemented and verified: the
+scheduled-automation contracts, deterministic occurrence fixtures, five-field
+cron semantics, shared queued-turn truth, active-run predicate, and optional
+bootstrap target-path wire shape with fail-closed pre-WP3 handling now exist.
+Persistence, scheduler, and UI work have not started. The shared
+`ThreadBootstrapService` required by this workstream already exists, but it is not
+phase-resumable and must be hardened before a scheduler can use it safely.
+
+The expanded WP0 acceptance and regression suites and affected
+contract/server/client-runtime typechecks pass. A further review identified
+case-folded ownership-key and alternate-ingress concerns; both were reproduced,
+fixed, and regression-tested. The WP0 exit gate has passed. WP1 has not started.
 
 The product boundary in
 `docs/user/slack-jira-ingress-design.md` remains authoritative. This plan resolves
@@ -161,6 +169,12 @@ interface ScheduledAutomation {
 implementation. `timeZone` is a required IANA time-zone identifier. The server,
 not the browser, parses both and returns a typed validation error.
 
+`ScheduledAutomationId` is a 1–64 character ASCII identifier beginning with an
+alphanumeric character and containing only letters, digits, `.`, `_`, and `-`.
+That bound keeps its lowercase-hex ownership key within Git-ref and filesystem
+component limits. Lowercase hex is deliberate: ownership keys must remain distinct
+after case folding on common Windows and macOS filesystems.
+
 `ModelSelection`, `RuntimeMode`, and `ProviderInteractionMode` reuse the existing
 orchestration contracts. Provider/model/options are validated against the live
 server catalog when a definition is enabled and again when an occurrence is
@@ -213,7 +227,8 @@ below.
 An occurrence is identified by `(automationId, scheduledFor)`, where
 `scheduledFor` is the UTC instant selected by the parsed cron schedule. Derive the
 thread, message, bootstrap command, and bootstrap phase IDs deterministically from
-that tuple.
+that tuple. Identity derivation rejects non-absolute timestamps and canonicalizes
+equivalent instant spellings before encoding them.
 
 ```text
 t3sa:v1:<automation-key>:<occurrence-key>:thread
@@ -228,6 +243,11 @@ instants are not run and do not become rows. Record their count in the latest
 outcome for operator visibility. This prevents a long-offline laptop or VM from
 starting a backlog storm while preserving a truthful cursor. A newly enabled or
 re-enabled definition waits for its next cron instant.
+
+The newest occurrence is selected from the forward `Cron.next` sequence. Do not
+use `Cron.prev` or raw local-time matching: they are not inverse operations around
+daylight-saving gaps and repeated hours. Library failures, including impossible
+calendar expressions, remain in the typed error channel.
 
 ### Claim and reconciliation protocol
 
@@ -273,6 +293,8 @@ the scheduler.
 
 The durable row records occurrence adjudication. `ScheduledAutomationOutcome` is
 a tagged value containing `scheduledFor`, `observedAt`, and `coalescedCount`, plus:
+`coalescedCount` is the number of eligible earlier occurrences discarded by
+`latest-only`, so it is zero when exactly one occurrence is due.
 
 - `starting` — the occurrence is claimed and reconciliation is incomplete;
 - `started` — the deterministic turn-start command was accepted;
@@ -363,9 +385,11 @@ work makes them expensive to change.
   contracts package.
 - Define branded `ScheduledAutomationId`, definition/outcome/read-view schemas,
   command union, errors, and `scheduledAutomation.*` RPC payload schemas.
-- Extend the existing bootstrap prepare-worktree contract with an optional,
-  server-validated target path. Existing web/Slack clients omit it; automation
-  uses it to stay inside the deterministic ownership namespace.
+- Extend the existing bootstrap prepare-worktree contract with an optional target
+  path. Existing web/Slack clients omit it, and the server rejects it until WP3
+  validates and consumes it. Automation then uses it to stay inside the
+  deterministic ownership namespace; WP0 only locks the wire shape and the
+  fail-closed interim behavior.
 - Add pure ID derivation and cron validation/next-occurrence helpers in the
   smallest shared server/contract boundary that does not pull server runtime code
   into clients.
@@ -381,18 +405,27 @@ work makes them expensive to change.
 - Schema tests accept every existing `RuntimeMode` and
   `ProviderInteractionMode`, preserve a ragged `ModelSelection.options`, and
   reject empty name/prompt, invalid cron, invalid timezone, and unsupported setup
-  policy.
+  policy. Management command drafts preserve invalid cron/timezone strings until
+  server validation returns stable `schedule.cron` / `schedule.timeZone` fields.
 - Snapshot tests prove the same `(automationId, scheduledFor)` always yields the
   same ThreadId, MessageId, phase CommandIds, branch, and worktree path, while two
-  different occurrences yield different values.
+  different occurrences yield different values. Equivalent spellings of one UTC
+  instant yield identical identities, and the maximum valid automation ID stays
+  within Git-ref and filesystem component limits. Distinct valid automation IDs
+  remain distinct after filesystem case folding.
 - ID snapshots contain neither prompt text nor model/provider credentials.
 - Cron fixtures cover UTC, a non-UTC zone, a daylight-saving gap, a repeated
-  daylight-saving hour, and multiple missed occurrences under `latest-only`.
+  daylight-saving hour, cursor-present restart cases, multiple missed occurrences
+  under `latest-only`, and impossible calendar expressions returning typed errors
+  rather than defects.
 - The active predicate's table covers every session status, all four latest-turn
   states, pending approval, pending input, a fresh queued start, an expired queued
   start, missing thread, settled thread, and completed-but-unsettled thread.
 - The completed-but-unsettled fixture is inactive, proving settlement is not used
   as overlap truth.
+- Client/HTTP normalization and `ThreadBootstrapService` both reject an explicit
+  bootstrap `targetPath` until WP3 validates and consumes it; tests prove the
+  rejection happens before attachment writes or orchestration dispatch.
 
 ### Verification
 
