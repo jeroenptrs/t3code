@@ -63,28 +63,34 @@ have opened it during the current Slack process lifetime.
 
 The sibling process reads:
 
-| Variable                    | Purpose                                                |
-| --------------------------- | ------------------------------------------------------ |
-| `SLACK_APP_TOKEN`           | Socket Mode app-level token                            |
-| `SLACK_BOT_TOKEN`           | Slack bot token                                        |
-| `T3_HTTP_URL`               | Internal T3 HTTP origin; WebSocket URLs derive from it |
-| `T3_PUBLIC_URL`             | Public origin used for links returned to Slack         |
-| `T3_BEARER_CREDENTIAL_FILE` | File containing the narrow T3 bearer credential        |
-| `T3_PROJECT_ID`             | Project used by standard starts                        |
-| `T3_MODEL_SELECTION`        | Optional JSON-encoded complete model selection         |
-| `SLACK_HEALTH_HOST`         | Health listener host; defaults to `127.0.0.1`          |
-| `SLACK_HEALTH_PORT`         | Health listener port; defaults to `3210`               |
+| Variable                            | Purpose                                                |
+| ----------------------------------- | ------------------------------------------------------ |
+| `SLACK_APP_TOKEN`                   | Socket Mode app-level token                            |
+| `SLACK_BOT_TOKEN`                   | Slack bot token                                        |
+| `T3_HTTP_URL`                       | Internal T3 HTTP origin; WebSocket URLs derive from it |
+| `T3_PUBLIC_URL`                     | Public origin used for links returned to Slack         |
+| `T3_BEARER_CREDENTIAL_FILE`         | File containing the narrow T3 bearer credential        |
+| `T3_PROJECT_ID`                     | Project used by standard starts                        |
+| `T3_MODEL_SELECTION`                | Optional JSON-encoded complete model selection         |
+| `SLACK_HEALTH_HOST`                 | Health listener host; defaults to `127.0.0.1`          |
+| `SLACK_HEALTH_PORT`                 | Health listener port; defaults to `3210`               |
+| `T3_CREDENTIAL_EXPIRY_WARNING_DAYS` | Bearer-expiry warning window; defaults to 10 days      |
 
 The T3 credential requires only `orchestration:read` and
 `orchestration:operate`. The process rereads the credential file for every new
-authenticated session so an atomic credential-file replacement is picked up.
+authenticated session. The checked-in systemd unit uses `LoadCredential`, whose
+protected runtime copy refreshes on service restart; the rotation job performs
+that restart after atomically replacing the source file.
+For production service, timer, rotation, recovery, and alerting instructions,
+see the [Slack ingress operations runbook](../../operations/slack-ingress.md).
 
 To make the linked T3 conversation UI available without a T3 pairing prompt, deploy the public web
 origin behind a reverse proxy that supplies a separate narrow portal credential. See
 [Deploying the Slack conversation portal](../../integrations/slack-conversation-portal-deployment.md).
 
 `/live` reports whether the process is alive. `/ready` becomes successful after
-Slack Socket Mode connects, T3 authentication and scopes validate,
+Slack Socket Mode connects, T3 authentication validates with exactly the two
+orchestration scopes,
 `server.getConfig` succeeds, and the configured project/default model resolves.
 
 The Slack manifest is maintained in `apps/slack/manifest.yaml`. It enables Socket

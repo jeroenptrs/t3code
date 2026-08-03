@@ -17,6 +17,7 @@ export interface SlackAppConfig {
   readonly modelSelection: ModelSelectionType | null;
   readonly healthHost: string;
   readonly healthPort: number;
+  readonly credentialExpiryWarningDays: number;
 }
 
 const required = (env: NodeJS.ProcessEnv, name: string): string => {
@@ -46,6 +47,11 @@ export function decodeSlackAppConfig(env: NodeJS.ProcessEnv): SlackAppConfig {
   if (!Number.isInteger(healthPort) || healthPort < 1 || healthPort > 65_535) {
     throw new Error("SLACK_HEALTH_PORT must be an integer from 1 through 65535.");
   }
+  const credentialExpiryWarningDaysRaw = env.T3_CREDENTIAL_EXPIRY_WARNING_DAYS?.trim() || "10";
+  const credentialExpiryWarningDays = Number(credentialExpiryWarningDaysRaw);
+  if (!Number.isInteger(credentialExpiryWarningDays) || credentialExpiryWarningDays < 1) {
+    throw new Error("T3_CREDENTIAL_EXPIRY_WARNING_DAYS must be a positive integer.");
+  }
   return {
     slackAppToken: required(env, "SLACK_APP_TOKEN"),
     slackBotToken: required(env, "SLACK_BOT_TOKEN"),
@@ -56,5 +62,6 @@ export function decodeSlackAppConfig(env: NodeJS.ProcessEnv): SlackAppConfig {
     modelSelection: modelSelection(env),
     healthHost: env.SLACK_HEALTH_HOST?.trim() || "127.0.0.1",
     healthPort,
+    credentialExpiryWarningDays,
   };
 }

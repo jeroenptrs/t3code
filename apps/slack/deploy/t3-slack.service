@@ -1,0 +1,26 @@
+[Unit]
+Description=T3 Code Slack ingress
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=t3-slack
+Group=t3-slack
+WorkingDirectory=/opt/t3-code
+EnvironmentFile=/etc/t3-slack/slack.env
+LoadCredential=t3-daemon:/etc/t3-slack/secrets/t3-daemon.token
+Environment=T3_BEARER_CREDENTIAL_FILE=%d/t3-daemon
+ExecStart=/usr/bin/env node --experimental-strip-types apps/slack/src/main.ts
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

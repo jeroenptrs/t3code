@@ -8,18 +8,23 @@ import {
   resolveStandardIngressTarget,
 } from "@t3tools/integration-runtime";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 
 import { makeSlackApp } from "./app.ts";
 import { decodeSlackAppConfig } from "./config.ts";
 import { startHealthServer, type HealthState } from "./health.ts";
 import { makeSlackDaemonLifecycle, type SlackDaemonLifecycle } from "./lifecycle.ts";
+import { makeOperationalHealth, type OperationalHealth } from "./operationalHealth.ts";
+import { makeReadinessCoordinator } from "./readiness.ts";
+import { hasExactScopes } from "./scopes.ts";
 
 const config = decodeSlackAppConfig(process.env);
 let health: HealthState = { live: true, ready: false, reason: "starting" };
+let operationalHealth: OperationalHealth | null = null;
 const healthServer = startHealthServer({
   host: config.healthHost,
   port: config.healthPort,
-  state: () => health,
+  state: () => operationalHealth?.state() ?? health,
 });
 
 const readBearerCredential = Effect.tryPromise({
@@ -30,40 +35,31 @@ const transport = await Effect.runPromise(
   makeLiveT3Transport({ httpBaseUrl: config.t3HttpBaseUrl, readBearerCredential }),
 );
 const { app, receiver, appHome } = makeSlackApp({ config, transport });
-let slackConnected = false;
+operationalHealth = makeOperationalHealth({
+  initial: { live: false, ready: false, reason: "initializing" },
+  logger: app.logger,
+  credentialExpiryWarningDays: config.credentialExpiryWarningDays,
+});
+operationalHealth.update(health);
+const updateHealth = (next: HealthState, details?: { readonly category?: string }): void => {
+  health = next;
+  operationalHealth?.update(next, details);
+};
 let lifecycle: SlackDaemonLifecycle | null = null;
-receiver.client.on("connected", () => {
-  if (lifecycle?.isShuttingDown()) return;
-  slackConnected = true;
-  lifecycle?.requestReadiness();
-});
-receiver.client.on("reconnecting", () => {
-  if (lifecycle?.isShuttingDown()) return;
-  slackConnected = false;
-  health = { live: true, ready: false, reason: "Slack Socket Mode is reconnecting" };
-});
-receiver.client.on("disconnected", () => {
-  if (lifecycle?.isShuttingDown()) return;
-  slackConnected = false;
-  health = { live: true, ready: false, reason: "Slack Socket Mode is disconnected" };
-});
-
-async function refreshReadiness(): Promise<void> {
-  if (lifecycle?.isShuttingDown()) return;
-  if (!slackConnected) {
-    health = { live: true, ready: false, reason: "Slack Socket Mode is disconnected" };
-    return;
-  }
-  try {
-    const [session, serverConfig, shell] = await Promise.all([
-      Effect.runPromise(transport.validateSession()),
+const readiness = makeReadinessCoordinator({
+  isShuttingDown: () => lifecycle?.isShuttingDown() ?? false,
+  check: async () => {
+    const session = await Effect.runPromise(transport.validateSession());
+    if (session.expiresAt) {
+      operationalHealth?.observeCredentialExpiry(DateTime.formatIso(session.expiresAt));
+    }
+    if (!session.authenticated || !hasExactScopes(session.scopes, REQUIRED_T3_SCOPES)) {
+      throw new Error("The T3 credential does not have the exact required scopes.");
+    }
+    const [serverConfig, shell] = await Promise.all([
       Effect.runPromise(transport.getServerConfig()),
       Effect.runPromise(transport.getShellSnapshot()),
     ]);
-    const scopes = new Set(session.scopes ?? []);
-    if (!session.authenticated || REQUIRED_T3_SCOPES.some((scope) => !scopes.has(scope))) {
-      throw new Error("The T3 credential is missing orchestration read/operate scopes.");
-    }
     await Effect.runPromise(
       resolveStandardIngressTarget({
         request: {
@@ -82,42 +78,54 @@ async function refreshReadiness(): Promise<void> {
         config: serverConfig,
       }),
     );
-    if (lifecycle?.isShuttingDown()) return;
-    health = { live: true, ready: true, reason: null };
-  } catch (error) {
-    if (lifecycle?.isShuttingDown()) return;
-    health = { live: true, ready: false, reason: "T3 readiness check failed" };
-    app.logger.warn("slack.readiness.failed", {
-      category:
-        typeof error === "object" && error !== null && "kind" in error
-          ? String(error.kind)
-          : "validation_or_unavailable",
-    });
-  }
-}
+  },
+  onReady: () => updateHealth({ live: true, ready: true, reason: null }),
+  onFailure: (error) =>
+    updateHealth(
+      { live: true, ready: false, reason: "T3 readiness check failed" },
+      {
+        category:
+          typeof error === "object" && error !== null && "kind" in error
+            ? String(error.kind)
+            : "validation_or_unavailable",
+      },
+    ),
+  onUnavailable: (reason) => updateHealth({ live: true, ready: false, reason }),
+});
+
+receiver.client.on("connected", () => {
+  if (lifecycle?.isShuttingDown()) return;
+  readiness.setConnected(true);
+  lifecycle?.requestReadiness();
+});
+receiver.client.on("reconnecting", () => {
+  readiness.setConnected(false, "Slack Socket Mode is reconnecting");
+});
+receiver.client.on("disconnected", () => {
+  readiness.setConnected(false, "Slack Socket Mode is disconnected");
+});
 
 lifecycle = makeSlackDaemonLifecycle({
   startSlack: async () => {
     await app.start();
-    slackConnected = true;
+    readiness.setConnected(true);
   },
   stopSlack: async () => {
-    slackConnected = false;
+    readiness.setConnected(false);
     await app.stop();
   },
   startAppHome: appHome.start,
   stopAppHome: appHome.stop,
-  refreshReadiness,
+  refreshReadiness: readiness.run,
   closeTransport: () => Effect.runPromise(transport.close()),
   closeHealth: () => new Promise<void>((resolve) => healthServer.close(() => resolve())),
   onStartFailure: () => {
-    slackConnected = false;
-    health = { live: true, ready: false, reason: "Slack Socket Mode is disconnected" };
+    readiness.setConnected(false);
   },
 });
 
 const shutdown = (): Promise<void> => {
-  health = { live: false, ready: false, reason: "shutting down" };
+  updateHealth({ live: false, ready: false, reason: "shutting down" });
   return lifecycle?.shutdown() ?? Promise.resolve();
 };
 
