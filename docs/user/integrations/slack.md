@@ -45,8 +45,10 @@ continue to report the configuration error until `T3_PROJECT_ID` is updated.
 ## App Home
 
 Opening the app's Home tab shows active T3 Code conversations from every project
-in the environment. Rows are ordered newest-first, matching the inbox-based T3
-sidebar, and include status, conversation title, project, and a direct link.
+in the environment. A welcome header and `View all tasks` button link to the T3
+environment, followed by an Active conversations section. Rows are ordered
+newest-first, matching the inbox-based T3 sidebar, and include a direct link with
+labelled status and project details beneath it.
 Archived and effectively snoozed conversations are omitted. A snoozed conversation
 can wake early and reappear when it raises its hand through a blocker, fresh
 failure, or completion. As a temporary scope choice, server-explicit settled
@@ -75,6 +77,21 @@ The sibling process reads:
 | `SLACK_HEALTH_HOST`                 | Health listener host; defaults to `127.0.0.1`          |
 | `SLACK_HEALTH_PORT`                 | Health listener port; defaults to `3210`               |
 | `T3_CREDENTIAL_EXPIRY_WARNING_DAYS` | Bearer-expiry warning window; defaults to 10 days      |
+| `SLACK_CONVERSATION_AUDIT_LOG_FILE` | Append-only conversation-start JSONL path              |
+
+## Conversation start audit log
+
+Before dispatching a valid standard or custom start, the Slack process appends a
+JSON Lines record to `SLACK_CONVERSATION_AUDIT_LOG_FILE`. Each record includes the
+timestamp, Slack team and user IDs, invocation surface, deterministic T3 thread
+ID, prompt, and the selected project, workspace, branch option, and model option
+for custom-modal starts. Standard starts store `configuration: null` because they
+use the integration defaults.
+
+The app refuses to dispatch when it cannot append the record. The default path is
+`.t3/slack/conversation-starts.jsonl`; production installs should use a durable,
+access-restricted path. Records contain user prompts and should be retained and
+accessed accordingly.
 
 The T3 credential requires only `orchestration:read` and
 `orchestration:operate`. The process rereads the credential file for every new
@@ -118,4 +135,5 @@ retarget that conversation to a different checkout.
 
 A process crash after Slack acknowledges an invocation but before dispatch or
 response update can leave a starting message behind. T3 remains the recovery
-directory; the Slack process owns no durable domain database.
+directory; the audit log is not used as a durable domain database or for delivery
+recovery.

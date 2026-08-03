@@ -201,6 +201,12 @@ The T3 service credential remains least-privilege (`orchestration:read` and
 `orchestration:operate`) even though Slack-user authorization is intentionally
 open.
 
+The Slack sibling keeps one operational exception to its stateless-client model:
+an append-only on-disk JSONL audit of conversation start requests. It records the
+Slack user, prompt, timestamp, deterministic thread ID, and custom-modal selections
+before dispatch. Audit persistence is fail-closed and is not used for delivery
+recovery or projection state.
+
 ### 2c. Slack delivery guarantee
 
 Delivery is **idempotent and best-effort**, not transactionally guaranteed across
