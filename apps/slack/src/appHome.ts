@@ -12,6 +12,7 @@ import { buildEnvironmentDeepLink, buildThreadDeepLink } from "@t3tools/integrat
 // constraint here so row capacity follows Block Kit rather than product config.
 // https://docs.slack.dev/reference/block-kit/blocks/
 export const SLACK_HOME_MAX_BLOCKS = 100;
+export const APP_HOME_VIEW_ALL_ACTION = "t3_view_all_tasks";
 
 const TEXT_MAX = 180;
 const PROJECT_TEXT_MAX = 80;
@@ -104,6 +105,34 @@ export interface AppHomeView {
   readonly blocks: ReadonlyArray<Record<string, unknown>>;
 }
 
+const appHomeChrome = (environmentUrl: string) =>
+  [
+    {
+      type: "header",
+      text: { type: "plain_text", text: "Welcome to t3 code" },
+    },
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: "Active conversations across all projects" },
+    },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "View all tasks" },
+          url: environmentUrl,
+          action_id: APP_HOME_VIEW_ALL_ACTION,
+        },
+      ],
+    },
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: "*Active conversations*" },
+    },
+    { type: "divider" },
+  ] as const;
+
 const cleanText = (value: string, maxLength: number): string => {
   const singleLine = value.replaceAll(/\s+/g, " ").trim();
   const characters = [...singleLine];
@@ -124,19 +153,13 @@ export function buildAppHomeView(input: {
   readonly environmentId: string;
 }): AppHomeView {
   const environmentUrl = buildEnvironmentDeepLink(input);
-  const header = {
-    type: "section",
-    text: {
-      type: "mrkdwn",
-      text: `*<${environmentUrl}|T3 Code tasks>*\nActive conversations across all projects`,
-    },
-  } as const;
+  const chrome = appHomeChrome(environmentUrl);
 
   if (input.tasks.length === 0) {
     return {
       type: "home",
       blocks: [
-        header,
+        ...chrome,
         {
           type: "section",
           text: { type: "mrkdwn", text: "_No active conversations right now._" },
@@ -145,9 +168,9 @@ export function buildAppHomeView(input: {
     };
   }
 
-  const maximumRowsWithoutFooter = SLACK_HOME_MAX_BLOCKS - 1;
+  const maximumRowsWithoutFooter = SLACK_HOME_MAX_BLOCKS - chrome.length;
   const truncated = input.tasks.length > maximumRowsWithoutFooter;
-  const rowCapacity = SLACK_HOME_MAX_BLOCKS - 1 - (truncated ? 1 : 0);
+  const rowCapacity = SLACK_HOME_MAX_BLOCKS - chrome.length - (truncated ? 1 : 0);
   const visibleTasks = input.tasks.slice(0, rowCapacity);
   const rows = visibleTasks.map(({ thread, project, status }) => {
     const threadUrl = buildThreadDeepLink({
@@ -159,7 +182,7 @@ export function buildAppHomeView(input: {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*<${threadUrl}|${cleanText(thread.title, TEXT_MAX)}>*\n${cleanText(status, TEXT_MAX)} · ${cleanText(project.title, PROJECT_TEXT_MAX)}`,
+        text: `*<${threadUrl}|${cleanText(thread.title, TEXT_MAX)}>*\nStatus: *${cleanText(status, TEXT_MAX)}*    Project: *${cleanText(project.title, PROJECT_TEXT_MAX)}*`,
       },
     };
   });
@@ -177,7 +200,7 @@ export function buildAppHomeView(input: {
       ]
     : [];
 
-  return { type: "home", blocks: [header, ...rows, ...footer] };
+  return { type: "home", blocks: [...chrome, ...rows, ...footer] };
 }
 
 const viewHash = (view: AppHomeView): string =>
@@ -254,13 +277,7 @@ export function makeAppHomePublisher(input: {
   const unavailableView = (): AppHomeView => ({
     type: "home",
     blocks: [
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `*<${input.publicBaseUrl}|T3 Code tasks>*\nActive conversations across all projects`,
-        },
-      },
+      ...appHomeChrome(input.publicBaseUrl),
       {
         type: "section",
         text: { type: "mrkdwn", text: "_T3 Code tasks are temporarily unavailable._" },

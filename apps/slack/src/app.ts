@@ -18,7 +18,16 @@ import {
 } from "effect/unstable/http";
 
 import type { SlackAppConfig } from "./config.ts";
-import { makeAppHomePublisher, resolveAppHomeOpenSnapshot } from "./appHome.ts";
+import {
+  makeConversationStartAuditLog,
+  type ConversationStartAuditLog,
+  type ConversationStartConfiguration,
+} from "./conversationAudit.ts";
+import {
+  APP_HOME_VIEW_ALL_ACTION,
+  makeAppHomePublisher,
+  resolveAppHomeOpenSnapshot,
+} from "./appHome.ts";
 import {
   normalizeCustomMentionInvocation,
   normalizeCustomSlashInvocation,
@@ -69,6 +78,7 @@ const canConfigureFailure = (error: unknown): error is IngressFailure =>
 
 const runIngress = (input: {
   readonly invocation: IngressInvocation;
+  readonly requestedAt: string;
   readonly config: SlackAppConfig;
   readonly transport: T3Transport;
 }) =>
@@ -80,7 +90,7 @@ const runIngress = (input: {
           projectId: input.config.projectId,
           modelSelection: input.config.modelSelection,
         },
-        requestedAt: new Date().toISOString(),
+        requestedAt: input.requestedAt,
       },
       publicBaseUrl: input.config.t3PublicBaseUrl,
       transport: input.transport,
@@ -89,7 +99,16 @@ const runIngress = (input: {
 
 type SetupStateValues = Record<
   string,
-  Record<string, { readonly value?: string; readonly selected_option?: { readonly value: string } }>
+  Record<
+    string,
+    {
+      readonly value?: string;
+      readonly selected_option?: {
+        readonly value: string;
+        readonly text?: { readonly text?: string };
+      };
+    }
+  >
 >;
 
 const stateValue = (values: SetupStateValues, actionId: string): string | null => {
@@ -97,6 +116,14 @@ const stateValue = (values: SetupStateValues, actionId: string): string | null =
     const action = block[actionId];
     const value = action?.selected_option?.value ?? action?.value;
     if (typeof value === "string") return value;
+  }
+  return null;
+};
+
+const stateOptionLabel = (values: SetupStateValues, actionId: string): string | null => {
+  for (const block of Object.values(values)) {
+    const label = block[actionId]?.selected_option?.text?.text;
+    if (typeof label === "string") return label;
   }
   return null;
 };
@@ -382,6 +409,7 @@ export function makeSlackApp(
   },
   dependencies: {
     readonly postResponseUrl?: (url: string, payload: object) => Promise<void>;
+    readonly conversationAuditLog?: ConversationStartAuditLog;
   } = {},
 ): {
   readonly app: App;
@@ -421,6 +449,9 @@ export function makeSlackApp(
   });
   const unsubscribeAppHome = shellProjection.subscribe(appHomePublisher.updated);
   const slashResponseUrls = new Map<string, { readonly url: string; readonly expiresAt: number }>();
+  const conversationAuditLog =
+    dependencies.conversationAuditLog ??
+    makeConversationStartAuditLog(input.config.conversationAuditLogFile);
   const rememberSlashResponseUrl = (key: string, url: string) => {
     const now = Date.now();
     for (const [storedKey, entry] of slashResponseUrls) {
@@ -441,11 +472,30 @@ export function makeSlackApp(
     }
     return entry.url;
   };
-  const startWithLogging = async (invocation: IngressInvocation) => {
+  const recordStart = async (input_: {
+    readonly invocation: IngressInvocation;
+    readonly userId: string;
+    readonly requestedAt: string;
+    readonly configuration: ConversationStartConfiguration | null;
+  }) => {
+    const { threadId } = deriveIngressIds(input_.invocation);
+    await conversationAuditLog.append({
+      version: 1,
+      recordedAt: input_.requestedAt,
+      slack: { teamId: input_.invocation.tenantId, userId: input_.userId },
+      surface: input_.invocation.surface,
+      threadId,
+      prompt: input_.invocation.prompt,
+      configuration: input_.configuration,
+    });
+  };
+  const startWithLogging = async (invocation: IngressInvocation, userId: string) => {
     const { threadId } = deriveIngressIds(invocation);
+    const requestedAt = new Date().toISOString();
     app.logger.info("slack.ingress.started", { surface: invocation.surface, threadId });
     try {
-      const result = await runIngress({ invocation, ...input });
+      await recordStart({ invocation, userId, requestedAt, configuration: null });
+      const result = await runIngress({ invocation, requestedAt, ...input });
       app.logger.info("slack.ingress.completed", {
         surface: invocation.surface,
         threadId,
@@ -467,13 +517,23 @@ export function makeSlackApp(
     }
   };
 
-  const startCustomWithLogging = async (input_: Parameters<typeof startCustomIngress>[0]) => {
+  const startCustomWithLogging = async (
+    input_: Parameters<typeof startCustomIngress>[0],
+    userId: string,
+    configuration: ConversationStartConfiguration,
+  ) => {
     const { threadId } = deriveIngressIds(input_.invocation);
     app.logger.info("slack.ingress.started", {
       surface: input_.invocation.surface,
       threadId,
     });
     try {
+      await recordStart({
+        invocation: input_.invocation,
+        userId,
+        requestedAt: input_.requestedAt,
+        configuration,
+      });
       const result = await Effect.runPromise(startCustomIngress(input_));
       app.logger.info("slack.ingress.completed", {
         surface: input_.invocation.surface,
@@ -646,7 +706,7 @@ export function makeSlackApp(
           blocks: configureBlocks(origin, invocation.prompt),
         };
       },
-      start: startWithLogging,
+      start: (invocation) => startWithLogging(invocation, command.user_id),
     });
   });
 
@@ -685,6 +745,14 @@ export function makeSlackApp(
       app.logger.warn("slack.ingress.rejected", {
         surface: "mention",
         category: "bot_identity_missing",
+      });
+      return;
+    }
+    const slackUserId = mention.user;
+    if (!slackUserId) {
+      app.logger.warn("slack.ingress.rejected", {
+        surface: "mention",
+        category: "user_identity_missing",
       });
       return;
     }
@@ -755,7 +823,7 @@ export function makeSlackApp(
           blocks: configureBlocks(origin, invocation.prompt),
         };
       },
-      start: startWithLogging,
+      start: (invocation) => startWithLogging(invocation, slackUserId),
     });
   });
 
@@ -771,6 +839,10 @@ export function makeSlackApp(
       },
     });
     await appHomePublisher.opened(event.user, snapshot);
+  });
+
+  app.action(APP_HOME_VIEW_ALL_ACTION, async ({ ack }) => {
+    await ack();
   });
 
   app.message(async ({ message, body, client }) => {
@@ -800,7 +872,11 @@ export function makeSlackApp(
     });
     const origin: SetupOrigin = {
       invocation: invocationWithoutPrompt(invocation),
-      response: { kind: "message", channelId: message.channel, threadTimestamp: rootTimestamp },
+      response: {
+        kind: "message",
+        channelId: message.channel,
+        threadTimestamp: rootTimestamp,
+      },
     };
     const promptError = promptValidationMessage(invocation.prompt);
     /* oxlint-disable unicorn/require-post-message-target-origin -- Slack Web API method, not Window.postMessage. */
@@ -963,7 +1039,7 @@ export function makeSlackApp(
     await ack({ option_groups: optionGroups } as never);
   });
 
-  app.view(SETUP_CALLBACK_ID, async ({ ack, view }) => {
+  app.view(SETUP_CALLBACK_ID, async ({ ack, view, body }) => {
     const values = view.state.values as SetupStateValues;
     const prompt = stateValue(values, SETUP_PROMPT_ACTION)?.trim() ?? "";
     const projectId = stateValue(values, SETUP_PROJECT_ACTION);
@@ -983,6 +1059,7 @@ export function makeSlackApp(
       return;
     }
     const origin = parseJson<SetupOrigin>(view.private_metadata);
+    const userId = body.user.id;
     if (
       origin.response.kind === "response-url" &&
       (!origin.response.responseKey || !responseUrlFor(origin.response.responseKey))
@@ -1002,19 +1079,31 @@ export function makeSlackApp(
     let terminalText: string | null = null;
     try {
       starting = await postCustomStarting(origin, ids, prompt);
-      const result = await startCustomWithLogging({
-        invocation,
-        selection: {
-          projectId,
-          workspace: workspace === "new-worktree" ? "new-worktree" : "current",
-          branch: branchValue === "no-repository" ? null : branchValue,
-          modelOption,
+      const result = await startCustomWithLogging(
+        {
+          invocation,
+          selection: {
+            projectId,
+            workspace: workspace === "new-worktree" ? "new-worktree" : "current",
+            branch: branchValue === "no-repository" ? null : branchValue,
+            modelOption,
+          },
+          integrationDefault: input.config.modelSelection,
+          requestedAt: new Date().toISOString(),
+          publicBaseUrl: input.config.t3PublicBaseUrl,
+          transport: input.transport,
         },
-        integrationDefault: input.config.modelSelection,
-        requestedAt: new Date().toISOString(),
-        publicBaseUrl: input.config.t3PublicBaseUrl,
-        transport: input.transport,
-      });
+        userId,
+        {
+          projectId,
+          projectLabel: stateOptionLabel(values, SETUP_PROJECT_ACTION),
+          workspace: workspace === "new-worktree" ? "new-worktree" : "current",
+          branchOption: branchValue === "no-repository" ? null : branchValue,
+          branchLabel: stateOptionLabel(values, SETUP_BRANCH_ACTION),
+          modelOption,
+          modelLabel: stateOptionLabel(values, SETUP_MODEL_ACTION),
+        },
+      );
       terminalText =
         result.recovery === "unverified"
           ? `T3 Code could not verify whether the conversation started. Open ${input.config.t3PublicBaseUrl}`
