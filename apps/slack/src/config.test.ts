@@ -18,8 +18,13 @@ describe("Slack app configuration", () => {
       t3PublicBaseUrl: "https://t3.example/",
       healthHost: "127.0.0.1",
       healthPort: 3210,
+      credentialExpiryWarningDays: 10,
       modelSelection: null,
     });
+    expect(
+      decodeSlackAppConfig({ ...baseEnv, T3_CREDENTIAL_EXPIRY_WARNING_DAYS: "" })
+        .credentialExpiryWarningDays,
+    ).toBe(10);
   });
 
   it("decodes a complete integration model selection", () => {
@@ -46,5 +51,8 @@ describe("Slack app configuration", () => {
     expect(() => decodeSlackAppConfig({ ...baseEnv, SLACK_HEALTH_PORT: "0" })).toThrow(
       "SLACK_HEALTH_PORT",
     );
+    expect(() =>
+      decodeSlackAppConfig({ ...baseEnv, T3_CREDENTIAL_EXPIRY_WARNING_DAYS: "0" }),
+    ).toThrow("T3_CREDENTIAL_EXPIRY_WARNING_DAYS");
   });
 });

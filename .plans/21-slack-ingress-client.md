@@ -2,8 +2,8 @@
 
 ## Status
 
-Slices 1–3 are implemented; Slice 4 operations work remains planned. Product and
-boundary decisions are locked in `docs/integrations/slack-jira-ingress-design.md`.
+Slices 1–4 are implemented. Product and boundary decisions are locked in
+`docs/integrations/slack-jira-ingress-design.md`.
 This plan begins after that design lock and covers the Slack implementation plus
 the bootstrap extraction required by the broader ingress/automation design.
 
@@ -889,6 +889,87 @@ Verification boundary:
 - Add service environment/config documentation.
 - Add health/readiness logging and expiry warnings.
 - Document manual recovery and known best-effort delivery window.
+
+#### Slice 4 acceptance criteria
+
+Credential rotation:
+
+- A timer-safe command checks the daemon and administrative rotator bearer
+  sessions daily and rotates either credential when it has 10 days or less
+  remaining (day 20 of the current 30-day bearer lifetime).
+- The rotator credential is read from a separate root-owned file and must have
+  `access:read`, `access:write`, `orchestration:read`, and
+  `orchestration:operate`. A newly issued daemon credential is accepted only
+  when it has exactly the two orchestration scopes; a replacement rotator must
+  have exactly the four administrative/delegated scopes.
+- An authenticated existing daemon with missing, duplicate, or additional scopes
+  is treated as due and replaced rather than leaving automatic recovery blocked.
+- Credential files are replaced atomically in their existing directory with
+  mode `0600` (and the existing owner when run with sufficient privilege).
+  Tokens, pairing credentials, and response bodies are never logged.
+- After daemon credential replacement, the command restarts the configured
+  Slack service and waits for `/ready`. Only then does it revoke the daemon's
+  previously labelled sessions. A failed restart/readiness check restores the
+  previous daemon credential atomically, restarts the service again, and leaves
+  the old session valid.
+- Rotator self-rotation validates and installs the new rotator before using it
+  to revoke the prior rotator session. A `--dry-run` mode reports whether each
+  credential is due without issuing, replacing, restarting, or revoking.
+- Every non-dry run reconciles contract-shaped `client.label` session listings,
+  retains the uniquely identified installed daemon/current rotator sessions,
+  and retries stale labelled-session revocation even when no credential is due.
+  Before later-run daemon cleanup it restarts and verifies Slack to close the
+  source-replaced/runtime-copy-not-reloaded crash window. Ambiguous active-session
+  identity fails closed instead of revoking.
+
+Health and observability:
+
+- `/live` continues to represent process liveness and `/ready` continues to
+  require Slack connectivity plus valid T3 authentication, exactly the two
+  daemon scopes, server config, project, and model resolution.
+- Connection generations and readiness-attempt versions prevent an older check
+  from committing success after disconnect or overwriting a newer result.
+- Readiness changes are logged once per state transition, including startup,
+  reconnect/disconnect, recovery, and shutdown; repeated 30-second checks do
+  not repeat an unchanged failure warning. Credential-expiry observation is
+  independent and cannot clear or replay the current readiness category.
+- The daemon reads the bearer expiry returned by `/api/auth/session` and emits
+  a safe warning, containing the expiry time and remaining whole days but no
+  credential, when 10 days or less remain. The warning is transition-based so
+  it does not repeat on every readiness poll.
+
+Deployment and recovery documentation:
+
+- Checked-in systemd service/timer and environment examples enumerate every
+  Slack and rotation setting, use separate root-owned credential files, bind
+  health to loopback, run the timer daily, and make process/PID ownership
+  explicit.
+- The operator guide covers initial narrow credential issuance, installation,
+  health checks, rotation dry runs, day-20 automatic rotation, logs/alerts,
+  upgrades, manual recovery after expiry, rollback behavior, and revocation.
+- The guide explicitly describes the best-effort window between Slack
+  acknowledgement, T3 dispatch/reconciliation, and Slack response replacement,
+  including the stronger current-checkout replay behavior and the known partial
+  New-worktree bootstrap limitation.
+- Focused rotation, configuration, health/observability, and existing Slack
+  tests pass together with targeted Slack typecheck, lint, and formatting.
+
+#### Slice 4 implementation evidence (2026-08-03)
+
+- All 83 focused Slack tests passed. Coverage includes threshold/no-op, dry-run,
+  exact and malformed scope sets, contract-shaped client labels, rotation
+  ordering, cleanup retry, rollback cleanup, atomic durable file replacement,
+  expiry warnings, transition-only health, failure-category changes, and
+  readiness races.
+- Targeted Slack typecheck, lint, formatting, diff checks, and systemd unit/timer
+  verification passed. Any verifier warnings came from unrelated pre-existing
+  host units rather than the checked-in Slack units.
+- The rotation entrypoint's configuration-failure path was executed directly and
+  produced a structured, non-secret warning with a nonzero exit.
+- No live T3 administrative credential was issued and no real systemd service was
+  restarted or Slack workspace exercised. Those remain deployment-time
+  operational checks; the rotation workflow is covered through injected focused
+  tests and checked-in unit validation.
 
 ## Tests
 
