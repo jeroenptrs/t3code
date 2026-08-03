@@ -19,12 +19,22 @@ describe("Slack app configuration", () => {
       healthHost: "127.0.0.1",
       healthPort: 3210,
       credentialExpiryWarningDays: 10,
+      conversationAuditLogFile: ".t3/slack/conversation-starts.jsonl",
       modelSelection: null,
     });
     expect(
       decodeSlackAppConfig({ ...baseEnv, T3_CREDENTIAL_EXPIRY_WARNING_DAYS: "" })
         .credentialExpiryWarningDays,
     ).toBe(10);
+  });
+
+  it("accepts a custom append-only conversation audit path", () => {
+    expect(
+      decodeSlackAppConfig({
+        ...baseEnv,
+        SLACK_CONVERSATION_AUDIT_LOG_FILE: "/var/lib/t3-slack/starts.jsonl",
+      }).conversationAuditLogFile,
+    ).toBe("/var/lib/t3-slack/starts.jsonl");
   });
 
   it("decodes a complete integration model selection", () => {

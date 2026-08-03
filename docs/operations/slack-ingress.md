@@ -30,6 +30,7 @@ to atomically replace credential sources and restart the daemon.
 | `SLACK_HEALTH_HOST`                 | no       | Health bind host; keep at `127.0.0.1`      |
 | `SLACK_HEALTH_PORT`                 | no       | Health port; default `3210`                |
 | `T3_CREDENTIAL_EXPIRY_WARNING_DAYS` | no       | Warning window; default `10`               |
+| `SLACK_CONVERSATION_AUDIT_LOG_FILE` | no       | Conversation-start JSONL audit path        |
 
 The rotation job reads:
 
@@ -75,6 +76,14 @@ configured project/default model resolves. Alert on repeated `/ready` failures a
 `slack.credential.expiry-warning` or `slack.rotation.failed` journal events.
 Readiness is logged only when it changes, so a persistent failure does not emit
 the same warning every 30 seconds.
+
+The provided service sets `StateDirectory=t3-slack`, and the example environment
+writes append-only conversation-start records to
+`/var/lib/t3-slack/conversation-starts.jsonl`. Each line contains a prompt and
+Slack user ID, so restrict the directory to the service account and apply the
+organization's retention policy. A write failure prevents the corresponding T3
+dispatch; check the state directory's ownership and available space when an
+ingress start fails unexpectedly.
 
 ## Bootstrap narrow credentials
 
@@ -238,7 +247,8 @@ New-worktree bootstrap is weaker: its server workflow is not phase-resumable
 across every partial preparation failure, so retry may remain unverified while T3
 finishes or cleans up. Ambiguous outcomes are queried before uncertainty is
 reported, with a public environment link when verification is impossible. Slack
-stores no durable domain state; T3 is the recovery directory.
+stores an append-only security audit of requested starts but no durable domain
+state; T3 is the recovery directory.
 
 ## Upgrade and uninstall
 
