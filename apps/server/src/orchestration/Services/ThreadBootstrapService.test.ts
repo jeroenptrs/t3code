@@ -115,6 +115,26 @@ describe("ThreadBootstrapService", () => {
       expect(switched).toEqual([{ cwd: "/repo", refName: "feature" }]);
       expect(dispatched[0]).toMatchObject({ type: "thread.create", branch: "resolved-feature" });
       expect(dispatched[1]).toMatchObject({ type: "thread.turn.start" });
+
+      dispatched.length = 0;
+      const targetPathError = yield* service
+        .dispatch({
+          ...command,
+          bootstrap: {
+            ...command.bootstrap,
+            prepareWorktree: {
+              ...command.bootstrap!.prepareWorktree!,
+              targetPath: "/tmp/worktrees/deterministic",
+            },
+          },
+        })
+        .pipe(Effect.flip);
+      expect(targetPathError).toMatchObject({
+        _tag: "OrchestrationDispatchCommandError",
+        message:
+          "Explicit bootstrap worktree paths are not supported until deterministic bootstrap validation is enabled.",
+      });
+      expect(dispatched).toEqual([]);
     }),
   );
 
