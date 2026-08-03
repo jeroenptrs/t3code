@@ -443,13 +443,14 @@ sandboxes aren't really necessary for the current design; sandboxing earns its k
 as a _trust boundary for ingress_ (e.g. dependency-update automation running
 `npm install && npm test` on ticket-chosen code), if anywhere.
 
-### 12. Auth: anonymous portal identity first; edge OIDC later
+### 12. Auth: anonymous portal identity in development; edge OIDC for production
 
-- **Now**: the public reverse proxy injects a shared T3 bearer credential with only
+- **Development**: the public reverse proxy injects a shared T3 bearer credential with only
   `orchestration:read` and `orchestration:operate`. Browsers see no T3 pairing or
   login prompt, while T3's existing session and RPC scope checks remain active.
   The T3 listener stays on loopback/private networking; only the HTTPS proxy is
-  public. This requires ZERO server changes.
+  public. This requires ZERO server changes and is suitable for the dev-app phase,
+  but it is not the production access policy.
 - **Slack sibling process**: use an internal loopback HTTP/WS URL and its own narrow
   T3 bearer credential for API traffic, plus the public proxy URL for deep links.
   Do not reuse the portal credential: independent credentials keep rotation and
@@ -460,8 +461,10 @@ as a _trust boundary for ingress_ (e.g. dependency-update automation running
   Manual pairing and narrow token exchange over loopback is the recovery path if a
   timer misses the expiry window. This is credential rotation, not a refresh-token
   flow.
-- **Later — Entra ID (OIDC)**: enforce OIDC at the same reverse-proxy boundary and
-  continue injecting the narrow shared portal credential after successful login.
+- **Production graduation gate — Entra ID (OIDC)**: enforce OIDC at the same
+  reverse-proxy boundary before graduating the Slack app and conversation portal
+  from development to production. Continue injecting the narrow shared portal
+  credential after successful login.
   No T3, Slack, deep-link, or WebSocket changes are required. The gateway can audit
   the employee identity; T3 deliberately continues to see one team portal
   principal.
@@ -543,19 +546,67 @@ scheduler, #9).
 
 ---
 
-## Delivery shape (Jeroen's priority order, 2026-07-29)
+## Delivery shape (implementation order, updated 2026-08-03)
 
-1. **Slack integration** (highest clarity)
-2. **Automation server engine** (#9 backend half)
-3. **Bootstrap extraction** (`ThreadBootstrapService`, #1a) — minimal upstream
-   touch: ~200 lines move out of `ws.ts` into a new service file, call-site
-   replaced, no contract/decider/behavior changes. **Milestone 1 = 1 + 3.**
-4. **Automation webapp UI** — folded into #9 as one workstream with the engine;
-   scope/refine at implementation start.
-5. **Jira integration** — refine as first step when picked up.
-6. **Authentication** — anonymous shared portal identity now; Entra at the proxy
-   boundary later, with no T3 changes unless per-user authorization becomes a
-   requirement.
+This is an implementation dependency order, not the chapter order of this design.
+The automation sequence is the fixed next workstream. Its later follow-ons may be
+reordered as implementation evidence changes their cost or value. Jira remains the
+default last feature because its product shape is unresolved and automations or
+loops may absorb much of its value.
+
+0. **Slack ingress foundation — implemented.** Slices 1–4 cover shared ingress,
+   standard and custom starts, App Home, and operations. Updating and exercising
+   the installed dev Slack app is rollout work, not the next feature-development
+   slice.
+1. **Automation definition and management.** Scope the intentionally open product
+   details, then build the automation contracts, single-row durable entity,
+   persistence, CRUD commands, and webapp management UI as one vertical
+   workstream. An automation must explicitly define its prompt, project,
+   provider/effort, cron target, runtime and interaction modes, worktree policy,
+   and setup-script policy before it can be enabled.
+2. **Reliable automation execution foundation.** Harden the already-extracted
+   `ThreadBootstrapService` so new-worktree execution is phase-resumable. A retry
+   after interruption must inspect the existing thread, worktree, setup activity,
+   and command receipts, then continue only the missing phase instead of creating
+   duplicate worktrees, rerunning completed setup, or stranding the turn. Prefer
+   deriving progress from existing durable state over adding another workflow
+   store.
+3. **Automation scheduler and occurrence reconciliation.** Schedule enabled
+   automations in-process, adjudicate each occurrence through `lastScheduledFor`,
+   use deterministic occurrence ThreadIds, recover safely after restart, and
+   implement the locked `skipped-active` overlap policy without a job queue or run
+   table. The T3 thread remains the execution record.
+4. **Automation worktree retention and pruning.** Implement the safety policy in
+   #10a before unattended ephemeral-worktree schedules are considered ready:
+   retention windows, ownership and activity checks, safe path validation, clean
+   worktree enforcement, `git worktree remove`, visible `prune-blocked` outcomes,
+   and preserved thread/branch/checkpoint history.
+5. **Automation visibility and operational controls.** Surface running, completed,
+   failed, and skipped outcomes with links to their threads in the webapp; make
+   enable/disable and failure recovery clear; and let active automation threads
+   appear naturally in Slack App Home. Web and desktop are required, with an
+   explicit mobile-surface decision before completion.
+6. **Automation loops.** Once ordinary scheduled runs are reliable, allow an
+   automation occurrence to seed itself from `lastThreadId`. Define stop,
+   disable, failure, and context-boundary behavior before considering graphs or
+   decision trees.
+7. **Remaining Slack product improvements.** Restore the intended newest-settled
+   App Home tail as a small completion patch, then consider the parked read-only
+   conversation modal. Slack remains ingress + directory; steering, approvals,
+   and live output stay in T3.
+8. **Conditional infrastructure.** Add Daytona or stronger isolation, durable
+   Slack inbox/outbox delivery, or native per-user T3 authorization only when a
+   concrete requirement justifies them.
+9. **Jira integration — last by default.** When it is eventually picked up, first
+   decide whether Jira should remain an explicit symmetric ingress action or
+   become an automation/loop trigger; do not implement an adapter before that
+   product decision.
+
+**Production graduation is a gate, not backlog item 10.** The dev Slack app and
+anonymous shared-credential portal may be used while the work above proceeds, but
+they must not graduate to production until Entra ID/OIDC is enforced at the proxy
+boundary. That work can move earlier whenever production graduation becomes the
+next objective; it does not otherwise block dev feature implementation.
 
 Slack implementation details and acceptance criteria live in
 `.plans/21-slack-ingress-client.md`; this document remains the authoritative
