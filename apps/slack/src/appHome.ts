@@ -109,7 +109,7 @@ const appHomeChrome = (environmentUrl: string) =>
   [
     {
       type: "header",
-      text: { type: "plain_text", text: "Welcome to t3 code" },
+      text: { type: "plain_text", text: "Welcome to T3 Code" },
     },
     {
       type: "section",

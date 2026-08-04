@@ -229,7 +229,7 @@ describe("App Home Block Kit rendering", () => {
     expect(text).toContain("https://t3.example/root/environment%2Fvalue");
     expect(text).toContain("/thread%2Fvalue");
     expect(text).toContain("Fix &lt;render&gt; ¦ safely");
-    expect(text).toContain("Welcome to t3 code");
+    expect(text).toContain("Welcome to T3 Code");
     expect(text).toContain("View all tasks");
     expect(text).toContain("*Active conversations*");
     expect(text).toContain("Status: *Pending approval*    Project: *Project A*");
