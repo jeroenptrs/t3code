@@ -10,6 +10,8 @@
 
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import ScheduledAutomationSchema from "../scheduledAutomation/ScheduledAutomationSchema.ts";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -140,6 +142,50 @@ export const makeMigrationLoader = (throughId?: number) =>
  * Uses the base Migrator.make without platform dependencies
  */
 const run = Migrator.make({});
+const runLocal = Migrator.make({});
+
+export const runScheduledAutomationMigrations = () =>
+  runLocal({
+    table: "local_scheduled_automation_migrations",
+    loader: Migrator.fromRecord({ "1_LocalScheduledAutomationsV1": ScheduledAutomationSchema }),
+  });
+
+// Earlier fork releases used upstream IDs 36 and 41. Repair the displaced
+// upstream migration in the same transaction that adopts the local schema.
+// Downstream migrations now have their own ledger so future main IDs stay free.
+const repairLegacyAutomationMigration = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const tables =
+    yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'`;
+  if (tables.length === 0) return;
+  const legacy = yield* sql<{ readonly migration_id: number }>`
+    SELECT migration_id FROM effect_sql_migrations
+    WHERE name = 'LocalScheduledAutomationsV1' AND migration_id IN (36, 41)
+  `;
+  if (legacy.length === 0) return;
+  // A historical marker is proof of ownership, but never adopt a missing or
+  // incompatible table. SQLite validates every referenced column even when empty.
+  yield* sql`SELECT id, schema_version, revision, definition_json, enabled,
+    enabled_at, last_scheduled_for, last_thread_id, last_outcome_json,
+    created_at, updated_at FROM local_scheduled_automations_v1 LIMIT 0`;
+  yield* runLocal({
+    table: "local_scheduled_automation_migrations",
+    loader: Migrator.fromRecord({}),
+  });
+  yield* sql`INSERT INTO local_scheduled_automation_migrations (migration_id, name)
+    VALUES (1, 'LocalScheduledAutomationsV1') ON CONFLICT (migration_id) DO NOTHING`;
+  for (const row of legacy) {
+    const entry = migrationEntries.find(([id]) => id === row.migration_id);
+    if (entry === undefined)
+      return yield* new Migrator.MigrationError({
+        kind: "BadState",
+        message: "The displaced upstream migration is unavailable.",
+      });
+    yield* entry[2];
+    yield* sql`UPDATE effect_sql_migrations SET name = ${entry[1]}
+      WHERE migration_id = ${row.migration_id} AND name = 'LocalScheduledAutomationsV1'`;
+  }
+});
 
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
@@ -158,7 +204,10 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql.withTransaction(repairLegacyAutomationMigration);
   const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
+  if (toMigrationInclusive === undefined) yield* runScheduledAutomationMigrations();
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")
