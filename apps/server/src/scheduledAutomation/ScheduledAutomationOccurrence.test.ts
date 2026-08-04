@@ -1,7 +1,9 @@
 import {
   latestScheduledAutomationOccurrence,
   nextScheduledAutomationOccurrence,
+  scheduledAutomationPlanningBoundary,
   ScheduledAutomationId,
+  ScheduledAutomationOutcome,
   ScheduledAutomationSchedule,
   type OrchestrationLatestTurnState,
   type OrchestrationSessionStatus,
@@ -22,6 +24,7 @@ import {
 
 const decodeSchedule = Schema.decodeUnknownSync(ScheduledAutomationSchedule);
 const decodeAutomationId = Schema.decodeUnknownSync(ScheduledAutomationId);
+const decodeOutcome = Schema.decodeUnknownSync(ScheduledAutomationOutcome);
 
 function schedule(cron: string, timeZone: string) {
   return decodeSchedule({ cron, timeZone, misfirePolicy: "latest-only" });
@@ -56,6 +59,7 @@ it.effect("snapshot-locks deterministic occurrence identities and ownership path
       "phaseCommandIds": {
         "createThread": "t3sa:v1:6e696768746c792d6d61696e74656e616e6365:323032362d30382d30335430393a33303a30302e3030305a:command:bootstrap:phase:create-thread",
         "prepareWorktree": "t3sa:v1:6e696768746c792d6d61696e74656e616e6365:323032362d30382d30335430393a33303a30302e3030305a:command:bootstrap:phase:prepare-worktree",
+        "recordFailure": "t3sa:v1:6e696768746c792d6d61696e74656e616e6365:323032362d30382d30335430393a33303a30302e3030305a:command:bootstrap:phase:record-failure",
         "startTurn": "t3sa:v1:6e696768746c792d6d61696e74656e616e6365:323032362d30382d30335430393a33303a30302e3030305a:command:bootstrap:phase:start-turn",
         "updateThreadMetadata": "t3sa:v1:6e696768746c792d6d61696e74656e616e6365:323032362d30382d30335430393a33303a30302e3030305a:command:bootstrap:phase:update-thread-metadata",
       },
@@ -309,6 +313,56 @@ it("coalesces multiple missed occurrences to the latest eligible instant", () =>
     }),
   );
   assert.isTrue(Option.isNone(noReplayAtBoundary));
+});
+
+it("excludes the disabled interval after reactivation from planning and coalescing", () => {
+  assert.strictEqual(
+    success(
+      scheduledAutomationPlanningBoundary({
+        enabledAt: "2026-08-03T10:15:00.000Z",
+        lastScheduledFor: "2026-08-01T02:30:00.000Z",
+      }),
+    ),
+    "2026-08-03T10:15:00.000Z",
+  );
+  assert.isTrue(
+    Option.isNone(
+      success(
+        latestScheduledAutomationOccurrence(schedule("30 2 * * *", "UTC"), {
+          enabledAt: "2026-08-03T10:15:00.000Z",
+          lastScheduledFor: "2026-08-01T02:30:00.000Z",
+          now: "2026-08-03T23:59:59.999Z",
+        }),
+      ),
+    ),
+  );
+  assert.strictEqual(
+    Option.getOrNull(
+      success(
+        latestScheduledAutomationOccurrence(schedule("30 2 * * *", "UTC"), {
+          enabledAt: "2026-08-03T10:15:00.000Z",
+          lastScheduledFor: "2026-08-01T02:30:00.000Z",
+          now: "2026-08-04T03:00:00.000Z",
+        }),
+      ),
+    ),
+    "2026-08-04T02:30:00.000Z",
+  );
+});
+
+it("decodes invariant-sensitive legacy failures as non-retryable", () => {
+  for (const code of ["bootstrap.phase-rejected", "occurrence.abandoned"]) {
+    const decoded = decodeOutcome({
+      kind: "failed",
+      scheduledFor: "2026-08-04T02:30:00.000Z",
+      observedAt: "2026-08-04T02:31:00.000Z",
+      coalescedCount: 0,
+      code,
+      detail: "Legacy failure without retryability.",
+    });
+    assert.isTrue(decoded.kind === "failed");
+    if (decoded.kind === "failed") assert.isFalse(decoded.retryable);
+  }
 });
 
 const NOW = "2026-08-03T10:00:00.000Z";

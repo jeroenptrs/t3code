@@ -107,6 +107,7 @@ import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinar
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import * as ThreadBootstrap from "./orchestration/Services/ThreadBootstrapService.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
@@ -118,6 +119,7 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 import { forkParked, ServerActivation } from "./serverActivation.ts";
 import { ScheduledAutomationRepositoryLive } from "./scheduledAutomation/ScheduledAutomationRepository.ts";
+import * as ScheduledAutomationBootstrap from "./scheduledAutomation/ScheduledAutomationBootstrap.ts";
 import { ScheduledAutomationServiceLive } from "./scheduledAutomation/ScheduledAutomationService.ts";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
@@ -372,6 +374,7 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
 const RuntimeCoreDependenciesLive = Layer.mergeAll(
   ReactorLayerLive,
   ScheduledAutomationServiceLive,
+  ScheduledAutomationBootstrap.layer.pipe(Layer.provideMerge(ThreadBootstrap.layer)),
 ).pipe(
   // Core Services
   Layer.provideMerge(ServerSettingsLayerLive),

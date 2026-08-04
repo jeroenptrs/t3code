@@ -43,6 +43,7 @@ export function deriveScheduledAutomationOccurrenceIdentity(
       readonly prepareWorktree: CommandId;
       readonly updateThreadMetadata: CommandId;
       readonly startTurn: CommandId;
+      readonly recordFailure: CommandId;
     };
     readonly failureActivityId: EventId;
     readonly branch: string;
@@ -82,6 +83,7 @@ export function deriveScheduledAutomationOccurrenceIdentity(
       prepareWorktree: CommandId.make(`${bootstrapRoot}:phase:prepare-worktree`),
       updateThreadMetadata: CommandId.make(`${bootstrapRoot}:phase:update-thread-metadata`),
       startTurn: CommandId.make(`${bootstrapRoot}:phase:start-turn`),
+      recordFailure: CommandId.make(`${bootstrapRoot}:phase:record-failure`),
     },
     failureActivityId: EventId.make(`${bootstrapRoot}:activity:failed`),
     branch: `t3/local-scheduled-automation/${automationKey}/${occurrenceKey}`,
