@@ -29,7 +29,10 @@ import {
   AutomationRow,
   type AutomationsSettingsProps,
 } from "./AutomationsSettings";
-import { DELETE_AUTOMATION_DISCLOSURE } from "./AutomationsSettings.logic";
+import {
+  ABANDON_AUTOMATION_DISCLOSURE,
+  DELETE_AUTOMATION_DISCLOSURE,
+} from "./AutomationsSettings.logic";
 
 const NOW = "2026-08-04T12:00:00.000Z";
 const ENVIRONMENT_ID = EnvironmentId.make("environment-one");
@@ -513,6 +516,41 @@ describe("AutomationEditor interaction wiring", () => {
 });
 
 describe("AutomationRow safety actions", () => {
+  it("confirms abandonment with artifact-retention disclosure", async () => {
+    const onAction = vi.fn(async () => undefined);
+    const view: ScheduledAutomationView = {
+      automation: automation({
+        lastOutcome: {
+          kind: "failed",
+          scheduledFor: "2026-08-04T09:00:00.000Z",
+          observedAt: "2026-08-04T09:00:01.000Z",
+          coalescedCount: 0,
+          code: "bootstrap.phase-rejected",
+          detail: "Rejected.",
+          retryable: false,
+        },
+      }),
+      status: "failed",
+      nextScheduledFor: null,
+      lastThread: null,
+    };
+    render(
+      <AutomationRow
+        environmentId={ENVIRONMENT_ID}
+        view={view}
+        project={projects[0]}
+        provider={providers[0]}
+        pending={false}
+        onEdit={vi.fn()}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Abandon last occurrence" }));
+    expect(await screen.findByText(ABANDON_AUTOMATION_DISCLOSURE)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Abandon occurrence" }));
+    await waitFor(() => expect(onAction).toHaveBeenCalledWith("abandon"));
+  });
+
   it("gates deletion behind the disabled state and explicit disclosure", async () => {
     const onAction = vi.fn(async () => undefined);
     const view: ScheduledAutomationView = {
@@ -564,6 +602,10 @@ describe("AutomationRow safety actions", () => {
     expect((screen.getByRole("button", { name: "Retry last" }) as HTMLButtonElement).disabled).toBe(
       true,
     );
+    expect(
+      (screen.getByRole("button", { name: "Abandon last occurrence" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
     expect((screen.getByLabelText("Delete Weekday review") as HTMLButtonElement).disabled).toBe(
       true,
     );

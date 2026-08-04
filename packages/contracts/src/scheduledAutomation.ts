@@ -1,5 +1,6 @@
 import * as Cron from "effect/Cron";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -31,6 +32,9 @@ export const SCHEDULED_AUTOMATION_WS_METHODS = {
 const SCHEDULED_AUTOMATION_ID_MAX_CHARS = 64;
 const SCHEDULED_AUTOMATION_NAME_MAX_CHARS = 160;
 export const SCHEDULED_AUTOMATION_FAILURE_DETAIL_MAX_CHARS = 1_000;
+export const SCHEDULED_AUTOMATION_BOOTSTRAP_PHASE_REJECTED_CODE =
+  "bootstrap.phase-rejected" as const;
+export const SCHEDULED_AUTOMATION_ABANDONED_CODE = "occurrence.abandoned" as const;
 
 export const ScheduledAutomationId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(SCHEDULED_AUTOMATION_ID_MAX_CHARS),
@@ -188,6 +192,8 @@ export const ScheduledAutomationOutcome = Schema.Union([
     detail: TrimmedNonEmptyString.check(
       Schema.isMaxLength(SCHEDULED_AUTOMATION_FAILURE_DETAIL_MAX_CHARS),
     ),
+    /** Durable operator retry truth. Missing legacy values fail closed. */
+    retryable: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   }),
 ]);
 export type ScheduledAutomationOutcome = typeof ScheduledAutomationOutcome.Type;
@@ -263,6 +269,13 @@ export const ScheduledAutomationRetryLastCommand = Schema.Struct({
 });
 export type ScheduledAutomationRetryLastCommand = typeof ScheduledAutomationRetryLastCommand.Type;
 
+export const ScheduledAutomationAbandonFailedCommand = Schema.Struct({
+  type: Schema.Literal("scheduledAutomation.failed.abandon"),
+  ...ScheduledAutomationRevisionFields,
+});
+export type ScheduledAutomationAbandonFailedCommand =
+  typeof ScheduledAutomationAbandonFailedCommand.Type;
+
 export const ScheduledAutomationDeleteCommand = Schema.Struct({
   type: Schema.Literal("scheduledAutomation.delete"),
   ...ScheduledAutomationRevisionFields,
@@ -274,6 +287,7 @@ export const ScheduledAutomationCommand = Schema.Union([
   ScheduledAutomationUpdateCommand,
   ScheduledAutomationEnabledSetCommand,
   ScheduledAutomationRetryLastCommand,
+  ScheduledAutomationAbandonFailedCommand,
   ScheduledAutomationDeleteCommand,
 ]);
 export type ScheduledAutomationCommand = typeof ScheduledAutomationCommand.Type;
@@ -549,6 +563,25 @@ export function nextScheduledAutomationOccurrence(
   return Result.succeed(formatUtc(occurrence.success));
 }
 
+/** Returns the later activation/cursor instant used by reads and the scheduler. */
+export function scheduledAutomationPlanningBoundary(input: {
+  readonly enabledAt: string;
+  readonly lastScheduledFor: string | null;
+}): Result.Result<string, ScheduledAutomationScheduleError> {
+  const enabledAt = parseInstant(input.enabledAt, "enabledAt");
+  if (Result.isFailure(enabledAt)) return Result.fail(enabledAt.failure);
+  if (input.lastScheduledFor === null) return Result.succeed(formatUtc(enabledAt.success));
+  const cursor = parseInstant(input.lastScheduledFor, "lastScheduledFor");
+  if (Result.isFailure(cursor)) return Result.fail(cursor.failure);
+  return Result.succeed(
+    formatUtc(
+      DateTime.toEpochMillis(cursor.success) > DateTime.toEpochMillis(enabledAt.success)
+        ? cursor.success
+        : enabledAt.success,
+    ),
+  );
+}
+
 /**
  * Implements v1 `latest-only`: at most one newest occurrence at or before now,
  * strictly after both the activation boundary and durable cursor.
@@ -567,15 +600,15 @@ export function latestScheduledAutomationOccurrence(
   if (Result.isFailure(parsedSchedule)) return Result.fail(parsedSchedule.failure);
   const now = parseInstant(input.now, "now");
   if (Result.isFailure(now)) return Result.fail(now.failure);
-  const enabledAt = parseInstant(input.enabledAt, "enabledAt");
-  if (Result.isFailure(enabledAt)) return Result.fail(enabledAt.failure);
-
-  let boundary = DateTime.toEpochMillis(enabledAt.success);
-  if (input.lastScheduledFor !== null) {
-    const cursor = parseInstant(input.lastScheduledFor, "lastScheduledFor");
-    if (Result.isFailure(cursor)) return Result.fail(cursor.failure);
-    boundary = Math.max(boundary, DateTime.toEpochMillis(cursor.success));
-  }
+  const planningBoundary = scheduledAutomationPlanningBoundary({
+    enabledAt: input.enabledAt,
+    lastScheduledFor: input.lastScheduledFor,
+  });
+  if (Result.isFailure(planningBoundary)) return Result.fail(planningBoundary.failure);
+  const boundary = DateTime.make(planningBoundary.success).pipe(
+    Option.map(DateTime.toEpochMillis),
+    Option.getOrThrow,
+  );
 
   const nowMs = DateTime.toEpochMillis(now.success);
   const first = cronNextResult(parsedSchedule.success, boundary);
