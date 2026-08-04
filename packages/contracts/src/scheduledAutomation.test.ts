@@ -167,6 +167,15 @@ it.effect("decodes the namespaced command union and requires revisions after cre
       assert.strictEqual(update.expectedRevision, 3);
     }
 
+    const abandon = yield* decodeCommand({
+      type: "scheduledAutomation.failed.abandon",
+      commandId: "command-abandon",
+      automationId: "automation-1",
+      expectedRevision: 4,
+      createdAt: "2026-08-03T09:01:30.000Z",
+    });
+    assert.strictEqual(abandon.type, "scheduledAutomation.failed.abandon");
+
     const missingRevision = yield* Effect.exit(
       decodeCommand({
         type: "scheduledAutomation.enabled.set",

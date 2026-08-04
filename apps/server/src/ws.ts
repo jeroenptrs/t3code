@@ -71,7 +71,7 @@ import {
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
-import { makeThreadBootstrapService } from "./orchestration/Services/ThreadBootstrapService.ts";
+import { ThreadBootstrapService } from "./orchestration/Services/ThreadBootstrapService.ts";
 import * as WorkspaceMutationCoordinator from "./orchestration/Services/WorkspaceMutationCoordinator.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
@@ -325,13 +325,13 @@ function toAuthAccessStreamEvent(
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  threadBootstrap: ThreadBootstrapService["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
-      const threadBootstrap = yield* makeThreadBootstrapService;
       const workspaceMutationCoordinator =
         yield* WorkspaceMutationCoordinator.WorkspaceMutationCoordinator;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -1847,6 +1847,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+    const threadBootstrap = yield* ThreadBootstrapService;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -1866,7 +1867,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session, previewAutomationBroker).pipe(
+            makeWsRpcLayer(session, previewAutomationBroker, threadBootstrap).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),

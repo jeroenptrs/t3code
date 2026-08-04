@@ -2,6 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   OrchestrationProjectShell,
   ScheduledAutomationCommand,
+  SCHEDULED_AUTOMATION_ABANDONED_CODE,
+  SCHEDULED_AUTOMATION_BOOTSTRAP_PHASE_REJECTED_CODE,
   ServerProvider,
   ThreadId,
   type ScheduledAutomationDefinitionDraft,
@@ -15,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -303,6 +306,86 @@ it.effect("validates live project, provider, Git repository, and base ref on ena
   }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
 });
 
+it.effect("plans re-enabled automations strictly after the new activation boundary", () => {
+  const state = initialState();
+  return Effect.gen(function* () {
+    const service = yield* ScheduledAutomationService;
+    const repository = yield* ScheduledAutomationRepository;
+    const created = (yield* service.dispatch(yield* createCommand())).automation!;
+
+    yield* TestClock.setTime(Date.parse("2026-08-01T00:00:00.000Z"));
+    const firstEnabled = (yield* service.dispatch(
+      yield* decodeCommand({
+        type: "scheduledAutomation.enabled.set",
+        commandId: "enable-first",
+        automationId: created.id,
+        expectedRevision: created.revision,
+        enabled: true,
+        createdAt: created.createdAt,
+      }),
+    )).automation!;
+    const claimed = yield* repository.claimOccurrence({
+      automationId: firstEnabled.id,
+      expectedRevision: firstEnabled.revision,
+      scheduledFor: "2026-08-01T02:30:00.000Z",
+      lastThreadId: ThreadId.make("t3sa:v1:reactivation:thread"),
+      lastOutcome: {
+        kind: "starting",
+        scheduledFor: "2026-08-01T02:30:00.000Z",
+        observedAt: "2026-08-01T02:30:01.000Z",
+        coalescedCount: 0,
+      },
+      updatedAt: "2026-08-01T02:30:01.000Z",
+    });
+    const disabled = (yield* service.dispatch(
+      yield* decodeCommand({
+        type: "scheduledAutomation.enabled.set",
+        commandId: "disable",
+        automationId: claimed.id,
+        expectedRevision: claimed.revision,
+        enabled: false,
+        createdAt: claimed.updatedAt,
+      }),
+    )).automation!;
+
+    yield* TestClock.setTime(Date.parse("2026-08-03T10:15:00.000Z"));
+    const reenabled = (yield* service.dispatch(
+      yield* decodeCommand({
+        type: "scheduledAutomation.enabled.set",
+        commandId: "enable-again",
+        automationId: disabled.id,
+        expectedRevision: disabled.revision,
+        enabled: true,
+        createdAt: disabled.updatedAt,
+      }),
+    )).automation!;
+    const disabledIntervalClaim = yield* Effect.flip(
+      repository.claimOccurrence({
+        automationId: reenabled.id,
+        expectedRevision: reenabled.revision,
+        scheduledFor: "2026-08-03T02:30:00.000Z",
+        lastThreadId: ThreadId.make("t3sa:v1:disabled-interval:thread"),
+        lastOutcome: {
+          kind: "starting",
+          scheduledFor: "2026-08-03T02:30:00.000Z",
+          observedAt: "2026-08-03T10:15:01.000Z",
+          coalescedCount: 1,
+        },
+        updatedAt: "2026-08-03T10:15:01.000Z",
+      }),
+    );
+    const view = yield* service.get(reenabled.id);
+
+    assert.equal(reenabled.enabledAt, "2026-08-03T10:15:00.000Z");
+    assert.equal(reenabled.lastScheduledFor, "2026-08-01T02:30:00.000Z");
+    assert.equal(disabledIntervalClaim._tag, "ScheduledAutomationInvalidStateError");
+    if (disabledIntervalClaim._tag === "ScheduledAutomationInvalidStateError") {
+      assert.include(disabledIntervalClaim.message, "activation boundary");
+    }
+    assert.equal(view.nextScheduledFor, "2026-08-04T02:30:00.000Z");
+  }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
+});
+
 it.effect(
   "validates enabled edits but permits disabled saves with unavailable dependencies",
   () => {
@@ -400,7 +483,7 @@ it.effect(
   },
 );
 
-it.effect("rejects retry until reconciliation exists without mutating the failed row", () => {
+it.effect("abandons a receipt-rejected occurrence before resource correction", () => {
   const state = initialState();
   return Effect.gen(function* () {
     const service = yield* ScheduledAutomationService;
@@ -442,8 +525,9 @@ it.effect("rejects retry until reconciliation exists without mutating the failed
           scheduledFor: "2026-08-04T02:30:00.000Z",
           observedAt: "2026-08-04T02:31:30.000Z",
           coalescedCount: 0,
-          code: "fixture.failure",
-          detail: "Fixture failure.",
+          code: "bootstrap.phase-rejected",
+          detail: "A deterministic phase command was rejected.",
+          retryable: false,
         },
         updatedAt: "2026-08-04T02:31:30.000Z",
       },
@@ -456,6 +540,23 @@ it.effect("rejects retry until reconciliation exists without mutating the failed
     assert.equal(events[1]?.kind, "upserted");
     if (events[1]?.kind === "upserted") {
       assert.deepStrictEqual(events[1].automation.automation, claimed);
+    }
+    const resourceEditError = yield* Effect.flip(
+      Effect.flatMap(
+        decodeCommand({
+          type: "scheduledAutomation.update",
+          commandId: "change-failed-occurrence-resources",
+          automationId: failed.id,
+          expectedRevision: failed.revision,
+          definition: { ...definition, worktreePolicy: { kind: "current" } },
+          createdAt: failed.updatedAt,
+        }),
+        service.dispatch,
+      ),
+    );
+    assert.equal(resourceEditError._tag, "ScheduledAutomationInvalidStateError");
+    if (resourceEditError._tag === "ScheduledAutomationInvalidStateError") {
+      assert.include(resourceEditError.message, "until the failed occurrence is abandoned");
     }
     const retryError = yield* Effect.flip(
       Effect.flatMap(
@@ -471,9 +572,197 @@ it.effect("rejects retry until reconciliation exists without mutating the failed
     );
     assert.equal(retryError._tag, "ScheduledAutomationInvalidStateError");
     if (retryError._tag === "ScheduledAutomationInvalidStateError") {
-      assert.include(retryError.message, "unavailable until scheduled reconciliation");
+      assert.include(retryError.message, "durably rejected");
     }
-    assert.deepStrictEqual(Option.getOrThrow(yield* repository.get(failed.id)), failed);
+    const enabledAbandonError = yield* Effect.flip(
+      Effect.flatMap(
+        decodeCommand({
+          type: "scheduledAutomation.failed.abandon",
+          commandId: "abandon-enabled-occurrence",
+          automationId: failed.id,
+          expectedRevision: failed.revision,
+          createdAt: failed.updatedAt,
+        }),
+        service.dispatch,
+      ),
+    );
+    assert.equal(enabledAbandonError._tag, "ScheduledAutomationInvalidStateError");
+    if (enabledAbandonError._tag === "ScheduledAutomationInvalidStateError") {
+      assert.include(enabledAbandonError.message, "Disable");
+    }
+    const disabled = (yield* Effect.flatMap(
+      decodeCommand({
+        type: "scheduledAutomation.enabled.set",
+        commandId: "disable-rejected-occurrence",
+        automationId: failed.id,
+        expectedRevision: failed.revision,
+        enabled: false,
+        createdAt: failed.updatedAt,
+      }),
+      service.dispatch,
+    )).automation!;
+    const abandoned = (yield* Effect.flatMap(
+      decodeCommand({
+        type: "scheduledAutomation.failed.abandon",
+        commandId: "abandon-rejected-occurrence",
+        automationId: disabled.id,
+        expectedRevision: disabled.revision,
+        createdAt: disabled.updatedAt,
+      }),
+      service.dispatch,
+    )).automation!;
+    const corrected = (yield* Effect.flatMap(
+      decodeCommand({
+        type: "scheduledAutomation.update",
+        commandId: "correct-abandoned-resources",
+        automationId: abandoned.id,
+        expectedRevision: abandoned.revision,
+        definition: {
+          ...definition,
+          projectId: "replacement-project",
+          worktreePolicy: {
+            kind: "new-worktree",
+            baseBranch: "replacement-main",
+            startFromOrigin: false,
+          },
+        },
+        createdAt: abandoned.updatedAt,
+      }),
+      service.dispatch,
+    )).automation!;
+
+    assert.equal(corrected.projectId, "replacement-project");
+    assert.equal(corrected.worktreePolicy.kind, "new-worktree");
+    assert.equal(corrected.lastThreadId, failed.lastThreadId);
+    assert.equal(corrected.lastOutcome?.kind, "failed");
+    if (corrected.lastOutcome?.kind === "failed") {
+      assert.equal(corrected.lastOutcome.code, "occurrence.abandoned");
+      assert.isFalse(corrected.lastOutcome.retryable);
+    }
+    const abandonedRetry = yield* Effect.flip(
+      Effect.flatMap(
+        decodeCommand({
+          type: "scheduledAutomation.retry-last",
+          commandId: "retry-abandoned-occurrence",
+          automationId: corrected.id,
+          expectedRevision: corrected.revision,
+          createdAt: corrected.updatedAt,
+        }),
+        service.dispatch,
+      ),
+    );
+    assert.equal(abandonedRetry._tag, "ScheduledAutomationInvalidStateError");
+    if (abandonedRetry._tag === "ScheduledAutomationInvalidStateError") {
+      assert.include(abandonedRetry.message, "abandoned and cannot be retried");
+    }
+  }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
+});
+
+it.effect("rejects retry for invariant-sensitive legacy failures", () => {
+  const state = initialState();
+  return Effect.gen(function* () {
+    const service = yield* ScheduledAutomationService;
+    const sql = yield* SqlClient.SqlClient;
+    for (const [index, code] of [
+      SCHEDULED_AUTOMATION_BOOTSTRAP_PHASE_REJECTED_CODE,
+      SCHEDULED_AUTOMATION_ABANDONED_CODE,
+    ].entries()) {
+      const created = (yield* service.dispatch(
+        yield* createCommand({
+          commandId: `create-legacy-failure-${index}`,
+          automationId: `legacy-failure-${index}`,
+        }),
+      )).automation!;
+      const legacyOutcomeJson = `{"kind":"failed","scheduledFor":"2026-08-04T02:30:00.000Z","observedAt":"2026-08-04T02:31:00.000Z","coalescedCount":0,"code":"${code}","detail":"Legacy failure without retryability."}`;
+      yield* sql`
+        UPDATE local_scheduled_automations_v1
+        SET last_outcome_json = ${legacyOutcomeJson}
+        WHERE id = ${created.id}
+      `;
+
+      const decoded = yield* service.get(created.id);
+      assert.equal(decoded.automation.lastOutcome?.kind, "failed");
+      if (decoded.automation.lastOutcome?.kind === "failed") {
+        assert.isFalse(decoded.automation.lastOutcome.retryable);
+      }
+      const retryError = yield* Effect.flip(
+        service.dispatch(
+          yield* decodeCommand({
+            type: "scheduledAutomation.retry-last",
+            commandId: `retry-legacy-failure-${index}`,
+            automationId: created.id,
+            expectedRevision: created.revision,
+            createdAt: created.updatedAt,
+          }),
+        ),
+      );
+      assert.equal(retryError._tag, "ScheduledAutomationInvalidStateError");
+      if (retryError._tag === "ScheduledAutomationInvalidStateError") {
+        assert.match(retryError.message, /rejected|abandoned/);
+      }
+    }
+  }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
+});
+
+it.effect("rejects execution-definition edits while an occurrence is starting", () => {
+  const state = initialState();
+  return Effect.gen(function* () {
+    const service = yield* ScheduledAutomationService;
+    const repository = yield* ScheduledAutomationRepository;
+    const created = (yield* service.dispatch(yield* createCommand())).automation!;
+    const enabled = (yield* Effect.flatMap(
+      decodeCommand({
+        type: "scheduledAutomation.enabled.set",
+        commandId: "enable-starting-fixture",
+        automationId: created.id,
+        expectedRevision: created.revision,
+        enabled: true,
+        createdAt: created.createdAt,
+      }),
+      service.dispatch,
+    )).automation!;
+    const starting = yield* repository.claimOccurrence({
+      automationId: enabled.id,
+      expectedRevision: enabled.revision,
+      scheduledFor: "2026-08-04T02:30:00.000Z",
+      lastThreadId: ThreadId.make("t3sa:v1:starting-fixture:thread"),
+      lastOutcome: {
+        kind: "starting",
+        scheduledFor: "2026-08-04T02:30:00.000Z",
+        observedAt: "2026-08-04T02:31:00.000Z",
+        coalescedCount: 0,
+      },
+      updatedAt: "2026-08-04T02:31:00.000Z",
+    });
+    const error = yield* Effect.flip(
+      Effect.flatMap(
+        decodeCommand({
+          type: "scheduledAutomation.update",
+          commandId: "update-starting-execution",
+          automationId: starting.id,
+          expectedRevision: starting.revision,
+          definition: {
+            ...definition,
+            name: "Changed name",
+            prompt: "Changed prompt",
+            projectId: "different-project",
+            modelSelection: { instanceId: "different-provider", model: "different-model" },
+            runtimeMode: "approval-required",
+            interactionMode: "plan",
+            worktreePolicy: { kind: "current" },
+            schedule: { cron: "45 3 * * *", timeZone: "UTC", misfirePolicy: "latest-only" },
+          },
+          createdAt: "2026-08-04T02:32:00.000Z",
+        }),
+        service.dispatch,
+      ),
+    );
+
+    assert.equal(error._tag, "ScheduledAutomationInvalidStateError");
+    if (error._tag === "ScheduledAutomationInvalidStateError") {
+      assert.include(error.message, "cannot change while an occurrence is starting");
+    }
+    assert.deepStrictEqual(Option.getOrThrow(yield* repository.get(starting.id)), starting);
   }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
 });
 

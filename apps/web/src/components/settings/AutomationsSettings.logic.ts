@@ -1,4 +1,5 @@
 import {
+  SCHEDULED_AUTOMATION_ABANDONED_CODE,
   ProviderInstanceId,
   isScheduledAutomationProviderEligible,
   type CommandId,
@@ -34,6 +35,8 @@ export const DELETE_AUTOMATION_DISCLOSURE =
   "This removes only the disabled automation definition. Prior threads, branches, and worktrees are not deleted.";
 export const DISABLE_AUTOMATION_DISCLOSURE =
   "Disabling prevents future runs and does not interrupt the linked thread.";
+export const ABANDON_AUTOMATION_DISCLOSURE =
+  "This ends retry for the failed occurrence. Its linked thread, branch, and worktree are retained; future runs use a new occurrence.";
 export const AUTOMATION_ID_ERROR =
   "Use 1–64 letters, numbers, dots, underscores, or dashes, beginning with a letter or number.";
 
@@ -251,7 +254,7 @@ export function previewAutomationSchedule(
 
 export function buildAutomationRevisionCommand(
   automation: ScheduledAutomation,
-  action: "enable" | "disable" | "retry" | "delete",
+  action: "enable" | "disable" | "retry" | "abandon" | "delete",
   now: string,
 ): ScheduledAutomationCommand {
   const common = {
@@ -264,6 +267,9 @@ export function buildAutomationRevisionCommand(
     return { type: "scheduledAutomation.enabled.set", ...common, enabled: action === "enable" };
   }
   if (action === "retry") return { type: "scheduledAutomation.retry-last", ...common };
+  if (action === "abandon") {
+    return { type: "scheduledAutomation.failed.abandon", ...common };
+  }
   return { type: "scheduledAutomation.delete", ...common };
 }
 
@@ -271,7 +277,12 @@ export const canDeleteAutomation = (automation: ScheduledAutomation): boolean =>
   !automation.enabled;
 
 export const canRetryAutomation = (automation: ScheduledAutomation): boolean =>
-  automation.lastOutcome?.kind === "failed";
+  automation.lastOutcome?.kind === "failed" && automation.lastOutcome.retryable;
+
+export const canAbandonAutomation = (automation: ScheduledAutomation): boolean =>
+  !automation.enabled &&
+  automation.lastOutcome?.kind === "failed" &&
+  automation.lastOutcome.code !== SCHEDULED_AUTOMATION_ABANDONED_CODE;
 
 export function applyAutomationConflictRows(
   views: ReadonlyArray<ScheduledAutomationView>,

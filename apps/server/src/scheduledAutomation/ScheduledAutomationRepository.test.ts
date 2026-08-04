@@ -425,6 +425,7 @@ describe("ScheduledAutomationRepository restart", () => {
               coalescedCount: 4,
               code: "provider.unavailable",
               detail: "Provider was unavailable.",
+              retryable: true,
             },
             updatedAt: "2026-08-04T00:32:00.000Z",
           },

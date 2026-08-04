@@ -59,6 +59,7 @@ import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import {
   EMPTY_AUTOMATION_DEFINITION,
   AUTOMATION_ID_ERROR,
+  ABANDON_AUTOMATION_DISCLOSURE,
   CURRENT_WORKSPACE_DISCLOSURE,
   DELETE_AUTOMATION_DISCLOSURE,
   DISABLE_AUTOMATION_DISCLOSURE,
@@ -67,6 +68,7 @@ import {
   applyAutomationConflictRows,
   buildAutomationRevisionCommand,
   buildAutomationSaveCommand,
+  canAbandonAutomation,
   canDeleteAutomation,
   canRetryAutomation,
   canSubmitAutomationDraft,
@@ -670,10 +672,13 @@ export function AutomationRow(props: {
   readonly provider: ServerProvider | undefined;
   readonly pending: boolean;
   readonly onEdit: () => void;
-  readonly onAction: (action: "enable" | "disable" | "retry" | "delete") => Promise<void>;
+  readonly onAction: (
+    action: "enable" | "disable" | "retry" | "abandon" | "delete",
+  ) => Promise<void>;
 }) {
   const { automation } = props.view;
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [abandonOpen, setAbandonOpen] = useState(false);
   const effort = automation.modelSelection.options?.find((option) =>
     option.id.toLocaleLowerCase().includes("effort"),
   );
@@ -786,12 +791,40 @@ export function AutomationRow(props: {
         >
           Retry last
         </Button>
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={props.pending || !canAbandonAutomation(automation)}
+          onClick={() => setAbandonOpen(true)}
+        >
+          Abandon last occurrence
+        </Button>
         {automation.enabled && automation.lastThreadId ? (
           <span className="self-center text-xs text-muted-foreground">
             {DISABLE_AUTOMATION_DISCLOSURE}
           </span>
         ) : null}
       </div>
+      <AlertDialog open={abandonOpen} onOpenChange={setAbandonOpen}>
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Abandon the last occurrence?</AlertDialogTitle>
+            <AlertDialogDescription>{ABANDON_AUTOMATION_DISCLOSURE}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setAbandonOpen(false);
+                void props.onAction("abandon");
+              }}
+            >
+              Abandon occurrence
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
@@ -845,7 +878,7 @@ export function AutomationsSettings(props: AutomationsSettingsProps) {
   const visibleViews = applyAutomationConflictRows(props.views, conflictRows);
   const runAction = async (
     automation: ScheduledAutomation,
-    action: "enable" | "disable" | "retry" | "delete",
+    action: "enable" | "disable" | "retry" | "abandon" | "delete",
   ) => {
     if (pendingActionIdsRef.current.has(automation.id)) return;
     pendingActionIdsRef.current.add(automation.id);

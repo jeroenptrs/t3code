@@ -1,7 +1,10 @@
 import {
   isScheduledAutomationProviderEligible,
   nextScheduledAutomationOccurrence,
+  scheduledAutomationPlanningBoundary,
   ScheduledAutomationConflictError,
+  SCHEDULED_AUTOMATION_ABANDONED_CODE,
+  SCHEDULED_AUTOMATION_BOOTSTRAP_PHASE_REJECTED_CODE,
   type ScheduledAutomation,
   type ScheduledAutomationCommand,
   type ScheduledAutomationDefinition,
@@ -16,6 +19,7 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -155,6 +159,29 @@ function definitionChanges(definition: ScheduledAutomationDefinition) {
     worktreePolicy: definition.worktreePolicy,
     setupScriptPolicy: definition.setupScriptPolicy,
     schedule: definition.schedule,
+  };
+}
+
+function executionDefinition(definition: ScheduledAutomation | ScheduledAutomationDefinition) {
+  return {
+    name: definition.name,
+    prompt: definition.prompt,
+    projectId: definition.projectId,
+    modelSelection: definition.modelSelection,
+    runtimeMode: definition.runtimeMode,
+    interactionMode: definition.interactionMode,
+    worktreePolicy: definition.worktreePolicy,
+    setupScriptPolicy: definition.setupScriptPolicy,
+  };
+}
+
+function occurrenceResourceDefinition(
+  definition: ScheduledAutomation | ScheduledAutomationDefinition,
+) {
+  return {
+    projectId: definition.projectId,
+    worktreePolicy: definition.worktreePolicy,
+    setupScriptPolicy: definition.setupScriptPolicy,
   };
 }
 
@@ -333,10 +360,16 @@ export const makeScheduledAutomationService = Effect.gen(function* () {
 
     let nextScheduledFor: ScheduledAutomationView["nextScheduledFor"] = null;
     if (automation.enabled && automation.enabledAt !== null) {
-      const next = nextScheduledAutomationOccurrence(
-        automation.schedule,
-        automation.lastScheduledFor ?? automation.enabledAt,
-      );
+      const boundary = scheduledAutomationPlanningBoundary({
+        enabledAt: automation.enabledAt,
+        lastScheduledFor: automation.lastScheduledFor,
+      });
+      if (Result.isFailure(boundary)) {
+        return yield* new ScheduledAutomationInternalError({
+          message: "Scheduled automation planning boundary could not be computed.",
+        });
+      }
+      const next = nextScheduledAutomationOccurrence(automation.schedule, boundary.success);
       if (Result.isFailure(next)) {
         return yield* new ScheduledAutomationInternalError({
           message: "Scheduled automation next occurrence could not be computed.",
@@ -380,6 +413,31 @@ export const makeScheduledAutomationService = Effect.gen(function* () {
         yield* ensureExpectedRevision(current, command.expectedRevision);
         const validated = validateScheduledAutomationDefinitionDraft(command.definition);
         if (Result.isFailure(validated)) return yield* validated.failure;
+        if (
+          current.lastOutcome?.kind === "starting" &&
+          !Equal.equals(executionDefinition(current), executionDefinition(validated.success))
+        ) {
+          return yield* new ScheduledAutomationInvalidStateError({
+            automationId: current.id,
+            message: "Execution fields cannot change while an occurrence is starting.",
+            current,
+          });
+        }
+        if (
+          current.lastOutcome?.kind === "failed" &&
+          current.lastOutcome.code !== SCHEDULED_AUTOMATION_ABANDONED_CODE &&
+          !Equal.equals(
+            occurrenceResourceDefinition(current),
+            occurrenceResourceDefinition(validated.success),
+          )
+        ) {
+          return yield* new ScheduledAutomationInvalidStateError({
+            automationId: current.id,
+            message:
+              "Project, worktree, and setup policies cannot change until the failed occurrence is abandoned.",
+            current,
+          });
+        }
         if (current.enabled) yield* validateLiveDefinition(validated.success);
         const automation = yield* repository
           .compareAndSwapUpdate({
@@ -421,11 +479,66 @@ export const makeScheduledAutomationService = Effect.gen(function* () {
             current,
           });
         }
+        if (!current.lastOutcome.retryable) {
+          return yield* new ScheduledAutomationInvalidStateError({
+            automationId: current.id,
+            message:
+              current.lastOutcome.code === SCHEDULED_AUTOMATION_ABANDONED_CODE
+                ? "The failed occurrence was abandoned and cannot be retried."
+                : current.lastOutcome.code === SCHEDULED_AUTOMATION_BOOTSTRAP_PHASE_REJECTED_CODE
+                  ? "A bootstrap phase was durably rejected. Disable and abandon this occurrence before correcting the definition."
+                  : "This failure is non-retryable. Disable and abandon the occurrence before correcting the definition.",
+            current,
+          });
+        }
         return yield* new ScheduledAutomationInvalidStateError({
           automationId: current.id,
           message: "Retry is unavailable until scheduled reconciliation is installed.",
           current,
         });
+      }
+      case "scheduledAutomation.failed.abandon": {
+        const current = yield* load(command.automationId);
+        yield* ensureExpectedRevision(current, command.expectedRevision);
+        if (current.lastOutcome?.kind !== "failed") {
+          return yield* new ScheduledAutomationInvalidStateError({
+            automationId: current.id,
+            message: "Only a failed occurrence can be abandoned.",
+            current,
+          });
+        }
+        if (current.enabled) {
+          return yield* new ScheduledAutomationInvalidStateError({
+            automationId: current.id,
+            message: "Disable the automation before abandoning its failed occurrence.",
+            current,
+          });
+        }
+        if (current.lastOutcome.code === SCHEDULED_AUTOMATION_ABANDONED_CODE) {
+          return yield* new ScheduledAutomationInvalidStateError({
+            automationId: current.id,
+            message: "The failed occurrence is already abandoned.",
+            current,
+          });
+        }
+        const automation = yield* repository
+          .compareAndSwapUpdate({
+            automationId: command.automationId,
+            expectedRevision: command.expectedRevision,
+            replacement: replacement(current, {
+              lastOutcome: {
+                ...current.lastOutcome,
+                observedAt: timestamp,
+                code: SCHEDULED_AUTOMATION_ABANDONED_CODE,
+                retryable: false,
+                detail:
+                  "The failed occurrence was abandoned. Its thread and worktree artifacts were retained.",
+              },
+              updatedAt: timestamp,
+            }),
+          })
+          .pipe(mapRepositoryMutationFailure("abandon failed occurrence"));
+        return { automation };
       }
       case "scheduledAutomation.delete": {
         const current = yield* load(command.automationId);

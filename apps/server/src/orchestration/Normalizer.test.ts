@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 import {
+  ApprovalRequestId,
   CommandId,
   type ClientOrchestrationCommand,
   MessageId,
@@ -122,9 +123,168 @@ describe("normalizeDispatchCommand", () => {
       expect(error).toMatchObject({
         _tag: "OrchestrationDispatchCommandError",
         message:
-          "Explicit bootstrap worktree paths are not supported until deterministic bootstrap validation is enabled.",
+          "Deterministic bootstrap paths and reconciliation are reserved for trusted server callers.",
       });
       expect(writeFile).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("reserves scheduled-automation identities only when clients mint them", () =>
+    Effect.gen(function* () {
+      const base: ClientOrchestrationCommand = {
+        type: "thread.turn.start",
+        commandId: CommandId.make("command"),
+        threadId: ThreadId.make("thread"),
+        message: {
+          messageId: MessageId.make("message"),
+          role: "user",
+          text: "Start",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt: clientCreatedAt,
+      };
+      const commands: ClientOrchestrationCommand[] = [
+        { ...base, commandId: CommandId.make("t3sa:v1:collision") },
+        {
+          ...base,
+          message: { ...base.message, messageId: MessageId.make("t3sa:v1:collision") },
+        },
+        {
+          type: "thread.create",
+          commandId: CommandId.make("create-reserved-thread"),
+          threadId: ThreadId.make("t3sa:v1:collision"),
+          projectId: ProjectId.make("project-1"),
+          title: "Forged automation thread",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: clientCreatedAt,
+        },
+        {
+          ...base,
+          threadId: ThreadId.make("t3sa:v1:collision"),
+          bootstrap: {
+            createThread: {
+              projectId: ProjectId.make("project-1"),
+              title: "Forged automation thread",
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              createdAt: clientCreatedAt,
+            },
+          },
+        },
+      ];
+
+      for (const command of commands) {
+        const error = yield* normalizeDispatchCommand(command).pipe(
+          Effect.provideService(FileSystem.FileSystem, {} as never),
+          Effect.provideService(Path.Path, {} as never),
+          Effect.provideService(ServerConfig, {} as never),
+          Effect.provideService(WorkspacePaths.WorkspacePaths, {} as never),
+          Effect.flip,
+        );
+        expect(error).toMatchObject({
+          _tag: "OrchestrationDispatchCommandError",
+          message: "The scheduled-automation identity namespace is reserved for server use.",
+        });
+      }
+    }),
+  );
+
+  it.effect("allows clients to operate on existing scheduled-automation threads", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("t3sa:v1:existing:thread");
+      const commands: ClientOrchestrationCommand[] = [
+        {
+          type: "thread.turn.start",
+          commandId: CommandId.make("follow-up"),
+          threadId,
+          message: {
+            messageId: MessageId.make("follow-up-message"),
+            role: "user",
+            text: "Continue",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: clientCreatedAt,
+        },
+        {
+          type: "thread.approval.respond",
+          commandId: CommandId.make("approve"),
+          threadId,
+          requestId: ApprovalRequestId.make("approval"),
+          decision: "accept",
+          createdAt: clientCreatedAt,
+        },
+        {
+          type: "thread.user-input.respond",
+          commandId: CommandId.make("answer"),
+          threadId,
+          requestId: ApprovalRequestId.make("input"),
+          answers: { choice: "continue" },
+          createdAt: clientCreatedAt,
+        },
+        {
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("interrupt"),
+          threadId,
+          createdAt: clientCreatedAt,
+        },
+        {
+          type: "thread.delete",
+          commandId: CommandId.make("delete"),
+          threadId,
+        },
+      ];
+
+      for (const command of commands) {
+        const normalized = yield* normalizeDispatchCommand(command).pipe(
+          Effect.provideService(FileSystem.FileSystem, {} as never),
+          Effect.provideService(Path.Path, {} as never),
+          Effect.provideService(ServerConfig, {} as never),
+          Effect.provideService(WorkspacePaths.WorkspacePaths, {} as never),
+        );
+        expect("threadId" in normalized ? normalized.threadId : null).toBe(threadId);
+      }
+    }),
+  );
+
+  it.effect("rejects client-supplied deterministic reconciliation revisions", () =>
+    Effect.gen(function* () {
+      const command: ClientOrchestrationCommand = {
+        type: "thread.turn.start",
+        commandId: CommandId.make("command-reconcile"),
+        threadId: ThreadId.make("thread-existing"),
+        message: {
+          messageId: MessageId.make("message-reconcile"),
+          role: "user",
+          text: "Reconcile",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: { reconcileThreadRevision: 2 },
+        createdAt: clientCreatedAt,
+      };
+
+      const error = yield* normalizeDispatchCommand(command).pipe(
+        Effect.provideService(FileSystem.FileSystem, {} as never),
+        Effect.provideService(Path.Path, {} as never),
+        Effect.provideService(ServerConfig, {} as never),
+        Effect.provideService(WorkspacePaths.WorkspacePaths, {} as never),
+        Effect.flip,
+      );
+      expect(error.message).toBe(
+        "Deterministic bootstrap paths and reconciliation are reserved for trusted server callers.",
+      );
     }),
   );
 });

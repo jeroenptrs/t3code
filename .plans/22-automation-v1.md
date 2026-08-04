@@ -14,9 +14,10 @@ The scheduler work has not started. WP2's web/desktop management vertical is
 implemented and verified: the shared settings route, navigation/search and
 command-palette entry, environment-wide subscribed list, capability-backed
 create/edit form, branch refresh/invalidation, safety disclosures, CAS conflict
-review, and enable/disable/retry/delete controls are present. The shared
-`ThreadBootstrapService` required by this workstream already exists, but it is not
-phase-resumable and must be hardened before a scheduler can use it safely.
+review, and enable/disable/retry/abandon/delete controls are present. WP3's shared
+`ThreadBootstrapService` is installed in the server runtime and is phase-resumable
+for deterministic automation callers; its crash-point, worktree-identity,
+failure-retention, WS-compatibility, and setup-skip acceptance suites pass.
 
 The expanded WP0 acceptance and regression suites and affected
 contract/server/client-runtime typechecks pass. A further review identified
@@ -197,7 +198,12 @@ after case folding on common Windows and macOS filesystems.
 `ModelSelection`, `RuntimeMode`, and `ProviderInteractionMode` reuse the existing
 orchestration contracts. Provider/model/options are validated against the live
 server catalog when a definition is enabled and again when an occurrence is
-claimed. A definition may remain stored while its project or provider is
+claimed. Failed outcomes carry durable `code`, `detail`, and `retryable` truth;
+legacy rows without `retryable` decode fail-closed as non-retryable. Operators
+can disable and abandon a rejected occurrence; an already abandoned occurrence
+remains final without reviving either deterministic identity.
+
+A definition may remain stored while its project or provider is
 temporarily unavailable, but it cannot produce a new thread until valid again.
 
 `current` deliberately shares the selected project's current workspace and gives
@@ -225,13 +231,17 @@ Contracts define these commands:
 - `scheduledAutomation.update`
 - `scheduledAutomation.enabled.set`
 - `scheduledAutomation.retry-last`
+- `scheduledAutomation.failed.abandon`
 - `scheduledAutomation.delete`
 
-Update, enable/disable, retry, and delete carry `expectedRevision`. The repository
-uses a compare-and-swap update and returns a typed conflict containing the current
-row when another client has changed it. Create is disabled by default. Delete is
-allowed only while disabled and deletes only the automation row; its T3 threads,
-branches, and worktrees remain governed by normal retention.
+Update, enable/disable, retry, abandon, and delete carry `expectedRevision`. The
+repository uses a compare-and-swap update and returns a typed conflict containing
+the current row when another client has changed it. Create is disabled by
+default. Abandon requires a disabled failed row, marks its occurrence
+non-retryable, and preserves its thread/worktree artifacts while restoring
+definition editability. Delete is allowed only while disabled and deletes only
+the automation row; its T3 threads, branches, and worktrees remain governed by
+normal retention.
 
 Disabling or deleting an automation prevents future claims but never interrupts
 or deletes an already-started thread. Enabling sets `enabledAt` to the server
@@ -288,7 +298,9 @@ For a due occurrence:
 
 `retry-last` is allowed only for `failed`. It reuses the same occurrence IDs and
 does not move `lastScheduledFor`. It is therefore a reconciliation command, not a
-new run.
+new run. A durably rejected phase is explicitly non-retryable. The operator must
+disable and abandon that failed occurrence before correcting occurrence-resource
+fields; the next schedule then receives new occurrence IDs.
 
 ### Active-run truth
 
@@ -382,7 +394,8 @@ Acceptance criteria below use these authorities in order:
 | Was a schedule occurrence adjudicated? | `local_scheduled_automations_v1.last_scheduled_for` plus the row revision |
 | Was a command accepted already? | orchestration command receipt for its deterministic CommandId |
 | Does the run/thread exist and what state is it in? | projection shell/detail snapshot |
-| Was a bootstrap phase completed? | deterministic command receipt plus projected thread metadata/activity |
+| Was an orchestration bootstrap phase completed? | accepted deterministic command receipt with the expected aggregate plus matching projected thread state |
+| Was deterministic Git preparation completed? | fresh live ref/worktree snapshot where the exact branch and canonical path agree |
 | Does a worktree exist and which branch owns it? | Git live worktree/ref query, not only a stored path |
 | Is a worktree clean? | fresh local Git status from the worktree immediately before removal |
 | Was a worktree pruned? | successful non-force `git worktree remove`, absent live worktree entry, and appended T3 activity |
@@ -405,10 +418,10 @@ work makes them expensive to change.
 - Define branded `ScheduledAutomationId`, definition/outcome/read-view schemas,
   command union, errors, and `scheduledAutomation.*` RPC payload schemas.
 - Extend the existing bootstrap prepare-worktree contract with an optional target
-  path. Existing web/Slack clients omit it, and the server rejects it until WP3
-  validates and consumes it. Automation then uses it to stay inside the
-  deterministic ownership namespace; WP0 only locks the wire shape and the
-  fail-closed interim behavior.
+  path. Existing web/Slack clients omit it, and client-facing ingress always
+  rejects it. From WP3 onward, a trusted in-process automation adapter validates
+  and consumes it inside the deterministic ownership namespace; WP0 only locks
+  the wire shape and the fail-closed interim behavior.
 - Add pure ID derivation and cron validation/next-occurrence helpers in the
   smallest shared server/contract boundary that does not pull server runtime code
   into clients.
@@ -681,11 +694,26 @@ The present `ThreadBootstrapService`:
   service into WS and scheduled-automation callers.
 - Derive stable phase command/activity IDs from the caller's deterministic start
   CommandId.
-- Before each phase, inspect projection detail and let command-receipt dedupe
-  adjudicate already-accepted mutations.
+- Before each orchestration phase, require both its accepted deterministic
+  command receipt and matching projection detail. Either source without the
+  other is a typed conflict; rejected or wrong-aggregate receipts fail closed.
 - For deterministic new-worktree bootstraps, pass an explicit automation path to
-  Git. On retry, require the deterministic branch and live Git worktree path to
-  agree before reusing it.
+  Git. Read a fresh local-ref snapshot before any fetch or add. Reuse only when
+  the exact branch and canonical path form one live worktree; create only when
+  neither exists. Branch-only, path-only, mismatched, and pruned states fail
+  closed.
+- Reserve the `t3sa:v1` command/message namespace and client-side ThreadId
+  minting at orchestration ingress. Ordinary commands may address an existing
+  automation ThreadId so users can follow up, approve, answer, interrupt, stop,
+  archive, or delete it. Trusted automation paths are additionally checked as
+  strict descendants of the configured automation worktree root.
+- Freeze execution-field edits while an occurrence is `starting`. A corrected
+  failed retry may update title/prompt/model/runtime/interaction through
+  revision-keyed reconciliation commands. Its project, worktree policy, and
+  setup policy remain immutable until that failed occurrence is abandoned. An
+  operator may explicitly abandon a disabled automation's failed occurrence,
+  preserving artifacts while making those fields editable for future
+  occurrences.
 - Keep partial threads/worktrees on a recoverable bootstrap failure. Append a
   bounded, secret-safe failure activity instead of deleting the thread and losing
   the recovery anchor.
@@ -703,14 +731,43 @@ The present `ThreadBootstrapService`:
 - A retry after worktree creation but before metadata update discovers the live
   deterministic branch/path and finishes the metadata phase without calling
   `git worktree add` again.
-- A mismatched existing path or branch fails closed and neither adopts nor removes
-  that worktree.
+- Exact worktree recovery succeeds without fetching origin, including while the
+  remote is unavailable. Every identity scan requests fresh Git state.
+- Branch-only, path-only, mismatched, and WP6-pruned states fail closed and
+  neither adopt, recreate, nor remove a worktree.
 - A final-turn dispatch timeout reconciles through receipt/message truth and does
   not send a second provider turn.
+- Projection-only and receipt-only fixtures for create, metadata, and turn-start
+  fail closed. Rejected and wrong-aggregate receipts also fail closed; message
+  and same-project metadata collisions are not adopted.
 - A conclusive failure retains the partial thread and appends one deterministic
-  bootstrap-failed activity. Retrying does not duplicate the activity.
-- Existing successful WS bootstrap server tests remain green and still prove
-  switch-ref, worktree, setup-launch, and no-worktree paths.
+  bootstrap-failed activity stamped at observed failure time. Consecutive
+  failures do not duplicate the activity.
+- An interactive retry with retained worktree metadata is adjudicated before any
+  Git side effect and cannot leak a newly named worktree.
+- A current-workspace concurrency fixture uses a barrier to force two dispatches
+  past the same initial reads, then proves receipt dedupe accepts one create.
+  One integration case also crosses the real SQLite
+  event/projection/receipt transaction boundary.
+- Starting execution edits are rejected. A failed same-occurrence correction
+  reconciles the supported mutable thread fields and prompt without duplicating
+  thread, worktree, or initial message; occurrence resource fields stay fixed
+  until an explicit abandon. Receipt-rejected occurrences cannot retry and can
+  be disabled/abandoned without deleting their artifacts.
+- Client normalization and RPC tests prove existing automation threads remain
+  operable while client attempts to mint their reserved ThreadIds fail.
+- Re-enable tests prove the read view and shared planner use the later activation
+  boundary and cursor, excluding disabled-period occurrences from display and
+  coalescing, while the repository rejects a direct disabled-period claim; WP4
+  must use the same helper when selecting claims.
+- Failed outcomes durably decode retryability. Legacy
+  `bootstrap.phase-rejected` and `occurrence.abandoned` rows fail closed as
+  non-retryable in contracts, service dispatch, and Settings; abandonment
+  remains available without hiding artifact retention or CAS conflicts.
+- Focused `ThreadBootstrapService` fixtures prove switch-ref, origin-fetch,
+  worktree, setup-launch/failure, and no-worktree behavior. Server RPC cases
+  separately prove authenticated orchestration ingress, retained failure state,
+  and address-but-do-not-mint automation identity enforcement.
 - Scheduled-automation service tests prove `setupScriptPolicy: skip` produces no
   call to `ProjectSetupScriptRunner`.
 
@@ -718,8 +775,10 @@ The present `ThreadBootstrapService`:
 
 ```text
 vp test run apps/server/src/orchestration/Services/ThreadBootstrapService.test.ts \
+  apps/server/src/orchestration/Normalizer.test.ts \
   apps/server/src/server.test.ts \
-  apps/server/src/scheduledAutomation/ScheduledAutomationBootstrap.test.ts
+  apps/server/src/scheduledAutomation/ScheduledAutomationBootstrap.test.ts \
+  apps/server/src/scheduledAutomation/ScheduledAutomationService.test.ts
 vp run --filter t3 typecheck
 ```
 
@@ -731,6 +790,71 @@ supports a name filter; do not turn this work package into a repo-wide test run.
 The same deterministic bootstrap can be resumed after every durable phase and no
 test observes a duplicate thread, worktree, message, or turn.
 
+### Implementation record
+
+WP3 passed its focused acceptance suite and the affected server typecheck. The
+runtime now constructs one shared `ThreadBootstrapService`; WS sessions and the
+trusted scheduled-automation bootstrap boundary consume that instance. Durable
+thread-create, metadata-update, turn-start, and bootstrap-failure identities are
+derived from the caller's start `CommandId`. A phase is complete only when its
+accepted receipt has the expected thread aggregate and its projected state
+matches. Projection-only, receipt-only, rejected, and mismatched provenance fail
+closed. A focused integration case proves recovery across the real SQLite
+event/projection/receipt transaction boundary.
+
+Failure-injection coverage stops after thread creation, Git worktree creation,
+metadata acceptance, and turn-start acceptance, then replays the same bootstrap
+and observes one thread, one live deterministic worktree, one initial message,
+and one accepted turn start. Additional cases prove exact branch/path reuse,
+offline origin recovery, fresh-ref scans, refusal of branch-only/path-only,
+mismatched, externally pruned, and metadata-conflict states, retained partial
+state, one deterministic secret-safe failure activity across consecutive
+failures, and no cleanup deletion. Interactive retained-worktree retries are
+adjudicated before Git mutation. Focused `ThreadBootstrapService` cases continue
+to cover switch-ref, origin fetch, worktree, setup launch/failure, and
+no-worktree behavior; the relevant server RPC cases cover ingress and retained
+failure state. The automation adapter always emits `runSetupScript: false`; its test
+composes the real bootstrap service and a dying runner. Client ingress rejects
+reserved command/message IDs and attempts to mint automation ThreadIds, while
+allowing normal interaction with existing automation threads. Explicit target
+paths and reconciliation revisions remain trusted-only.
+
+While `starting`, execution fields are frozen so reconciliation cannot mix a
+claim-time thread with a later definition. For a corrected failed retry,
+name/prompt/model/runtime/interaction changes use revision-keyed reconciliation;
+project/worktree/setup policy changes are rejected until the failed occurrence
+is abandoned. A disabled failed occurrence can be explicitly abandoned;
+this retains its artifacts, permanently rejects retry for that occurrence, and
+restores definition editability for future schedules. Rejected phase errors carry
+`code = bootstrap.phase-rejected` and `retryable = false` so WP4 can persist the
+same classification without parsing prose. The automation adapter classifies
+every other failure as well: configuration/identity invariants are explicitly
+non-retryable, temporarily unavailable projects and unclassified Git/bootstrap
+failures are retryable, and no scheduler handoff must infer disposition from an
+error message.
+
+Failed outcomes now persist `retryable`; legacy JSON without the field decodes
+fail-closed as non-retryable, while abandonment writes `retryable = false`.
+Service and Settings retry eligibility consume that durable truth rather than
+maintaining error-code blacklists. The read service and occurrence planner share
+the later-of-`enabledAt`/`lastScheduledFor` planning boundary, so a re-enabled
+definition does not display or coalesce an occurrence from its disabled interval.
+Settings also provides the disabled-failed-only abandonment action with confirmation, retained
+artifact disclosure, revision-bound CAS handling, and pending-state gating; WP5
+owns the same behavior as an explicit acceptance requirement.
+
+The final re-review WP3 sweep passed 123 focused contract, service, adapter,
+identity, normalizer, provider-reactor, and web logic tests across eight suites,
+plus 12 Settings interaction tests. Five
+behavior-relevant server RPC cases passed; the broader nine-case name-filtered
+selection also includes authentication/bootstrap setup cases and is not the
+proof for switch-ref or no-worktree behavior.
+Contracts/server/client-runtime/web/Slack typechecks, targeted lint/formatting,
+and `git diff --check` are clean. The only intentionally retained v1 tradeoff is
+the fresh paginated local-ref scan: the Git boundary has no worktree-only query,
+and enumerating all local refs is required to prove that no differently named
+branch owns the deterministic path.
+
 ## Work package 4 — Occurrence planner, durable claim, and scheduler
 
 ### Purpose
@@ -741,6 +865,9 @@ job queue.
 ### Implementation
 
 - Add a pure occurrence planner around Effect Cron and an injected clock.
+- Use `scheduledAutomationPlanningBoundary` everywhere planning occurs: the
+  later of `enabledAt` and `lastScheduledFor` is the exclusive boundary for
+  displayed, claimed, and coalesced occurrences.
 - Add the atomic claim operation described above. Claim and cursor advance occur
   in one SQLite transaction/CAS before bootstrap side effects.
 - Add one scoped `ScheduledAutomationScheduler` coordinator to server startup
@@ -752,6 +879,14 @@ job queue.
 - Reconcile durable `starting` outcomes on startup before claiming later
   occurrences for that automation.
 - Implement `retry-last` through the same reconciliation path.
+- Persist `OrchestrationDispatchCommandError.code` and `retryable` into the
+  failed outcome. Retry eligibility consumes `retryable`, never a client/server
+  code blacklist. Reject retry for non-retryable outcomes;
+  `occurrence.abandoned` is the explicit supersession path.
+- Query the deterministic `phaseCommandIds.startTurn` receipt as the accepted
+  start oracle. No receipt is written under the root `bootstrapCommandId`;
+  `phaseCommandIds.prepareWorktree` is reserved because Git has no orchestration
+  command, while `recordFailure` identifies the failure-activity command.
 - Log/measure claims, starts, skips, failures, reconciliation, and clock/misfire
   decisions with IDs and status only; never log prompts.
 
@@ -762,7 +897,7 @@ job queue.
   dispatch again.
 - Disabled definitions never claim. Enabling sets a durable activation boundary
   and waits for the first cron instant after it; re-enabling never replays the
-  disabled interval.
+  disabled interval in displayed, claimed, or coalesced occurrences.
 - Restart while still enabled preserves that activation boundary and coalesces
   missed instants to the latest due occurrence.
 - Restart before claim claims once; restart after `starting` and before bootstrap
@@ -816,8 +951,14 @@ Make current behavior explainable without adding a parallel run-history model.
   SQLite remains truth if the signal is lost.
 - Add a readiness/health contribution: malformed stored definitions and scheduler
   startup failure are visible and do not crash unrelated chat/Slack operation.
-- Document manual recovery: disable, inspect linked thread/worktree, correct the
-  definition, retry-last when eligible, then re-enable.
+- Document manual recovery: disable, inspect the linked thread/worktree, and use
+  `retry-last` only for retryable failures. For rejected phases or resource
+  corrections, abandon the failed occurrence first, correct the definition, and
+  re-enable; retained artifacts remain available for inspection.
+- Add an **Abandon last occurrence** Settings row action, gated to disabled,
+  failed, non-abandoned rows. Require confirmation with an explicit retained
+  thread/branch/worktree disclosure, carry the visible revision for CAS conflict
+  handling, and disable the action while its command is pending.
 
 ### Acceptance criteria
 
@@ -829,6 +970,10 @@ Make current behavior explainable without adding a parallel run-history model.
   never-run or completed.
 - Disabling takes effect before the next claim and leaves an in-flight thread
   untouched.
+- Settings offers abandonment only for a disabled failed occurrence, discloses
+  retained artifacts before confirmation, sends
+  `scheduledAutomation.failed.abandon` with the visible revision, surfaces CAS
+  conflicts without auto-retry, and prevents duplicate submission while pending.
 - Settings links use the existing environment/thread route builder and work over
   local, remote/relay, and tunnel connections because they remain same-origin
   client routes.

@@ -27,6 +27,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -57,6 +58,7 @@ import {
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import * as WorkspaceMutationCoordinator from "../Services/WorkspaceMutationCoordinator.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
@@ -579,6 +581,12 @@ describe("ProviderCommandReactor", () => {
       );
       const now = "2026-01-01T00:00:00.000Z";
       const bootstrapService = yield* makeThreadBootstrapService.pipe(
+        Effect.provideService(OrchestrationCommandReceiptRepository, {
+          getByCommandId: () => Effect.succeed(Option.none()),
+        } as unknown as OrchestrationCommandReceiptRepository["Service"]),
+        Effect.provideService(ProjectionSnapshotQuery, {
+          getThreadDetailById: () => Effect.succeed(Option.none()),
+        } as unknown as ProjectionSnapshotQuery["Service"]),
         Effect.provideService(
           WorkspaceMutationCoordinator.WorkspaceMutationCoordinator,
           workspaceMutationCoordinator,

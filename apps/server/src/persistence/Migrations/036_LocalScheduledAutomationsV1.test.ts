@@ -109,6 +109,7 @@ layer("036_LocalScheduledAutomationsV1", (it) => {
             coalescedCount: 3,
             code: "fixture.failure",
             detail: "Migration fixture failure.",
+            retryable: true,
           },
           updatedAt: "2026-08-04T09:00:01.000Z",
         },

@@ -6,23 +6,29 @@ import {
   ProviderInstanceId,
   ProviderDriverKind,
   ScheduledAutomationId,
+  ScheduledAutomationOutcome,
+  SCHEDULED_AUTOMATION_ABANDONED_CODE,
+  SCHEDULED_AUTOMATION_BOOTSTRAP_PHASE_REJECTED_CODE,
   ThreadId,
   isScheduledAutomationProviderEligible,
   type ScheduledAutomation,
   type ScheduledAutomationDefinitionDraft,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import {
   automationDraftFromRow,
   applyAutomationConflictRows,
   buildAutomationRevisionCommand,
   buildAutomationSaveCommand,
+  canAbandonAutomation,
   canDeleteAutomation,
   canRetryAutomation,
   canSubmitAutomationDraft,
   changeAutomationProject,
   CURRENT_WORKSPACE_DISCLOSURE,
+  ABANDON_AUTOMATION_DISCLOSURE,
   DELETE_AUTOMATION_DISCLOSURE,
   DISABLE_AUTOMATION_DISCLOSURE,
   isValidAutomationId,
@@ -38,6 +44,7 @@ const COMMAND_ID = CommandId.make("00000000-0000-4000-8000-000000000001");
 const PROJECT_ID = ProjectId.make("project-one");
 const AUTOMATION_ID = ScheduledAutomationId.make("weekday-review");
 const CODEX_ID = ProviderInstanceId.make("codex");
+const decodeOutcome = Schema.decodeUnknownSync(ScheduledAutomationOutcome);
 
 const providers: ReadonlyArray<ServerProvider> = [
   {
@@ -129,6 +136,7 @@ function automation(overrides: Partial<ScheduledAutomation> = {}): ScheduledAuto
       coalescedCount: 0,
       code: "provider.unavailable",
       detail: "Provider unavailable.",
+      retryable: true,
     },
     createdAt: "2026-08-01T12:00:00.000Z",
     updatedAt: "2026-08-03T13:00:01.000Z",
@@ -210,6 +218,22 @@ describe("AutomationsSettings command payloads", () => {
     });
     expect(command).not.toHaveProperty("lastThreadId");
     expect(existing.lastThreadId).toBe(ThreadId.make("thread-existing"));
+  });
+
+  it("binds abandonment to the visible revision", () => {
+    const stale = automation();
+    expect(buildAutomationRevisionCommand(stale, "abandon", NOW)).toMatchObject({
+      type: "scheduledAutomation.failed.abandon",
+      automationId: AUTOMATION_ID,
+      expectedRevision: 4,
+    });
+    const current = automation({ revision: 5 });
+    expect(
+      reconcileAutomationCommandFailure({
+        _tag: "ScheduledAutomationConflictError",
+        current,
+      }),
+    ).toMatchObject({ kind: "conflict", current, shouldRetry: false });
   });
 });
 
@@ -401,11 +425,50 @@ describe("AutomationsSettings live form rules", () => {
     ).toBe(current);
   });
 
-  it("allows retry only for failed outcomes and delete only while disabled", () => {
+  it("uses durable retry truth and gates abandonment and deletion", () => {
     expect(canRetryAutomation(automation())).toBe(true);
     expect(canRetryAutomation(automation({ lastOutcome: null }))).toBe(false);
+    for (const code of [
+      SCHEDULED_AUTOMATION_ABANDONED_CODE,
+      SCHEDULED_AUTOMATION_BOOTSTRAP_PHASE_REJECTED_CODE,
+    ]) {
+      const legacyOutcome = decodeOutcome({
+        kind: "failed",
+        scheduledFor: "2026-08-03T13:00:00.000Z",
+        observedAt: "2026-08-03T13:00:01.000Z",
+        coalescedCount: 0,
+        code,
+        detail: "Legacy non-retryable failure.",
+      });
+      expect(legacyOutcome.kind).toBe("failed");
+      expect(
+        canRetryAutomation(
+          automation({
+            lastOutcome: legacyOutcome,
+          }),
+        ),
+      ).toBe(false);
+    }
     expect(canDeleteAutomation(automation())).toBe(true);
     expect(canDeleteAutomation(automation({ enabled: true }))).toBe(false);
+    expect(canAbandonAutomation(automation())).toBe(true);
+    expect(canAbandonAutomation(automation({ enabled: true }))).toBe(false);
+    expect(canAbandonAutomation(automation({ lastOutcome: null }))).toBe(false);
+    expect(
+      canAbandonAutomation(
+        automation({
+          lastOutcome: {
+            kind: "failed",
+            scheduledFor: "2026-08-03T13:00:00.000Z",
+            observedAt: "2026-08-03T13:00:01.000Z",
+            coalescedCount: 0,
+            code: SCHEDULED_AUTOMATION_ABANDONED_CODE,
+            detail: "Abandoned.",
+            retryable: false,
+          },
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("uses explicit isolation, retention, disable, and deletion disclosures", () => {
@@ -413,5 +476,6 @@ describe("AutomationsSettings live form rules", () => {
     expect(NEW_WORKTREE_DISCLOSURE).toContain("retention cleanup");
     expect(DISABLE_AUTOMATION_DISCLOSURE).toContain("does not interrupt");
     expect(DELETE_AUTOMATION_DISCLOSURE).toContain("worktrees are not deleted");
+    expect(ABANDON_AUTOMATION_DISCLOSURE).toContain("thread, branch, and worktree are retained");
   });
 });
