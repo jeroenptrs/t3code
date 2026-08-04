@@ -8,6 +8,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/providers"
   | "/settings/integrations"
+  | "/settings/automations"
   | "/settings/source-control"
   | "/settings/connections"
   | "/settings/archived";
@@ -54,6 +55,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
+  "/settings/automations": "Automations",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
@@ -403,6 +405,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Auto-show floating preview",
     to: "/settings/integrations",
     searchTerms: ["agent opens browser pop into view hide"],
+  },
+  {
+    id: "automations",
+    title: "Automations",
+    to: "/settings/automations",
   },
   {
     id: "source-control",

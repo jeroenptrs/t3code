@@ -39,6 +39,7 @@ import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
+  CalendarClockIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderIcon,
@@ -164,6 +165,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
+import { makeOpenAutomationsCommand } from "../commands/scheduledAutomationCommands";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import {
   buildSidebarProjectPickerEntries,
@@ -1616,6 +1618,15 @@ function OpenCommandPaletteDialog(props: {
     run: async () => {
       openOverlayMode("files");
     },
+  });
+
+  const openAutomations = makeOpenAutomationsCommand(async (to) => {
+    await navigate({ to });
+  });
+  actionItems.push({
+    kind: "action",
+    ...openAutomations,
+    icon: <CalendarClockIcon className={ITEM_ICON_CLASS} />,
   });
 
   actionItems.push({
