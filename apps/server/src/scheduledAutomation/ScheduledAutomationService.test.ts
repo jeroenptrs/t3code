@@ -303,67 +303,102 @@ it.effect("validates live project, provider, Git repository, and base ref on ena
   }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
 });
 
-it.effect("disables with unavailable dependencies and requires disabled state for delete", () => {
-  const state = initialState();
-  return Effect.gen(function* () {
-    const service = yield* ScheduledAutomationService;
-    const created = (yield* service.dispatch(yield* createCommand())).automation!;
-    const enabled = (yield* Effect.flatMap(
-      decodeCommand({
-        type: "scheduledAutomation.enabled.set",
-        commandId: "enable",
-        automationId: created.id,
-        expectedRevision: 1,
-        enabled: true,
-        createdAt: created.createdAt,
-      }),
-      service.dispatch,
-    )).automation!;
-    const deleteEnabled = yield* Effect.flip(
-      Effect.flatMap(
+it.effect(
+  "validates enabled edits but permits disabled saves with unavailable dependencies",
+  () => {
+    const state = initialState();
+    return Effect.gen(function* () {
+      const service = yield* ScheduledAutomationService;
+      const created = (yield* service.dispatch(yield* createCommand())).automation!;
+      const enabled = (yield* Effect.flatMap(
         decodeCommand({
-          type: "scheduledAutomation.delete",
-          commandId: "delete-enabled",
+          type: "scheduledAutomation.enabled.set",
+          commandId: "enable",
+          automationId: created.id,
+          expectedRevision: 1,
+          enabled: true,
+          createdAt: created.createdAt,
+        }),
+        service.dispatch,
+      )).automation!;
+      const deleteEnabled = yield* Effect.flip(
+        Effect.flatMap(
+          decodeCommand({
+            type: "scheduledAutomation.delete",
+            commandId: "delete-enabled",
+            automationId: enabled.id,
+            expectedRevision: enabled.revision,
+            createdAt: enabled.updatedAt,
+          }),
+          service.dispatch,
+        ),
+      );
+      assert.equal(deleteEnabled._tag, "ScheduledAutomationInvalidStateError");
+
+      state.projectAvailable = false;
+      state.providerAvailable = false;
+      const createdWhileUnavailable = (yield* service.dispatch(
+        yield* createCommand({ automationId: "created-while-unavailable" }),
+      )).automation!;
+      assert.equal(createdWhileUnavailable.enabled, false);
+      assert.equal(createdWhileUnavailable.revision, 1);
+      const enabledEdit = yield* Effect.flip(
+        Effect.flatMap(
+          decodeCommand({
+            type: "scheduledAutomation.update",
+            commandId: "update-enabled-unavailable",
+            automationId: enabled.id,
+            expectedRevision: enabled.revision,
+            definition: { ...definition, name: "Enabled edit" },
+            createdAt: enabled.updatedAt,
+          }),
+          service.dispatch,
+        ),
+      );
+      assert.equal(enabledEdit._tag, "ScheduledAutomationValidationError");
+      const disabled = (yield* Effect.flatMap(
+        decodeCommand({
+          type: "scheduledAutomation.enabled.set",
+          commandId: "disable",
           automationId: enabled.id,
           expectedRevision: enabled.revision,
+          enabled: false,
           createdAt: enabled.updatedAt,
         }),
         service.dispatch,
-      ),
-    );
-    assert.equal(deleteEnabled._tag, "ScheduledAutomationInvalidStateError");
-
-    state.projectAvailable = false;
-    state.providerAvailable = false;
-    const disabled = (yield* Effect.flatMap(
-      decodeCommand({
-        type: "scheduledAutomation.enabled.set",
-        commandId: "disable",
-        automationId: enabled.id,
-        expectedRevision: enabled.revision,
-        enabled: false,
-        createdAt: enabled.updatedAt,
-      }),
-      service.dispatch,
-    )).automation!;
-    assert.equal(disabled.enabled, false);
-    assert.equal(disabled.enabledAt, null);
-    assert.equal(disabled.revision, enabled.revision + 1);
-    const removed = yield* Effect.flatMap(
-      decodeCommand({
-        type: "scheduledAutomation.delete",
-        commandId: "delete",
-        automationId: disabled.id,
-        expectedRevision: disabled.revision,
-        createdAt: disabled.updatedAt,
-      }),
-      service.dispatch,
-    );
-    assert.equal(removed.automation, null);
-    const repository = yield* ScheduledAutomationRepository;
-    assert.isTrue(Option.isNone(yield* repository.get(disabled.id)));
-  }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
-});
+      )).automation!;
+      assert.equal(disabled.enabled, false);
+      assert.equal(disabled.enabledAt, null);
+      assert.equal(disabled.revision, enabled.revision + 1);
+      const editedWhileDisabled = (yield* Effect.flatMap(
+        decodeCommand({
+          type: "scheduledAutomation.update",
+          commandId: "update-disabled-unavailable",
+          automationId: disabled.id,
+          expectedRevision: disabled.revision,
+          definition: { ...definition, name: "Disabled edit" },
+          createdAt: disabled.updatedAt,
+        }),
+        service.dispatch,
+      )).automation!;
+      assert.equal(editedWhileDisabled.name, "Disabled edit");
+      assert.equal(editedWhileDisabled.revision, disabled.revision + 1);
+      const removed = yield* Effect.flatMap(
+        decodeCommand({
+          type: "scheduledAutomation.delete",
+          commandId: "delete",
+          automationId: editedWhileDisabled.id,
+          expectedRevision: editedWhileDisabled.revision,
+          createdAt: editedWhileDisabled.updatedAt,
+        }),
+        service.dispatch,
+      );
+      assert.equal(removed.automation, null);
+      const repository = yield* ScheduledAutomationRepository;
+      assert.isTrue(Option.isNone(yield* repository.get(editedWhileDisabled.id)));
+    }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
+  },
+);
 
 it.effect("rejects retry until reconciliation exists without mutating the failed row", () => {
   const state = initialState();

@@ -10,7 +10,11 @@ Work package 1 is implemented and verified after review hardening: the namespace
 v1 migration, guarded SQLite repository and CAS operations, durable management
 service, snapshot and committed-row-change subscription, WS RPC surface, and
 compound read/operate authorization now exist.
-The scheduler and UI work have not started. The shared
+The scheduler work has not started. WP2's web/desktop management vertical is
+implemented and verified: the shared settings route, navigation/search and
+command-palette entry, environment-wide subscribed list, capability-backed
+create/edit form, branch refresh/invalidation, safety disclosures, CAS conflict
+review, and enable/disable/retry/delete controls are present. The shared
 `ThreadBootstrapService` required by this workstream already exists, but it is not
 phase-resumable and must be hardened before a scheduler can use it safely.
 
@@ -564,7 +568,9 @@ boundary before execution is activated.
   and last-thread link.
 - Add create/edit forms backed by live shell projects and live provider/model
   capabilities. Branch choices refresh when project/worktree mode changes and
-  are revalidated by the server on submit.
+  are revalidated by the server when enabling and when editing an already-enabled
+  definition. Every save still validates cron, timezone, and the definition
+  schema; disabled definitions may preserve temporarily unavailable dependencies.
 - Make `Current workspace` disclose that it is shared and not isolated. Make
   `New worktree` disclose the retention behavior.
 - Implement enable/disable, retry-last, and delete confirmation. A conflict
@@ -577,16 +583,33 @@ boundary before execution is activated.
 
 - Component tests create and edit all definition fields and assert the exact
   command payload sent over RPC.
+- An open editor preserves unsaved fields and conflict state across project and
+  provider snapshot refreshes. Live descriptor changes may normalize the current
+  model options, but must not reset unrelated draft fields.
 - The model selector only emits combinations present in that model's live
-  capability descriptors; it does not assume a common effort set.
+  capability descriptors; it does not assume a common effort set. Provider
+  eligibility matches server validation: warning is eligible, while uninstalled,
+  unavailable, disabled, and error providers are not.
+- A disabled definition may change non-capability fields while preserving an
+  unchanged project/model/worktree selection that is temporarily unavailable.
 - Selecting a different project clears an invalid branch and model default rather
   than submitting stale values.
+- Entering new-worktree mode and changing project refresh the searchable,
+  paginated branch source. Query failures, non-Git projects, policy errors, and
+  base-ref errors are visible at the workspace controls.
 - Invalid cron/timezone errors returned by the server are rendered on the
-  corresponding controls; the browser's preview is advisory only.
+  corresponding controls; the browser's preview is advisory only. Cron, timezone,
+  and schema validation occur on every save. Live project/provider/model/options
+  and base-ref validation occur when enabling and when editing an already-enabled
+  definition.
 - A stale-revision response never retries the write automatically and visibly
-  presents the current server definition.
+  presents the current server definition. A create collision locks the server
+  row ID, and every subsequent update derives both ID and revision from that row.
 - Disable leaves the linked running thread unchanged. Delete requires a disabled
-  row and explicitly says it does not delete prior threads/worktrees.
+  row and explicitly says it does not delete prior threads/worktrees. Row actions
+  remain disabled while their command is pending.
+- The subscription remains pending until its first snapshot and uses one stable
+  creation-time/ID order for snapshots and later change events.
 - The route and command-palette action work in the web build and the Electron
   wrapper without Electron-specific RPC.
 - Settings navigation/search tests include Automations, and generated route-tree
@@ -598,15 +621,40 @@ boundary before execution is activated.
 
 ```text
 vp test run apps/web/src/components/settings/AutomationsSettings.test.tsx \
+  apps/web/src/components/settings/AutomationsSettings.interaction.test.tsx \
   apps/web/src/components/settings/settingsSearch.test.ts \
-  apps/web/src/commands/scheduledAutomationCommands.test.ts
-vp run --filter @t3tools/web --filter @t3tools/client-runtime typecheck
+  apps/web/src/commands/scheduledAutomationCommands.test.ts \
+  apps/web/src/state/scheduledAutomations.test.ts \
+  apps/server/src/scheduledAutomation/ScheduledAutomationService.test.ts
+vp run --filter @t3tools/contracts --filter @t3tools/client-runtime \
+  --filter @t3tools/web --filter t3 typecheck
 ```
 
 ### Exit gate
 
 The UI is contract-complete, but production rollout still keeps automations
 disabled because bootstrap recovery and scheduling have not passed.
+
+### Implementation record
+
+WP2 passed its focused acceptance suite and affected
+contracts/server/client-runtime/web typechecks. Rendered interaction tests drive
+every create/edit definition field through the real dialog and assert the command
+callback payload. The acceptance suite also covers capability-stream rerenders
+without draft loss,
+warning/uninstalled eligibility, unavailable selections on disabled definitions,
+model switching with model-specific options, branch search/pagination/refresh and
+error states, field-anchored server errors, conflict-state preservation and
+identity locking without automatic retry, and disabled/delete/pending safety
+behavior. Logic, state, and service tests additionally lock project-change
+invalidation, the shared provider-eligibility predicate, exact save-versus-enable
+live-validation timing, stable snapshot/change ordering, no pre-snapshot empty
+emission, settings discovery, and command-palette routing. The generated route
+tree contains `/settings/automations`.
+Web and Electron use this same route and WS boundary without Electron-specific
+RPC. Mobile intentionally has no management route in v1; its existing shared
+thread list/detail remains the execution view when later work packages begin
+creating automation threads.
 
 ## Work package 3 — Phase-resumable thread bootstrap
 

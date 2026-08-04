@@ -1,5 +1,5 @@
 import {
-  isProviderAvailable,
+  isScheduledAutomationProviderEligible,
   nextScheduledAutomationOccurrence,
   ScheduledAutomationConflictError,
   type ScheduledAutomation,
@@ -202,14 +202,7 @@ export const makeScheduledAutomationService = Effect.gen(function* () {
       const provider = snapshots.find(
         (candidate) => candidate.instanceId === definition.modelSelection.instanceId,
       );
-      if (
-        provider === undefined ||
-        !isProviderAvailable(provider) ||
-        !provider.enabled ||
-        !provider.installed ||
-        provider.status === "disabled" ||
-        provider.status === "error"
-      ) {
+      if (provider === undefined || !isScheduledAutomationProviderEligible(provider)) {
         return yield* validationError(
           "modelSelection",
           "The selected provider instance is unavailable.",

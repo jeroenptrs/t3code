@@ -209,6 +209,14 @@ export type ServerProviders = typeof ServerProviders.Type;
 export const isProviderAvailable = (snapshot: ServerProvider): boolean =>
   snapshot.availability !== "unavailable";
 
+/** Shared live-provider gate for scheduled-automation forms, enablement, and enabled edits. */
+export const isScheduledAutomationProviderEligible = (snapshot: ServerProvider): boolean =>
+  isProviderAvailable(snapshot) &&
+  snapshot.enabled &&
+  snapshot.installed &&
+  snapshot.status !== "disabled" &&
+  snapshot.status !== "error";
+
 export const ServerObservability = Schema.Struct({
   logsDirectoryPath: TrimmedNonEmptyString,
   localTracingEnabled: Schema.Boolean,
