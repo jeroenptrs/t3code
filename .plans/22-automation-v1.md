@@ -6,14 +6,29 @@ Implementation in progress. Work package 0 is implemented and verified: the
 scheduled-automation contracts, deterministic occurrence fixtures, five-field
 cron semantics, shared queued-turn truth, active-run predicate, and optional
 bootstrap target-path wire shape with fail-closed pre-WP3 handling now exist.
-Persistence, scheduler, and UI work have not started. The shared
+Work package 1 is implemented and verified after review hardening: the namespaced
+v1 migration, guarded SQLite repository and CAS operations, durable management
+service, snapshot and committed-row-change subscription, WS RPC surface, and
+compound read/operate authorization now exist.
+The scheduler and UI work have not started. The shared
 `ThreadBootstrapService` required by this workstream already exists, but it is not
 phase-resumable and must be hardened before a scheduler can use it safely.
 
 The expanded WP0 acceptance and regression suites and affected
 contract/server/client-runtime typechecks pass. A further review identified
 case-folded ownership-key and alternate-ingress concerns; both were reproduced,
-fixed, and regression-tested. The WP0 exit gate has passed. WP1 has not started.
+fixed, and regression-tested. The WP0 exit gate has passed.
+The WP1 migration, repository, service, RPC, authenticated-WS authorization,
+restart, and boundary acceptance tests pass with the affected contract/server
+typechecks. The WP1 exit gate has passed; no scheduler loop or scheduled execution
+is installed.
+
+WP1 also made one additive post-WP0 contract adjustment explicit:
+`ScheduledAutomationInternalError` is part of the RPC error union so persistence
+and read-service failures fail closed without being misreported as validation or
+not-found results. WP1 currently derives preliminary row-plus-shell views needed
+by its RPC shape; WP5 still owns complete table-driven status truth and
+projection-change-driven subscription refresh.
 
 The product boundary in
 `docs/user/slack-jira-ingress-design.md` remains authoritative. This plan resolves
@@ -456,13 +471,18 @@ Make definitions durable and safely mutable without starting scheduled work yet.
 - Add a `ScheduledAutomationRepository` with
   list/get/create/CAS-update/CAS-delete and an atomic occurrence-claim operation.
   Keep SQL and decoding errors typed, and keep the table name private to this
-  repository.
+  repository. Claims are accepted only for an enabled row with an activation
+  boundary, a strictly newer cursor, and a matching outcome occurrence.
 - Add a `ScheduledAutomationService` that validates live
   project/provider/ref capability, handles management commands, and publishes
   in-memory changes after commit.
 - Add WS RPC methods for command dispatch, list/get, and a snapshot-plus-change
   subscription. Read methods require `orchestration:read`; mutation methods
-  require `orchestration:operate`.
+  require both `orchestration:read` and `orchestration:operate` because mutation
+  responses and conflicts contain the full definition.
+- Until WP4 installs durable reconciliation, `retry-last` on a failed row returns
+  a typed unavailable/invalid-state result and changes no durable state. It must
+  never report a successful no-op.
 - Do not add an automation event store, run table, job table, retry table, or
   client-owned persistence.
 
@@ -486,6 +506,9 @@ Make definitions durable and safely mutable without starting scheduled work yet.
 - Every successful mutation increments revision exactly once; a stale
   `expectedRevision` changes no columns and returns the current row in a typed
   conflict.
+- Occurrence claim atomically rejects disabled rows, null activation boundaries,
+  duplicate/backward cursors, mismatched outcome occurrences, and a concurrent
+  disable that wins the revision CAS.
 - Enabling rejects a missing/deleted project, unavailable provider instance,
   unsupported model option, invalid base ref, non-Git new-worktree target, and any
   setup policy other than `skip`.
@@ -493,15 +516,20 @@ Make definitions durable and safely mutable without starting scheduled work yet.
 - Delete is rejected while enabled. A successful delete leaves orchestration
   events, projections, branches, and worktree directories untouched.
 - Subscription tests receive an initial SQLite-backed snapshot and committed
-  upsert/remove changes; a fresh subscription after process restart reconstructs
-  the same snapshot without relying on PubSub history.
-- Authorization tests prove a read-only session cannot mutate and an operate-only
-  session cannot subscribe unless it also has read scope.
+  upsert/remove changes from management and direct repository claims; a fresh
+  subscription after process restart reconstructs the same snapshot without
+  relying on PubSub history. Projection-only view refresh remains WP5 scope.
+- Authorization tests prove through the authenticated WS boundary that read-only
+  and operate-only sessions cannot mutate, and that operate-only sessions cannot
+  recover prompt/configuration data from mutation responses or typed conflicts.
 - SQLite schema inspection finds `local_scheduled_automations_v1`, does not find a
   locally created plain `automations` table, and finds no local automation
   run/job/history table.
-- A repository-boundary test proves the scheduler/service consume only
-  `ScheduledAutomationRepository` operations and do not embed the SQL table name.
+- A repository-boundary test proves the WP1 service consumes only
+  `ScheduledAutomationRepository` operations and does not embed the SQL table
+  name. WP4 adds the equivalent scheduler proof when the scheduler exists.
+- A seeded failed row proves pre-WP4 `retry-last` rejects without changing its
+  revision, outcome, cursor, or timestamps.
 
 ### Verification
 

@@ -26,6 +26,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ResolvedKeybindingRule,
+  SCHEDULED_AUTOMATION_WS_METHODS,
+  ScheduledAutomationId,
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
@@ -52,6 +54,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -123,6 +126,7 @@ import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryR
 import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import * as ScheduledAutomation from "./scheduledAutomation/ScheduledAutomationService.ts";
 import * as Data from "effect/Data";
 
 const defaultProjectId = ProjectId.make("project-default");
@@ -349,6 +353,7 @@ const buildAppUnderTest = (options?: {
     terminalManager?: Partial<TerminalManager.TerminalManager["Service"]>;
     orchestrationEngine?: Partial<OrchestrationEngine.OrchestrationEngineService["Service"]>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]>;
+    scheduledAutomationService?: Partial<ScheduledAutomation.ScheduledAutomationService["Service"]>;
     checkpointDiffQuery?: Partial<CheckpointDiffQuery.CheckpointDiffQuery["Service"]>;
     browserTraceCollector?: Partial<BrowserTraceCollector.BrowserTraceCollector["Service"]>;
     serverLifecycleEvents?: Partial<ServerLifecycleEvents.ServerLifecycleEvents["Service"]>;
@@ -751,23 +756,32 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
-          getTurnDiff: () =>
-            Effect.succeed({
-              threadId: defaultThreadId,
-              fromTurnCount: 0,
-              toTurnCount: 0,
-              diff: "",
-            }),
-          getFullThreadDiff: () =>
-            Effect.succeed({
-              threadId: defaultThreadId,
-              fromTurnCount: 0,
-              toTurnCount: 0,
-              diff: "",
-            }),
-          ...options?.layers?.checkpointDiffQuery,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ScheduledAutomation.ScheduledAutomationService)({
+            dispatch: () => Effect.die("ScheduledAutomationService.dispatch not stubbed in test"),
+            list: () => Effect.succeed([]),
+            get: () => Effect.die("ScheduledAutomationService.get not stubbed in test"),
+            subscribe: Effect.succeed(Stream.empty),
+            ...options?.layers?.scheduledAutomationService,
+          }),
+          Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
+            getTurnDiff: () =>
+              Effect.succeed({
+                threadId: defaultThreadId,
+                fromTurnCount: 0,
+                toTurnCount: 0,
+                diff: "",
+              }),
+            getFullThreadDiff: () =>
+              Effect.succeed({
+                threadId: defaultThreadId,
+                fromTurnCount: 0,
+                toTurnCount: 0,
+                diff: "",
+              }),
+            ...options?.layers?.checkpointDiffQuery,
+          }),
+        ),
       ),
     );
 
@@ -3322,6 +3336,67 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       if (rpcError._tag === "EnvironmentAuthorizationError") {
         assert.equal(rpcError.requiredScope, "orchestration:read");
       }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("requires read and operate scopes before automation mutations can disclose data", () =>
+    Effect.gen(function* () {
+      const dispatchCalled = yield* Ref.make(false);
+      yield* buildAppUnderTest({
+        layers: {
+          scheduledAutomationService: {
+            dispatch: () => Ref.set(dispatchCalled, true).pipe(Effect.as({ automation: null })),
+          },
+        },
+      });
+
+      for (const [scope, missingScope] of [
+        ["orchestration:operate", "orchestration:read"],
+        ["orchestration:read", "orchestration:operate"],
+      ] as const) {
+        const { response: exchangeResponse, body: tokenBody } = yield* exchangeAccessToken(
+          defaultDesktopBootstrapToken,
+          { scope },
+        );
+        assert.equal(exchangeResponse.status, 200);
+        assert.isDefined(tokenBody.access_token);
+        const wsTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { authorization: `Bearer ${tokenBody.access_token ?? ""}` },
+        });
+        const wsTicketBody = (yield* wsTicketResponse.json) as { readonly ticket: string };
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
+        const rpcError = yield* Effect.flip(
+          Effect.scoped(
+            withWsRpcClient(wsUrl, (client) =>
+              client[SCHEDULED_AUTOMATION_WS_METHODS.dispatchCommand]({
+                type: "scheduledAutomation.create",
+                commandId: CommandId.make(`automation-auth-${scope}`),
+                automationId: ScheduledAutomationId.make("auth-fixture"),
+                definition: {
+                  name: "Sensitive automation",
+                  prompt: "secret prompt must not be disclosed",
+                  projectId: ProjectId.make("project-1"),
+                  modelSelection: {
+                    instanceId: ProviderInstanceId.make("codex-work"),
+                    model: "gpt-5.6",
+                  },
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  worktreePolicy: { kind: "current" },
+                  setupScriptPolicy: "skip",
+                  schedule: { cron: "0 9 * * *", timeZone: "UTC", misfirePolicy: "latest-only" },
+                },
+                createdAt: "2026-08-04T00:00:00.000Z",
+              }),
+            ),
+          ),
+        );
+        assert.equal(rpcError._tag, "EnvironmentAuthorizationError");
+        if (rpcError._tag === "EnvironmentAuthorizationError") {
+          assert.equal(rpcError.requiredScope, missingScope);
+        }
+      }
+      assert.isFalse(yield* Ref.get(dispatchCalled));
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -321,12 +321,18 @@ export class ScheduledAutomationInvalidStateError extends Schema.TaggedErrorClas
   },
 ) {}
 
+export class ScheduledAutomationInternalError extends Schema.TaggedErrorClass<ScheduledAutomationInternalError>()(
+  "ScheduledAutomationInternalError",
+  { message: TrimmedNonEmptyString },
+) {}
+
 export const ScheduledAutomationError = Schema.Union([
   ScheduledAutomationValidationError,
   ScheduledAutomationNotFoundError,
   ScheduledAutomationConflictError,
   ScheduledAutomationInvalidStateError,
   ScheduledAutomationScheduleError,
+  ScheduledAutomationInternalError,
 ]);
 export type ScheduledAutomationError = typeof ScheduledAutomationError.Type;
 

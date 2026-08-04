@@ -7,17 +7,20 @@ import {
   AuthReviewWriteScope,
   AuthTerminalOperateScope,
   ORCHESTRATION_WS_METHODS,
+  SCHEDULED_AUTOMATION_WS_METHODS,
   type AuthEnvironmentScope,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import type * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 /**
  * Keep authorization coverage coupled to the RPC group itself. Adding an RPC to
- * `WsRpcGroup` without choosing a scope is a type error instead of a production
+ * `WsRpcGroup` without choosing its required scope set is a type error instead of a production
  * runtime failure.
  */
 export const RPC_REQUIRED_SCOPES = {
@@ -28,6 +31,13 @@ export const RPC_REQUIRED_SCOPES = {
   [ORCHESTRATION_WS_METHODS.subscribeShell]: AuthOrchestrationReadScope,
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: AuthOrchestrationReadScope,
   [ORCHESTRATION_WS_METHODS.subscribeThread]: AuthOrchestrationReadScope,
+  [SCHEDULED_AUTOMATION_WS_METHODS.dispatchCommand]: [
+    AuthOrchestrationOperateScope,
+    AuthOrchestrationReadScope,
+  ],
+  [SCHEDULED_AUTOMATION_WS_METHODS.list]: AuthOrchestrationReadScope,
+  [SCHEDULED_AUTOMATION_WS_METHODS.get]: AuthOrchestrationReadScope,
+  [SCHEDULED_AUTOMATION_WS_METHODS.subscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverProbe]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationOperateScope,
@@ -100,15 +110,47 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
   [WS_METHODS.subscribeBackgroundPolicy]: AuthOrchestrationReadScope,
-} as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
+} as const satisfies Readonly<
+  Record<
+    WsRpcMethod,
+    AuthEnvironmentScope | readonly [AuthEnvironmentScope, ...AuthEnvironmentScope[]]
+  >
+>;
 
-export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {
+export function requiredScopesForRpcMethod(method: string): ReadonlyArray<AuthEnvironmentScope> {
   if (!Object.hasOwn(RPC_REQUIRED_SCOPES, method)) {
     throw new Error(`RPC method ${method} has no declared authorization scope.`);
   }
-  const requiredScope = RPC_REQUIRED_SCOPES[method as WsRpcMethod];
-  if (requiredScope === undefined) {
+  const declaration = RPC_REQUIRED_SCOPES[method as WsRpcMethod];
+  if (declaration === undefined) {
     throw new Error(`RPC method ${method} has no declared authorization scope.`);
   }
-  return requiredScope;
+  return typeof declaration === "string" ? [declaration] : declaration;
+}
+
+export function missingScopeForRpcMethod(
+  method: string,
+  grantedScopes: ReadonlyArray<AuthEnvironmentScope>,
+): AuthEnvironmentScope | null {
+  return requiredScopesForRpcMethod(method).find((scope) => !grantedScopes.includes(scope)) ?? null;
+}
+
+export function authorizeRpcEffectForScopes<A, E, R, AuthorizationError>(
+  method: string,
+  grantedScopes: ReadonlyArray<AuthEnvironmentScope>,
+  effect: Effect.Effect<A, E, R>,
+  authorizationError: (missingScope: AuthEnvironmentScope) => AuthorizationError,
+): Effect.Effect<A, E | AuthorizationError, R> {
+  const missingScope = missingScopeForRpcMethod(method, grantedScopes);
+  return missingScope === null ? effect : Effect.fail(authorizationError(missingScope));
+}
+
+export function authorizeRpcStreamForScopes<A, E, R, AuthorizationError>(
+  method: string,
+  grantedScopes: ReadonlyArray<AuthEnvironmentScope>,
+  stream: Stream.Stream<A, E, R>,
+  authorizationError: (missingScope: AuthEnvironmentScope) => AuthorizationError,
+): Stream.Stream<A, E | AuthorizationError, R> {
+  const missingScope = missingScopeForRpcMethod(method, grantedScopes);
+  return missingScope === null ? stream : Stream.fail(authorizationError(missingScope));
 }
