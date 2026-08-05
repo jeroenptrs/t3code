@@ -132,6 +132,11 @@ export const makeCommandGate = Effect.gen(function* () {
   } satisfies CommandGate;
 });
 
+export const signalCommandReadyAndLaunch = <R>(
+  commandGate: Pick<CommandGate, "signalCommandReady">,
+  launch: Effect.Effect<void, never, R>,
+) => commandGate.signalCommandReady.pipe(Effect.andThen(launch));
+
 export const recordStartupHeartbeat = Effect.gen(function* () {
   const analytics = yield* AnalyticsService.AnalyticsService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
@@ -290,13 +295,14 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
     Effect.withSpan(`server.startup.${phase}`),
   );
 
-interface StartupOptions {
+interface StartupOptions<R = never> {
   readonly activate?: Effect.Effect<void>;
   readonly awaitAuxiliaryParked?: Effect.Effect<void>;
+  readonly launchAfterCommandReady?: Effect.Effect<void, never, R>;
   readonly abort?: (error: ServerRuntimeStartupError) => Effect.Effect<void>;
 }
 
-export const make = (options?: StartupOptions) =>
+export const make = <R = never>(options?: StartupOptions<R>) =>
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig.ServerConfig;
     const keybindings = yield* Keybindings.Keybindings;
@@ -444,7 +450,10 @@ export const make = (options?: StartupOptions) =>
       yield* options?.activate ?? Effect.void;
 
       yield* Effect.logDebug("Accepting commands");
-      yield* commandGate.signalCommandReady;
+      yield* signalCommandReadyAndLaunch(
+        commandGate,
+        options?.launchAfterCommandReady ?? Effect.void,
+      );
       yield* runStartupPhase(
         "ready.publish",
         lifecycleEvents.publish({
@@ -494,7 +503,7 @@ export const make = (options?: StartupOptions) =>
     } satisfies ServerRuntimeStartup["Service"];
   });
 
-export const layerWithOptions = (options?: StartupOptions) =>
+export const layerWithOptions = <R = never>(options?: StartupOptions<R>) =>
   Layer.effect(ServerRuntimeStartup, make(options));
 
 export const layer = layerWithOptions();
