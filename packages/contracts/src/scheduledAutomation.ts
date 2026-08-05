@@ -233,6 +233,18 @@ export const ScheduledAutomationView = Schema.Struct({
 });
 export type ScheduledAutomationView = typeof ScheduledAutomationView.Type;
 
+export const ScheduledAutomationHealth = Schema.Struct({
+  status: Schema.Literals(["healthy", "degraded"]),
+  schedulerStatus: Schema.Literals(["starting", "running", "failed"]),
+  malformedDefinitionCount: NonNegativeInt,
+});
+export type ScheduledAutomationHealth = typeof ScheduledAutomationHealth.Type;
+export const DEFAULT_SCHEDULED_AUTOMATION_HEALTH: ScheduledAutomationHealth = {
+  status: "healthy",
+  schedulerStatus: "starting",
+  malformedDefinitionCount: 0,
+};
+
 const ScheduledAutomationRevisionFields = {
   commandId: CommandId,
   automationId: ScheduledAutomationId,
@@ -437,6 +449,9 @@ export type ScheduledAutomationDispatchResult = typeof ScheduledAutomationDispat
 
 export const ScheduledAutomationListResult = Schema.Struct({
   automations: Schema.Array(ScheduledAutomationView),
+  health: ScheduledAutomationHealth.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SCHEDULED_AUTOMATION_HEALTH)),
+  ),
 });
 export type ScheduledAutomationListResult = typeof ScheduledAutomationListResult.Type;
 
@@ -449,6 +464,9 @@ export const ScheduledAutomationStreamItem = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("snapshot"),
     automations: Schema.Array(ScheduledAutomationView),
+    health: ScheduledAutomationHealth.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_SCHEDULED_AUTOMATION_HEALTH)),
+    ),
   }),
   Schema.Struct({
     kind: Schema.Literal("upserted"),

@@ -21,6 +21,10 @@ acceptance suites pass. WP4's latest-only occurrence planner, durable claim and
 reconciliation path, retry handoff, and single scoped scheduler coordinator are
 implemented and verified with an injected clock, restart fixtures, cooperative
 large-misfire counting, conflated change wakes, and bounded failure backoff.
+WP5's table-driven operator status, projection-driven subscription refresh,
+operational Settings detail, scheduler/definition health, automation-prefixed
+thread titles, cross-client visibility, and recovery documentation are
+implemented and verified.
 
 The expanded WP0 acceptance and regression suites and affected
 contract/server/client-runtime typechecks pass. A further review identified
@@ -34,9 +38,9 @@ was installed at that gate. WP4 now installs the scheduler after command readine
 WP1 also made one additive post-WP0 contract adjustment explicit:
 `ScheduledAutomationInternalError` is part of the RPC error union so persistence
 and read-service failures fail closed without being misreported as validation or
-not-found results. WP1 currently derives preliminary row-plus-shell views needed
-by its RPC shape; WP5 still owns complete table-driven status truth and
-projection-change-driven subscription refresh.
+not-found results. WP1's preliminary row-plus-shell views are now completed by
+WP5's table-driven status truth and projection-change-driven subscription
+refresh.
 
 The product boundary in
 `docs/user/slack-jira-ingress-design.md` remains authoritative. This plan resolves
@@ -1023,10 +1027,19 @@ Make current behavior explainable without adding a parallel run-history model.
   never consult settlement for running/completed status.
 - A thread moving from running to completed changes the next read/subscription
   view without requiring a lifecycle rewrite in the automation row.
+- Automation-created threads retain their explicit `Automation:` title after the
+  first provider turn; automatic first-turn title generation is not requested.
 - A missing last thread is shown as `thread-missing`, not silently rewritten to
   never-run or completed.
+- A linked thread whose latest turn failed shows its session error even when the
+  durable occurrence outcome remains `started`.
 - Disabling takes effect before the next claim and leaves an in-flight thread
   untouched.
+- Subscription invalidations ignore streaming assistant deltas, conflate bursts,
+  suppress unchanged views, and serialize repository/projection refreshes so a
+  delayed refresh cannot resurrect a deleted definition.
+- Malformed stored definitions degrade health without preventing valid
+  definitions from being claimed and scheduled.
 - Settings offers abandonment only for a disabled failed occurrence, discloses
   retained artifacts before confirmation, sends
   `scheduledAutomation.failed.abandon` with the visible revision, surfaces CAS
@@ -1045,16 +1058,73 @@ Make current behavior explainable without adding a parallel run-history model.
 ### Verification
 
 ```text
-vp test run apps/server/src/scheduledAutomation/ScheduledAutomationReadService.test.ts \
+vp test run packages/contracts/src/scheduledAutomation.test.ts \
+  apps/server/src/persistence/Migrations/036_LocalScheduledAutomationsV1.test.ts \
+  apps/server/src/scheduledAutomation/ScheduledAutomationOccurrence.test.ts \
+  apps/server/src/scheduledAutomation/ScheduledAutomationRepository.test.ts \
+  apps/server/src/scheduledAutomation/ScheduledAutomationBootstrap.test.ts \
+  apps/server/src/scheduledAutomation/ScheduledAutomationScheduler.test.ts \
+  apps/server/src/scheduledAutomation/ScheduledAutomationScheduler.restart.test.ts \
+  apps/server/src/scheduledAutomation/ScheduledAutomationReadService.test.ts \
+  apps/server/src/scheduledAutomation/ScheduledAutomationService.test.ts \
+  apps/server/src/scheduledAutomation/scheduledAutomationRpc.test.ts \
+  apps/server/src/serverRuntimeStartup.test.ts \
+  apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts \
+  apps/server/src/relay/AgentAwarenessRelay.test.ts \
+  apps/web/src/commands/scheduledAutomationCommands.test.ts \
   apps/web/src/components/settings/AutomationsSettings.test.tsx \
-  apps/slack/src/appHome.test.ts
-vp run --filter t3 --filter @t3tools/web --filter @t3tools/slack typecheck
+  apps/web/src/components/settings/AutomationsSettings.interaction.test.tsx \
+  apps/web/src/state/scheduledAutomations.test.ts \
+  apps/slack/src/appHome.test.ts \
+  apps/mobile/src/features/threads/automationThreadContract.test.ts \
+  --silent=passed-only --reporter=dot
+vp run --filter @t3tools/contracts --filter t3 --filter @t3tools/web \
+  --filter @t3tools/slack --filter @t3tools/mobile typecheck
 ```
 
 ### Exit gate
 
 An operator can identify why the latest occurrence ran, skipped, failed, or is
 blocked and can reach the authoritative T3 thread.
+
+### Implementation record
+
+WP5 centralizes operator-facing state derivation in a table-tested server helper.
+Durable failed and skipped adjudications retain precedence; starting/started
+occurrences join against live shell truth for starting, running, blocked,
+completed, failed, interrupted, and thread-missing states. Settlement is absent
+from this derivation. Scheduled-automation subscriptions acquire orchestration
+domain-event, repository, and scheduler-health subscriptions before their
+initial read. A single serialized invalidation worker filters streaming deltas,
+conflates bursts, rereads current truth, discards superseded reads, and emits
+only changed views, so projection refreshes cannot resurrect deleted rows.
+
+Settings now presents current status, next occurrence, durable cursor, last
+outcome and coalesced count, typed failure code/detail/retryability, and the
+ordinary same-origin environment/thread link. The existing disabled-only abandon
+control remains revision-bound, conflict-visible, artifact-explicit, and guarded
+against pending duplicate submission. Automation threads are created with an
+`Automation:` title prefix, so existing web, mobile, and Slack shell consumers
+show meaningful directory rows without parsing deterministic IDs.
+
+The scheduler publishes scoped starting/running/failed health and isolates a
+startup defect from unrelated server operation. Repository inspection returns
+valid definitions while reporting a secret-safe malformed-row count; both the
+scheduler and read service use that inspection so malformed neighbors do not
+stop valid occurrences. Settings surfaces either degraded condition. Health
+additions decode with a pre-WP5 default for list/snapshot compatibility and use
+the existing snapshot stream variant for forward compatibility. The user
+recovery guide documents disable, inspect, retry-only-when-retryable, and
+abandon/correct/re-enable flows, including retained thread, branch, and worktree
+artifacts.
+
+The exact focused/regression command above passes 211 contract, migration,
+repository, read-service, bootstrap, scheduler/restart, RPC, startup, reactor,
+relay, web state/Settings, Slack App Home, and mobile contract tests across 19
+suites. Affected contracts, server, web, Slack, and mobile typechecks pass;
+targeted formatting and diff hygiene are clean. No
+browser pass was run because this task did not include permission for computer
+use.
 
 ## Work package 6 — Owned-worktree retention and fail-closed pruning
 

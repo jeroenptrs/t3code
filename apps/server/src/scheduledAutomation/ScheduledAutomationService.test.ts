@@ -1,7 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   OrchestrationProjectShell,
+  type OrchestrationEvent,
+  type OrchestrationThreadShell,
   ScheduledAutomationCommand,
+  ScheduledAutomationId,
   SCHEDULED_AUTOMATION_ABANDONED_CODE,
   SCHEDULED_AUTOMATION_BOOTSTRAP_PHASE_REJECTED_CODE,
   ServerProvider,
@@ -10,19 +13,24 @@ import {
   type ScheduledAutomationDefinitionDraft,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 import * as NodeSqliteClient from "../persistence/NodeSqliteClient.ts";
@@ -108,6 +116,15 @@ interface HarnessState {
   refPageCalls: number;
   schedulerRetryResult: ScheduledAutomation | null;
   schedulerRetryCalls: Array<{ readonly automationId: string; readonly expectedRevision: number }>;
+  schedulerStatus: "starting" | "running" | "failed";
+  lastThread: OrchestrationThreadShell | null;
+  threadShellReads: number;
+  threadShellReadGate: {
+    readonly entered: Deferred.Deferred<void>;
+    readonly release: Deferred.Deferred<void>;
+  } | null;
+  domainEvents: Stream.Stream<OrchestrationEvent>;
+  subscribeDomainEvents: Effect.Effect<Stream.Stream<OrchestrationEvent>, never, Scope.Scope>;
 }
 
 function testLayerWithPersistence<PersistenceError, PersistenceRequirements>(
@@ -128,7 +145,17 @@ function testLayerWithPersistence<PersistenceError, PersistenceRequirements>(
     getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
     getThreadCheckpointContext: () => Effect.die("unused"),
     getFullThreadDiffContext: () => Effect.die("unused"),
-    getThreadShellById: () => Effect.succeed(Option.none()),
+    getThreadShellById: () =>
+      Effect.gen(function* () {
+        state.threadShellReads += 1;
+        const gate = state.threadShellReadGate;
+        if (gate !== null) {
+          state.threadShellReadGate = null;
+          yield* Deferred.succeed(gate.entered, undefined);
+          yield* Deferred.await(gate.release);
+        }
+        return Option.fromNullishOr(state.lastThread);
+      }),
     getThreadDetailById: () => Effect.die("unused"),
     getThreadDetailSnapshot: () => Effect.die("unused"),
   };
@@ -173,12 +200,21 @@ function testLayerWithPersistence<PersistenceError, PersistenceRequirements>(
             }
             return state.schedulerRetryResult;
           }),
+        health: Effect.sync(() => state.schedulerStatus),
+        subscribeHealth: Effect.succeed(Stream.empty),
       }),
     ),
     Layer.provideMerge(persistence),
     Layer.provideMerge(
       Layer.mergeAll(
         Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, projections),
+        Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
+          readEvents: () => Stream.empty,
+          dispatch: () => Effect.die("unused"),
+          streamDomainEvents: state.domainEvents,
+          subscribeDomainEvents: state.subscribeDomainEvents,
+          latestSequence: Effect.succeed(0),
+        }),
         Layer.succeed(ProviderRegistry.ProviderRegistry, providerRegistry),
         Layer.succeed(GitWorkflow.GitWorkflowService, git),
       ),
@@ -208,6 +244,12 @@ const initialState = (): HarnessState => ({
   refPageCalls: 0,
   schedulerRetryResult: null,
   schedulerRetryCalls: [],
+  schedulerStatus: "running",
+  lastThread: null,
+  threadShellReads: 0,
+  threadShellReadGate: null,
+  domainEvents: Stream.empty,
+  subscribeDomainEvents: Effect.succeed(Stream.empty),
 });
 
 it.effect("keeps the private SQL namespace behind the repository boundary", () =>
@@ -251,6 +293,79 @@ it.effect("creates disabled definitions and returns field-addressed schedule err
     assert.equal(invalid._tag, "ScheduledAutomationValidationError");
     if (invalid._tag === "ScheduledAutomationValidationError") {
       assert.equal(invalid.field, "schedule.cron");
+    }
+  }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
+});
+
+it.effect("reports malformed stored definitions without hiding valid chat operation", () => {
+  const state = initialState();
+  return Effect.gen(function* () {
+    const service = yield* ScheduledAutomationService;
+    const sql = yield* SqlClient.SqlClient;
+    const secret = "wp5-health-secret-must-not-escape";
+    const malformedDefinition = `{"prompt":"${secret}"}`;
+    yield* sql`
+      INSERT INTO local_scheduled_automations_v1 (
+        id, schema_version, revision, definition_json, enabled, enabled_at,
+        last_scheduled_for, last_thread_id, last_outcome_json, created_at, updated_at
+      ) VALUES (
+        'malformed-row', 1, 1, ${malformedDefinition}, 0, NULL,
+        NULL, NULL, NULL, '2026-08-05T00:00:00.000Z', '2026-08-05T00:00:00.000Z'
+      )
+    `;
+
+    assert.deepStrictEqual(yield* service.list(), []);
+    const health = yield* service.health();
+    assert.deepStrictEqual(health, {
+      status: "degraded",
+      schedulerStatus: "running",
+      malformedDefinitionCount: 1,
+    });
+    const getError = yield* service
+      .get(ScheduledAutomationId.make("malformed-row"))
+      .pipe(Effect.flip);
+    assert.equal(getError._tag, "ScheduledAutomationInternalError");
+    assert.notInclude(getError.message, secret);
+  }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
+});
+
+it.effect("reports a failed scheduler without failing automation reads", () => {
+  const state = initialState();
+  state.schedulerStatus = "failed";
+  return Effect.gen(function* () {
+    const service = yield* ScheduledAutomationService;
+    assert.deepStrictEqual(yield* service.list(), []);
+    assert.deepStrictEqual(yield* service.health(), {
+      status: "degraded",
+      schedulerStatus: "failed",
+      malformedDefinitionCount: 0,
+    });
+  }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
+});
+
+it.effect("pushes refreshed health when a repository change reveals malformed storage", () => {
+  const state = initialState();
+  return Effect.gen(function* () {
+    const service = yield* ScheduledAutomationService;
+    const sql = yield* SqlClient.SqlClient;
+    const stream = yield* service.subscribe;
+    const collected = yield* Stream.runCollect(stream.pipe(Stream.take(2))).pipe(Effect.forkScoped);
+    yield* sql`
+      INSERT INTO local_scheduled_automations_v1 (
+        id, schema_version, revision, definition_json, enabled, enabled_at,
+        last_scheduled_for, last_thread_id, last_outcome_json, created_at, updated_at
+      ) VALUES (
+        'late-malformed-row', 1, 1, '{"prompt":"late-secret"}', 0, NULL,
+        NULL, NULL, NULL, '2026-08-05T00:00:00.000Z', '2026-08-05T00:00:00.000Z'
+      )
+    `;
+    yield* service.dispatch(yield* createCommand());
+
+    const items = Array.from(yield* Fiber.join(collected));
+    assert.equal(items[1]?.kind, "snapshot");
+    if (items[1]?.kind === "snapshot") {
+      assert.equal(items[1].health.status, "degraded");
+      assert.equal(items[1].health.malformedDefinitionCount, 1);
     }
   }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
 });
@@ -567,7 +682,7 @@ it.effect("abandons a receipt-rejected occurrence before resource correction", (
     );
     assert.equal(events[1]?.kind, "upserted");
     if (events[1]?.kind === "upserted") {
-      assert.deepStrictEqual(events[1].automation.automation, claimed);
+      assert.deepStrictEqual(events[1].automation.automation, failed);
     }
     const resourceEditError = yield* Effect.flip(
       Effect.flatMap(
@@ -877,7 +992,13 @@ it.effect("streams an SQLite snapshot followed by committed upsert and remove ch
     const service = yield* ScheduledAutomationService;
     const created = (yield* service.dispatch(yield* createCommand())).automation!;
     const stream = yield* service.subscribe;
-    const collected = yield* Stream.runCollect(stream.pipe(Stream.take(3))).pipe(Effect.forkScoped);
+    const output =
+      yield* Queue.unbounded<import("@t3tools/contracts").ScheduledAutomationStreamItem>();
+    yield* stream.pipe(
+      Stream.runForEach((item) => Queue.offer(output, item)),
+      Effect.forkScoped,
+    );
+    const snapshot = yield* Queue.take(output);
     const updated = (yield* Effect.flatMap(
       decodeCommand({
         type: "scheduledAutomation.update",
@@ -889,6 +1010,7 @@ it.effect("streams an SQLite snapshot followed by committed upsert and remove ch
       }),
       service.dispatch,
     )).automation!;
+    const upserted = yield* Queue.take(output);
     yield* Effect.flatMap(
       decodeCommand({
         type: "scheduledAutomation.delete",
@@ -899,7 +1021,8 @@ it.effect("streams an SQLite snapshot followed by committed upsert and remove ch
       }),
       service.dispatch,
     );
-    const events = Array.from(yield* Fiber.join(collected));
+    const removed = yield* Queue.take(output);
+    const events = [snapshot, upserted, removed];
     assert.deepStrictEqual(
       events.map((event) => event.kind),
       ["snapshot", "upserted", "removed"],
@@ -917,6 +1040,230 @@ it.effect("streams an SQLite snapshot followed by committed upsert and remove ch
     }
   }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
 });
+
+it.effect("refreshes a subscribed view when the linked thread projection changes", () => {
+  return Effect.gen(function* () {
+    const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+    const state = initialState();
+    state.domainEvents = Stream.fromPubSub(liveEvents);
+    state.subscribeDomainEvents = PubSub.subscribe(liveEvents).pipe(
+      Effect.map(Stream.fromSubscription),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledAutomationService;
+      const repository = yield* ScheduledAutomationRepository;
+      const created = (yield* service.dispatch(yield* createCommand())).automation!;
+      const enabled = (yield* service.dispatch(
+        yield* decodeCommand({
+          type: "scheduledAutomation.enabled.set",
+          commandId: "enable-projection-refresh",
+          automationId: created.id,
+          expectedRevision: created.revision,
+          enabled: true,
+          createdAt: created.createdAt,
+        }),
+      )).automation!;
+      const threadId = ThreadId.make("t3sa:v1:projection-refresh:thread");
+      yield* repository.claimOccurrence({
+        automationId: enabled.id,
+        expectedRevision: enabled.revision,
+        scheduledFor: "2026-08-05T02:30:00.000Z",
+        lastThreadId: threadId,
+        lastOutcome: {
+          kind: "starting",
+          scheduledFor: "2026-08-05T02:30:00.000Z",
+          observedAt: "2026-08-05T02:30:01.000Z",
+          coalescedCount: 0,
+        },
+        updatedAt: "2026-08-05T02:30:01.000Z",
+      });
+      state.lastThread = {
+        latestTurn: { state: "running" },
+        latestUserMessageAt: "2026-08-05T02:30:00.000Z",
+        session: null,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      } as OrchestrationThreadShell;
+
+      const stream = yield* service.subscribe;
+      const collected = yield* Stream.runCollect(stream.pipe(Stream.take(2))).pipe(
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+      state.lastThread = {
+        ...state.lastThread,
+        latestTurn: { state: "completed" },
+        latestUserMessageAt: null,
+      } as OrchestrationThreadShell;
+      yield* PubSub.publish(liveEvents, {
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.session-set",
+      } as OrchestrationEvent);
+
+      const items = Array.from(yield* Fiber.join(collected));
+      assert.equal(items[0]?.kind, "snapshot");
+      assert.equal(items[1]?.kind, "upserted");
+      if (items[0]?.kind === "snapshot") assert.equal(items[0].automations[0]?.status, "running");
+      if (items[1]?.kind === "upserted") assert.equal(items[1].automation.status, "completed");
+    }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
+  });
+});
+
+it.effect("ignores streamed assistant deltas and refreshes once for a status event", () =>
+  Effect.gen(function* () {
+    const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+    const state = initialState();
+    state.subscribeDomainEvents = PubSub.subscribe(liveEvents).pipe(
+      Effect.map(Stream.fromSubscription),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledAutomationService;
+      const repository = yield* ScheduledAutomationRepository;
+      const created = (yield* service.dispatch(yield* createCommand())).automation!;
+      const enabled = (yield* service.dispatch(
+        yield* decodeCommand({
+          type: "scheduledAutomation.enabled.set",
+          commandId: "enable-delta-filter",
+          automationId: created.id,
+          expectedRevision: created.revision,
+          enabled: true,
+          createdAt: created.createdAt,
+        }),
+      )).automation!;
+      const threadId = ThreadId.make("t3sa:v1:delta-filter:thread");
+      yield* repository.claimOccurrence({
+        automationId: enabled.id,
+        expectedRevision: enabled.revision,
+        scheduledFor: "2026-08-05T02:30:00.000Z",
+        lastThreadId: threadId,
+        lastOutcome: {
+          kind: "starting",
+          scheduledFor: "2026-08-05T02:30:00.000Z",
+          observedAt: "2026-08-05T02:30:01.000Z",
+          coalescedCount: 0,
+        },
+        updatedAt: "2026-08-05T02:30:01.000Z",
+      });
+      state.lastThread = {
+        latestTurn: { state: "running" },
+        latestUserMessageAt: "2026-08-05T02:30:00.000Z",
+        session: null,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      } as OrchestrationThreadShell;
+
+      const stream = yield* service.subscribe;
+      const collected = yield* Stream.runCollect(stream.pipe(Stream.take(2))).pipe(
+        Effect.forkScoped,
+      );
+      for (let index = 0; index < 100; index += 1) {
+        yield* PubSub.publish(liveEvents, {
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          type: "thread.message-sent",
+          payload: { role: "assistant", streaming: true },
+        } as OrchestrationEvent);
+        yield* PubSub.publish(liveEvents, {
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          type: "thread.activity-appended",
+          payload: { activity: { kind: "provider.tool-output.delta" } },
+        } as OrchestrationEvent);
+      }
+      state.lastThread = {
+        ...state.lastThread,
+        latestTurn: { state: "completed" },
+        latestUserMessageAt: null,
+      } as OrchestrationThreadShell;
+      yield* PubSub.publish(liveEvents, {
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.session-set",
+      } as OrchestrationEvent);
+
+      const items = Array.from(yield* Fiber.join(collected));
+      assert.equal(items[1]?.kind, "upserted");
+      assert.equal(state.threadShellReads, 2);
+    }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
+  }),
+);
+
+it.effect("ends absent when a delayed projection refresh races with deletion", () =>
+  Effect.gen(function* () {
+    const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+    const state = initialState();
+    state.subscribeDomainEvents = PubSub.subscribe(liveEvents).pipe(
+      Effect.map(Stream.fromSubscription),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledAutomationService;
+      const repository = yield* ScheduledAutomationRepository;
+      const created = (yield* service.dispatch(yield* createCommand())).automation!;
+      const enabled = (yield* service.dispatch(
+        yield* decodeCommand({
+          type: "scheduledAutomation.enabled.set",
+          commandId: "enable-delete-race",
+          automationId: created.id,
+          expectedRevision: created.revision,
+          enabled: true,
+          createdAt: created.createdAt,
+        }),
+      )).automation!;
+      const threadId = ThreadId.make("t3sa:v1:delete-race:thread");
+      const claimed = yield* repository.claimOccurrence({
+        automationId: enabled.id,
+        expectedRevision: enabled.revision,
+        scheduledFor: "2026-08-05T02:30:00.000Z",
+        lastThreadId: threadId,
+        lastOutcome: {
+          kind: "starting",
+          scheduledFor: "2026-08-05T02:30:00.000Z",
+          observedAt: "2026-08-05T02:30:01.000Z",
+          coalescedCount: 0,
+        },
+        updatedAt: "2026-08-05T02:30:01.000Z",
+      });
+      state.lastThread = {
+        latestTurn: { state: "running" },
+        latestUserMessageAt: "2026-08-05T02:30:00.000Z",
+        session: null,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+      } as OrchestrationThreadShell;
+
+      const stream = yield* service.subscribe;
+      const collected = yield* Stream.runCollect(stream.pipe(Stream.take(2))).pipe(
+        Effect.forkScoped,
+      );
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      state.threadShellReadGate = { entered, release };
+      state.lastThread = {
+        ...state.lastThread,
+        latestTurn: { state: "completed" },
+        latestUserMessageAt: null,
+      } as OrchestrationThreadShell;
+      yield* PubSub.publish(liveEvents, {
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.session-set",
+      } as OrchestrationEvent);
+      yield* Deferred.await(entered);
+      yield* repository.compareAndSwapDelete({
+        automationId: claimed.id,
+        expectedRevision: claimed.revision,
+      });
+      yield* Deferred.succeed(release, undefined);
+
+      const items = Array.from(yield* Fiber.join(collected));
+      assert.deepStrictEqual(
+        items.map((item) => item.kind),
+        ["snapshot", "removed"],
+      );
+    }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
+  }),
+);
 
 it.effect("reconstructs a subscription snapshot after the service and database restart", () => {
   const state = initialState();
