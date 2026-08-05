@@ -43,6 +43,7 @@ type ScheduledAutomationDbRow = typeof ScheduledAutomationDbRow.Type;
 const decodeScheduledAutomationDbRows = Schema.decodeUnknownEffect(
   Schema.Array(ScheduledAutomationDbRow),
 );
+const decodeScheduledAutomationDbRow = Schema.decodeUnknownEffect(ScheduledAutomationDbRow);
 
 export type ScheduledAutomationRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 export type ScheduledAutomationCasError =
@@ -103,6 +104,13 @@ export interface ScheduledAutomationRepositoryShape {
   readonly list: () => Effect.Effect<
     ReadonlyArray<ScheduledAutomation>,
     ScheduledAutomationRepositoryError
+  >;
+  readonly inspect: () => Effect.Effect<
+    {
+      readonly automations: ReadonlyArray<ScheduledAutomation>;
+      readonly malformedDefinitionCount: number;
+    },
+    PersistenceSqlError
   >;
   readonly get: (
     automationId: ScheduledAutomationId,
@@ -182,7 +190,7 @@ export const makeScheduledAutomationRepository = Effect.gen(function* () {
   const publishUpsert = (automation: ScheduledAutomation) =>
     PubSub.publish(changes, { kind: "upserted", automation }).pipe(Effect.asVoid);
 
-  const selectAll = () =>
+  const selectAllRows = () =>
     sql<Record<string, unknown>>`
       SELECT
         id,
@@ -198,9 +206,24 @@ export const makeScheduledAutomationRepository = Effect.gen(function* () {
         updated_at AS "updatedAt"
       FROM local_scheduled_automations_v1
       ORDER BY created_at ASC, id ASC
-    `.pipe(
-      Effect.mapError(toPersistenceSqlError("ScheduledAutomationRepository.list:query")),
+    `.pipe(Effect.mapError(toPersistenceSqlError("ScheduledAutomationRepository.list:query")));
+
+  const selectAll = () =>
+    selectAllRows().pipe(
       Effect.flatMap((rows) => decodeRows("ScheduledAutomationRepository.list:decode", rows)),
+    );
+
+  const inspect: ScheduledAutomationRepositoryShape["inspect"] = () =>
+    selectAllRows().pipe(
+      Effect.flatMap((rows) =>
+        Effect.forEach(rows, (row) => Effect.result(decodeScheduledAutomationDbRow(row))),
+      ),
+      Effect.map((results) => ({
+        automations: results.flatMap((result) =>
+          result._tag === "Success" ? [fromDbRow(result.success)] : [],
+        ),
+        malformedDefinitionCount: results.filter((result) => result._tag === "Failure").length,
+      })),
     );
 
   const selectById = (automationId: ScheduledAutomationId) =>
@@ -449,6 +472,7 @@ export const makeScheduledAutomationRepository = Effect.gen(function* () {
 
   return ScheduledAutomationRepository.of({
     list: selectAll,
+    inspect,
     get: selectById,
     create: (input) => mutationMutex.withPermits(1)(create(input)),
     compareAndSwapUpdate: (input) => mutationMutex.withPermits(1)(compareAndSwapUpdate(input)),

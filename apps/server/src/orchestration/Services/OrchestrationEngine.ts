@@ -82,6 +82,13 @@ export interface OrchestrationEngineShape {
    */
   readonly streamDomainEvents: Stream.Stream<OrchestrationEvent>;
 
+  /** Acquire the hot domain-event subscription before reading a snapshot. */
+  readonly subscribeDomainEvents: Effect.Effect<
+    Stream.Stream<OrchestrationEvent>,
+    never,
+    Scope.Scope
+  >;
+
   /**
    * Acquire a domain-event subscription before starting a consumer.
    * The subscription is ready when this effect returns and closes with the scope.

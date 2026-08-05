@@ -11,11 +11,13 @@ import {
   scheduledAutomationPlanningBoundary,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -45,6 +47,8 @@ type SchedulerError =
   | ScheduledAutomationInvalidStateError
   | ScheduledAutomationNotFoundError;
 
+export type ScheduledAutomationSchedulerStatus = "starting" | "running" | "failed";
+
 export interface ScheduledAutomationSchedulerShape {
   readonly runOnce: Effect.Effect<void, SchedulerError>;
   readonly run: Effect.Effect<never, SchedulerError>;
@@ -52,6 +56,12 @@ export interface ScheduledAutomationSchedulerShape {
     automationId: ScheduledAutomationId,
     expectedRevision: number,
   ) => Effect.Effect<ScheduledAutomation, SchedulerError>;
+  readonly health: Effect.Effect<ScheduledAutomationSchedulerStatus>;
+  readonly subscribeHealth: Effect.Effect<
+    Stream.Stream<ScheduledAutomationSchedulerStatus>,
+    never,
+    import("effect/Scope").Scope
+  >;
 }
 
 export class ScheduledAutomationScheduler extends Context.Service<
@@ -120,13 +130,33 @@ function internalError(operation: string): ScheduledAutomationInternalError {
   });
 }
 
-function schedulerFailureAttributes(cause: SchedulerError): Readonly<Record<string, unknown>> {
+function schedulerFailureAttributes(cause: unknown): Readonly<Record<string, unknown>> {
+  if (typeof cause !== "object" || cause === null) return { errorType: typeof cause };
+  const error = cause as Record<string, unknown>;
   return {
-    errorTag: cause._tag,
-    ...("operation" in cause && typeof cause.operation === "string"
-      ? { operation: cause.operation }
+    ...(typeof error._tag === "string" ? { errorTag: error._tag } : {}),
+    ...("operation" in error && typeof error.operation === "string"
+      ? { operation: error.operation }
       : {}),
-    ...("automationId" in cause ? { automationId: cause.automationId } : {}),
+    ...("automationId" in error ? { automationId: error.automationId } : {}),
+  };
+}
+
+function schedulerCauseAttributes(cause: Cause.Cause<unknown>): Readonly<Record<string, unknown>> {
+  const failure = cause.reasons.find(Cause.isFailReason);
+  const defect = cause.reasons.find(Cause.isDieReason);
+  return {
+    reasonCount: cause.reasons.length,
+    failureCount: cause.reasons.filter(Cause.isFailReason).length,
+    defectCount: cause.reasons.filter(Cause.isDieReason).length,
+    interruptionCount: cause.reasons.filter(Cause.isInterruptReason).length,
+    ...(failure === undefined ? {} : schedulerFailureAttributes(failure.error)),
+    ...(defect === undefined
+      ? {}
+      : {
+          defectType: typeof defect.defect,
+          defectTag: schedulerFailureAttributes(defect.defect).errorTag,
+        }),
   };
 }
 
@@ -146,6 +176,14 @@ export const makeScheduledAutomationScheduler = (
       readonly users: number;
     }
     const locks = yield* Ref.make<ReadonlyMap<ScheduledAutomationId, LockEntry>>(new Map());
+    const health = yield* Ref.make<ScheduledAutomationSchedulerStatus>("starting");
+    const healthChanges = yield* PubSub.sliding<ScheduledAutomationSchedulerStatus>(1);
+    yield* Effect.addFinalizer(() => PubSub.shutdown(healthChanges));
+    const setHealth = (status: ScheduledAutomationSchedulerStatus) =>
+      Ref.set(health, status).pipe(
+        Effect.andThen(PubSub.publish(healthChanges, status)),
+        Effect.asVoid,
+      );
 
     const acquireLock: (automationId: ScheduledAutomationId) => Effect.Effect<Semaphore.Semaphore> =
       Effect.fn("ScheduledAutomationScheduler.acquireLock")(function* (
@@ -461,7 +499,13 @@ export const makeScheduledAutomationScheduler = (
       yield* options.onCycleStarted ?? Effect.void;
       let hadFailures = false;
       const failedReconciliations = new Set<ScheduledAutomationId>();
-      const automations = yield* repository.list();
+      const initialInspection = yield* repository.inspect();
+      if (initialInspection.malformedDefinitionCount > 0) {
+        yield* Effect.logWarning("Malformed scheduled automation definitions were skipped", {
+          malformedDefinitionCount: initialInspection.malformedDefinitionCount,
+        });
+      }
+      const automations = initialInspection.automations;
       for (const automation of automations) {
         if (automation.lastOutcome?.kind === "starting") {
           const result = yield* Effect.result(reconcileStarting(automation.id));
@@ -475,7 +519,7 @@ export const makeScheduledAutomationScheduler = (
           }
         }
       }
-      const refreshed = (yield* repository.list()).filter(
+      const refreshed = (yield* repository.inspect()).automations.filter(
         (automation) =>
           (automation.enabled || automation.lastOutcome?.kind === "starting") &&
           !failedReconciliations.has(automation.id),
@@ -509,7 +553,7 @@ export const makeScheduledAutomationScheduler = (
     const nextDelay = Effect.gen(function* () {
       const timestamp = yield* nowIso;
       const nowMs = Date.parse(timestamp);
-      const automations = yield* repository.list();
+      const automations = (yield* repository.inspect()).automations;
       let nearest = Number.POSITIVE_INFINITY;
       for (const automation of automations) {
         if (automation.lastOutcome?.kind === "starting") return 0;
@@ -529,7 +573,7 @@ export const makeScheduledAutomationScheduler = (
       return Number.isFinite(nearest) ? Math.max(0, nearest - nowMs) : null;
     });
 
-    const run = Effect.scoped(
+    const coordinator = Effect.scoped(
       Effect.gen(function* () {
         const signal = yield* Queue.sliding<void>(1);
         const changes = yield* repository.subscribe;
@@ -612,7 +656,25 @@ export const makeScheduledAutomationScheduler = (
       );
     });
 
-    return ScheduledAutomationScheduler.of({ runOnce, run, retry });
+    const run = setHealth("running").pipe(
+      Effect.andThen(coordinator),
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause)
+          : setHealth("failed").pipe(Effect.andThen(Effect.failCause(cause))),
+      ),
+    );
+    const subscribeHealth = PubSub.subscribe(healthChanges).pipe(
+      Effect.map(Stream.fromSubscription),
+    );
+
+    return ScheduledAutomationScheduler.of({
+      runOnce,
+      run,
+      retry,
+      health: Ref.get(health),
+      subscribeHealth,
+    });
   });
 
 export const layerWithOptions = (options: ScheduledAutomationSchedulerOptions = {}) =>
@@ -621,5 +683,16 @@ export const layerWithOptions = (options: ScheduledAutomationSchedulerOptions = 
 export const layer = layerWithOptions();
 
 export const launch = Effect.flatMap(ScheduledAutomationScheduler, (scheduler) =>
-  scheduler.run.pipe(Effect.forkScoped, Effect.asVoid),
+  scheduler.run.pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.void
+        : Effect.logError(
+            "Scheduled automation coordinator stopped",
+            schedulerCauseAttributes(cause),
+          ),
+    ),
+    Effect.forkScoped,
+    Effect.asVoid,
+  ),
 );

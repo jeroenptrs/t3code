@@ -173,6 +173,7 @@ it.effect("builds deterministic automation bootstrap input and always skips setu
       commandId: expect.stringContaining(":command:bootstrap"),
       message: { text: "Inspect the workspace.", attachments: [] },
       bootstrap: {
+        createThread: { title: "Automation: Nightly maintenance" },
         runSetupScript: false,
         reconcileThreadRevision: 2,
         prepareWorktree: {
@@ -184,6 +185,7 @@ it.effect("builds deterministic automation bootstrap input and always skips setu
         },
       },
     });
+    expect(bootstrapInputs[0]).not.toHaveProperty("titleSeed");
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
