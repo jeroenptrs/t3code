@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
 import {
+  INITIAL_SCHEDULED_AUTOMATION_HEALTH,
+  applyScheduledAutomationStateStreamItem,
   applyScheduledAutomationStreamItem,
   projectScheduledAutomationStream,
 } from "./scheduledAutomations";
@@ -50,6 +52,7 @@ describe("scheduled automation subscription projection", () => {
     const snapshot = applyScheduledAutomationStreamItem([], {
       kind: "snapshot",
       automations: [beta],
+      health: INITIAL_SCHEDULED_AUTOMATION_HEALTH,
     });
     const upserted = applyScheduledAutomationStreamItem(snapshot, {
       kind: "upserted",
@@ -67,12 +70,42 @@ describe("scheduled automation subscription projection", () => {
   it.effect("does not emit an empty seed before the first server snapshot", () => {
     const alpha = view("alpha", "Alpha");
     return projectScheduledAutomationStream(
-      Stream.fromIterable([{ kind: "snapshot" as const, automations: [alpha] }]),
+      Stream.fromIterable([
+        {
+          kind: "snapshot" as const,
+          automations: [alpha],
+          health: INITIAL_SCHEDULED_AUTOMATION_HEALTH,
+        },
+      ]),
     ).pipe(
       Stream.runCollect,
       Effect.map((values) => {
         expect(Array.from(values)).toEqual([[alpha]]);
       }),
     );
+  });
+
+  it("projects scheduler and malformed-definition health without rewriting rows", () => {
+    const alpha = view("alpha", "Alpha");
+    const initial = applyScheduledAutomationStateStreamItem(
+      { views: [], health: INITIAL_SCHEDULED_AUTOMATION_HEALTH },
+      {
+        kind: "snapshot",
+        automations: [alpha],
+        health: INITIAL_SCHEDULED_AUTOMATION_HEALTH,
+      },
+    );
+    const degraded = applyScheduledAutomationStateStreamItem(initial, {
+      kind: "snapshot",
+      automations: [alpha],
+      health: { status: "degraded", schedulerStatus: "failed", malformedDefinitionCount: 1 },
+    });
+
+    expect(degraded.views).toEqual([alpha]);
+    expect(degraded.health).toEqual({
+      status: "degraded",
+      schedulerStatus: "failed",
+      malformedDefinitionCount: 1,
+    });
   });
 });

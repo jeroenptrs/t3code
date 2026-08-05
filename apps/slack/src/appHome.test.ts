@@ -212,6 +212,30 @@ describe("App Home task selection", () => {
 });
 
 describe("App Home Block Kit rendering", () => {
+  it("shows an active automation thread with its title and ordinary deep link", () => {
+    const tasks = selectAppHomeTasks(
+      snapshot([
+        thread({
+          id: "t3sa:v1:automation:occurrence:thread",
+          title: "Automation: Nightly maintenance",
+          sessionStatus: "running",
+        }),
+      ]),
+      { now: NOW },
+    ).tasks;
+    const rendered = JSON.stringify(
+      buildAppHomeView({
+        tasks,
+        publicBaseUrl: "https://t3.example",
+        environmentId: "environment-a",
+      }),
+    );
+
+    expect(tasks).toHaveLength(1);
+    expect(rendered).toContain("Automation: Nightly maintenance");
+    expect(rendered).toContain("/t3sa%3Av1%3Aautomation%3Aoccurrence%3Athread");
+  });
+
   it("renders direct task links with status and project plus the environment-level header link", () => {
     const tasks = selectAppHomeTasks(
       snapshot([

@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   ProviderInstanceId,
   ScheduledAutomationId,
@@ -8,6 +9,7 @@ import {
   type ProviderOptionDescriptor,
   type ScheduledAutomation,
   type ScheduledAutomationCommand,
+  type ScheduledAutomationHealth,
   type ScheduledAutomationDefinitionDraft,
   type ScheduledAutomationValidationField,
   type ScheduledAutomationView,
@@ -31,8 +33,13 @@ import { useProjects } from "../../state/entities";
 import { usePaginatedBranches } from "../../state/queries";
 import { primaryServerProvidersAtom } from "../../state/server";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { scheduledAutomationEnvironment } from "../../state/scheduledAutomations";
+import {
+  INITIAL_SCHEDULED_AUTOMATION_HEALTH,
+  scheduledAutomationEnvironment,
+  type ScheduledAutomationState,
+} from "../../state/scheduledAutomations";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import {
@@ -85,6 +92,7 @@ import {
 export interface AutomationsSettingsProps {
   readonly environmentId: EnvironmentId;
   readonly views: ReadonlyArray<ScheduledAutomationView>;
+  readonly health?: ScheduledAutomationHealth;
   readonly projects: ReadonlyArray<AutomationProjectOption>;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly isPending?: boolean;
@@ -92,8 +100,30 @@ export interface AutomationsSettingsProps {
   readonly onCommand: (command: ScheduledAutomationCommand) => Promise<ScheduledAutomation | null>;
 }
 
+export function AutomationHealthNotice(props: {
+  readonly health?: ScheduledAutomationHealth | undefined;
+}) {
+  if (props.health?.status !== "degraded") return null;
+  return (
+    <div
+      role="status"
+      className="mx-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm sm:mx-4"
+    >
+      <p className="font-medium">Automation scheduling needs attention</p>
+      <p className="mt-1 text-muted-foreground">
+        {props.health.schedulerStatus === "failed"
+          ? "The scheduler stopped; unrelated conversations remain available. "
+          : ""}
+        {props.health.malformedDefinitionCount > 0
+          ? `${props.health.malformedDefinitionCount} stored definition${props.health.malformedDefinitionCount === 1 ? " is malformed and was" : "s are malformed and were"} not scheduled.`
+          : ""}
+      </p>
+    </div>
+  );
+}
+
 const EMPTY_AUTOMATIONS_ATOM = Atom.make(
-  AsyncResult.initial<ReadonlyArray<ScheduledAutomationView>, never>(false),
+  AsyncResult.initial<ScheduledAutomationState, never>(false),
 ).pipe(Atom.withLabel("web:scheduled-automations:empty"));
 
 function modelKey(selection: Pick<ModelSelection, "instanceId" | "model">): string {
@@ -665,6 +695,10 @@ function outcomeLabel(view: ScheduledAutomationView): string {
   return `${view.automation.lastOutcome.kind.replaceAll("-", " ")}${count > 0 ? ` · ${count} coalesced` : ""}`;
 }
 
+function statusLabel(view: ScheduledAutomationView): string {
+  return view.status.replaceAll("-", " ");
+}
+
 export function AutomationRow(props: {
   readonly environmentId: EnvironmentId;
   readonly view: ScheduledAutomationView;
@@ -677,6 +711,8 @@ export function AutomationRow(props: {
   ) => Promise<void>;
 }) {
   const { automation } = props.view;
+  const lastExecutionError =
+    props.view.status === "failed" ? props.view.lastThread?.session?.lastError : null;
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [abandonOpen, setAbandonOpen] = useState(false);
   const effort = automation.modelSelection.options?.find((option) =>
@@ -749,12 +785,19 @@ export function AutomationRow(props: {
           </dd>
         </div>
         <div>
+          <dt className="text-xs text-muted-foreground">Current status</dt>
+          <dd className="capitalize">{statusLabel(props.view)}</dd>
+        </div>
+        <div>
           <dt className="text-xs text-muted-foreground">Last outcome</dt>
-          <dd className="capitalize">
-            {outcomeLabel(props.view)}
-            {automation.lastOutcome !== null && props.view.status !== automation.lastOutcome.kind
-              ? ` · status ${props.view.status.replaceAll("-", " ")}`
-              : ""}
+          <dd className="capitalize">{outcomeLabel(props.view)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">Cursor</dt>
+          <dd>
+            {automation.lastScheduledFor
+              ? new Date(automation.lastScheduledFor).toLocaleString()
+              : "Never claimed"}
           </dd>
         </div>
         <div>
@@ -764,7 +807,9 @@ export function AutomationRow(props: {
               <Link
                 className="text-primary underline-offset-4 hover:underline"
                 to="/$environmentId/$threadId"
-                params={{ environmentId: props.environmentId, threadId: automation.lastThreadId }}
+                params={buildThreadRouteParams(
+                  scopeThreadRef(props.environmentId, automation.lastThreadId),
+                )}
               >
                 Open thread
               </Link>
@@ -774,6 +819,23 @@ export function AutomationRow(props: {
           </dd>
         </div>
       </dl>
+      {automation.lastOutcome?.kind === "failed" ? (
+        <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-sm">
+          <p className="font-medium">{automation.lastOutcome.code}</p>
+          <p className="mt-1 text-muted-foreground">{automation.lastOutcome.detail}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {automation.lastOutcome.retryable
+              ? "Retryable after inspection."
+              : "Not retryable; disable and abandon this occurrence before correcting resources."}
+          </p>
+        </div>
+      ) : null}
+      {lastExecutionError ? (
+        <div className="mt-3 rounded-lg border border-destructive/25 bg-destructive/5 p-3 text-sm">
+          <p className="font-medium">Last execution error</p>
+          <p className="mt-1 text-muted-foreground">{lastExecutionError}</p>
+        </div>
+      ) : null}
       <div className="mt-4 flex flex-wrap gap-2">
         <Button
           size="xs"
@@ -815,6 +877,7 @@ export function AutomationRow(props: {
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
             <Button
               variant="destructive"
+              disabled={props.pending}
               onClick={() => {
                 setAbandonOpen(false);
                 void props.onAction("abandon");
@@ -942,6 +1005,7 @@ export function AutomationsSettings(props: AutomationsSettingsProps) {
             {props.loadError}
           </div>
         ) : null}
+        <AutomationHealthNotice health={props.health} />
         <div className="grid gap-3 px-3 sm:px-4">
           {visibleViews.map((view) => (
             <AutomationRow
@@ -1002,10 +1066,13 @@ export function AutomationsSettingsPanel() {
   const providers = useAtomValue(primaryServerProvidersAtom);
   const result = useAtomValue(
     environmentId
-      ? scheduledAutomationEnvironment.views({ environmentId, input: {} })
+      ? scheduledAutomationEnvironment.state({ environmentId, input: {} })
       : EMPTY_AUTOMATIONS_ATOM,
   );
-  const views = result._tag === "Success" ? result.value : [];
+  const state =
+    result._tag === "Success"
+      ? result.value
+      : { views: [], health: INITIAL_SCHEDULED_AUTOMATION_HEALTH };
   const loadError =
     result._tag === "Failure" ? "Could not load automations for this environment." : null;
   if (!environmentId)
@@ -1019,7 +1086,8 @@ export function AutomationsSettingsPanel() {
   return (
     <AutomationsSettings
       environmentId={environmentId}
-      views={views}
+      views={state.views}
+      health={state.health}
       projects={projects}
       providers={providers}
       isPending={result.waiting}

@@ -26,6 +26,14 @@ import * as Result from "effect/Result";
 export const SCHEDULED_AUTOMATION_THREAD_PREFIX = "t3sa:v1";
 export const SCHEDULED_AUTOMATION_WORKTREE_SUBTREE = "local-scheduled-automations-v1";
 
+export function isScheduledAutomationThreadId(threadId: string): boolean {
+  return threadId.startsWith(`${SCHEDULED_AUTOMATION_THREAD_PREFIX}:`);
+}
+
+export function scheduledAutomationThreadTitle(name: string): string {
+  return `Automation: ${name}`;
+}
+
 function identityKey(input: string): string {
   return Encoding.encodeHex(input);
 }

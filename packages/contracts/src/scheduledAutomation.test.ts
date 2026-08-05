@@ -6,12 +6,16 @@ import * as Schema from "effect/Schema";
 import {
   ScheduledAutomationCommand,
   ScheduledAutomationDefinition,
+  ScheduledAutomationListResult,
+  ScheduledAutomationStreamItem,
   validateScheduledAutomationDefinitionDraft,
 } from "./scheduledAutomation.ts";
 import type { ProviderInteractionMode, RuntimeMode } from "./orchestration.ts";
 
 const decodeDefinition = Schema.decodeUnknownEffect(ScheduledAutomationDefinition);
 const decodeCommand = Schema.decodeUnknownEffect(ScheduledAutomationCommand);
+const decodeListResult = Schema.decodeUnknownSync(ScheduledAutomationListResult);
+const decodeStreamItem = Schema.decodeUnknownSync(ScheduledAutomationStreamItem);
 
 const runtimeModes = {
   "approval-required": true,
@@ -188,3 +192,16 @@ it.effect("decodes the namespaced command union and requires revisions after cre
     assert.strictEqual(missingRevision._tag, "Failure");
   }),
 );
+
+it("defaults automation health when decoding a pre-WP5 list or snapshot", () => {
+  const expected = {
+    status: "healthy",
+    schedulerStatus: "starting",
+    malformedDefinitionCount: 0,
+  } as const;
+
+  assert.deepStrictEqual(decodeListResult({ automations: [] }).health, expected);
+  const snapshot = decodeStreamItem({ kind: "snapshot", automations: [] });
+  assert.strictEqual(snapshot.kind, "snapshot");
+  if (snapshot.kind === "snapshot") assert.deepStrictEqual(snapshot.health, expected);
+});

@@ -7,6 +7,9 @@ import {
   type ScheduledAutomation,
   type ScheduledAutomationCommand,
   type ScheduledAutomationDefinition,
+  type ScheduledAutomationHealth,
+  type OrchestrationThreadShell,
+  type OrchestrationEvent,
   ScheduledAutomationInternalError,
   ScheduledAutomationInvalidStateError,
   ScheduledAutomationNotFoundError,
@@ -21,11 +24,17 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { isScheduledAutomationThreadActive } from "./ScheduledAutomationOccurrence.ts";
+import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
+import {
+  isScheduledAutomationThreadActive,
+  isScheduledAutomationThreadId,
+} from "./ScheduledAutomationOccurrence.ts";
 import {
   ScheduledAutomationRepository,
   type ScheduledAutomationRepositoryError,
@@ -54,6 +63,7 @@ export interface ScheduledAutomationServiceShape {
     ScheduledAutomationView,
     ScheduledAutomationNotFoundError | ScheduledAutomationInternalError
   >;
+  readonly health: () => Effect.Effect<ScheduledAutomationHealth, ScheduledAutomationInternalError>;
   readonly subscribe: Effect.Effect<
     Stream.Stream<ScheduledAutomationStreamItem, ScheduledAutomationInternalError>,
     never,
@@ -65,6 +75,59 @@ export class ScheduledAutomationService extends Context.Service<
   ScheduledAutomationService,
   ScheduledAutomationServiceShape
 >()("t3/scheduledAutomation/ScheduledAutomationService") {}
+
+export function deriveScheduledAutomationVisibleStatus(
+  automation: ScheduledAutomation,
+  lastThread: OrchestrationThreadShell | null,
+  now: string,
+): ScheduledAutomationView["status"] {
+  if (automation.lastOutcome === null) return "never-run";
+  if (automation.lastOutcome.kind === "failed") return "failed";
+  if (automation.lastOutcome.kind === "skipped-active") return "skipped-active";
+  if (lastThread === null) return "thread-missing";
+  if (lastThread.hasPendingApprovals || lastThread.hasPendingUserInput) return "blocked";
+  if (isScheduledAutomationThreadActive(lastThread, { now })) return "running";
+
+  switch (lastThread.latestTurn?.state) {
+    case "completed":
+      return "completed";
+    case "error":
+      return "failed";
+    case "interrupted":
+      return "interrupted";
+    default:
+      return automation.lastOutcome.kind === "starting" ? "starting" : "running";
+  }
+}
+
+export function isScheduledAutomationStatusEvent(event: OrchestrationEvent): boolean {
+  if (event.aggregateKind !== "thread" || !isScheduledAutomationThreadId(event.aggregateId)) {
+    return false;
+  }
+  switch (event.type) {
+    case "thread.created":
+    case "thread.deleted":
+    case "thread.turn-start-requested":
+    case "thread.turn-interrupt-requested":
+    case "thread.session-set":
+    case "thread.approval-response-requested":
+    case "thread.user-input-response-requested":
+      return true;
+    case "thread.message-sent":
+      return event.payload.role === "user" || !event.payload.streaming;
+    case "thread.activity-appended":
+      return [
+        "approval.requested",
+        "approval.resolved",
+        "provider.approval.respond.failed",
+        "user-input.requested",
+        "user-input.resolved",
+        "provider.user-input.respond.failed",
+      ].includes(event.payload.activity.kind);
+    default:
+      return false;
+  }
+}
 
 const internalError = (operation: string) => (_cause: unknown) =>
   new ScheduledAutomationInternalError({
@@ -93,8 +156,8 @@ function internalFailureAttributes(cause: unknown): Readonly<Record<string, unkn
   if (error._tag === "PersistenceSqlError" && typeof error.detail === "string") {
     attributes.detail = error.detail;
   }
-  if (error._tag === "PersistenceDecodeError" && typeof error.issue === "string") {
-    attributes.issue = error.issue;
+  if (error._tag === "PersistenceDecodeError") {
+    attributes.decodeFailed = true;
   }
   return attributes;
 }
@@ -187,6 +250,7 @@ function occurrenceResourceDefinition(
 export const makeScheduledAutomationService = Effect.gen(function* () {
   const repository = yield* ScheduledAutomationRepository;
   const projections = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const scheduler = yield* ScheduledAutomationScheduler;
   const validation = yield* ScheduledAutomationValidation;
 
@@ -221,34 +285,11 @@ export const makeScheduledAutomationService = Effect.gen(function* () {
             .getThreadShellById(automation.lastThreadId)
             .pipe(mapInternalFailure("thread view"));
 
-    let status: ScheduledAutomationView["status"];
-    if (automation.lastOutcome === null) {
-      status = "never-run";
-    } else if (automation.lastOutcome.kind === "failed") {
-      status = "failed";
-    } else if (automation.lastOutcome.kind === "skipped-active") {
-      status = "skipped-active";
-    } else if (Option.isNone(lastThread)) {
-      status = "thread-missing";
-    } else if (lastThread.value.hasPendingApprovals || lastThread.value.hasPendingUserInput) {
-      status = "blocked";
-    } else if (isScheduledAutomationThreadActive(lastThread.value, { now: timestamp })) {
-      status = "running";
-    } else {
-      switch (lastThread.value.latestTurn?.state) {
-        case "completed":
-          status = "completed";
-          break;
-        case "error":
-          status = "failed";
-          break;
-        case "interrupted":
-          status = "interrupted";
-          break;
-        default:
-          status = automation.lastOutcome.kind === "starting" ? "starting" : "running";
-      }
-    }
+    const status = deriveScheduledAutomationVisibleStatus(
+      automation,
+      Option.getOrNull(lastThread),
+      timestamp,
+    );
 
     let nextScheduledFor: ScheduledAutomationView["nextScheduledFor"] = null;
     if (automation.enabled && automation.enabledAt !== null) {
@@ -278,14 +319,43 @@ export const makeScheduledAutomationService = Effect.gen(function* () {
     } satisfies ScheduledAutomationView;
   });
 
-  const list: ScheduledAutomationServiceShape["list"] = () =>
-    repository.list().pipe(
-      mapInternalFailure("list"),
-      Effect.flatMap((automations) => Effect.forEach(automations, view)),
+  const inspect = () => repository.inspect().pipe(mapInternalFailure("inspect"));
+
+  const healthFromInspection = (
+    malformedDefinitionCount: number,
+    schedulerStatus: ScheduledAutomationHealth["schedulerStatus"],
+  ): ScheduledAutomationHealth => ({
+    status: malformedDefinitionCount > 0 || schedulerStatus === "failed" ? "degraded" : "healthy",
+    schedulerStatus,
+    malformedDefinitionCount,
+  });
+
+  const health: ScheduledAutomationServiceShape["health"] = () =>
+    Effect.all({ inspection: inspect(), schedulerStatus: scheduler.health }).pipe(
+      Effect.map(({ inspection, schedulerStatus }) =>
+        healthFromInspection(inspection.malformedDefinitionCount, schedulerStatus),
+      ),
     );
+
+  const list: ScheduledAutomationServiceShape["list"] = () =>
+    inspect().pipe(Effect.flatMap(({ automations }) => Effect.forEach(automations, view)));
 
   const get: ScheduledAutomationServiceShape["get"] = (automationId) =>
     load(automationId).pipe(Effect.flatMap(view));
+
+  const loadSubscriptionTruth = Effect.fn("ScheduledAutomationService.subscriptionTruth")(
+    function* () {
+      const inspection = yield* inspect();
+      const [views, schedulerStatus] = yield* Effect.all([
+        Effect.forEach(inspection.automations, view),
+        scheduler.health,
+      ]);
+      return {
+        views,
+        health: healthFromInspection(inspection.malformedDefinitionCount, schedulerStatus),
+      } as const;
+    },
+  );
 
   const dispatch: ScheduledAutomationServiceShape["dispatch"] = Effect.fn(
     "ScheduledAutomationService.dispatch",
@@ -461,41 +531,96 @@ export const makeScheduledAutomationService = Effect.gen(function* () {
 
   const acquireSubscription = Effect.gen(function* () {
     // Attach first, then read SQLite. A concurrent commit is therefore either
-    // represented in the snapshot or queued as a following change (possibly both,
-    // which is a harmless idempotent upsert for clients).
+    // represented in the snapshot or queued as a following invalidation. Every
+    // refresh rereads truth and suppresses unchanged output.
     const liveChanges = yield* repository.subscribe;
-    const initial = yield* list();
-    const live: Stream.Stream<ScheduledAutomationStreamItem, ScheduledAutomationInternalError> =
-      liveChanges.pipe(
-        Stream.mapEffect(
-          (
-            change,
-          ): Effect.Effect<ScheduledAutomationStreamItem, ScheduledAutomationInternalError> => {
-            if (change.kind === "removed") {
-              return Effect.succeed({
-                kind: "removed" as const,
-                automationId: change.automationId,
-              });
-            }
-            return view(change.automation).pipe(
-              Effect.map((automation) => ({ kind: "upserted" as const, automation })),
-            );
-          },
-        ),
-      );
+    const liveSchedulerHealth = yield* scheduler.subscribeHealth;
+    const liveProjectionEvents = yield* orchestrationEngine.subscribeDomainEvents;
+    const invalidations = yield* Queue.sliding<void>(1);
+    const output = yield* Queue.unbounded<
+      | { readonly kind: "item"; readonly item: ScheduledAutomationStreamItem }
+      | { readonly kind: "error"; readonly error: ScheduledAutomationInternalError }
+    >();
+    const invalidate = Queue.offer(invalidations, undefined).pipe(Effect.asVoid);
+    yield* liveChanges.pipe(
+      Stream.runForEach(() => invalidate),
+      Effect.forkScoped,
+    );
+    yield* liveSchedulerHealth.pipe(
+      Stream.runForEach(() => invalidate),
+      Effect.forkScoped,
+    );
+    yield* liveProjectionEvents.pipe(
+      Stream.filter(isScheduledAutomationStatusEvent),
+      Stream.runForEach(() => invalidate),
+      Effect.forkScoped,
+    );
+
+    const initialTruth = yield* loadSubscriptionTruth();
+    const latestTruth = yield* Ref.make(initialTruth);
     const snapshotItem: ScheduledAutomationStreamItem = {
       kind: "snapshot",
-      automations: initial,
+      automations: initialTruth.views,
+      health: initialTruth.health,
     };
-    const combined: Stream.Stream<ScheduledAutomationStreamItem, ScheduledAutomationInternalError> =
-      Stream.concat(Stream.make(snapshotItem), live);
+
+    const refresh = Effect.gen(function* () {
+      const refreshed = yield* Effect.result(loadSubscriptionTruth());
+      if (Result.isFailure(refreshed)) {
+        yield* Queue.offer(output, { kind: "error", error: refreshed.failure });
+        return;
+      }
+      // A newer invalidation arrived while this read was in flight. Let the
+      // serialized worker consume it and publish only the newer truth.
+      if ((yield* Queue.size(invalidations)) > 0) return;
+      const previous = yield* Ref.getAndSet(latestTruth, refreshed.success);
+      const previousById = new Map(previous.views.map((entry) => [entry.automation.id, entry]));
+      const currentById = new Map(
+        refreshed.success.views.map((entry) => [entry.automation.id, entry]),
+      );
+      const items: ScheduledAutomationStreamItem[] = [];
+      if (!Equal.equals(previous.health, refreshed.success.health)) {
+        yield* Queue.offer(output, {
+          kind: "item",
+          item: {
+            kind: "snapshot",
+            automations: refreshed.success.views,
+            health: refreshed.success.health,
+          },
+        });
+        return;
+      }
+      for (const automationId of previousById.keys()) {
+        if (!currentById.has(automationId)) items.push({ kind: "removed", automationId });
+      }
+      for (const current of refreshed.success.views) {
+        const prior = previousById.get(current.automation.id);
+        if (prior === undefined || !Equal.equals(prior, current)) {
+          items.push({ kind: "upserted", automation: current });
+        }
+      }
+      yield* Queue.offerAll(
+        output,
+        items.map((item) => ({ kind: "item" as const, item })),
+      );
+    });
+    yield* Effect.forever(Queue.take(invalidations).pipe(Effect.andThen(refresh))).pipe(
+      Effect.forkScoped,
+    );
+
+    const live = Stream.fromQueue(output).pipe(
+      Stream.mapEffect((entry) =>
+        entry.kind === "error" ? Effect.fail(entry.error) : Effect.succeed(entry.item),
+      ),
+    );
+    const combined = Stream.concat(Stream.make(snapshotItem), live);
     return combined;
   });
   const subscribe: ScheduledAutomationServiceShape["subscribe"] = acquireSubscription.pipe(
     Effect.catch((error) => Effect.succeed(Stream.fail(error))),
   );
 
-  return ScheduledAutomationService.of({ dispatch, list, get, subscribe });
+  return ScheduledAutomationService.of({ dispatch, list, get, health, subscribe });
 });
 
 function mapRepositoryMutationError(

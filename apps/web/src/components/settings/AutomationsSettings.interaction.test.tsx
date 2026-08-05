@@ -26,6 +26,7 @@ vi.mock("../../state/queries", () => ({
 
 import {
   AutomationEditor,
+  AutomationHealthNotice,
   AutomationRow,
   type AutomationsSettingsProps,
 } from "./AutomationsSettings";
@@ -520,6 +521,7 @@ describe("AutomationRow safety actions", () => {
     const onAction = vi.fn(async () => undefined);
     const view: ScheduledAutomationView = {
       automation: automation({
+        lastScheduledFor: "2026-08-04T09:00:00.000Z",
         lastOutcome: {
           kind: "failed",
           scheduledFor: "2026-08-04T09:00:00.000Z",
@@ -545,10 +547,84 @@ describe("AutomationRow safety actions", () => {
         onAction={onAction}
       />,
     );
+    expect(screen.getByText("Current status").parentElement?.textContent).toContain("failed");
+    expect(screen.getByText("Cursor").parentElement?.textContent).not.toContain("Never claimed");
+    expect(screen.getByText("bootstrap.phase-rejected")).toBeTruthy();
+    expect(screen.getByText("Rejected.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Abandon last occurrence" }));
     expect(await screen.findByText(ABANDON_AUTOMATION_DISCLOSURE)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Abandon occurrence" }));
     await waitFor(() => expect(onAction).toHaveBeenCalledWith("abandon"));
+  });
+
+  it("shows the linked shell error when a started occurrence fails during execution", () => {
+    const view: ScheduledAutomationView = {
+      automation: automation({
+        lastOutcome: {
+          kind: "started",
+          scheduledFor: NOW,
+          observedAt: NOW,
+          coalescedCount: 0,
+        },
+      }),
+      status: "failed",
+      nextScheduledFor: null,
+      lastThread: {
+        session: { lastError: "Provider exited before completing the turn." },
+      } as ScheduledAutomationView["lastThread"],
+    };
+
+    render(
+      <AutomationRow
+        environmentId={ENVIRONMENT_ID}
+        view={view}
+        project={projects[0]}
+        provider={providers[0]}
+        pending={false}
+        onEdit={vi.fn()}
+        onAction={vi.fn(async () => undefined)}
+      />,
+    );
+
+    expect(screen.getByText("Last execution error")).toBeTruthy();
+    expect(screen.getByText("Provider exited before completing the turn.")).toBeTruthy();
+  });
+
+  it("disables abandonment confirmation after the row becomes pending", async () => {
+    const view: ScheduledAutomationView = {
+      automation: automation({
+        lastOutcome: {
+          kind: "failed",
+          scheduledFor: NOW,
+          observedAt: NOW,
+          coalescedCount: 0,
+          code: "bootstrap.failed",
+          detail: "Failed.",
+          retryable: true,
+        },
+      }),
+      status: "failed",
+      nextScheduledFor: null,
+      lastThread: null,
+    };
+    const renderRow = (pending: boolean) => (
+      <AutomationRow
+        environmentId={ENVIRONMENT_ID}
+        view={view}
+        project={projects[0]}
+        provider={providers[0]}
+        pending={pending}
+        onEdit={vi.fn()}
+        onAction={vi.fn(async () => undefined)}
+      />
+    );
+    const result = render(renderRow(false));
+    fireEvent.click(screen.getByRole("button", { name: "Abandon last occurrence" }));
+    expect(await screen.findByRole("button", { name: "Abandon occurrence" })).toBeTruthy();
+    result.rerender(renderRow(true));
+    expect(
+      (screen.getByRole("button", { name: "Abandon occurrence" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 
   it("gates deletion behind the disabled state and explicit disclosure", async () => {
@@ -610,5 +686,19 @@ describe("AutomationRow safety actions", () => {
       true,
     );
     expect((screen.getByLabelText("Edit Weekday review") as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("AutomationsSettings health", () => {
+  it("shows degraded scheduler and malformed-definition diagnostics", () => {
+    render(
+      <AutomationHealthNotice
+        health={{ status: "degraded", schedulerStatus: "failed", malformedDefinitionCount: 2 }}
+      />,
+    );
+
+    expect(screen.getByText("Automation scheduling needs attention")).toBeTruthy();
+    expect(screen.getByText(/scheduler stopped/)).toBeTruthy();
+    expect(screen.getByText(/2 stored definitions are malformed/)).toBeTruthy();
   });
 });

@@ -12,9 +12,12 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -156,6 +159,16 @@ function state(): HarnessState {
   };
 }
 
+function renderLogValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map(renderLogValue).join(" ");
+  if (typeof value === "object" && value !== null) {
+    return Object.entries(value)
+      .flatMap(([key, entry]) => [key, renderLogValue(entry)])
+      .join(" ");
+  }
+  return String(value);
+}
+
 const enable = Effect.fn("ScheduledAutomationSchedulerTest.enable")(function* (
   repository: ScheduledAutomationRepository["Service"],
   enabledAt: string,
@@ -190,10 +203,45 @@ it.effect("the production launcher forks exactly one coordinator fiber", () =>
           run,
           runOnce: Effect.void,
           retry: () => Effect.die("unused test retry"),
+          health: Effect.succeed("running" as const),
+          subscribeHealth: Effect.succeed(Stream.empty),
         }),
       );
       yield* Effect.yieldNow;
       assert.equal(yield* Ref.get(launches), 1);
+    }),
+  ),
+);
+
+it.effect("a coordinator startup defect is isolated from unrelated server work", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const logRecords: Array<string> = [];
+      const logger = Logger.make<unknown, void>((options) => {
+        const annotations = options.fiber.getRef(References.CurrentLogAnnotations);
+        const messages = Array.isArray(options.message) ? options.message : [options.message];
+        logRecords.push(
+          [
+            ...messages.map(renderLogValue),
+            ...Object.entries(annotations).flatMap(([key, value]) => [key, renderLogValue(value)]),
+          ].join(" "),
+        );
+      });
+      yield* launchScheduledAutomationCoordinator.pipe(
+        Effect.provideService(ScheduledAutomationScheduler, {
+          run: Effect.die("scheduler startup failed"),
+          runOnce: Effect.void,
+          retry: () => Effect.die("unused test retry"),
+          health: Effect.succeed("failed" as const),
+          subscribeHealth: Effect.succeed(Stream.empty),
+        }),
+        Effect.provide(Logger.layer([logger], { mergeWithExisting: false })),
+      );
+      yield* Effect.yieldNow;
+      const logged = logRecords.join(" ");
+      assert.include(logged, "Scheduled automation coordinator stopped");
+      assert.include(logged, "defectCount 1");
+      assert.include(logged, "defectType string");
     }),
   ),
 );
@@ -221,6 +269,35 @@ it.effect("claims and starts a due occurrence exactly once across duplicate eval
     const retryError = yield* Effect.flip(scheduler.retry(automationId, afterFirst.revision));
     assert.equal(retryError._tag, "ScheduledAutomationInvalidStateError");
   }).pipe(Effect.provide(harnessLayer(testState)));
+});
+
+it.effect("continues scheduling valid definitions when another stored row is malformed", () => {
+  const testState = state();
+  return Effect.gen(function* () {
+    const repository = yield* ScheduledAutomationRepository;
+    const scheduler = yield* ScheduledAutomationScheduler;
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`DELETE FROM local_scheduled_automations_v1`;
+    yield* sql`
+      INSERT INTO local_scheduled_automations_v1 (
+        id, schema_version, revision, definition_json, enabled, enabled_at,
+        last_scheduled_for, last_thread_id, last_outcome_json, created_at, updated_at
+      ) VALUES (
+        'malformed-neighbor', 1, 1, '{"prompt":"must-not-be-logged"}', 1,
+        '2026-08-04T10:00:00.000Z', NULL, NULL, NULL,
+        '2026-08-04T10:00:00.000Z', '2026-08-04T10:00:00.000Z'
+      )
+    `;
+    yield* enable(repository, "2026-08-04T10:00:00.000Z");
+    yield* TestClock.setTime(Date.parse("2026-08-04T10:01:00.000Z"));
+
+    yield* scheduler.runOnce;
+
+    const valid = Option.getOrThrow(yield* repository.get(automationId));
+    assert.equal(testState.dispatched.length, 1);
+    assert.equal(valid.lastScheduledFor, "2026-08-04T10:01:00.000Z");
+    assert.equal(valid.lastOutcome?.kind, "started");
+  }).pipe(Effect.provide(harnessLayer(testState)), Effect.scoped);
 });
 
 it.effect("coalesces missed instants into one claimed run with a truthful count", () => {
@@ -426,6 +503,17 @@ it.effect("allows the next run when the previous turn completed but remains unse
 
 it.effect("persists bounded typed bootstrap failures and retries only on explicit request", () => {
   const testState = state();
+  const logRecords: Array<string> = [];
+  const logger = Logger.make<unknown, void>((options) => {
+    const annotations = options.fiber.getRef(References.CurrentLogAnnotations);
+    const messages = Array.isArray(options.message) ? options.message : [options.message];
+    logRecords.push(
+      [
+        ...messages.map(renderLogValue),
+        ...Object.entries(annotations).flatMap(([key, value]) => [key, renderLogValue(value)]),
+      ].join(" "),
+    );
+  });
   testState.bootstrapFailure = {
     code: "provider.temporarily-unavailable",
     message: `temporary Inspect\n\t the workspace. ${"x".repeat(2_000)}`,
@@ -446,6 +534,10 @@ it.effect("persists bounded typed bootstrap failures and retries only on explici
     assert.isTrue(failed.lastOutcome.retryable);
     assert.isAtMost(failed.lastOutcome.detail.length, 1_000);
     assert.notInclude(failed.lastOutcome.detail, definition.prompt);
+    const logged = logRecords.join(" ");
+    assert.include(logged, automationId);
+    assert.include(logged, failed.lastThreadId!);
+    assert.notInclude(logged, definition.prompt);
 
     yield* scheduler.runOnce;
     assert.equal(testState.dispatched.length, 1);
@@ -455,7 +547,11 @@ it.effect("persists bounded typed bootstrap failures and retries only on explici
     assert.equal(retried.lastThreadId, failed.lastThreadId);
     assert.equal(retried.lastOutcome?.kind, "started");
     assert.equal(testState.dispatched.length, 2);
-  }).pipe(Effect.provide(harnessLayer(testState)));
+  }).pipe(
+    Effect.provide(
+      Layer.merge(harnessLayer(testState), Logger.layer([logger], { mergeWithExisting: false })),
+    ),
+  );
 });
 
 it.effect("claims then records a typed failure when live configuration went stale", () => {

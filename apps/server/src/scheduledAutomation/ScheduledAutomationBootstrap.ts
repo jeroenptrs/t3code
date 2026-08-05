@@ -12,6 +12,7 @@ import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSna
 import { ThreadBootstrapService } from "../orchestration/Services/ThreadBootstrapService.ts";
 import {
   deriveScheduledAutomationOccurrenceIdentity,
+  scheduledAutomationThreadTitle,
   SCHEDULED_AUTOMATION_WORKTREE_SUBTREE,
 } from "./ScheduledAutomationOccurrence.ts";
 
@@ -71,6 +72,7 @@ export const makeScheduledAutomationBootstrap = Effect.gen(function* () {
     }
 
     const occurrence = identity.success;
+    const threadTitle = scheduledAutomationThreadTitle(automation.name);
     const automationRoot = canonicalPathIdentity(
       path.resolve(config.worktreesDir, SCHEDULED_AUTOMATION_WORKTREE_SUBTREE),
     );
@@ -94,13 +96,12 @@ export const makeScheduledAutomationBootstrap = Effect.gen(function* () {
           attachments: [],
         },
         modelSelection: automation.modelSelection,
-        titleSeed: automation.name,
         runtimeMode: automation.runtimeMode,
         interactionMode: automation.interactionMode,
         bootstrap: {
           createThread: {
             projectId: automation.projectId,
-            title: automation.name,
+            title: threadTitle,
             modelSelection: automation.modelSelection,
             runtimeMode: automation.runtimeMode,
             interactionMode: automation.interactionMode,

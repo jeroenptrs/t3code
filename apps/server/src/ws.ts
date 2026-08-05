@@ -730,7 +730,10 @@ const makeWsRpcLayer = (
         [SCHEDULED_AUTOMATION_WS_METHODS.list]: (_input) =>
           observeRpcEffect(
             SCHEDULED_AUTOMATION_WS_METHODS.list,
-            scheduledAutomations.list().pipe(Effect.map((automations) => ({ automations }))),
+            Effect.all({
+              automations: scheduledAutomations.list(),
+              health: scheduledAutomations.health(),
+            }),
             { "rpc.aggregate": "scheduledAutomation" },
           ),
         [SCHEDULED_AUTOMATION_WS_METHODS.get]: (input) =>

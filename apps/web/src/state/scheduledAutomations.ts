@@ -4,6 +4,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   SCHEDULED_AUTOMATION_WS_METHODS,
+  DEFAULT_SCHEDULED_AUTOMATION_HEALTH,
+  type ScheduledAutomationHealth,
   type ScheduledAutomationStreamItem,
   type ScheduledAutomationView,
 } from "@t3tools/contracts";
@@ -44,12 +46,44 @@ export function projectScheduledAutomationStream<E, R>(
   );
 }
 
+export interface ScheduledAutomationState {
+  readonly views: ReadonlyArray<ScheduledAutomationView>;
+  readonly health: ScheduledAutomationHealth;
+}
+
+export const INITIAL_SCHEDULED_AUTOMATION_HEALTH = DEFAULT_SCHEDULED_AUTOMATION_HEALTH;
+
+export function applyScheduledAutomationStateStreamItem(
+  current: ScheduledAutomationState,
+  item: ScheduledAutomationStreamItem,
+): ScheduledAutomationState {
+  if (item.kind === "snapshot") {
+    return {
+      views: item.automations.toSorted(compareScheduledAutomationViews),
+      health: item.health,
+    };
+  }
+  return { ...current, views: applyScheduledAutomationStreamItem(current.views, item) };
+}
+
+export function projectScheduledAutomationStateStream<E, R>(
+  stream: Stream.Stream<ScheduledAutomationStreamItem, E, R>,
+): Stream.Stream<ScheduledAutomationState, E, R> {
+  return stream.pipe(
+    Stream.scan(
+      { views: [], health: INITIAL_SCHEDULED_AUTOMATION_HEALTH } as ScheduledAutomationState,
+      applyScheduledAutomationStateStreamItem,
+    ),
+    Stream.drop(1),
+  );
+}
+
 export const scheduledAutomationEnvironment = {
-  views: createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
-    label: "environment-data:scheduled-automations",
+  state: createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
+    label: "environment-data:scheduled-automations:state",
     tag: SCHEDULED_AUTOMATION_WS_METHODS.subscribe,
     idleTtlMs: 0,
-    transform: projectScheduledAutomationStream,
+    transform: projectScheduledAutomationStateStream,
   }),
   dispatch: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "environment-data:scheduled-automations:dispatch",

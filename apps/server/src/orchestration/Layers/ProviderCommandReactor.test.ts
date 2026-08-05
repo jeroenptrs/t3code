@@ -385,6 +385,9 @@ describe("ProviderCommandReactor", () => {
           get streamDomainEvents() {
             return engine.streamDomainEvents;
           },
+          get subscribeDomainEvents() {
+            return engine.subscribeDomainEvents;
+          },
           latestSequence: engine.latestSequence,
         } satisfies OrchestrationEngineService["Service"];
       }),
@@ -813,6 +816,43 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Generated title");
+  });
+
+  it("preserves an explicit automation title when the first turn omits titleSeed", async () => {
+    const harness = await createHarness();
+    const automationTitle = "Automation: Nightly maintenance";
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-automation-title"),
+        threadId: ThreadId.make("thread-1"),
+        title: automationTitle,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-automation-turn-start"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("automation-user-message"),
+          role: "user",
+          text: "Inspect the workspace.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    await harness.drain();
+    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+    const readModel = await harness.readModel();
+    expect(readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title).toBe(
+      automationTitle,
+    );
   });
 
   it("regenerates a thread title from the current conversation", async () => {

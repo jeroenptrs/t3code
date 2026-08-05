@@ -123,6 +123,31 @@ layer("ScheduledAutomationRepository", (it) => {
     }),
   );
 
+  it.effect("inspects valid rows while counting malformed definitions without exposing them", () =>
+    Effect.gen(function* () {
+      const repository = yield* ScheduledAutomationRepository;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM local_scheduled_automations_v1`;
+      const valid = yield* repository.create({ id: automationId, definition, createdAt });
+      const secret = "repository-inspection-secret";
+      const malformedDefinition = `{"prompt":"${secret}"}`;
+      yield* sql`
+        INSERT INTO local_scheduled_automations_v1 (
+          id, schema_version, revision, definition_json, enabled, enabled_at,
+          last_scheduled_for, last_thread_id, last_outcome_json, created_at, updated_at
+        ) VALUES (
+          'malformed-inspection-row', 1, 1, ${malformedDefinition}, 0, NULL,
+          NULL, NULL, NULL, ${createdAt}, ${createdAt}
+        )
+      `;
+
+      const inspection = yield* repository.inspect();
+      assert.deepStrictEqual(inspection.automations, [valid]);
+      assert.equal(inspection.malformedDefinitionCount, 1);
+      assert.notEqual(inspection.automations[0]?.prompt, secret);
+    }),
+  );
+
   it.effect("claims an occurrence atomically and CAS-deletes", () =>
     Effect.gen(function* () {
       const repository = yield* ScheduledAutomationRepository;
