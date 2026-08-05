@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import {
   deriveScheduledAutomationOccurrenceIdentity,
   isScheduledAutomationThreadActive,
+  planScheduledAutomationOccurrence,
   type ScheduledAutomationActivityShell,
 } from "./ScheduledAutomationOccurrence.ts";
 
@@ -314,6 +315,76 @@ it("coalesces multiple missed occurrences to the latest eligible instant", () =>
   );
   assert.isTrue(Option.isNone(noReplayAtBoundary));
 });
+
+it.effect("plans one claim with truthful coalescing for 1, 10, and 10,000 due instants", () =>
+  Effect.gen(function* () {
+    const enabledAt = "2026-01-01T00:00:00.000Z";
+    for (const [now, expected] of [
+      ["2026-01-01T00:01:00.000Z", { scheduledFor: "2026-01-01T00:01:00.000Z", coalescedCount: 0 }],
+      ["2026-01-01T00:10:00.000Z", { scheduledFor: "2026-01-01T00:10:00.000Z", coalescedCount: 9 }],
+      [
+        "2026-01-07T22:40:00.000Z",
+        { scheduledFor: "2026-01-07T22:40:00.000Z", coalescedCount: 9_999 },
+      ],
+    ] as const) {
+      const plan = success(
+        yield* planScheduledAutomationOccurrence(
+          {
+            enabled: true,
+            enabledAt,
+            lastScheduledFor: null,
+            schedule: schedule("* * * * *", "UTC"),
+          },
+          now,
+        ),
+      );
+      assert.deepStrictEqual(Option.getOrThrow(plan), expected);
+    }
+
+    assert.isTrue(
+      Option.isNone(
+        success(
+          yield* planScheduledAutomationOccurrence(
+            {
+              enabled: false,
+              enabledAt,
+              lastScheduledFor: null,
+              schedule: schedule("* * * * *", "UTC"),
+            },
+            "2026-01-07T22:40:00.000Z",
+          ),
+        ),
+      ),
+    );
+  }),
+);
+
+it.effect("counts 10,000 non-UTC misses in cooperative bounded batches", () =>
+  Effect.gen(function* () {
+    let yields = 0;
+    const plan = success(
+      yield* planScheduledAutomationOccurrence(
+        {
+          enabled: true,
+          enabledAt: "2026-01-01T00:00:00.000Z",
+          lastScheduledFor: null,
+          schedule: schedule("*/1 * * * *", "America/New_York"),
+        },
+        "2026-01-07T22:40:00.000Z",
+        {
+          yieldControl: Effect.sync(() => {
+            yields += 1;
+          }).pipe(Effect.andThen(Effect.yieldNow)),
+        },
+      ),
+    );
+    assert.deepStrictEqual(Option.getOrThrow(plan), {
+      scheduledFor: "2026-01-07T22:40:00.000Z",
+      coalescedCount: 9_999,
+    });
+    assert.isAtLeast(yields, 39);
+  }),
+);
 
 it("excludes the disabled interval after reactivation from planning and coalescing", () => {
   assert.strictEqual(
