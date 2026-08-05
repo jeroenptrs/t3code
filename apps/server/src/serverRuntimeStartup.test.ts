@@ -45,6 +45,23 @@ it.effect("enqueueCommand waits for readiness and then drains queued work", () =
   ),
 );
 
+it.effect("launches the coordinator exactly once after command readiness", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const launches = yield* Ref.make(0);
+      const commandGate = yield* ServerRuntimeStartup.makeCommandGate;
+      yield* ServerRuntimeStartup.signalCommandReadyAndLaunch(
+        commandGate,
+        commandGate.awaitCommandReady.pipe(
+          Effect.orDie,
+          Effect.andThen(Ref.update(launches, (count) => count + 1)),
+        ),
+      );
+      assert.equal(yield* Ref.get(launches), 1);
+    }),
+  ),
+);
+
 it.effect("enqueueCommand fails queued work when readiness fails", () =>
   Effect.scoped(
     Effect.gen(function* () {

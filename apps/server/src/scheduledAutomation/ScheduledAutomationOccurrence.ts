@@ -1,7 +1,23 @@
-import type { OrchestrationThreadShell, ScheduledAutomationId } from "@t3tools/contracts";
-import { CommandId, EventId, hasQueuedTurnStart, MessageId, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationThreadShell,
+  ScheduledAutomation,
+  ScheduledAutomationId,
+} from "@t3tools/contracts";
+import {
+  CommandId,
+  EventId,
+  hasQueuedTurnStart,
+  latestScheduledAutomationOccurrence,
+  MessageId,
+  parseScheduledAutomationSchedule,
+  ScheduledAutomationScheduleError,
+  scheduledAutomationPlanningBoundary,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as Cron from "effect/Cron";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
@@ -115,3 +131,91 @@ export function isScheduledAutomationThreadActive(
   if (hasQueuedTurnStart(shell, options)) return true;
   return shell.latestTurn?.state === "running";
 }
+
+export interface ScheduledAutomationOccurrencePlan {
+  readonly scheduledFor: string;
+  readonly coalescedCount: number;
+}
+
+const OCCURRENCE_COUNT_YIELD_INTERVAL = 256;
+
+export interface ScheduledAutomationOccurrencePlannerOptions {
+  /** Test seam for proving that large counts yield between bounded batches. */
+  readonly yieldControl?: Effect.Effect<void>;
+}
+
+/**
+ * Plans one latest-only claim from durable row truth. Counting walks only the
+ * discarded occurrence identities; it never materializes or dispatches them.
+ */
+export const planScheduledAutomationOccurrence = Effect.fn("planScheduledAutomationOccurrence")(
+  function* (
+    automation: Pick<
+      ScheduledAutomation,
+      "enabled" | "enabledAt" | "lastScheduledFor" | "schedule"
+    >,
+    now: string,
+    options: ScheduledAutomationOccurrencePlannerOptions = {},
+  ) {
+    if (!automation.enabled || automation.enabledAt === null) {
+      return Result.succeed(Option.none());
+    }
+    const latest = latestScheduledAutomationOccurrence(automation.schedule, {
+      enabledAt: automation.enabledAt,
+      lastScheduledFor: automation.lastScheduledFor,
+      now,
+    });
+    if (Result.isFailure(latest)) return Result.fail(latest.failure);
+    if (Option.isNone(latest.success)) return Result.succeed(Option.none());
+
+    const boundary = scheduledAutomationPlanningBoundary({
+      enabledAt: automation.enabledAt,
+      lastScheduledFor: automation.lastScheduledFor,
+    });
+    if (Result.isFailure(boundary)) return Result.fail(boundary.failure);
+
+    if (automation.schedule.cron.trim() === "* * * * *" && automation.schedule.timeZone === "UTC") {
+      const firstOccurrence = Math.floor(Date.parse(boundary.success) / 60_000) * 60_000 + 60_000;
+      const coalescedCount = Math.floor(
+        (Date.parse(latest.success.value) - firstOccurrence) / 60_000,
+      );
+      return Result.succeed(
+        Option.some({
+          scheduledFor: latest.success.value,
+          coalescedCount: Math.max(0, coalescedCount),
+        }),
+      );
+    }
+
+    const parsedSchedule = parseScheduledAutomationSchedule(automation.schedule);
+    if (Result.isFailure(parsedSchedule)) return Result.fail(parsedSchedule.failure);
+    const next = (after: string) =>
+      Result.try({
+        try: () => Cron.next(parsedSchedule.success, after).toISOString(),
+        catch: (error) =>
+          new ScheduledAutomationScheduleError({
+            field: "schedule.cron",
+            message:
+              error instanceof Error ? error.message : "Unable to compute a cron occurrence.",
+          }),
+      });
+    let occurrence = next(boundary.success);
+    if (Result.isFailure(occurrence)) return Result.fail(occurrence.failure);
+    let coalescedCount = 0;
+    while (occurrence.success !== latest.success.value) {
+      coalescedCount += 1;
+      if (coalescedCount % OCCURRENCE_COUNT_YIELD_INTERVAL === 0) {
+        yield* options.yieldControl ?? Effect.yieldNow;
+      }
+      occurrence = next(occurrence.success);
+      if (Result.isFailure(occurrence)) return Result.fail(occurrence.failure);
+    }
+
+    return Result.succeed(
+      Option.some({
+        scheduledFor: latest.success.value,
+        coalescedCount,
+      }),
+    );
+  },
+);

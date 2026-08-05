@@ -5,6 +5,7 @@ import {
   SCHEDULED_AUTOMATION_ABANDONED_CODE,
   SCHEDULED_AUTOMATION_BOOTSTRAP_PHASE_REJECTED_CODE,
   ServerProvider,
+  type ScheduledAutomation,
   ThreadId,
   type ScheduledAutomationDefinitionDraft,
 } from "@t3tools/contracts";
@@ -34,6 +35,8 @@ import {
   ScheduledAutomationService,
   ScheduledAutomationServiceLive,
 } from "./ScheduledAutomationService.ts";
+import { ScheduledAutomationScheduler } from "./ScheduledAutomationScheduler.ts";
+import * as ScheduledAutomationValidation from "./ScheduledAutomationValidation.ts";
 
 const definition: ScheduledAutomationDefinitionDraft = {
   name: "Nightly maintenance",
@@ -103,6 +106,8 @@ interface HarnessState {
   baseRefAvailable: boolean;
   baseRefBeyondFirstPage: boolean;
   refPageCalls: number;
+  schedulerRetryResult: ScheduledAutomation | null;
+  schedulerRetryCalls: Array<{ readonly automationId: string; readonly expectedRevision: number }>;
 }
 
 function testLayerWithPersistence<PersistenceError, PersistenceRequirements>(
@@ -155,6 +160,21 @@ function testLayerWithPersistence<PersistenceError, PersistenceRequirements>(
 
   return ScheduledAutomationServiceLive.pipe(
     Layer.provideMerge(ScheduledAutomationRepositoryLive),
+    Layer.provideMerge(ScheduledAutomationValidation.layer),
+    Layer.provide(
+      Layer.succeed(ScheduledAutomationScheduler, {
+        runOnce: Effect.void,
+        run: Effect.never,
+        retry: (automationId, expectedRevision) =>
+          Effect.sync(() => {
+            state.schedulerRetryCalls.push({ automationId, expectedRevision });
+            if (state.schedulerRetryResult === null) {
+              throw new Error("Unexpected retryable scheduler call.");
+            }
+            return state.schedulerRetryResult;
+          }),
+      }),
+    ),
     Layer.provideMerge(persistence),
     Layer.provideMerge(
       Layer.mergeAll(
@@ -186,17 +206,25 @@ const initialState = (): HarnessState => ({
   baseRefAvailable: true,
   baseRefBeyondFirstPage: false,
   refPageCalls: 0,
+  schedulerRetryResult: null,
+  schedulerRetryCalls: [],
 });
 
 it.effect("keeps the private SQL namespace behind the repository boundary", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
-    const serviceSource = yield* fileSystem.readFileString(
-      decodeURIComponent(new URL("./ScheduledAutomationService.ts", import.meta.url).pathname),
-    );
-    assert.notInclude(serviceSource, "local_scheduled_automations_v1");
-    assert.notInclude(serviceSource, "unstable/sql");
-    assert.notInclude(serviceSource, "SqlClient");
+    for (const sourceFile of [
+      "ScheduledAutomationService.ts",
+      "ScheduledAutomationScheduler.ts",
+      "ScheduledAutomationValidation.ts",
+    ]) {
+      const source = yield* fileSystem.readFileString(
+        decodeURIComponent(new URL(`./${sourceFile}`, import.meta.url).pathname),
+      );
+      assert.notInclude(source, "local_scheduled_automations_v1", sourceFile);
+      assert.notInclude(source, "unstable/sql", sourceFile);
+      assert.notInclude(source, "SqlClient", sourceFile);
+    }
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -656,6 +684,83 @@ it.effect("abandons a receipt-rejected occurrence before resource correction", (
       assert.include(abandonedRetry.message, "abandoned and cannot be retried");
     }
   }).pipe(Effect.provide(testLayer(state)), Effect.scoped);
+});
+
+it.effect("hands retryable retry-last commands to durable reconciliation", () => {
+  const state = initialState();
+  return Effect.gen(function* () {
+    const service = yield* ScheduledAutomationService;
+    const repository = yield* ScheduledAutomationRepository;
+    const created = (yield* service.dispatch(yield* createCommand())).automation!;
+    const enabled = (yield* Effect.flatMap(
+      decodeCommand({
+        type: "scheduledAutomation.enabled.set",
+        commandId: "enable-retryable-fixture",
+        automationId: created.id,
+        expectedRevision: created.revision,
+        enabled: true,
+        createdAt: created.createdAt,
+      }),
+      service.dispatch,
+    )).automation!;
+    const scheduledFor = "2026-08-04T02:30:00.000Z";
+    const claimed = yield* repository.claimOccurrence({
+      automationId: enabled.id,
+      expectedRevision: enabled.revision,
+      scheduledFor,
+      lastThreadId: ThreadId.make("t3sa:v1:retryable-fixture:thread"),
+      lastOutcome: {
+        kind: "starting",
+        scheduledFor,
+        observedAt: scheduledFor,
+        coalescedCount: 0,
+      },
+      updatedAt: scheduledFor,
+    });
+    const failed = yield* repository.compareAndSwapUpdate({
+      automationId: claimed.id,
+      expectedRevision: claimed.revision,
+      replacement: {
+        ...claimed,
+        lastOutcome: {
+          kind: "failed",
+          scheduledFor,
+          observedAt: "2026-08-04T02:31:00.000Z",
+          coalescedCount: 0,
+          code: "provider.temporarily-unavailable",
+          detail: "The provider is temporarily unavailable.",
+          retryable: true,
+        },
+        updatedAt: "2026-08-04T02:31:00.000Z",
+      },
+    });
+    state.schedulerRetryResult = {
+      ...failed,
+      revision: failed.revision + 2,
+      lastOutcome: {
+        kind: "started",
+        scheduledFor,
+        observedAt: "2026-08-04T02:32:00.000Z",
+        coalescedCount: 0,
+      },
+      updatedAt: "2026-08-04T02:32:00.000Z",
+    };
+
+    const retried = yield* Effect.flatMap(
+      decodeCommand({
+        type: "scheduledAutomation.retry-last",
+        commandId: "retry-retryable-fixture",
+        automationId: failed.id,
+        expectedRevision: failed.revision,
+        createdAt: failed.updatedAt,
+      }),
+      service.dispatch,
+    );
+    assert.deepStrictEqual(retried.automation, state.schedulerRetryResult);
+    assert.deepStrictEqual(state.schedulerRetryCalls, [
+      { automationId: failed.id, expectedRevision: failed.revision },
+    ]);
+  }).pipe(Effect.provide(testLayer(state)));
 });
 
 it.effect("rejects retry for invariant-sensitive legacy failures", () => {

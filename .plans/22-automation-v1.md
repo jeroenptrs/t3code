@@ -10,14 +10,17 @@ Work package 1 is implemented and verified after review hardening: the namespace
 v1 migration, guarded SQLite repository and CAS operations, durable management
 service, snapshot and committed-row-change subscription, WS RPC surface, and
 compound read/operate authorization now exist.
-The scheduler work has not started. WP2's web/desktop management vertical is
-implemented and verified: the shared settings route, navigation/search and
-command-palette entry, environment-wide subscribed list, capability-backed
-create/edit form, branch refresh/invalidation, safety disclosures, CAS conflict
-review, and enable/disable/retry/abandon/delete controls are present. WP3's shared
-`ThreadBootstrapService` is installed in the server runtime and is phase-resumable
-for deterministic automation callers; its crash-point, worktree-identity,
-failure-retention, WS-compatibility, and setup-skip acceptance suites pass.
+WP2's web/desktop management vertical is implemented and verified: the shared
+settings route, navigation/search and command-palette entry, environment-wide
+subscribed list, capability-backed create/edit form, branch refresh/invalidation,
+safety disclosures, CAS conflict review, and enable/disable/retry/abandon/delete
+controls are present. WP3's shared `ThreadBootstrapService` is installed in the
+server runtime and is phase-resumable for deterministic automation callers; its
+crash-point, worktree-identity, failure-retention, WS-compatibility, and setup-skip
+acceptance suites pass. WP4's latest-only occurrence planner, durable claim and
+reconciliation path, retry handoff, and single scoped scheduler coordinator are
+implemented and verified with an injected clock, restart fixtures, cooperative
+large-misfire counting, conflated change wakes, and bounded failure backoff.
 
 The expanded WP0 acceptance and regression suites and affected
 contract/server/client-runtime typechecks pass. A further review identified
@@ -26,7 +29,7 @@ fixed, and regression-tested. The WP0 exit gate has passed.
 The WP1 migration, repository, service, RPC, authenticated-WS authorization,
 restart, and boundary acceptance tests pass with the affected contract/server
 typechecks. The WP1 exit gate has passed; no scheduler loop or scheduled execution
-is installed.
+was installed at that gate. WP4 now installs the scheduler after command readiness.
 
 WP1 also made one additive post-WP0 contract adjustment explicit:
 `ScheduledAutomationInternalError` is part of the RPC error union so persistence
@@ -932,6 +935,60 @@ vp run --filter t3 typecheck
 
 Current-workspace schedules may be exercised manually in development. Unattended
 new-worktree rollout remains blocked on work package 6.
+
+### Implementation record
+
+WP4 installs one scoped `ScheduledAutomationScheduler` after migrations,
+projection/reactor startup, and command readiness. The coordinator attaches to
+committed repository changes before its first read, reconciles all durable
+`starting` rows before evaluating later occurrences, then waits on either the
+nearest forward-cron instant or a committed in-memory change signal. Every wake
+re-reads SQLite and the injected clock. Per-automation semaphores serialize
+retry, reconciliation, and due evaluation; the repository revision/CAS remains
+the final claim arbiter.
+
+The pure occurrence plan uses `scheduledAutomationPlanningBoundary`, selects the
+latest due occurrence from forward Effect Cron truth, and records the exact
+discarded count. A constant-time UTC every-minute path handles the common case;
+general cron/timezone counting reuses one parsed Cron and cooperatively yields
+after bounded batches. Non-UTC 10,000-misfire coverage proves those yield points
+without relying on wall-clock timing. Claim writes `starting` or
+`skipped-active`, cursor, deterministic ThreadId, outcome, timestamp, and revision
+atomically before any bootstrap side effect. The shared active-run predicate
+controls every skip and retains the previous ThreadId.
+
+Startup and explicit retry share the same reconciliation function. It checks the
+deterministic `phaseCommandIds.startTurn` receipt and matching projected initial
+message, otherwise delegates to the phase-resumable bootstrap service. Accepted
+starts finalize without another side effect; typed bootstrap failures preserve
+their stable code and retryability with prompt-redacted, bounded detail.
+`retry-last` now moves the same occurrence back to `starting` through a revision
+CAS and reuses its cursor, thread, message, and phase IDs. Live definition
+validation was extracted so management enablement and claim-time execution share
+the same project/provider/model/Git truth.
+
+The coordinator converts repository changes to a size-one edge signal, so
+duplicate management changes and claim/start notifications cause one follow-up
+evaluation rather than one full scan per notification. Per-row failures impose
+a fake-clock-driven exponential retry delay (capped at one minute), while a new
+committed change can still wake immediately. Timer waits are also capped at one
+minute for wall-clock correction and suspend recovery. Disabled durable
+`starting` rows remain eligible for reconciliation, and keyed semaphores are
+removed after their final waiter exits.
+
+The WP4 occurrence, scheduler, and restart suites cover 1/10/10,000 due instants,
+duplicate evaluations and committed definition signals, a 24-automation
+self-notification batch, committed-change and timer wakes, persistent receipt
+failure backoff, all active-run signals, durable skip truth, failure
+bounds/redaction/retryability, explicit retry, restart before claim, a
+pre-bootstrap `starting` restart, and accepted-start receipt reconciliation.
+The production launcher and readiness gate have focused tests proving one launch
+after command readiness, and a repository-boundary source test now includes the
+scheduler and shared validation module.
+Repository, management-service, bootstrap, startup-readiness, and focused server
+regressions plus the server typecheck, targeted lint/format, and diff hygiene pass.
+No browser pass applies to this server-only work package. Unattended
+new-worktree rollout remains gated on WP6 as specified above.
 
 ## Work package 5 — Truthful status and operational controls
 
