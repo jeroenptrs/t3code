@@ -390,6 +390,19 @@ describe("AutomationsSettings live form rules", () => {
     ).toContain("Cron must contain exactly five fields.");
   });
 
+  it("preserves actionable messages from untagged command failures", () => {
+    expect(reconcileAutomationCommandFailure(new Error("The WebSocket disconnected."))).toEqual({
+      kind: "error",
+      message: "The WebSocket disconnected.",
+      shouldRetry: false,
+    });
+    expect(reconcileAutomationCommandFailure("The RPC method is unavailable.")).toEqual({
+      kind: "error",
+      message: "The RPC method is unavailable.",
+      shouldRetry: false,
+    });
+  });
+
   it("replaces a stale draft with the server row and never requests an automatic retry", () => {
     const current = automation({ revision: 7, name: "Changed elsewhere" });
     const failure = reconcileAutomationCommandFailure({
