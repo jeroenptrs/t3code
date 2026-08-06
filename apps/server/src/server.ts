@@ -119,6 +119,7 @@ import * as ScheduledAutomationBootstrap from "./scheduledAutomation/ScheduledAu
 import * as ScheduledAutomationScheduler from "./scheduledAutomation/ScheduledAutomationScheduler.ts";
 import { ScheduledAutomationServiceLive } from "./scheduledAutomation/ScheduledAutomationService.ts";
 import * as ScheduledAutomationValidation from "./scheduledAutomation/ScheduledAutomationValidation.ts";
+import * as ScheduledAutomationWorktreePruner from "./scheduledAutomation/ScheduledAutomationWorktreePruner.ts";
 
 // Effect's default preemptive shutdown waits 20s before finalizing request scopes.
 // T3's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
@@ -361,10 +362,12 @@ const ScheduledAutomationLayerLive = ScheduledAutomationServiceLive.pipe(
   Layer.provideMerge(ScheduledAutomationSchedulerLive),
   Layer.provideMerge(ScheduledAutomationValidationLive),
 );
+const ScheduledAutomationWorktreePrunerLive = ScheduledAutomationWorktreePruner.layer;
 
 const RuntimeCoreDependenciesLive = Layer.mergeAll(
   ReactorLayerLive,
   ScheduledAutomationLayerLive,
+  ScheduledAutomationWorktreePrunerLive,
 ).pipe(
   // Core Services
   Layer.provideMerge(ServerSettingsLayerLive),
@@ -620,7 +623,10 @@ export const makeServerLayer = Layer.unwrap(
     const runtimeServicesLive = ServerRuntimeStartup.layerWithOptions({
       activate: Deferred.succeed(activation, undefined).pipe(Effect.asVoid),
       abort: (error) => Deferred.die(activation, error).pipe(Effect.asVoid),
-      launchAfterCommandReady: ScheduledAutomationScheduler.launch,
+      launchAfterCommandReady: Effect.all(
+        [ScheduledAutomationScheduler.launch, ScheduledAutomationWorktreePruner.launch],
+        { concurrency: "unbounded", discard: true },
+      ),
       awaitAuxiliaryParked: Effect.all(
         [
           Deferred.await(runtimeStateParked),

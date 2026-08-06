@@ -156,6 +156,7 @@ function testLayerWithPersistence<PersistenceError, PersistenceRequirements>(
         }
         return Option.fromNullishOr(state.lastThread);
       }),
+    getRetainedThreadShellById: () => Effect.die("unused"),
     getThreadDetailById: () => Effect.die("unused"),
     getThreadDetailSnapshot: () => Effect.die("unused"),
   };
