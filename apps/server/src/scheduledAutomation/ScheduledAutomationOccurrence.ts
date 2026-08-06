@@ -1,8 +1,4 @@
-import type {
-  OrchestrationThreadShell,
-  ScheduledAutomation,
-  ScheduledAutomationId,
-} from "@t3tools/contracts";
+import type { OrchestrationThreadShell, ScheduledAutomation } from "@t3tools/contracts";
 import {
   CommandId,
   EventId,
@@ -10,6 +6,7 @@ import {
   latestScheduledAutomationOccurrence,
   MessageId,
   parseScheduledAutomationSchedule,
+  ScheduledAutomationId,
   ScheduledAutomationScheduleError,
   scheduledAutomationPlanningBoundary,
   ThreadId,
@@ -22,12 +19,50 @@ import * as Encoding from "effect/Encoding";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
 export const SCHEDULED_AUTOMATION_THREAD_PREFIX = "t3sa:v1";
 export const SCHEDULED_AUTOMATION_WORKTREE_SUBTREE = "local-scheduled-automations-v1";
+const isScheduledAutomationId = Schema.is(ScheduledAutomationId);
 
 export function isScheduledAutomationThreadId(threadId: string): boolean {
   return threadId.startsWith(`${SCHEDULED_AUTOMATION_THREAD_PREFIX}:`);
+}
+
+export interface ScheduledAutomationThreadIdentity {
+  readonly automationId: ScheduledAutomationId;
+  readonly automationKey: string;
+  readonly scheduledFor: string;
+  readonly occurrenceKey: string;
+}
+
+/** Parses only canonical v1 thread identities minted by the derivation helper. */
+export function parseScheduledAutomationThreadIdentity(
+  threadId: string,
+): ScheduledAutomationThreadIdentity | null {
+  const match = /^t3sa:v1:([0-9a-f]+):([0-9a-f]+):thread$/.exec(threadId);
+  if (match === null) return null;
+  const automationKey = match[1];
+  const occurrenceKey = match[2];
+  if (automationKey === undefined || occurrenceKey === undefined) return null;
+
+  const decodedAutomationId = Encoding.decodeHexString(automationKey);
+  const decodedScheduledFor = Encoding.decodeHexString(occurrenceKey);
+  if (Result.isFailure(decodedAutomationId) || Result.isFailure(decodedScheduledFor)) return null;
+  const automationId = decodedAutomationId.success;
+  const scheduledFor = decodedScheduledFor.success;
+  if (!isScheduledAutomationId(automationId)) return null;
+  if (Encoding.encodeHex(automationId) !== automationKey) return null;
+  const instant = DateTime.make(scheduledFor);
+  if (Option.isNone(instant) || DateTime.formatIso(instant.value) !== scheduledFor) return null;
+  if (Encoding.encodeHex(scheduledFor) !== occurrenceKey) return null;
+
+  return {
+    automationId,
+    automationKey,
+    scheduledFor,
+    occurrenceKey,
+  };
 }
 
 export function scheduledAutomationThreadTitle(name: string): string {

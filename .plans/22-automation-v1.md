@@ -25,6 +25,10 @@ WP5's table-driven operator status, projection-driven subscription refresh,
 operational Settings detail, scheduler/definition health, automation-prefixed
 thread titles, cross-client visibility, and recovery documentation are
 implemented and verified.
+WP6's global retention setting, scoped six-hour housekeeper, projection-owned
+candidate discovery, fail-closed ownership/inactivity/age/cleanliness proof,
+non-force removal, deterministic activity trail, and real-Git qualification are
+implemented and verified.
 
 The expanded WP0 acceptance and regression suites and affected
 contract/server/client-runtime typechecks pass. A further review identified
@@ -1154,15 +1158,18 @@ Bound disk use without risking a user's checkout or destroying unpreserved work.
 
 ### Acceptance criteria
 
-- A real temporary Git integration test creates an automation worktree, advances
-  the fake clock past retention, prunes it, then proves: `git worktree list` no
-  longer contains the path; the directory is absent; the branch still exists;
-  the T3 thread, messages, activities, and non-null `worktreePath` still exist.
+- A real temporary Git integration test creates automation worktrees, advances
+  the fake clock past retention, and proves: a clean worktree disappears from
+  `git worktree list` and disk while its branch remains; genuinely tracked-dirty
+  and untracked-dirty worktrees remain registered and present; and the pruner's
+  only T3 commands are deterministic activity appends, never thread/message
+  deletion or `worktreePath` mutation commands.
 - Table-driven safety tests refuse removal for each independently: unknown ID
   prefix/version, branch mismatch, path outside worktree root, path equal to the
   root, symlink/canonical escape, Git list mismatch, missing project, active
   session, pending approval, pending input, queued turn, running latest turn,
-  recent activity, dirty tracked file, dirty untracked file, and Git status error.
+  recent activity, dirty working tree, and Git status error. The real-Git test
+  separately proves both tracked-only and untracked-only dirtiness.
 - A completed-but-unsettled clean run older than retention is eligible.
 - The remove call always has `force: false`; a mock asserting any force/raw-remove
   attempt fails the test.
@@ -1188,6 +1195,44 @@ vp run --filter t3 --filter @t3tools/contracts typecheck
 
 Unattended new-worktree schedules remain disabled until the real-Git integration
 test and every fail-closed refusal fixture pass.
+
+### Implementation record
+
+WP6 adds the seven-day `localScheduledAutomationWorktreeRetentionDays` server
+setting and starts one scoped housekeeper after orchestration command readiness.
+The worker is launched after orchestration command readiness, runs once when its
+scope starts, and then no more frequently than every six hours. A TestClock
+lifecycle test exercises `launch`, immediate execution, the six-hour cadence,
+and scoped shutdown without wall-clock sleeps or polling.
+
+Candidate discovery reads lightweight active and archived projection shells and
+then loads activities only for canonical `t3sa:v1` identities. It does not scan
+definition rows or hydrate unrelated thread histories, so deleted definitions
+remain cleanable without making housekeeping proportional to all message data.
+Immediately before removal it refreshes both thread/project projection truth,
+activities and retention age, the exact live Git branch/worktree registration,
+canonical paths, and cache-invalidated local Git status. Any missing, changed,
+active, newly recent, dirty, escaped, or unreadable proof fails closed. Removal
+goes only through `GitWorkflowService.removeWorktree` with `force: false`; a
+guarded filesystem service fails the unit suite if the pruner attempts direct
+removal. The real-Git test asserts the only dispatched T3 commands are activity
+appends, which is the pruner's architectural proof that it does not mutate or
+delete retained thread/message/`worktreePath` state.
+
+Deterministic per-thread/per-reason command and activity IDs make
+`local-scheduled-automation.worktree.prune-blocked` idempotent, while successful
+removal appends `local-scheduled-automation.worktree.pruned` with the retained
+branch/new-worktree recovery instruction. If dispatch or post-remove Git
+verification transiently fails after physical removal, the next pass reconciles
+the absent path plus retained unregistered branch and retries that activity;
+`pruned` is counted only after the append succeeds. The focused unit matrix
+covers every listed refusal plus newly recent activity, changed Git registration,
+newly dirty status, post-remove recovery, and worker lifecycle races. The
+temporary-repository integration test independently exercises real tracked and
+untracked dirtiness as well as clean non-force removal. The final WP6/regression
+sweep passes 165 tests across 12 focused suites; contracts, server,
+client-runtime, web, desktop, and mobile typechecks pass; targeted lint,
+formatting, and diff hygiene are clean.
 
 ## Work package 7 — Integrated qualification, docs, and rollout
 
