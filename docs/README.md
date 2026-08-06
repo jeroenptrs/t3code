@@ -18,6 +18,7 @@
 - [Running in the background](./user/background-service.md)
 - [Updating T3 Code](./user/updating.md)
 - Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md)
+- [Automations](./user/automations.md)
 
 ---
 
@@ -46,6 +47,7 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Mobile development lifecycle](./internals/mobile-development.md)
 - [Terminal runtime](./internals/terminal-runtime.md)
 - [Voice input](./internals/voice-input.md)
+- [Scheduled automations](./internals/scheduled-automations.md)
 
 ### Runbooks
 
@@ -56,3 +58,4 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Relay observability](./operations/relay-observability.md)
 - [Slack ingress](./operations/slack-ingress.md)
 - [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)
+- [Scheduled automation rollout and recovery](./operations/scheduled-automations.md)

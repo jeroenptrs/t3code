@@ -2,10 +2,11 @@
 
 ## Status
 
-Implementation in progress. Work package 0 is implemented and verified: the
-scheduled-automation contracts, deterministic occurrence fixtures, five-field
-cron semantics, shared queued-turn truth, active-run predicate, and optional
-bootstrap target-path wire shape with fail-closed pre-WP3 handling now exist.
+Code-complete; production rollout gate outstanding. Work package 0 is
+implemented and verified: the scheduled-automation contracts, deterministic
+occurrence fixtures, five-field cron semantics, shared queued-turn truth,
+active-run predicate, and optional bootstrap target-path wire shape with
+fail-closed pre-WP3 handling now exist.
 Work package 1 is implemented and verified after review hardening: the namespaced
 v1 migration, guarded SQLite repository and CAS operations, durable management
 service, snapshot and committed-row-change subscription, WS RPC surface, and
@@ -29,6 +30,14 @@ WP6's global retention setting, scoped six-hour housekeeper, projection-owned
 candidate discovery, fail-closed ownership/inactivity/age/cleanliness proof,
 non-force removal, deterministic activity trail, and real-Git qualification are
 implemented and verified.
+WP7's durable-SQLite lifecycle qualification now closes and reconstructs the
+server persistence/orchestration runtime at every bootstrap phase, then composes
+reconciliation with real Git worktrees, overlap truth, successor occurrences,
+and retention pruning. User, contributor, and operations documentation records
+the shipped boundaries and deliberately small rollout gate. The
+repository-verifiable WP7 acceptance suite passes. The permission-gated web
+client pass was not performed, no production rollout evidence was collected, and
+broader production enablement remains blocked on an authorized operator.
 
 The expanded WP0 acceptance and regression suites and affected
 contract/server/client-runtime typechecks pass. A further review identified
@@ -747,7 +756,8 @@ The present `ThreadBootstrapService`:
 - Branch-only, path-only, mismatched, and WP6-pruned states fail closed and
   neither adopt, recreate, nor remove a worktree.
 - A final-turn dispatch timeout reconciles through receipt/message truth and does
-  not send a second provider turn.
+  not accept a second T3 turn-start intent. Provider delivery remains outside
+  this receipt boundary.
 - Projection-only and receipt-only fixtures for create, metadata, and turn-start
   fail closed. Rejected and wrong-aggregate receipts also fail closed; message
   and same-project metadata collisions are not adopted.
@@ -1243,10 +1253,11 @@ then enable a deliberately small production rollout.
 
 ### Implementation
 
-- Add one server integration scenario using temporary SQLite, a fake clock, fake
-  provider, and real temporary Git repository: create disabled definition,
-  enable, claim, restart at injected phase, reconcile, complete, schedule the next
-  occurrence, then prune after retention.
+- Add one server integration scenario using temporary SQLite, a fake clock, an
+  accepted-turn-intent observer, and a real temporary Git repository: create a
+  disabled definition, enable, claim, fully close the runtime at an injected
+  phase, reconstruct it against the same database, reconcile, complete, schedule
+  the next occurrence, then prune after retention.
 - Add user documentation under `docs/user/automations.md`, contributor
   architecture under `docs/internals/`, and an operations runbook under
   `docs/operations/`.
@@ -1264,7 +1275,9 @@ then enable a deliberately small production rollout.
 ### Acceptance criteria
 
 - The integrated scenario proves one row, one occurrence thread, one worktree,
-  one initial message, and one provider turn across every injected restart point.
+  one initial message, and one accepted T3 turn-start intent across every
+  injected restart point. Provider delivery happens later through a hot,
+  non-replayed reactor stream and is explicitly not an exactly-once guarantee.
 - A second due occurrence after the first is terminal starts a different
   deterministic thread even if the first is not settled.
 - The same scenario with the first run active records `skipped-active` and creates
@@ -1273,7 +1286,9 @@ then enable a deliberately small production rollout.
   pass focused tests.
 - Provider decision is explicit: no adapter-specific change is needed because
   automation uses the existing provider instance/model selection and bootstrap
-  path; live capability validation rejects unsupported selections.
+  path; live capability validation rejects unsupported selections. The durable
+  boundary ends at the accepted turn-start intent; v1 has no provider outbox and
+  does not guarantee delivery across a server crash.
 - Connection-mode decision is explicit: `scheduledAutomation.*` RPC/subscriptions
   use the existing WS session and therefore cover local, remote/relay, and tunnel
   without origin-specific URLs.
@@ -1294,9 +1309,18 @@ then enable a deliberately small production rollout.
 ### Verification
 
 ```text
-vp test run apps/server/src/scheduledAutomation/ScheduledAutomationLifecycle.integration.test.ts
+vp test run \
+  apps/server/src/scheduledAutomation/ScheduledAutomationLifecycle.integration.test.ts \
+  apps/web/src/commands/scheduledAutomationCommands.test.ts \
+  apps/web/src/components/settings/AutomationsSettings.test.tsx \
+  apps/web/src/components/settings/AutomationsSettings.interaction.test.tsx \
+  apps/web/src/components/settings/settingsSearch.test.ts \
+  apps/web/src/state/scheduledAutomations.test.ts \
+  apps/slack/src/appHome.test.ts \
+  apps/mobile/src/features/threads/automationThreadContract.test.ts
 vp run --filter @t3tools/contracts --filter @t3tools/client-runtime \
-  --filter t3 --filter @t3tools/web --filter @t3tools/slack typecheck
+  --filter t3 --filter @t3tools/web --filter @t3tools/desktop \
+  --filter @t3tools/slack --filter @t3tools/mobile typecheck
 vp fmt --check <changed files>
 vp lint <changed files>
 ```
@@ -1311,6 +1335,51 @@ The first deliberately small rollout has produced inspectable thread, scheduler,
 restart, and pruning evidence, and the shipped documentation matches those
 observations. Only then may unattended new-worktree definitions be enabled more
 broadly.
+
+This gate is pending. Repository qualification is not production rollout
+evidence, and unattended new-worktree enablement must remain blocked until an
+authorized operator records the runbook evidence.
+
+### Implementation record
+
+The integrated lifecycle suite runs once for each interruption boundary:
+accepted thread creation, real Git worktree creation, accepted thread metadata,
+and accepted turn start. In every case the first SQLite/orchestration scope is
+fully released while the durable automation row remains `starting`; a second
+runtime then reconstructs the repository, engine, projections, receipts,
+bootstrap, and scheduler from the same database and live Git state. The fixture
+observes exactly one row, thread, worktree, initial message, and accepted T3
+turn-start intent. It does not claim provider delivery: the production provider
+reactor consumes a hot, non-replayed event stream after that durable boundary.
+The same qualification records `skipped-active` without minting a thread, then
+marks the first run terminal and unsettled and starts a different deterministic
+occurrence before both clean worktrees are pruned non-force with absent live
+worktree registrations, retained branches and T3 history, and pruned activities.
+
+The lifecycle fixture deliberately seeds management state through
+`ScheduledAutomationRepository`, stubs live-catalog validation for its synthetic
+provider selection, and uses a fake provider runtime-event stream through the
+production `ProviderRuntimeIngestion` path to persist running/completed session
+state. It does not install `ProviderCommandReactor` or interpret those lifecycle
+events as proof of provider delivery. Management commands and live validation are
+qualified in their focused suites; the fixture isolates durable claim/bootstrap
+recovery so it can inject a crash after each accepted phase without allowing the
+ordinary scheduler failure handler to finalize the row.
+
+The user guide, contributor architecture, and operations runbook now cover
+single-process ownership, timezone/latest-only behavior, setup-script exclusion,
+current-workspace sharing, manual retry and abandon, deletion and retention
+safety, applicable product surfaces and connection modes, the downstream
+namespace, and the no-dual-scheduler consolidation sequence. The runbook keeps
+broader unattended enablement gated on inspectable production evidence; this
+repository task does not itself mutate a production environment.
+The permission-gated integrated web-client pass was not run because explicit
+computer-use permission was not provided; the rendered interaction and routing
+suites remain the repository evidence for that surface.
+The final repository qualification passes 197 tests across 21 focused
+automation, orchestration, web, Slack, and mobile suites; contracts,
+client-runtime, server, web, desktop, Slack, and mobile typechecks pass; and
+changed-file formatting, lint, and diff hygiene are clean.
 
 ## Dependency sequence
 
