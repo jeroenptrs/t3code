@@ -32,7 +32,7 @@ import { usePrimaryEnvironment } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { usePaginatedBranches } from "../../state/queries";
 import { primaryServerProvidersAtom } from "../../state/server";
-import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   INITIAL_SCHEDULED_AUTOMATION_HEALTH,
   scheduledAutomationEnvironment,
@@ -1058,6 +1058,7 @@ export function AutomationsSettings(props: AutomationsSettingsProps) {
 export function AutomationsSettingsPanel() {
   const environment = usePrimaryEnvironment();
   const environmentId = environment?.environmentId ?? null;
+  const dispatchAutomation = useAtomCommand(scheduledAutomationEnvironment.dispatch);
   const allProjects = useProjects();
   const projects = useMemo(
     () => allProjects.filter((project) => project.environmentId === environmentId),
@@ -1093,7 +1094,7 @@ export function AutomationsSettingsPanel() {
       isPending={result.waiting}
       loadError={loadError}
       onCommand={async (command) => {
-        const commandResult = await scheduledAutomationEnvironment.dispatch.run(appAtomRegistry, {
+        const commandResult = await dispatchAutomation({
           environmentId,
           input: command,
         });

@@ -465,6 +465,17 @@ describe("AutomationEditor interaction wiring", () => {
     expect(screen.getByLabelText(/^IANA timezone/).getAttribute("aria-invalid")).toBe("true");
   });
 
+  it("renders an untagged command error instead of a generic failure", async () => {
+    const onCommand = vi.fn(async () => {
+      throw new Error("The automation RPC is unavailable.");
+    });
+    render(editor(onCommand));
+    fillRequiredCreateFields();
+    fireEvent.click(screen.getByRole("button", { name: "Save automation" }));
+
+    expect(await screen.findByText("The automation RPC is unavailable.")).toBeTruthy();
+  });
+
   it("renders branch query, non-Git, and server worktree-policy errors", async () => {
     branchMocks.hook.mockReturnValue({
       data: {
