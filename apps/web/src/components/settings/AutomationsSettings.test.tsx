@@ -31,6 +31,7 @@ import {
   ABANDON_AUTOMATION_DISCLOSURE,
   DELETE_AUTOMATION_DISCLOSURE,
   DISABLE_AUTOMATION_DISCLOSURE,
+  isInitialAutomationLoadPending,
   isValidAutomationId,
   liveModelSelection,
   normalizeProviderOptions,
@@ -238,6 +239,12 @@ describe("AutomationsSettings command payloads", () => {
 });
 
 describe("AutomationsSettings live form rules", () => {
+  it("stops treating a successful empty subscription as an initial load", () => {
+    expect(isInitialAutomationLoadPending({ _tag: "Initial", waiting: true })).toBe(true);
+    expect(isInitialAutomationLoadPending({ _tag: "Success", waiting: true })).toBe(false);
+    expect(isInitialAutomationLoadPending({ _tag: "Success", waiting: false })).toBe(false);
+  });
+
   it("only preserves option combinations present in the selected model descriptor", () => {
     const sol = liveModelSelection(providers, {
       instanceId: CODEX_ID,
