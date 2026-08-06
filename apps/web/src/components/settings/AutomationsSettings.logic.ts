@@ -311,34 +311,44 @@ export type AutomationCommandFailureState =
   | { readonly kind: "error"; readonly message: string; readonly shouldRetry: false };
 
 export function reconcileAutomationCommandFailure(error: unknown): AutomationCommandFailureState {
-  if (typeof error !== "object" || error === null || !("_tag" in error)) {
-    return { kind: "error", message: "The automation request failed.", shouldRetry: false };
+  if (typeof error === "object" && error !== null && "_tag" in error) {
+    if (
+      error._tag === "ScheduledAutomationValidationError" &&
+      "field" in error &&
+      "message" in error &&
+      typeof error.field === "string" &&
+      typeof error.message === "string"
+    ) {
+      return {
+        kind: "validation",
+        errors: { [error.field as ScheduledAutomationValidationField]: error.message },
+        shouldRetry: false,
+      };
+    }
+    if (error._tag === "ScheduledAutomationConflictError" && "current" in error) {
+      const current = error.current as ScheduledAutomation;
+      return {
+        kind: "conflict",
+        current,
+        message: `“${current.name}” changed on another device. The server version is now revision ${current.revision}; review it before trying again.`,
+        shouldRetry: false,
+      };
+    }
+    const message =
+      "message" in error && typeof error.message === "string"
+        ? error.message
+        : "The automation request failed.";
+    return { kind: "error", message, shouldRetry: false };
   }
-  if (
-    error._tag === "ScheduledAutomationValidationError" &&
-    "field" in error &&
-    "message" in error &&
-    typeof error.field === "string" &&
-    typeof error.message === "string"
-  ) {
-    return {
-      kind: "validation",
-      errors: { [error.field as ScheduledAutomationValidationField]: error.message },
-      shouldRetry: false,
-    };
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return { kind: "error", message: error.message, shouldRetry: false };
   }
-  if (error._tag === "ScheduledAutomationConflictError" && "current" in error) {
-    const current = error.current as ScheduledAutomation;
-    return {
-      kind: "conflict",
-      current,
-      message: `“${current.name}” changed on another device. The server version is now revision ${current.revision}; review it before trying again.`,
-      shouldRetry: false,
-    };
-  }
-  const message =
-    "message" in error && typeof error.message === "string"
-      ? error.message
-      : "The automation request failed.";
-  return { kind: "error", message, shouldRetry: false };
+  return {
+    kind: "error",
+    message:
+      typeof error === "string" && error.trim().length > 0
+        ? error
+        : "The automation request failed.",
+    shouldRetry: false,
+  };
 }
