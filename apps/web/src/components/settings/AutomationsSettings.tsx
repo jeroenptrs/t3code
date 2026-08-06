@@ -81,6 +81,7 @@ import {
   canSubmitAutomationDraft,
   changeAutomationProject,
   defaultLiveModelSelection,
+  isInitialAutomationLoadPending,
   isValidAutomationId,
   liveModelSelection,
   normalizeProviderOptions,
@@ -771,9 +772,9 @@ export function AutomationRow(props: {
         <div>
           <dt className="text-xs text-muted-foreground">Model / effort</dt>
           <dd>
-            {props.provider?.displayName ?? automation.modelSelection.instanceId} ·{" "}
+            {props.provider?.displayName ?? automation.modelSelection.instanceId}{" "}
             {automation.modelSelection.model}
-            {effort ? ` · ${String(effort.value)}` : ""}
+            {effort ? ` ${String(effort.value)}` : ""}
           </dd>
         </div>
         <div>
@@ -781,7 +782,7 @@ export function AutomationRow(props: {
           <dd>
             {automation.worktreePolicy.kind === "current"
               ? "Current (shared)"
-              : `New worktree · ${automation.worktreePolicy.baseBranch}`}
+              : `New worktree ${automation.worktreePolicy.baseBranch}`}
           </dd>
         </div>
         <div>
@@ -1091,7 +1092,7 @@ export function AutomationsSettingsPanel() {
       health={state.health}
       projects={projects}
       providers={providers}
-      isPending={result.waiting}
+      isPending={isInitialAutomationLoadPending(result)}
       loadError={loadError}
       onCommand={async (command) => {
         const commandResult = await dispatchAutomation({

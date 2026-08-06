@@ -559,6 +559,12 @@ describe("AutomationRow safety actions", () => {
       />,
     );
     expect(screen.getByText("Current status").parentElement?.textContent).toContain("failed");
+    expect(screen.getByText("Model / effort").parentElement?.textContent).toBe(
+      "Model / effortCodex gpt-5.6-sol high",
+    );
+    expect(screen.getByText("Workspace").parentElement?.textContent).toBe(
+      "WorkspaceNew worktree main",
+    );
     expect(screen.getByText("Cursor").parentElement?.textContent).not.toContain("Never claimed");
     expect(screen.getByText("bootstrap.phase-rejected")).toBeTruthy();
     expect(screen.getByText("Rejected.")).toBeTruthy();

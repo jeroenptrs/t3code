@@ -242,6 +242,13 @@ export function canSubmitAutomationDraft(input: {
   );
 }
 
+export function isInitialAutomationLoadPending(result: {
+  readonly _tag: string;
+  readonly waiting: boolean;
+}): boolean {
+  return result._tag === "Initial" && result.waiting;
+}
+
 export function previewAutomationSchedule(
   schedule: ScheduledAutomationDefinitionDraft["schedule"],
   after: string,
