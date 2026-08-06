@@ -227,6 +227,10 @@ export interface ProjectionSnapshotQueryShape {
     }>,
     ProjectionRepositoryError
   >;
+  /** Read a non-deleted thread shell, including archived threads, for server housekeeping. */
+  readonly getRetainedThreadShellById: (
+    threadId: ThreadId,
+  ) => Effect.Effect<Option.Option<OrchestrationThreadShell>, ProjectionRepositoryError>;
 
   /**
    * Read a single active thread detail snapshot by id.

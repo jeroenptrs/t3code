@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
   ForwardCompatibleNullable,
+  PositiveInt,
   ProjectId,
   TrimmedNonEmptyString,
   TrimmedString,
@@ -804,6 +805,7 @@ export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyle
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
+const DEFAULT_LOCAL_SCHEDULED_AUTOMATION_WORKTREE_RETENTION_DAYS = 7;
 
 export const BackgroundActivityProfile = Schema.Literals([
   "balanced",
@@ -930,6 +932,11 @@ export const ServerSettings = Schema.Struct({
   ),
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  localScheduledAutomationWorktreeRetentionDays: PositiveInt.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(DEFAULT_LOCAL_SCHEDULED_AUTOMATION_WORKTREE_RETENTION_DAYS),
+    ),
   ),
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
@@ -1172,6 +1179,7 @@ export const ServerSettingsPatch = Schema.Struct({
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
+  localScheduledAutomationWorktreeRetentionDays: Schema.optionalKey(PositiveInt),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   sourceControlWritingStyle: Schema.optionalKey(

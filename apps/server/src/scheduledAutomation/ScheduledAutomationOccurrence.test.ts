@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import {
   deriveScheduledAutomationOccurrenceIdentity,
   isScheduledAutomationThreadActive,
+  parseScheduledAutomationThreadIdentity,
   planScheduledAutomationOccurrence,
   type ScheduledAutomationActivityShell,
 } from "./ScheduledAutomationOccurrence.ts";
@@ -69,6 +70,16 @@ it.effect("snapshot-locks deterministic occurrence identities and ownership path
     }
   `);
     assert.deepStrictEqual(second, first);
+    expect(parseScheduledAutomationThreadIdentity(first.threadId)).toEqual({
+      automationId,
+      automationKey: first.automationKey,
+      scheduledFor: input.scheduledFor,
+      occurrenceKey: first.occurrenceKey,
+    });
+    expect(parseScheduledAutomationThreadIdentity(first.threadId.replace("v1", "v2"))).toBeNull();
+    expect(
+      parseScheduledAutomationThreadIdentity(first.threadId.replace(first.automationKey, "zz")),
+    ).toBeNull();
 
     const later = success(
       deriveScheduledAutomationOccurrenceIdentity(

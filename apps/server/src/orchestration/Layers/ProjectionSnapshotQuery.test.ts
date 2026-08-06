@@ -914,6 +914,19 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         (yield* snapshotQuery.getThreadRuntimeContext(ThreadId.make("thread-active")))._tag,
         "None",
       );
+
+      assert.equal(
+        (yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-archived")))._tag,
+        "None",
+      );
+      const retainedArchived = yield* snapshotQuery.getRetainedThreadShellById(
+        ThreadId.make("thread-archived"),
+      );
+      assert.equal(retainedArchived._tag, "Some");
+      if (retainedArchived._tag === "Some") {
+        assert.equal(retainedArchived.value.archivedAt, "2026-04-06T00:00:06.000Z");
+        assert.deepEqual(retainedArchived.value, archivedShellSnapshot.threads[0]);
+      }
     }),
   );
 
