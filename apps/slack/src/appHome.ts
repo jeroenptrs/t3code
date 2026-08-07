@@ -8,7 +8,6 @@ import type {
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { buildEnvironmentDeepLink, buildThreadDeepLink } from "@t3tools/integration-runtime";
-import { resolveChangeRequestPresentation } from "@t3tools/shared/sourceControl";
 
 // Slack currently permits 100 blocks in a Home tab view. Keep the platform
 // constraint here so row capacity follows Block Kit rather than product config.
@@ -110,7 +109,6 @@ export interface AppHomeView {
 
 export interface AppHomeChangeRequest {
   readonly number: number;
-  readonly shortName: string;
   readonly state: "open" | "closed" | "merged";
   readonly url: string | null;
 }
@@ -143,7 +141,6 @@ export function resolveAppHomeChangeRequest(
   }
   return {
     number: status.pr.number,
-    shortName: resolveChangeRequestPresentation(status.sourceControlProvider).shortName,
     state: status.pr.state,
     url: safeChangeRequestUrl(status.pr.url),
   };
@@ -229,7 +226,7 @@ export function buildAppHomeView(input: {
       input.vcsStatuses ?? EMPTY_VCS_STATUSES,
     );
     const changeRequestText = changeRequest
-      ? `\n${changeRequest.shortName}: *${changeRequest.url ? `<${slackLinkHref(changeRequest.url)}|#${changeRequest.number}>` : `#${changeRequest.number}`}*    State: *${changeRequest.state.charAt(0).toUpperCase()}${changeRequest.state.slice(1)}*`
+      ? `    Change Request: *${changeRequest.url ? `<${slackLinkHref(changeRequest.url)}|#${changeRequest.number}>` : `#${changeRequest.number}`}* (${changeRequest.state.charAt(0).toUpperCase()}${changeRequest.state.slice(1)})`
       : "";
     return {
       type: "section",
