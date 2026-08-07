@@ -28,6 +28,7 @@ import {
   makeAppHomePublisher,
   resolveAppHomeOpenSnapshot,
 } from "./appHome.ts";
+import { makeAppHomeVcsProjection } from "./appHomeVcs.ts";
 import {
   normalizeCustomMentionInvocation,
   normalizeCustomSlashInvocation,
@@ -447,7 +448,19 @@ export function makeSlackApp(
         category: error instanceof T3TransportError ? error.kind : "unexpected",
       }),
   });
-  const unsubscribeAppHome = shellProjection.subscribe(appHomePublisher.updated);
+  const appHomeVcsProjection = makeAppHomeVcsProjection({
+    transport: input.transport,
+    onUpdated: appHomePublisher.vcsUpdated,
+    onError: (error, cwd) =>
+      app.logger.warn("slack.app-home.vcs-projection-failed", {
+        cwd,
+        category: error instanceof T3TransportError ? error.kind : "unexpected",
+      }),
+  });
+  const unsubscribeAppHome = shellProjection.subscribe((snapshot) => {
+    appHomePublisher.updated(snapshot);
+    appHomeVcsProjection.updated(snapshot);
+  });
   const slashResponseUrls = new Map<string, { readonly url: string; readonly expiresAt: number }>();
   const conversationAuditLog =
     dependencies.conversationAuditLog ??
@@ -1153,8 +1166,18 @@ export function makeSlackApp(
       stop: async () => {
         unsubscribeAppHome();
         const pendingPublications = appHomePublisher.stop();
-        await shellProjection.stop();
-        await pendingPublications;
+        const results = await Promise.allSettled([
+          shellProjection.stop(),
+          appHomeVcsProjection.stop(),
+          pendingPublications,
+        ]);
+        const failures = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : [],
+        );
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1) {
+          throw new AggregateError(failures, "Failed to stop Slack App Home projections.");
+        }
       },
     },
   };

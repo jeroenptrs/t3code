@@ -50,6 +50,7 @@ const transport = (input: {
   dispatch: () => Effect.die("not used"),
   getServerConfig: () => Effect.die("not used"),
   listRefs: () => Effect.die("not used"),
+  subscribeVcsStatus: () => Stream.never,
   switchRef: () => Effect.die("not used"),
   dispatchBootstrap: () => Effect.die("not used"),
 });

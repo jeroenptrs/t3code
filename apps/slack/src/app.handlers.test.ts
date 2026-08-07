@@ -105,6 +105,7 @@ const makeTransport = (commands: Array<ClientOrchestrationCommand>): T3Transport
       updatedAt: "2026-08-02T00:00:00.000Z",
     } as unknown as OrchestrationShellSnapshot),
   subscribeShell: () => Stream.never,
+  subscribeVcsStatus: () => Stream.never,
   getServerConfig: () =>
     Effect.succeed({
       environment: { environmentId: EnvironmentId.make("environment-a") },
