@@ -5,8 +5,10 @@ import type {
   OrchestrationProjectShell,
   OrchestrationShellSnapshot,
   OrchestrationThreadShell,
+  VcsStatusResult,
 } from "@t3tools/contracts";
 import { buildEnvironmentDeepLink, buildThreadDeepLink } from "@t3tools/integration-runtime";
+import { resolveChangeRequestPresentation } from "@t3tools/shared/sourceControl";
 
 // Slack currently permits 100 blocks in a Home tab view. Keep the platform
 // constraint here so row capacity follows Block Kit rather than product config.
@@ -16,6 +18,7 @@ export const APP_HOME_VIEW_ALL_ACTION = "t3_view_all_tasks";
 
 const TEXT_MAX = 180;
 const PROJECT_TEXT_MAX = 80;
+const EMPTY_VCS_STATUSES: ReadonlyMap<string, VcsStatusResult> = new Map();
 
 export interface AppHomeTask {
   readonly thread: OrchestrationThreadShell;
@@ -105,6 +108,47 @@ export interface AppHomeView {
   readonly blocks: ReadonlyArray<Record<string, unknown>>;
 }
 
+export interface AppHomeChangeRequest {
+  readonly number: number;
+  readonly shortName: string;
+  readonly state: "open" | "closed" | "merged";
+  readonly url: string | null;
+}
+
+const safeChangeRequestUrl = (value: string): string | null => {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+};
+
+const slackLinkHref = (value: string): string =>
+  value.replaceAll("&", "&amp;").replaceAll("|", "%7C");
+
+export function resolveAppHomeChangeRequest(
+  task: AppHomeTask,
+  statuses: ReadonlyMap<string, VcsStatusResult>,
+): AppHomeChangeRequest | null {
+  const cwd = task.thread.worktreePath ?? task.project.workspaceRoot;
+  const status = statuses.get(cwd);
+  if (
+    !status ||
+    task.thread.branch === null ||
+    status.refName !== task.thread.branch ||
+    !status.pr
+  ) {
+    return null;
+  }
+  return {
+    number: status.pr.number,
+    shortName: resolveChangeRequestPresentation(status.sourceControlProvider).shortName,
+    state: status.pr.state,
+    url: safeChangeRequestUrl(status.pr.url),
+  };
+}
+
 const appHomeChrome = (environmentUrl: string) =>
   [
     {
@@ -151,6 +195,7 @@ export function buildAppHomeView(input: {
   readonly tasks: ReadonlyArray<AppHomeTask>;
   readonly publicBaseUrl: string;
   readonly environmentId: string;
+  readonly vcsStatuses?: ReadonlyMap<string, VcsStatusResult>;
 }): AppHomeView {
   const environmentUrl = buildEnvironmentDeepLink(input);
   const chrome = appHomeChrome(environmentUrl);
@@ -172,17 +217,25 @@ export function buildAppHomeView(input: {
   const truncated = input.tasks.length > maximumRowsWithoutFooter;
   const rowCapacity = SLACK_HOME_MAX_BLOCKS - chrome.length - (truncated ? 1 : 0);
   const visibleTasks = input.tasks.slice(0, rowCapacity);
-  const rows = visibleTasks.map(({ thread, project, status }) => {
+  const rows = visibleTasks.map((task) => {
+    const { thread, project, status } = task;
     const threadUrl = buildThreadDeepLink({
       publicBaseUrl: input.publicBaseUrl,
       environmentId: input.environmentId,
       threadId: thread.id,
     });
+    const changeRequest = resolveAppHomeChangeRequest(
+      task,
+      input.vcsStatuses ?? EMPTY_VCS_STATUSES,
+    );
+    const changeRequestText = changeRequest
+      ? `\n${changeRequest.shortName}: *${changeRequest.url ? `<${slackLinkHref(changeRequest.url)}|#${changeRequest.number}>` : `#${changeRequest.number}`}*    State: *${changeRequest.state.charAt(0).toUpperCase()}${changeRequest.state.slice(1)}*`
+      : "";
     return {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: `*<${threadUrl}|${cleanText(thread.title, TEXT_MAX)}>*\nStatus: *${cleanText(status, TEXT_MAX)}*    Project: *${cleanText(project.title, PROJECT_TEXT_MAX)}*`,
+        text: `*<${threadUrl}|${cleanText(thread.title, TEXT_MAX)}>*\nStatus: *${cleanText(status, TEXT_MAX)}*    Project: *${cleanText(project.title, PROJECT_TEXT_MAX)}*${changeRequestText}`,
       },
     };
   });
@@ -209,6 +262,7 @@ const viewHash = (view: AppHomeView): string =>
 export interface AppHomePublisher {
   readonly opened: (userId: string, snapshot: OrchestrationShellSnapshot | null) => Promise<void>;
   readonly updated: (snapshot: OrchestrationShellSnapshot) => void;
+  readonly vcsUpdated: (statuses: ReadonlyMap<string, VcsStatusResult>) => void;
   readonly stop: () => Promise<void>;
 }
 
@@ -242,6 +296,7 @@ export function makeAppHomePublisher(input: {
   const now = input.now ?? (() => new Date());
   let environmentId: Promise<string> | null = null;
   let snapshot: OrchestrationShellSnapshot | null = null;
+  let vcsStatuses: ReadonlyMap<string, VcsStatusResult> = new Map();
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let wakeTimer: ReturnType<typeof setTimeout> | null = null;
   let livePublishPromise: Promise<void> | null = null;
@@ -308,6 +363,7 @@ export function makeAppHomePublisher(input: {
           tasks: selection.tasks,
           publicBaseUrl: input.publicBaseUrl,
           environmentId: resolvedEnvironmentId,
+          vcsStatuses,
         });
       }
       return { view, hash: viewHash(view) };
@@ -408,6 +464,12 @@ export function makeAppHomePublisher(input: {
       scheduleWake();
       scheduleLivePublish();
     },
+    vcsUpdated: (nextStatuses) => {
+      if (stopped) return;
+      vcsStatuses = nextStatuses;
+      invalidateRender();
+      scheduleLivePublish();
+    },
     stop: async () => {
       stopped = true;
       if (debounceTimer !== null) clearTimeout(debounceTimer);
@@ -417,6 +479,7 @@ export function makeAppHomePublisher(input: {
       knownUsers.clear();
       publishedHashes.clear();
       renderCache = null;
+      vcsStatuses = new Map();
       livePublishPending = false;
       const pending = [...publicationQueues.values()];
       if (livePublishPromise !== null) pending.push(livePublishPromise);

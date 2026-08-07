@@ -33,6 +33,7 @@ describe("server config connection manager", () => {
       const reads: Array<number> = [];
       const closes: Array<number> = [];
       const subscriptions: Array<number> = [];
+      const vcsSubscriptions: Array<number> = [];
       const disconnects: Array<Deferred.Deferred<never, Error>> = [];
       let connectionNumber = 0;
 
@@ -59,6 +60,16 @@ describe("server config connection manager", () => {
                   return { kind: "synchronized" as const };
                 }),
               ),
+            subscribeVcsStatus: () =>
+              Stream.fromEffect(
+                Effect.sync(() => {
+                  vcsSubscriptions.push(number);
+                  return {
+                    _tag: "remoteUpdated" as const,
+                    remote: null,
+                  };
+                }),
+              ),
             listRefs: () => Effect.die("not used"),
             switchRef: () => Effect.die("not used"),
             dispatchBootstrap: () => Effect.die("not used"),
@@ -77,7 +88,9 @@ describe("server config connection manager", () => {
       expect(connections).toEqual(["connection-1"]);
       expect(reads).toEqual([1, 2]);
       yield* manager.subscribeShell({ afterSequence: 4 }).pipe(Stream.runDrain);
+      yield* manager.subscribeVcsStatus({ cwd: "/workspace" }).pipe(Stream.runDrain);
       expect(subscriptions).toEqual([1]);
+      expect(vcsSubscriptions).toEqual([1]);
 
       yield* Deferred.fail(disconnects[0]!, new Error("socket closed"));
       yield* Effect.yieldNow;
@@ -88,7 +101,9 @@ describe("server config connection manager", () => {
       expect(credentials).toEqual(["credential-1", "credential-2"]);
       expect(tickets).toEqual(["ticket-1", "ticket-2"]);
       yield* manager.subscribeShell({ afterSequence: 5 }).pipe(Stream.runDrain);
+      yield* manager.subscribeVcsStatus({ cwd: "/workspace" }).pipe(Stream.runDrain);
       expect(subscriptions).toEqual([1, 2]);
+      expect(vcsSubscriptions).toEqual([1, 2]);
 
       yield* manager.close;
       expect(closes).toEqual([1, 2]);
@@ -112,6 +127,7 @@ describe("server config connection manager", () => {
           return {
             getConfig: Effect.succeed(serverConfig("environment-a")),
             subscribeShell: () => Stream.never,
+            subscribeVcsStatus: () => Stream.never,
             listRefs: () => Effect.die("not used"),
             switchRef: () => Effect.die("not used"),
             dispatchBootstrap: () => Effect.die("not used"),
@@ -197,6 +213,7 @@ describe("live T3 transport shutdown", () => {
         transport
           .subscribeShell({ requestCompletionMarker: true })
           .pipe(Stream.runDrain, Effect.flip),
+        transport.subscribeVcsStatus({ cwd: "/workspace" }).pipe(Stream.runDrain, Effect.flip),
         transport.getServerConfig().pipe(Effect.flip),
         transport.listRefs(null as never).pipe(Effect.flip),
         transport.switchRef(null as never).pipe(Effect.flip),

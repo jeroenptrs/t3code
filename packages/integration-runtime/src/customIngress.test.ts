@@ -120,6 +120,7 @@ const makeTransport = (refResult: VcsListRefsResult) => {
     getServerConfig: () => Effect.succeed(config),
     getThreadSnapshot: () => Effect.succeed(null),
     listRefs: () => Effect.succeed(refResult),
+    subscribeVcsStatus: () => Stream.never,
     switchRef: (input) => {
       switches.push(input.refName);
       return Effect.succeed({ refName: input.refName });
