@@ -13,6 +13,7 @@ import {
 import { createAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
 import { ServerConfig } from "../config.ts";
 import { parseBase64DataUrl } from "../imageMime.ts";
+import { SCHEDULED_AUTOMATION_THREAD_PREFIX } from "../scheduledAutomation/ScheduledAutomationOccurrence.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export const canonicalizeClientCommandTimestamps = (
@@ -47,6 +48,35 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
   Effect.gen(function* () {
     const receivedAt = DateTime.formatIso(yield* DateTime.now);
     const canonicalCommand = canonicalizeClientCommandTimestamps(command, receivedAt);
+    const reservedAutomationIdentity = (value: string) =>
+      value === SCHEDULED_AUTOMATION_THREAD_PREFIX ||
+      value.startsWith(`${SCHEDULED_AUTOMATION_THREAD_PREFIX}:`);
+    const mintsReservedThread =
+      (canonicalCommand.type === "thread.create" &&
+        reservedAutomationIdentity(canonicalCommand.threadId)) ||
+      (canonicalCommand.type === "thread.turn.start" &&
+        canonicalCommand.bootstrap?.createThread !== undefined &&
+        reservedAutomationIdentity(canonicalCommand.threadId));
+    const usesReservedAutomationIdentity =
+      reservedAutomationIdentity(canonicalCommand.commandId) ||
+      mintsReservedThread ||
+      (canonicalCommand.type === "thread.turn.start" &&
+        reservedAutomationIdentity(canonicalCommand.message.messageId));
+    if (usesReservedAutomationIdentity) {
+      return yield* new OrchestrationDispatchCommandError({
+        message: "The scheduled-automation identity namespace is reserved for server use.",
+      });
+    }
+    if (
+      canonicalCommand.type === "thread.turn.start" &&
+      (canonicalCommand.bootstrap?.prepareWorktree?.targetPath !== undefined ||
+        canonicalCommand.bootstrap?.reconcileThreadRevision !== undefined)
+    ) {
+      return yield* new OrchestrationDispatchCommandError({
+        message:
+          "Deterministic bootstrap paths and reconciliation are reserved for trusted server callers.",
+      });
+    }
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const serverConfig = yield* ServerConfig;

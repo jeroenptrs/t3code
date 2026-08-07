@@ -45,6 +45,23 @@ it.effect("enqueueCommand waits for readiness and then drains queued work", () =
   ),
 );
 
+it.effect("launches the coordinator exactly once after command readiness", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const launches = yield* Ref.make(0);
+      const commandGate = yield* ServerRuntimeStartup.makeCommandGate;
+      yield* ServerRuntimeStartup.signalCommandReadyAndLaunch(
+        commandGate,
+        commandGate.awaitCommandReady.pipe(
+          Effect.orDie,
+          Effect.andThen(Ref.update(launches, (count) => count + 1)),
+        ),
+      );
+      assert.equal(yield* Ref.get(launches), 1);
+    }),
+  ),
+);
+
 it.effect("enqueueCommand fails queued work when readiness fails", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -95,6 +112,7 @@ it.effect("launchStartupHeartbeat does not block the caller while counts are loa
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
           getThreadShellById: () => Effect.succeed(Option.none()),
+          getRetainedThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
           searchThreads: () => Effect.succeed({ matches: [] }),
@@ -159,6 +177,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
         getThreadCheckpointContext: () => Effect.succeed(Option.none()),
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
         getThreadShellById: () => Effect.die("unused"),
+        getRetainedThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
         getThreadDetailSnapshot: () => Effect.die("unused"),
         searchThreads: () => Effect.succeed({ matches: [] }),
@@ -170,6 +189,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
             Effect.as({ sequence: 1 }),
           ),
         streamDomainEvents: Stream.empty,
+        subscribeDomainEvents: Effect.succeed(Stream.empty),
         latestSequence: Effect.succeed(0),
       } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
       Effect.provide(NodeServices.layer),
@@ -204,6 +224,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
         getThreadCheckpointContext: () => Effect.succeed(Option.none()),
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
         getThreadShellById: () => Effect.die("unused"),
+        getRetainedThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
         getThreadDetailSnapshot: () => Effect.die("unused"),
         searchThreads: () => Effect.succeed({ matches: [] }),
@@ -215,6 +236,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
             Effect.as({ sequence: 1 }),
           ),
         streamDomainEvents: Stream.empty,
+        subscribeDomainEvents: Effect.succeed(Stream.empty),
         latestSequence: Effect.succeed(0),
       } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
       Effect.provide(NodeServices.layer),
@@ -255,6 +277,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
         getThreadCheckpointContext: () => Effect.succeed(Option.none()),
         getFullThreadDiffContext: () => Effect.succeed(Option.none()),
         getThreadShellById: () => Effect.die("unused"),
+        getRetainedThreadShellById: () => Effect.die("unused"),
         getThreadDetailById: () => Effect.die("unused"),
         getThreadDetailSnapshot: () => Effect.die("unused"),
         searchThreads: () => Effect.succeed({ matches: [] }),
@@ -266,6 +289,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation fa
             Effect.as({ sequence: 1 }),
           ),
         streamDomainEvents: Stream.empty,
+        subscribeDomainEvents: Effect.succeed(Stream.empty),
         latestSequence: Effect.succeed(0),
       } satisfies OrchestrationEngine.OrchestrationEngineService["Service"]),
       Effect.provideService(Crypto.Crypto, {

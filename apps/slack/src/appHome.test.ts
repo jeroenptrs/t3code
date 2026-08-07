@@ -6,6 +6,7 @@ import {
   type OrchestrationProjectShell,
   type OrchestrationShellSnapshot,
   type OrchestrationThreadShell,
+  type VcsStatusResult,
 } from "@t3tools/contracts";
 
 import {
@@ -49,6 +50,8 @@ const thread = (input: {
   readonly actionablePlan?: boolean;
   readonly interactionMode?: "default" | "plan";
   readonly latestTurnSettled?: boolean;
+  readonly branch?: string | null;
+  readonly worktreePath?: string | null;
 }): OrchestrationThreadShell =>
   ({
     id: ThreadId.make(input.id),
@@ -57,8 +60,8 @@ const thread = (input: {
     modelSelection,
     runtimeMode: "full-access",
     interactionMode: input.interactionMode ?? "default",
-    branch: null,
-    worktreePath: null,
+    branch: input.branch ?? null,
+    worktreePath: input.worktreePath ?? null,
     latestTurn: input.latestTurnSettled
       ? { turnId: "turn-1", startedAt: NOW, completedAt: NOW }
       : null,
@@ -212,6 +215,30 @@ describe("App Home task selection", () => {
 });
 
 describe("App Home Block Kit rendering", () => {
+  it("shows an active automation thread with its title and ordinary deep link", () => {
+    const tasks = selectAppHomeTasks(
+      snapshot([
+        thread({
+          id: "t3sa:v1:automation:occurrence:thread",
+          title: "Automation: Nightly maintenance",
+          sessionStatus: "running",
+        }),
+      ]),
+      { now: NOW },
+    ).tasks;
+    const rendered = JSON.stringify(
+      buildAppHomeView({
+        tasks,
+        publicBaseUrl: "https://t3.example",
+        environmentId: "environment-a",
+      }),
+    );
+
+    expect(tasks).toHaveLength(1);
+    expect(rendered).toContain("Automation: Nightly maintenance");
+    expect(rendered).toContain("/t3sa%3Av1%3Aautomation%3Aoccurrence%3Athread");
+  });
+
   it("renders direct task links with status and project plus the environment-level header link", () => {
     const tasks = selectAppHomeTasks(
       snapshot([
@@ -229,11 +256,67 @@ describe("App Home Block Kit rendering", () => {
     expect(text).toContain("https://t3.example/root/environment%2Fvalue");
     expect(text).toContain("/thread%2Fvalue");
     expect(text).toContain("Fix &lt;render&gt; ¦ safely");
-    expect(text).toContain("Welcome to t3 code");
+    expect(text).toContain("Welcome to T3 Code");
     expect(text).toContain("View all tasks");
     expect(text).toContain("*Active conversations*");
     expect(text).toContain("Status: *Pending approval*    Project: *Project A*");
     expect(text).not.toContain("Pending approval · Project A");
+  });
+
+  it("renders a live GitLab merge request only when status matches the thread branch", () => {
+    const tasks = selectAppHomeTasks(
+      snapshot([
+        thread({
+          id: "merge-request-thread",
+          branch: "feature/live-mr",
+          worktreePath: "/worktrees/live-mr",
+        }),
+      ]),
+      { now: NOW },
+    ).tasks;
+    const vcsStatus = {
+      isRepo: true,
+      sourceControlProvider: {
+        kind: "gitlab" as const,
+        name: "GitLab",
+        baseUrl: "https://gitlab.com",
+      },
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature/live-mr",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: {
+        number: 19,
+        title: "Live merge request",
+        url: "https://gitlab.com/example/project/-/merge_requests/19?label=a|b&view=compact",
+        baseRef: "main",
+        headRef: "feature/live-mr",
+        state: "open" as const,
+      },
+    };
+    const view = buildAppHomeView({
+      tasks,
+      publicBaseUrl: "https://t3.example",
+      environmentId: "environment-a",
+      vcsStatuses: new Map([["/worktrees/live-mr", vcsStatus]]),
+    });
+    const rendered = JSON.stringify(view);
+
+    expect(rendered).toContain(
+      "MR: *<https://gitlab.com/example/project/-/merge_requests/19?label=a%7Cb&amp;view=compact|#19>*    State: *Open*",
+    );
+
+    const mismatched = buildAppHomeView({
+      tasks,
+      publicBaseUrl: "https://t3.example",
+      environmentId: "environment-a",
+      vcsStatuses: new Map([["/worktrees/live-mr", { ...vcsStatus, refName: "another-branch" }]]),
+    });
+    expect(JSON.stringify(mismatched)).not.toContain("MR:");
   });
 
   it("uses the full Home-tab block budget and adds an environment-root footer only on overflow", () => {
@@ -355,6 +438,59 @@ describe("App Home publication", () => {
     await vi.advanceTimersByTimeAsync(20);
     expect(publications).toHaveLength(3);
     expect(publications.at(-1)?.userId).toBe("U1");
+    await publisher.stop();
+  });
+
+  it("republishes when live change-request status changes and suppresses identical views", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+    const publications: AppHomeView[] = [];
+    const publisher = makeAppHomePublisher({
+      publicBaseUrl: "https://t3.example",
+      resolveEnvironmentId: async () => "environment-a",
+      publish: async (_userId, view) => {
+        publications.push(view);
+      },
+      debounceMs: 20,
+    });
+    const initial = snapshot([
+      thread({ id: "live-pr", branch: "feature/live-pr", worktreePath: "/worktrees/live-pr" }),
+    ]);
+    const status = {
+      isRepo: true,
+      sourceControlProvider: {
+        kind: "github",
+        name: "GitHub",
+        baseUrl: "https://github.com",
+      },
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature/live-pr",
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: {
+        number: 42,
+        title: "Live pull request",
+        url: "https://github.com/example/project/pull/42",
+        baseRef: "main",
+        headRef: "feature/live-pr",
+        state: "open",
+      },
+    } satisfies VcsStatusResult;
+
+    await publisher.opened("U1", initial);
+    publisher.vcsUpdated(new Map([["/worktrees/live-pr", status]]));
+    await vi.advanceTimersByTimeAsync(20);
+    expect(publications).toHaveLength(2);
+    expect(JSON.stringify(publications.at(-1))).toContain("PR:");
+    expect(JSON.stringify(publications.at(-1))).toContain("pull/42|#42");
+
+    publisher.vcsUpdated(new Map([["/worktrees/live-pr", status]]));
+    await vi.advanceTimersByTimeAsync(20);
+    expect(publications).toHaveLength(2);
     await publisher.stop();
   });
 

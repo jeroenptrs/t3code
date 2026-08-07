@@ -104,6 +104,7 @@ const makeTransport = (input?: {
       return failure ? Effect.fail(failure) : Effect.succeed({ sequence: commands.length });
     },
     listRefs: () => Effect.die("not used"),
+    subscribeVcsStatus: () => Stream.never,
     switchRef: () => Effect.die("not used"),
     dispatchBootstrap: () => Effect.die("not used"),
   };

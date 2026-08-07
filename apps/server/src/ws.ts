@@ -28,6 +28,7 @@ import {
   OrchestrationSearchThreadsError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
+  SCHEDULED_AUTOMATION_WS_METHODS,
   type ProjectId,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
@@ -70,7 +71,7 @@ import {
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
-import { makeThreadBootstrapService } from "./orchestration/Services/ThreadBootstrapService.ts";
+import { ThreadBootstrapService } from "./orchestration/Services/ThreadBootstrapService.ts";
 import * as WorkspaceMutationCoordinator from "./orchestration/Services/WorkspaceMutationCoordinator.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
@@ -98,7 +99,10 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import { requiredScopeForRpcMethod } from "./auth/RpcAuthorization.ts";
+import {
+  authorizeRpcEffectForScopes,
+  authorizeRpcStreamForScopes,
+} from "./auth/RpcAuthorization.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
@@ -118,6 +122,7 @@ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import * as ScheduledAutomation from "./scheduledAutomation/ScheduledAutomationService.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -320,13 +325,13 @@ function toAuthAccessStreamEvent(
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  threadBootstrap: ThreadBootstrapService["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
-      const threadBootstrap = yield* makeThreadBootstrapService;
       const workspaceMutationCoordinator =
         yield* WorkspaceMutationCoordinator.WorkspaceMutationCoordinator;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -384,6 +389,7 @@ const makeWsRpcLayer = (
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
+      const scheduledAutomations = yield* ScheduledAutomation.ScheduledAutomationService;
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
@@ -391,39 +397,25 @@ const makeWsRpcLayer = (
           requiredScope,
         });
       const authorizeEffect = <A, E, R>(
-        requiredScope: AuthEnvironmentScope,
+        method: string,
         effect: Effect.Effect<A, E, R>,
       ): Effect.Effect<A, E | EnvironmentAuthorizationError, R> =>
-        currentSession.scopes.includes(requiredScope)
-          ? effect
-          : Effect.fail(authorizationError(requiredScope));
+        authorizeRpcEffectForScopes(method, currentSession.scopes, effect, authorizationError);
       const authorizeStream = <A, E, R>(
-        requiredScope: AuthEnvironmentScope,
+        method: string,
         stream: Stream.Stream<A, E, R>,
       ): Stream.Stream<A, E | EnvironmentAuthorizationError, R> =>
-        currentSession.scopes.includes(requiredScope)
-          ? stream
-          : Stream.fail(authorizationError(requiredScope));
+        authorizeRpcStreamForScopes(method, currentSession.scopes, stream, authorizationError);
       const observeRpcEffect = <A, E, R>(
         method: string,
         effect: Effect.Effect<A, E, R>,
         traceAttributes?: Readonly<Record<string, unknown>>,
-      ) =>
-        instrumentRpcEffect(
-          method,
-          authorizeEffect(requiredScopeForRpcMethod(method), effect),
-          traceAttributes,
-        );
+      ) => instrumentRpcEffect(method, authorizeEffect(method, effect), traceAttributes);
       const observeRpcStream = <A, E, R>(
         method: string,
         stream: Stream.Stream<A, E, R>,
         traceAttributes?: Readonly<Record<string, unknown>>,
-      ) =>
-        instrumentRpcStream(
-          method,
-          authorizeStream(requiredScopeForRpcMethod(method), stream),
-          traceAttributes,
-        );
+      ) => instrumentRpcStream(method, authorizeStream(method, stream), traceAttributes);
       const observeRpcStreamEffect = <A, StreamError, StreamContext, EffectError, EffectContext>(
         method: string,
         effect: Effect.Effect<
@@ -432,12 +424,7 @@ const makeWsRpcLayer = (
           EffectContext
         >,
         traceAttributes?: Readonly<Record<string, unknown>>,
-      ) =>
-        instrumentRpcStreamEffect(
-          method,
-          authorizeEffect(requiredScopeForRpcMethod(method), effect),
-          traceAttributes,
-        );
+      ) => instrumentRpcStreamEffect(method, authorizeEffect(method, effect), traceAttributes);
       const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
         isOrchestrationDispatchCommandError(cause)
           ? cause
@@ -734,6 +721,33 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
+        [SCHEDULED_AUTOMATION_WS_METHODS.dispatchCommand]: (command) =>
+          observeRpcEffect(
+            SCHEDULED_AUTOMATION_WS_METHODS.dispatchCommand,
+            scheduledAutomations.dispatch(command),
+            { "rpc.aggregate": "scheduledAutomation" },
+          ),
+        [SCHEDULED_AUTOMATION_WS_METHODS.list]: (_input) =>
+          observeRpcEffect(
+            SCHEDULED_AUTOMATION_WS_METHODS.list,
+            Effect.all({
+              automations: scheduledAutomations.list(),
+              health: scheduledAutomations.health(),
+            }),
+            { "rpc.aggregate": "scheduledAutomation" },
+          ),
+        [SCHEDULED_AUTOMATION_WS_METHODS.get]: (input) =>
+          observeRpcEffect(
+            SCHEDULED_AUTOMATION_WS_METHODS.get,
+            scheduledAutomations.get(input.automationId),
+            { "rpc.aggregate": "scheduledAutomation" },
+          ),
+        [SCHEDULED_AUTOMATION_WS_METHODS.subscribe]: (_input) =>
+          observeRpcStreamEffect(
+            SCHEDULED_AUTOMATION_WS_METHODS.subscribe,
+            scheduledAutomations.subscribe,
+            { "rpc.aggregate": "scheduledAutomation" },
+          ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -1836,6 +1850,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
+    const threadBootstrap = yield* ThreadBootstrapService;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -1855,7 +1870,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session, previewAutomationBroker).pipe(
+            makeWsRpcLayer(session, previewAutomationBroker, threadBootstrap).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),

@@ -14,6 +14,7 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ProviderItemId,
   ThreadId,
@@ -671,6 +672,12 @@ const ThreadTurnStartBootstrapPrepareWorktree = Schema.Struct({
   projectCwd: TrimmedNonEmptyString,
   baseBranch: TrimmedNonEmptyString,
   branch: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Explicit target path for deterministic background worktrees. Trusted
+   * in-process callers may use this after validating ownership and containment;
+   * client-facing orchestration ingress rejects it.
+   */
+  targetPath: Schema.optional(TrimmedNonEmptyString),
   startFromOrigin: Schema.optional(Schema.Boolean),
 });
 
@@ -684,6 +691,11 @@ const ThreadTurnStartBootstrap = Schema.Struct({
   prepareWorktree: Schema.optional(ThreadTurnStartBootstrapPrepareWorktree),
   switchRef: Schema.optional(ThreadTurnStartBootstrapSwitchRef),
   runSetupScript: Schema.optional(Schema.Boolean),
+  /**
+   * Definition revision used to idempotently reconcile mutable thread fields
+   * before a trusted scheduled retry. Client-facing ingress rejects this field.
+   */
+  reconcileThreadRevision: Schema.optional(PositiveInt),
 });
 
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
@@ -1470,6 +1482,8 @@ export class OrchestrationDispatchCommandError extends Schema.TaggedErrorClass<O
   "OrchestrationDispatchCommandError",
   {
     message: TrimmedNonEmptyString,
+    code: Schema.optional(TrimmedNonEmptyString),
+    retryable: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}

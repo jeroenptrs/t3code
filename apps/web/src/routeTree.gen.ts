@@ -21,6 +21,7 @@ import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
 import { Route as SettingsBetaRouteImport } from './routes/settings.beta'
+import { Route as SettingsAutomationsRouteImport } from './routes/settings.automations'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
@@ -86,6 +87,11 @@ const SettingsBetaRoute = SettingsBetaRouteImport.update({
   path: '/beta',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsAutomationsRoute = SettingsAutomationsRouteImport.update({
+  id: '/automations',
+  path: '/automations',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsArchivedRoute = SettingsArchivedRouteImport.update({
   id: '/archived',
   path: '/archived',
@@ -121,6 +127,7 @@ export interface FileRoutesByFullPath {
   '/connect/callback': typeof ConnectCallbackRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/automations': typeof SettingsAutomationsRoute
   '/settings/beta': typeof SettingsBetaRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
@@ -138,6 +145,7 @@ export interface FileRoutesByTo {
   '/connect/callback': typeof ConnectCallbackRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/automations': typeof SettingsAutomationsRoute
   '/settings/beta': typeof SettingsBetaRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
@@ -158,6 +166,7 @@ export interface FileRoutesById {
   '/connect_/callback': typeof ConnectCallbackRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/automations': typeof SettingsAutomationsRoute
   '/settings/beta': typeof SettingsBetaRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
@@ -179,6 +188,7 @@ export interface FileRouteTypes {
     | '/connect/callback'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/automations'
     | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
@@ -196,6 +206,7 @@ export interface FileRouteTypes {
     | '/connect/callback'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/automations'
     | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
@@ -215,6 +226,7 @@ export interface FileRouteTypes {
     | '/connect_/callback'
     | '/settings/appearance'
     | '/settings/archived'
+    | '/settings/automations'
     | '/settings/beta'
     | '/settings/connections'
     | '/settings/diagnostics'
@@ -321,6 +333,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsBetaRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/automations': {
+      id: '/settings/automations'
+      path: '/automations'
+      fullPath: '/settings/automations'
+      preLoaderRoute: typeof SettingsAutomationsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/archived': {
       id: '/settings/archived'
       path: '/archived'
@@ -376,6 +395,7 @@ const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 interface SettingsRouteChildren {
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
+  SettingsAutomationsRoute: typeof SettingsAutomationsRoute
   SettingsBetaRoute: typeof SettingsBetaRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
@@ -388,6 +408,7 @@ interface SettingsRouteChildren {
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsArchivedRoute: SettingsArchivedRoute,
+  SettingsAutomationsRoute: SettingsAutomationsRoute,
   SettingsBetaRoute: SettingsBetaRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,

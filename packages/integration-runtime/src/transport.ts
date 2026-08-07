@@ -26,6 +26,8 @@ import {
   type ThreadId,
   type VcsListRefsInput,
   type VcsListRefsResult,
+  type VcsStatusInput,
+  type VcsStatusStreamEvent,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   ORCHESTRATION_WS_METHODS,
@@ -82,6 +84,9 @@ export interface T3Transport {
   readonly listRefs: (
     input: VcsListRefsInput,
   ) => Effect.Effect<VcsListRefsResult, T3TransportError>;
+  readonly subscribeVcsStatus: (
+    input: VcsStatusInput,
+  ) => Stream.Stream<VcsStatusStreamEvent, T3TransportError>;
   readonly switchRef: (
     input: VcsSwitchRefInput,
   ) => Effect.Effect<VcsSwitchRefResult, T3TransportError>;
@@ -116,6 +121,9 @@ export interface ServerConfigConnection {
   readonly listRefs: (
     input: VcsListRefsInput,
   ) => Effect.Effect<VcsListRefsResult, T3TransportError>;
+  readonly subscribeVcsStatus: (
+    input: VcsStatusInput,
+  ) => Stream.Stream<VcsStatusStreamEvent, T3TransportError>;
   readonly switchRef: (
     input: VcsSwitchRefInput,
   ) => Effect.Effect<VcsSwitchRefResult, T3TransportError>;
@@ -256,6 +264,10 @@ export const makeServerConfigConnectionManager = Effect.fn(
       ),
     listRefs: (input: VcsListRefsInput) =>
       withConnection((connection) => connection.listRefs(input)),
+    subscribeVcsStatus: (input: VcsStatusInput) =>
+      Stream.unwrap(
+        getConnection.pipe(Effect.map((connection) => connection.subscribeVcsStatus(input))),
+      ),
     switchRef: (input: VcsSwitchRefInput) =>
       withConnection((connection) => connection.switchRef(input)),
     dispatchBootstrap: (command: ClientOrchestrationCommand) =>
@@ -456,6 +468,10 @@ export const makeLiveT3Transport = Effect.fn("integrationRuntime.makeLiveT3Trans
                 Stream.mapError(transportError),
               ),
             listRefs: (input) => request(session.client[WS_METHODS.vcsListRefs](input)),
+            subscribeVcsStatus: (input) =>
+              session.client[WS_METHODS.subscribeVcsStatus](input).pipe(
+                Stream.mapError(transportError),
+              ),
             switchRef: (input) => request(session.client[WS_METHODS.vcsSwitchRef](input)),
             dispatchBootstrap: (command) =>
               request(
@@ -477,6 +493,7 @@ export const makeLiveT3Transport = Effect.fn("integrationRuntime.makeLiveT3Trans
   const subscribeShell = (input: OrchestrationSubscribeShellInput) =>
     configManager.subscribeShell(input);
   const listRefs = (input: VcsListRefsInput) => configManager.listRefs(input);
+  const subscribeVcsStatus = (input: VcsStatusInput) => configManager.subscribeVcsStatus(input);
   const switchRef = (input: VcsSwitchRefInput) => configManager.switchRef(input);
   const dispatchBootstrap = (command: ClientOrchestrationCommand) =>
     configManager.dispatchBootstrap(command);
@@ -493,6 +510,7 @@ export const makeLiveT3Transport = Effect.fn("integrationRuntime.makeLiveT3Trans
     dispatch: (command) => whileOpen(() => dispatch(command)),
     getServerConfig: () => whileOpen(getServerConfig),
     listRefs: (input) => whileOpen(() => listRefs(input)),
+    subscribeVcsStatus: (input) => streamWhileOpen(() => subscribeVcsStatus(input)),
     switchRef: (input) => whileOpen(() => switchRef(input)),
     dispatchBootstrap: (command) => whileOpen(() => dispatchBootstrap(command)),
   } satisfies T3Transport;

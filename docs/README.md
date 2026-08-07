@@ -9,6 +9,7 @@
 - [Keeping app and server in sync](./user/updating.md)
 - [Source control integrations](./user/source-control.md)
 - [Background service (Linux)](./user/background-service.md)
+- [Automations](./user/automations.md)
 - Providers: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md)
 
 Mobile app: [apps/mobile/README.md](../apps/mobile/README.md)
@@ -32,6 +33,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [CI gates](./internals/ci.md)
+- [Scheduled automations](./internals/scheduled-automations.md)
 
 ### Runbooks
 
@@ -40,3 +42,4 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Relay observability](./operations/relay-observability.md)
 - [Slack ingress](./operations/slack-ingress.md)
 - [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)
+- [Scheduled automation rollout and recovery](./operations/scheduled-automations.md)

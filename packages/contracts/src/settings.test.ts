@@ -177,6 +177,26 @@ describe("ServerSettings worktree defaults", () => {
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
     ).toBe(false);
   });
+
+  it("defaults scheduled automation retention to seven days", () => {
+    expect(decodeServerSettings({}).localScheduledAutomationWorktreeRetentionDays).toBe(7);
+  });
+
+  it.each([0, -1, 1.5])("rejects an invalid automation retention: %s", (value) => {
+    expect(() =>
+      decodeServerSettings({ localScheduledAutomationWorktreeRetentionDays: value }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({ localScheduledAutomationWorktreeRetentionDays: value }),
+    ).toThrow();
+  });
+
+  it("accepts a positive automation retention update", () => {
+    expect(
+      decodeServerSettingsPatch({ localScheduledAutomationWorktreeRetentionDays: 30 })
+        .localScheduledAutomationWorktreeRetentionDays,
+    ).toBe(30);
+  });
 });
 
 describe("ServerSettings.sourceControlWritingStyle", () => {

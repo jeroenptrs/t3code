@@ -1,5 +1,11 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import {
+  QUEUED_TURN_START_GRACE_MS,
+  hasQueuedTurnStart,
+  type OrchestrationThreadShell,
+} from "@t3tools/contracts";
+
+export { QUEUED_TURN_START_GRACE_MS, hasQueuedTurnStart } from "@t3tools/contracts";
 
 export type ChangeRequestStateLike = "open" | "closed" | "merged";
 
@@ -25,48 +31,6 @@ export function threadLastActivityAt(shell: OrchestrationThreadShell): string | 
   }
 
   return latest;
-}
-
-/**
- * A queued turn start lives for at most this long: session adoption takes
- * seconds, so a user message still unadopted after the grace window is a
- * failed start (or stale data — shells from older servers can carry user
- * messages with no latestTurn at all), not pending work. Without this bound
- * such threads would be permanently unsettleable.
- */
-export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
-
-/**
- * A user message no turn has picked up yet: the turn.start command was
- * dispatched (message-sent + turn-start-requested) but no session has
- * adopted it, so `session` is still null and the pending work is invisible
- * to the session-status checks. Detectable as a user message strictly newer
- * than every timestamp on the latest turn — on adoption the new turn's
- * requestedAt equals the message time, clearing the condition — and only
- * within the adoption grace window.
- */
-export function hasQueuedTurnStart(
-  shell: Pick<OrchestrationThreadShell, "latestUserMessageAt" | "latestTurn" | "session">,
-  options: { readonly now: string },
-): boolean {
-  if (shell.latestUserMessageAt == null) return false;
-  // A failed session start clears the queued state: the failure is already
-  // visible (status edge / error).
-  if (shell.session?.status === "error") return false;
-  const messageAt = Date.parse(shell.latestUserMessageAt);
-  if (Number.isNaN(messageAt)) return false;
-  const nowMs = Date.parse(options.now);
-  if (Number.isNaN(nowMs)) return false;
-  // Bounded on both sides: message timestamps originate on whichever device
-  // sent the message, so a clock ahead of this one yields a negative age
-  // that would otherwise hold the queued state for the whole skew. Mirrors
-  // the decider's guard.
-  if (Math.abs(nowMs - messageAt) > QUEUED_TURN_START_GRACE_MS) return false;
-  const turn = shell.latestTurn;
-  if (turn === null) return true;
-  return [turn.requestedAt, turn.startedAt, turn.completedAt].every(
-    (candidate) => candidate == null || Date.parse(candidate) < messageAt,
-  );
 }
 
 /**

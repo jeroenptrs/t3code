@@ -63,6 +63,11 @@ import {
   OrchestrationGetTurnDiffInput,
   OrchestrationRpcSchemas,
 } from "./orchestration.ts";
+import {
+  SCHEDULED_AUTOMATION_WS_METHODS,
+  ScheduledAutomationError,
+  ScheduledAutomationRpcSchemas,
+} from "./scheduledAutomation.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   RelayClientInstallFailedError,
@@ -734,6 +739,37 @@ export const WsOrchestrationSubscribeThreadRpc = Rpc.make(
   },
 );
 
+export const WsScheduledAutomationDispatchCommandRpc = Rpc.make(
+  SCHEDULED_AUTOMATION_WS_METHODS.dispatchCommand,
+  {
+    payload: ScheduledAutomationRpcSchemas.dispatchCommand.input,
+    success: ScheduledAutomationRpcSchemas.dispatchCommand.output,
+    error: Schema.Union([ScheduledAutomationError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsScheduledAutomationListRpc = Rpc.make(SCHEDULED_AUTOMATION_WS_METHODS.list, {
+  payload: ScheduledAutomationRpcSchemas.list.input,
+  success: ScheduledAutomationRpcSchemas.list.output,
+  error: Schema.Union([ScheduledAutomationError, EnvironmentAuthorizationError]),
+});
+
+export const WsScheduledAutomationGetRpc = Rpc.make(SCHEDULED_AUTOMATION_WS_METHODS.get, {
+  payload: ScheduledAutomationRpcSchemas.get.input,
+  success: ScheduledAutomationRpcSchemas.get.output,
+  error: Schema.Union([ScheduledAutomationError, EnvironmentAuthorizationError]),
+});
+
+export const WsScheduledAutomationSubscribeRpc = Rpc.make(
+  SCHEDULED_AUTOMATION_WS_METHODS.subscribe,
+  {
+    payload: ScheduledAutomationRpcSchemas.subscribe.input,
+    success: ScheduledAutomationRpcSchemas.subscribe.output,
+    error: Schema.Union([ScheduledAutomationError, EnvironmentAuthorizationError]),
+    stream: true,
+  },
+);
+
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -863,4 +899,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsScheduledAutomationDispatchCommandRpc,
+  WsScheduledAutomationListRpc,
+  WsScheduledAutomationGetRpc,
+  WsScheduledAutomationSubscribeRpc,
 );

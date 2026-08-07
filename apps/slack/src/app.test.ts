@@ -47,6 +47,7 @@ describe("Slack slash handler", () => {
           ],
         } as unknown as OrchestrationShellSnapshot),
       subscribeShell: () => Stream.never,
+      subscribeVcsStatus: () => Stream.never,
       getServerConfig: () =>
         Effect.succeed({
           environment: { environmentId: EnvironmentId.make("environment-main") },

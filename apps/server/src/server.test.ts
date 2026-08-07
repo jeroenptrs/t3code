@@ -5,6 +5,7 @@ import * as NodeCrypto from "node:crypto";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import {
+  ApprovalRequestId,
   AuthAccessTokenType,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
@@ -26,6 +27,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ResolvedKeybindingRule,
+  SCHEDULED_AUTOMATION_WS_METHODS,
+  ScheduledAutomationId,
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
@@ -52,6 +55,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -83,8 +87,10 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ThreadBootstrap from "./orchestration/Services/ThreadBootstrapService.ts";
 import * as WorkspaceMutationCoordinator from "./orchestration/Services/WorkspaceMutationCoordinator.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
+import { OrchestrationCommandReceiptRepository } from "./persistence/Services/OrchestrationCommandReceipts.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
@@ -123,6 +129,7 @@ import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryR
 import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import * as ScheduledAutomation from "./scheduledAutomation/ScheduledAutomationService.ts";
 import * as Data from "effect/Data";
 
 const defaultProjectId = ProjectId.make("project-default");
@@ -349,6 +356,7 @@ const buildAppUnderTest = (options?: {
     terminalManager?: Partial<TerminalManager.TerminalManager["Service"]>;
     orchestrationEngine?: Partial<OrchestrationEngine.OrchestrationEngineService["Service"]>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]>;
+    scheduledAutomationService?: Partial<ScheduledAutomation.ScheduledAutomationService["Service"]>;
     checkpointDiffQuery?: Partial<CheckpointDiffQuery.CheckpointDiffQuery["Service"]>;
     browserTraceCollector?: Partial<BrowserTraceCollector.BrowserTraceCollector["Service"]>;
     serverLifecycleEvents?: Partial<ServerLifecycleEvents.ServerLifecycleEvents["Service"]>;
@@ -553,7 +561,9 @@ const buildAppUnderTest = (options?: {
     );
 
     const servedRoutesLayer = HttpRouter.serve(
-      makeRoutesLayer.pipe(Layer.provide(ServiceLauncherClient.layer)),
+      makeRoutesLayer.pipe(
+        Layer.provide(Layer.mergeAll(ThreadBootstrap.layer, ServiceLauncherClient.layer)),
+      ),
       {
         disableListenLog: true,
         disableLogger: true,
@@ -720,54 +730,68 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-          getCommandReadModel: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
-          getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
-          getShellSnapshot: () =>
-            Effect.succeed({
-              snapshotSequence: 0,
-              projects: [],
-              threads: [],
-              updatedAt: "1970-01-01T00:00:00.000Z",
-            }),
-          getArchivedShellSnapshot: () =>
-            Effect.succeed({
-              snapshotSequence: 0,
-              projects: [],
-              threads: [],
-              updatedAt: "1970-01-01T00:00:00.000Z",
-            }),
-          searchThreads: () => Effect.succeed({ matches: [] }),
-          getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
-          getProjectShellById: () => Effect.succeed(Option.none()),
-          getThreadShellById: () => Effect.succeed(Option.none()),
-          getThreadDetailById: () => Effect.succeed(Option.none()),
-          getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
-          getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
-          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
-          getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
-          getThreadCheckpointContext: () => Effect.succeed(Option.none()),
-          ...options?.layers?.projectionSnapshotQuery,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+            getCommandReadModel: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
+            getSnapshot: () => Effect.succeed(makeDefaultOrchestrationReadModel()),
+            getShellSnapshot: () =>
+              Effect.succeed({
+                snapshotSequence: 0,
+                projects: [],
+                threads: [],
+                updatedAt: "1970-01-01T00:00:00.000Z",
+              }),
+            getArchivedShellSnapshot: () =>
+              Effect.succeed({
+                snapshotSequence: 0,
+                projects: [],
+                threads: [],
+                updatedAt: "1970-01-01T00:00:00.000Z",
+              }),
+            searchThreads: () => Effect.succeed({ matches: [] }),
+            getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
+            getProjectShellById: () => Effect.succeed(Option.none()),
+            getThreadShellById: () => Effect.succeed(Option.none()),
+            getThreadDetailById: () => Effect.succeed(Option.none()),
+            getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
+            getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+            getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+            getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+            getThreadCheckpointContext: () => Effect.succeed(Option.none()),
+            ...options?.layers?.projectionSnapshotQuery,
+          }),
+          Layer.mock(OrchestrationCommandReceiptRepository)({
+            getByCommandId: () => Effect.succeed(Option.none()),
+          }),
+        ),
       ),
       Layer.provide(
-        Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
-          getTurnDiff: () =>
-            Effect.succeed({
-              threadId: defaultThreadId,
-              fromTurnCount: 0,
-              toTurnCount: 0,
-              diff: "",
-            }),
-          getFullThreadDiff: () =>
-            Effect.succeed({
-              threadId: defaultThreadId,
-              fromTurnCount: 0,
-              toTurnCount: 0,
-              diff: "",
-            }),
-          ...options?.layers?.checkpointDiffQuery,
-        }),
+        Layer.mergeAll(
+          Layer.mock(ScheduledAutomation.ScheduledAutomationService)({
+            dispatch: () => Effect.die("ScheduledAutomationService.dispatch not stubbed in test"),
+            list: () => Effect.succeed([]),
+            get: () => Effect.die("ScheduledAutomationService.get not stubbed in test"),
+            subscribe: Effect.succeed(Stream.empty),
+            ...options?.layers?.scheduledAutomationService,
+          }),
+          Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
+            getTurnDiff: () =>
+              Effect.succeed({
+                threadId: defaultThreadId,
+                fromTurnCount: 0,
+                toTurnCount: 0,
+                diff: "",
+              }),
+            getFullThreadDiff: () =>
+              Effect.succeed({
+                threadId: defaultThreadId,
+                fromTurnCount: 0,
+                toTurnCount: 0,
+                diff: "",
+              }),
+            ...options?.layers?.checkpointDiffQuery,
+          }),
+        ),
       ),
     );
 
@@ -3325,6 +3349,67 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("requires read and operate scopes before automation mutations can disclose data", () =>
+    Effect.gen(function* () {
+      const dispatchCalled = yield* Ref.make(false);
+      yield* buildAppUnderTest({
+        layers: {
+          scheduledAutomationService: {
+            dispatch: () => Ref.set(dispatchCalled, true).pipe(Effect.as({ automation: null })),
+          },
+        },
+      });
+
+      for (const [scope, missingScope] of [
+        ["orchestration:operate", "orchestration:read"],
+        ["orchestration:read", "orchestration:operate"],
+      ] as const) {
+        const { response: exchangeResponse, body: tokenBody } = yield* exchangeAccessToken(
+          defaultDesktopBootstrapToken,
+          { scope },
+        );
+        assert.equal(exchangeResponse.status, 200);
+        assert.isDefined(tokenBody.access_token);
+        const wsTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { authorization: `Bearer ${tokenBody.access_token ?? ""}` },
+        });
+        const wsTicketBody = (yield* wsTicketResponse.json) as { readonly ticket: string };
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicketBody.ticket)}`;
+        const rpcError = yield* Effect.flip(
+          Effect.scoped(
+            withWsRpcClient(wsUrl, (client) =>
+              client[SCHEDULED_AUTOMATION_WS_METHODS.dispatchCommand]({
+                type: "scheduledAutomation.create",
+                commandId: CommandId.make(`automation-auth-${scope}`),
+                automationId: ScheduledAutomationId.make("auth-fixture"),
+                definition: {
+                  name: "Sensitive automation",
+                  prompt: "secret prompt must not be disclosed",
+                  projectId: ProjectId.make("project-1"),
+                  modelSelection: {
+                    instanceId: ProviderInstanceId.make("codex-work"),
+                    model: "gpt-5.6",
+                  },
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  worktreePolicy: { kind: "current" },
+                  setupScriptPolicy: "skip",
+                  schedule: { cron: "0 9 * * *", timeZone: "UTC", misfirePolicy: "latest-only" },
+                },
+                createdAt: "2026-08-04T00:00:00.000Z",
+              }),
+            ),
+          ),
+        );
+        assert.equal(rpcError._tag, "EnvironmentAuthorizationError");
+        if (rpcError._tag === "EnvironmentAuthorizationError") {
+          assert.equal(rpcError.requiredScope, missingScope);
+        }
+      }
+      assert.isFalse(yield* Ref.get(dispatchCalled));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("includes CORS headers on remote auth success responses", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
@@ -4951,6 +5036,85 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.isAtLeast(response.sequence, 0);
       assert.equal(stat.type, "Directory");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("allows addressing but not minting scheduled-automation thread identities", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("t3sa:v1:existing:thread");
+      const dispatched: Array<OrchestrationCommand> = [];
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command);
+                return { sequence: dispatched.length };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.turn.start",
+            commandId: CommandId.make("automation-follow-up"),
+            threadId,
+            message: {
+              messageId: MessageId.make("automation-follow-up-message"),
+              role: "user",
+              text: "Continue",
+              attachments: [],
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ),
+      );
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.approval.respond",
+            commandId: CommandId.make("automation-approve"),
+            threadId,
+            requestId: ApprovalRequestId.make("automation-approval"),
+            decision: "accept",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ),
+      );
+      const forged = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.create",
+            commandId: CommandId.make("forge-automation-thread"),
+            threadId: ThreadId.make("t3sa:v1:forged:thread"),
+            projectId: ProjectId.make("project-1"),
+            title: "Forged",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5.6",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assert.deepEqual(
+        dispatched.map((command) => command.type),
+        ["thread.turn.start", "thread.approval.respond"],
+      );
+      assert.equal(forged._tag, "Failure");
+      if (forged._tag === "Failure") {
+        assert.include(forged.failure.message, "identity namespace is reserved");
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -7498,7 +7662,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("cleans up created bootstrap threads when worktree creation defects", () =>
+  it.effect("retains created bootstrap threads when worktree creation defects", () =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
       const createWorktree = vi.fn(
@@ -7567,7 +7731,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.include(result.failure.message, "worktree exploded");
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.delete"],
+        ["thread.create"],
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
