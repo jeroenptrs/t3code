@@ -307,7 +307,7 @@ describe("App Home Block Kit rendering", () => {
     const rendered = JSON.stringify(view);
 
     expect(rendered).toContain(
-      "MR: *<https://gitlab.com/example/project/-/merge_requests/19?label=a%7Cb&amp;view=compact|#19>*    State: *Open*",
+      "Status: *Ready*    Project: *Project A*    Change Request: *<https://gitlab.com/example/project/-/merge_requests/19?label=a%7Cb&amp;view=compact|#19>* (Open)",
     );
 
     const mismatched = buildAppHomeView({
@@ -316,7 +316,7 @@ describe("App Home Block Kit rendering", () => {
       environmentId: "environment-a",
       vcsStatuses: new Map([["/worktrees/live-mr", { ...vcsStatus, refName: "another-branch" }]]),
     });
-    expect(JSON.stringify(mismatched)).not.toContain("MR:");
+    expect(JSON.stringify(mismatched)).not.toContain("Change Request:");
   });
 
   it("uses the full Home-tab block budget and adds an environment-root footer only on overflow", () => {
@@ -485,7 +485,7 @@ describe("App Home publication", () => {
     publisher.vcsUpdated(new Map([["/worktrees/live-pr", status]]));
     await vi.advanceTimersByTimeAsync(20);
     expect(publications).toHaveLength(2);
-    expect(JSON.stringify(publications.at(-1))).toContain("PR:");
+    expect(JSON.stringify(publications.at(-1))).toContain("Change Request:");
     expect(JSON.stringify(publications.at(-1))).toContain("pull/42|#42");
 
     publisher.vcsUpdated(new Map([["/worktrees/live-pr", status]]));
