@@ -378,6 +378,7 @@ export const makeLiveT3Transport = Effect.fn("integrationRuntime.makeLiveT3Trans
           client.orchestration.threadSnapshot({
             headers: { authorization: `Bearer ${credential}` },
             params: { threadId },
+            payload: {},
           }),
         ).pipe(
           Effect.map((snapshot) => snapshot as OrchestrationThreadDetailSnapshot | null),
