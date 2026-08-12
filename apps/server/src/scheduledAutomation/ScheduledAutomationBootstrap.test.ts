@@ -131,6 +131,7 @@ it.effect("builds deterministic automation bootstrap input and always skips setu
             nextCursor: null,
             totalCount: 0,
           }),
+        remoteExists: () => Effect.succeed(true),
         fetchRemote: () => Effect.void,
         resolveRemoteTrackingCommit: () => Effect.succeed({ commitSha: "abc123" }),
         createWorktree: (input: { readonly newRefName?: string; readonly path: string | null }) =>
