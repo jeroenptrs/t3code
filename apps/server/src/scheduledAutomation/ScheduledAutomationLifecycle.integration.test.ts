@@ -28,6 +28,8 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { ServerConfig } from "../config.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
 import { OrchestrationEngineLive } from "../orchestration/Layers/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
@@ -174,6 +176,8 @@ for (const restartPoint of [
           ProjectionThreadActivityRepositoryLive,
           ScheduledAutomationRepositoryLive,
         ).pipe(
+          Layer.provideMerge(ThreadBackgroundLiveness.layer),
+          Layer.provideMerge(ThreadPlanProgress.layer),
           Layer.provideMerge(
             Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
               resolve: () => Effect.succeed(null),
@@ -228,6 +232,7 @@ for (const restartPoint of [
             localStatus: driver.status,
             removeWorktree: driver.removeWorktree,
             invalidateLocalStatus: () => Effect.void,
+            remoteExists: () => Effect.succeed(false),
             fetchRemote: () => Effect.die("origin fetch is excluded from this fixture"),
             resolveRemoteTrackingCommit: () =>
               Effect.die("origin resolution is excluded from this fixture"),

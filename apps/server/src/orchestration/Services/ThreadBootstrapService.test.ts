@@ -25,6 +25,8 @@ import { OrchestrationCommandReceiptRepository } from "../../persistence/Service
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import * as ProjectSetupScriptRunner from "../../project/ProjectSetupScriptRunner.ts";
 import * as VcsStatusBroadcaster from "../../vcs/VcsStatusBroadcaster.ts";
+import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import { OrchestrationEngineLive } from "../Layers/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "../Layers/ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "../Layers/ProjectionSnapshotQuery.ts";
@@ -266,6 +268,7 @@ function makeResumptionHarness(
           worktree: { refName: createdWorktree.name, path: createdWorktree.path },
         });
       },
+      remoteExists: () => Effect.succeed(true),
       fetchRemote: () => {
         fetchCount += 1;
         return fetchCount > 1
@@ -361,6 +364,8 @@ describe("ThreadBootstrapService", () => {
       ),
       OrchestrationProjectionSnapshotQueryLive,
     ).pipe(
+      Layer.provideMerge(ThreadBackgroundLiveness.layer),
+      Layer.provideMerge(ThreadPlanProgress.layer),
       Layer.provide(OrchestrationEventStoreLive),
       Layer.provideMerge(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(
@@ -448,6 +453,7 @@ describe("ThreadBootstrapService", () => {
             nextCursor: null,
             totalCount: liveWorktree === null ? 0 : 1,
           }),
+        remoteExists: () => Effect.succeed(true),
         fetchRemote: () => Effect.sync(() => void (fetchCount += 1)),
         resolveRemoteTrackingCommit: () => Effect.succeed({ commitSha: "abc123" }),
         createWorktree: (input: { readonly newRefName?: string; readonly path: string | null }) =>
