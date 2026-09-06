@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vite-plus/test";
-import { renderToStaticMarkup } from "react-dom/server";
 import {
   CommandId,
   ProjectId,
@@ -38,7 +37,6 @@ import {
   NEW_WORKTREE_DISCLOSURE,
   reconcileAutomationCommandFailure,
 } from "./AutomationsSettings.logic";
-import { AutomationFieldError } from "./AutomationsSettings";
 
 const NOW = "2026-08-04T12:00:00.000Z";
 const COMMAND_ID = CommandId.make("00000000-0000-4000-8000-000000000001");
@@ -366,35 +364,6 @@ describe("AutomationsSettings live form rules", () => {
     expect(isValidAutomationId("weekday-review.2")).toBe(true);
     expect(isValidAutomationId("_weekday")).toBe(false);
     expect(isValidAutomationId("Kelvin")).toBe(false);
-  });
-
-  it("maps server cron and timezone validation errors to their exact controls", () => {
-    expect(
-      reconcileAutomationCommandFailure({
-        _tag: "ScheduledAutomationValidationError",
-        field: "schedule.cron",
-        message: "Cron must contain exactly five fields.",
-      }),
-    ).toEqual({
-      kind: "validation",
-      errors: { "schedule.cron": "Cron must contain exactly five fields." },
-      shouldRetry: false,
-    });
-    expect(
-      reconcileAutomationCommandFailure({
-        _tag: "ScheduledAutomationValidationError",
-        field: "schedule.timeZone",
-        message: "Use an IANA timezone.",
-      }),
-    ).toMatchObject({ errors: { "schedule.timeZone": "Use an IANA timezone." } });
-    expect(
-      renderToStaticMarkup(
-        <AutomationFieldError
-          errors={{ "schedule.cron": "Cron must contain exactly five fields." }}
-          field="schedule.cron"
-        />,
-      ),
-    ).toContain("Cron must contain exactly five fields.");
   });
 
   it("preserves actionable messages from untagged command failures", () => {

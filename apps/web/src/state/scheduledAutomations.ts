@@ -13,7 +13,7 @@ import * as Stream from "effect/Stream";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 
-export function compareScheduledAutomationViews(
+function compareScheduledAutomationViews(
   left: ScheduledAutomationView,
   right: ScheduledAutomationView,
 ): number {
@@ -66,7 +66,7 @@ export function applyScheduledAutomationStateStreamItem(
   return { ...current, views: applyScheduledAutomationStreamItem(current.views, item) };
 }
 
-export function projectScheduledAutomationStateStream<E, R>(
+function projectScheduledAutomationStateStream<E, R>(
   stream: Stream.Stream<ScheduledAutomationStreamItem, E, R>,
 ): Stream.Stream<ScheduledAutomationState, E, R> {
   return stream.pipe(

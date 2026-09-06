@@ -70,6 +70,15 @@ retains the branch and all T3 history and appends a deterministic pruned
 activity; ownership, cleanliness, inspection, and removal failures append a
 deterministic blocked activity when that refusal can be recorded safely.
 
+## Database compatibility
+
+Downstream schema changes use `local_scheduled_automation_migrations`, separate
+from upstream's migration ledger. Older fork releases registered the automation
+schema as upstream migration 36 or 41. Startup recognizes that migration by name,
+adopts its existing table, and applies the displaced upstream migration in one
+transaction. Never renumber those historical entries by hand: doing so can skip
+an upstream migration or attempt to recreate the automation table.
+
 ## Future upstream consolidation
 
 Never dual-run the local scheduler and a future upstream scheduler. Cut over in

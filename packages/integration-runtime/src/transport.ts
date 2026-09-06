@@ -321,7 +321,7 @@ export const makeLiveT3Transport = Effect.fn("integrationRuntime.makeLiveT3Trans
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const bootstrapTimeoutMs = options.bootstrapTimeoutMs ?? DEFAULT_BOOTSTRAP_TIMEOUT_MS;
   const httpLayer = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
-  const rpcSessions = yield* makeRpcSessionFactory.pipe(
+  const rpcSessions = yield* makeRpcSessionFactory().pipe(
     Effect.provide(Socket.layerWebSocketConstructorGlobal),
   );
   let closed = false;

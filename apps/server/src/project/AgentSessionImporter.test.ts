@@ -1,3 +1,4 @@
+import * as WorkspaceMutationCoordinator from "../orchestration/Services/WorkspaceMutationCoordinator.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, vi } from "@effect/vitest";
 import {
@@ -930,6 +931,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
           Layer.provide(Layer.mock(GitWorkflowService)({})),
           Layer.provide(Layer.mock(VcsStatusBroadcaster)({})),
           Layer.provide(Layer.mock(TextGeneration)({})),
+          Layer.provide(WorkspaceMutationCoordinator.layer),
           Layer.provide(ServerSettingsService.layerTest()),
         );
 

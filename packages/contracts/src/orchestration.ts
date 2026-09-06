@@ -973,6 +973,8 @@ const ThreadTurnStartBootstrap = Schema.Struct({
   createThread: Schema.optional(ThreadTurnStartBootstrapCreateThread),
   prepareWorktree: Schema.optional(ThreadTurnStartBootstrapPrepareWorktree),
   switchRef: Schema.optional(ThreadTurnStartBootstrapSwitchRef),
+  /** Retain partial bootstrap work so an ingress client can retry the same identity. */
+  retainOnFailure: Schema.optional(Schema.Boolean),
   runSetupScript: Schema.optional(Schema.Boolean),
   /**
    * Definition revision used to idempotently reconcile mutable thread fields

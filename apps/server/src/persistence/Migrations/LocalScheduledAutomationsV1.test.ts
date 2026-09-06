@@ -10,8 +10,8 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { runMigrations } from "../Migrations.ts";
-import * as NodeSqliteClient from "../NodeSqliteClient.ts";
+import { runMigrations, runScheduledAutomationMigrations } from "../Migrations.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeScheduledAutomationRepository } from "../../scheduledAutomation/ScheduledAutomationRepository.ts";
 
 const decodeScheduledAutomationDefinition = Schema.decodeUnknownEffect(
@@ -21,14 +21,14 @@ const decodeScheduledAutomation = Schema.decodeUnknownEffect(ScheduledAutomation
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("041_LocalScheduledAutomationsV1", (it) => {
+layer("LocalScheduledAutomationsV1", (it) => {
   it.effect("creates only the namespaced v1 table with constraints and indexes", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 35 });
       yield* sql`DROP TABLE IF EXISTS local_scheduled_automations_v1`;
-      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 41`;
-      yield* runMigrations({ toMigrationInclusive: 41 });
+      yield* sql`DROP TABLE IF EXISTS local_scheduled_automation_migrations`;
+      yield* runScheduledAutomationMigrations();
 
       const tables = yield* sql<{ readonly name: string }>`
         SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name
@@ -123,7 +123,7 @@ layer("041_LocalScheduledAutomationsV1", (it) => {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 35 });
       yield* sql`DROP TABLE IF EXISTS local_scheduled_automations_v1`;
-      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 41`;
+      yield* sql`DROP TABLE IF EXISTS local_scheduled_automation_migrations`;
       yield* sql`CREATE TABLE automations (opaque BLOB PRIMARY KEY, meaning INTEGER NOT NULL)`;
       yield* sql`INSERT INTO automations (opaque, meaning) VALUES (X'00FF10', 73)`;
       const beforeSchema = yield* sql<{ readonly sql: string }>`
@@ -133,7 +133,7 @@ layer("041_LocalScheduledAutomationsV1", (it) => {
         SELECT hex(opaque) AS opaque, meaning FROM automations
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 41 });
+      yield* runScheduledAutomationMigrations();
 
       const afterSchema = yield* sql<{ readonly sql: string }>`
         SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'automations'
@@ -156,10 +156,10 @@ layer("041_LocalScheduledAutomationsV1", (it) => {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 35 });
       yield* sql`DROP TABLE IF EXISTS local_scheduled_automations_v1`;
-      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 41`;
+      yield* sql`DROP TABLE IF EXISTS local_scheduled_automation_migrations`;
       yield* sql`CREATE TABLE local_scheduled_automations_v1 (id TEXT PRIMARY KEY)`;
 
-      const exit = yield* Effect.exit(runMigrations({ toMigrationInclusive: 41 }));
+      const exit = yield* Effect.exit(runScheduledAutomationMigrations());
       assert.equal(exit._tag, "Failure");
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(local_scheduled_automations_v1)

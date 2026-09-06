@@ -49,16 +49,16 @@ describe("RPC authorization scopes", () => {
   });
 
   it("requires permission to operate on a thread before uploading feedback", () => {
-    expect(requiredScopeForRpcMethod(WS_METHODS.providerUploadFeedback)).toBe(
+    expect(requiredScopesForRpcMethod(WS_METHODS.providerUploadFeedback)[0]).toBe(
       AuthOrchestrationOperateScope,
     );
   });
 
   it("requires write access to import agent session history", () => {
-    expect(requiredScopeForRpcMethod(WS_METHODS.agentSessionsScan)).toBe(
+    expect(requiredScopesForRpcMethod(WS_METHODS.agentSessionsScan)[0]).toBe(
       AuthOrchestrationReadScope,
     );
-    expect(requiredScopeForRpcMethod(WS_METHODS.agentSessionsImport)).toBe(
+    expect(requiredScopesForRpcMethod(WS_METHODS.agentSessionsImport)[0]).toBe(
       AuthOrchestrationOperateScope,
     );
   });

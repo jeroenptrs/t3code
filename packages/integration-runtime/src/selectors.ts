@@ -159,7 +159,10 @@ export function modelEffortOptions(input: {
     for (const model of provider.models) {
       const baseSelections = baseSelectionsForModel({
         integrationDefault: input.integrationDefault,
-        projectDefault: input.project.defaultModelSelection,
+        projectDefault:
+          input.project.defaultModelSelection ??
+          input.config.settings?.defaultModelSelection ??
+          null,
         instanceId: provider.instanceId,
         model: model.slug,
       });

@@ -33,7 +33,7 @@ import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSn
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
-import * as NodeSqliteClient from "../persistence/NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as ProviderRegistry from "../provider/Services/ProviderRegistry.ts";
 import {
   ScheduledAutomationRepository,
@@ -132,6 +132,11 @@ function testLayerWithPersistence<PersistenceError, PersistenceRequirements>(
   persistence: Layer.Layer<SqlClient.SqlClient, PersistenceError, PersistenceRequirements>,
 ) {
   const projections: ProjectionSnapshotQuery.ProjectionSnapshotQueryShape = {
+    getUserInputActivity: () => Effect.die("unused"),
+    getEventReplayStats: () => Effect.die("unused"),
+    getImportedAgentSessionSources: () => Effect.succeed([]),
+    getThreadRuntimeContext: () => Effect.die("unused"),
+    getTurnStartMessage: () => Effect.die("unused"),
     getCommandReadModel: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),
     getShellSnapshot: () => Effect.die("unused"),
@@ -161,6 +166,7 @@ function testLayerWithPersistence<PersistenceError, PersistenceRequirements>(
     getThreadDetailSnapshot: () => Effect.die("unused"),
   };
   const providerRegistry: ProviderRegistry.ProviderRegistryShape = {
+    refreshWorkspaceSnapshot: () => Effect.sync(() => (state.providerAvailable ? [provider] : [])),
     getProviders: Effect.sync(() => (state.providerAvailable ? [provider] : [])),
     refresh: () => Effect.die("unused"),
     refreshInstance: () => Effect.die("unused"),
@@ -210,6 +216,8 @@ function testLayerWithPersistence<PersistenceError, PersistenceRequirements>(
       Layer.mergeAll(
         Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, projections),
         Layer.succeed(OrchestrationEngine.OrchestrationEngineService, {
+          readThreadEvents: () => Stream.empty,
+          getThreadReplayStats: () => Effect.die("unused"),
           readEvents: () => Stream.empty,
           dispatch: () => Effect.die("unused"),
           streamDomainEvents: state.domainEvents,

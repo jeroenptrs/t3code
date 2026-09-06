@@ -456,11 +456,10 @@ export const makeScheduledAutomationService = Effect.gen(function* () {
         const automation = yield* scheduler
           .retry(command.automationId, command.expectedRevision)
           .pipe(
-            Effect.mapError(
-              (error): ManagementError =>
-                error._tag === "PersistenceSqlError" || error._tag === "PersistenceDecodeError"
-                  ? internalError("retry failed occurrence")(error)
-                  : error,
+            Effect.mapError((error): ManagementError =>
+              error._tag === "PersistenceSqlError" || error._tag === "PersistenceDecodeError"
+                ? internalError("retry failed occurrence")(error)
+                : error,
             ),
           );
         return { automation };

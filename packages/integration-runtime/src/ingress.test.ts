@@ -203,6 +203,33 @@ describe("standard ingress", () => {
     }),
   );
 
+  it.effect("inherits the environment model when the project has no override", () =>
+    Effect.gen(function* () {
+      const { transport, commands } = makeTransport();
+      yield* startStandardIngress({
+        request,
+        publicBaseUrl: "https://t3.example.com",
+        transport: {
+          ...transport,
+          getShellSnapshot: () =>
+            Effect.succeed({
+              ...shell,
+              projects: shell.projects.map((project) => ({
+                ...project,
+                defaultModelSelection: null,
+              })),
+            }),
+          getServerConfig: () =>
+            Effect.succeed({
+              ...config,
+              settings: { ...config.settings, defaultModelSelection: modelSelection },
+            }),
+        },
+      });
+      expect(commands[0]).toMatchObject({ modelSelection });
+    }),
+  );
+
   it.effect("prefers the integration model over the project default", () =>
     Effect.gen(function* () {
       const { commands, transport } = makeTransport();

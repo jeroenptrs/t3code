@@ -22,7 +22,10 @@ import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import * as ProjectSetupScriptRunner from "../../project/ProjectSetupScriptRunner.ts";
 import * as VcsStatusBroadcaster from "../../vcs/VcsStatusBroadcaster.ts";
-import { OrchestrationEngineService } from "./OrchestrationEngine.ts";
+import {
+  type OrchestrationEngineShape,
+  OrchestrationEngineService,
+} from "./OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./ProjectionSnapshotQuery.ts";
 import {
   canonicalWorkspaceIdentity,
@@ -60,6 +63,7 @@ function projectSetupScriptCompatibilityDetail(
 export interface ThreadBootstrapServiceShape {
   readonly dispatch: (
     command: BootstrapTurnStartCommand,
+    options?: Parameters<OrchestrationEngineShape["dispatch"]>[1],
   ) => Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError>;
 }
 
@@ -143,40 +147,42 @@ export const makeThreadBootstrapService = Effect.gen(function* () {
       message: `Bootstrap ${phase} projection and receipt truth do not agree.`,
     });
 
-  const appendSetupScriptActivity = Effect.fn("ThreadBootstrapService.appendSetupScriptActivity")(
-    function* (input: {
-      readonly threadId: ThreadId;
-      readonly kind: "setup-script.requested" | "setup-script.started" | "setup-script.failed";
-      readonly summary: string;
-      readonly createdAt: string;
-      readonly payload: Record<string, unknown>;
-      readonly tone: "info" | "error";
-    }) {
-      const { commandId, activityId } = yield* Effect.all({
-        commandId: serverCommandId("setup-script-activity"),
-        activityId: serverEventId,
-      });
-      return yield* orchestrationEngine.dispatch({
-        type: "thread.activity.append",
-        commandId,
-        threadId: input.threadId,
-        activity: {
-          id: activityId,
-          tone: input.tone,
-          kind: input.kind,
-          summary: input.summary,
-          payload: input.payload,
-          turnId: null,
-          createdAt: input.createdAt,
-        },
-        createdAt: input.createdAt,
-      });
-    },
-  );
-
   const dispatch: ThreadBootstrapServiceShape["dispatch"] = Effect.fn(
     "ThreadBootstrapService.dispatch",
-  )(function* (command) {
+  )(function* (command, options) {
+    const dispatchCommand: OrchestrationEngineShape["dispatch"] = (input) =>
+      orchestrationEngine.dispatch(input, options);
+    const appendSetupScriptActivity = Effect.fn("ThreadBootstrapService.appendSetupScriptActivity")(
+      function* (input: {
+        readonly threadId: ThreadId;
+        readonly kind: "setup-script.requested" | "setup-script.started" | "setup-script.failed";
+        readonly summary: string;
+        readonly createdAt: string;
+        readonly payload: Record<string, unknown>;
+        readonly tone: "info" | "error";
+      }) {
+        const { commandId, activityId } = yield* Effect.all({
+          commandId: serverCommandId("setup-script-activity"),
+          activityId: serverEventId,
+        });
+        return yield* dispatchCommand({
+          type: "thread.activity.append",
+          commandId,
+          threadId: input.threadId,
+          activity: {
+            id: activityId,
+            tone: input.tone,
+            kind: input.kind,
+            summary: input.summary,
+            payload: input.payload,
+            turnId: null,
+            createdAt: input.createdAt,
+          },
+          createdAt: input.createdAt,
+        });
+      },
+    );
+
     const bootstrap = command.bootstrap;
     if (
       bootstrap?.prepareWorktree?.targetPath !== undefined &&
@@ -210,7 +216,7 @@ export const makeThreadBootstrapService = Effect.gen(function* () {
           );
           const receipt = yield* readAcceptedReceipt(commandId, command.threadId);
           if (Option.isSome(receipt)) return yield* phaseConflict("definition-metadata");
-          yield* orchestrationEngine.dispatch({
+          yield* dispatchCommand({
             type: "thread.meta.update",
             commandId,
             threadId: command.threadId,
@@ -227,7 +233,7 @@ export const makeThreadBootstrapService = Effect.gen(function* () {
           );
           const receipt = yield* readAcceptedReceipt(commandId, command.threadId);
           if (Option.isSome(receipt)) return yield* phaseConflict("definition-runtime-mode");
-          yield* orchestrationEngine.dispatch({
+          yield* dispatchCommand({
             type: "thread.runtime-mode.set",
             commandId,
             threadId: command.threadId,
@@ -244,7 +250,7 @@ export const makeThreadBootstrapService = Effect.gen(function* () {
           );
           const receipt = yield* readAcceptedReceipt(commandId, command.threadId);
           if (Option.isSome(receipt)) return yield* phaseConflict("definition-interaction-mode");
-          yield* orchestrationEngine.dispatch({
+          yield* dispatchCommand({
             type: "thread.interaction-mode.set",
             commandId,
             threadId: command.threadId,
@@ -282,7 +288,7 @@ export const makeThreadBootstrapService = Effect.gen(function* () {
         }
         if (activityExists) return;
         const failedAt = yield* nowIso;
-        yield* orchestrationEngine.dispatch({
+        yield* dispatchCommand({
           type: "thread.activity.append",
           commandId: failureCommandId,
           threadId: command.threadId,
@@ -428,7 +434,7 @@ export const makeThreadBootstrapService = Effect.gen(function* () {
           }
         }
         if (Option.isNone(thread)) {
-          yield* orchestrationEngine.dispatch({
+          yield* dispatchCommand({
             type: "thread.create",
             commandId: createCommandId,
             threadId: command.threadId,
@@ -605,7 +611,7 @@ export const makeThreadBootstrapService = Effect.gen(function* () {
               message: "The bootstrap thread metadata points at a different Git worktree.",
             });
           }
-          yield* orchestrationEngine.dispatch({
+          yield* dispatchCommand({
             type: "thread.meta.update",
             commandId: metadataCommandId,
             threadId: command.threadId,
@@ -651,7 +657,7 @@ export const makeThreadBootstrapService = Effect.gen(function* () {
       if (Option.isSome(startReceipt)) {
         return { sequence: startReceipt.value.resultSequence };
       }
-      return yield* orchestrationEngine.dispatch({
+      return yield* dispatchCommand({
         ...finalTurnStartCommand,
         commandId: startCommandId,
       });

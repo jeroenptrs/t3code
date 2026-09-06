@@ -31,7 +31,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { usePaginatedBranches } from "../../state/queries";
-import { primaryServerProvidersAtom } from "../../state/server";
+import { primaryServerProvidersAtom, primaryServerSettingsAtom } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   INITIAL_SCHEDULED_AUTOMATION_HEALTH,
@@ -172,7 +172,7 @@ function selectedModelDescriptors(
   );
 }
 
-export function AutomationFieldError({
+function AutomationFieldError({
   errors,
   field,
 }: {
@@ -913,7 +913,7 @@ export function AutomationRow(props: {
   );
 }
 
-export function AutomationsSettings(props: AutomationsSettingsProps) {
+function AutomationsSettings(props: AutomationsSettingsProps) {
   const [editor, setEditor] = useState<{
     open: boolean;
     existing: ScheduledAutomation | null;
@@ -990,8 +990,8 @@ export function AutomationsSettings(props: AutomationsSettingsProps) {
         }
       >
         <div className="rounded-xl px-3 pb-3 text-sm text-muted-foreground sm:px-4">
-          Create durable scheduled prompts for this environment. Definitions remain disabled until
-          enabled, and unattended setup scripts are always skipped in v1.
+          Run prompts on a schedule in this environment. New automations start disabled. Scheduled
+          runs skip project setup scripts.
         </div>
         {actionError ? (
           <div
@@ -1061,9 +1061,16 @@ export function AutomationsSettingsPanel() {
   const environmentId = environment?.environmentId ?? null;
   const dispatchAutomation = useAtomCommand(scheduledAutomationEnvironment.dispatch);
   const allProjects = useProjects();
+  const settings = useAtomValue(primaryServerSettingsAtom);
   const projects = useMemo(
-    () => allProjects.filter((project) => project.environmentId === environmentId),
-    [allProjects, environmentId],
+    () =>
+      allProjects
+        .filter((project) => project.environmentId === environmentId)
+        .map((project) => ({
+          ...project,
+          defaultModelSelection: project.defaultModelSelection ?? settings.defaultModelSelection,
+        })),
+    [allProjects, environmentId, settings.defaultModelSelection],
   );
   const providers = useAtomValue(primaryServerProvidersAtom);
   const result = useAtomValue(

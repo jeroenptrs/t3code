@@ -13,7 +13,7 @@ starts, continue working in T3 Code.
   message's thread.
 - Each invocation targets the configured T3 project and its current checkout.
 - The integration-wide model selection is used when configured; otherwise the
-  project's default model selection is used.
+  project's default model selection is used, including an inherited environment default.
 - Empty prompts and missing or unavailable project/model configuration fail
   without creating a conversation.
 
@@ -103,7 +103,7 @@ see the [Slack ingress operations runbook](../../operations/slack-ingress.md).
 
 To make the linked T3 conversation UI available without a T3 pairing prompt, deploy the public web
 origin behind a reverse proxy that supplies a separate narrow portal credential. See
-[Deploying the Slack conversation portal](../../integrations/slack-conversation-portal-deployment.md).
+[Deploying the Slack conversation portal](../slack-conversation-portal-deployment.md).
 
 `/live` reports whether the process is alive. `/ready` becomes successful after
 Slack Socket Mode connects, T3 authentication validates with exactly the two
@@ -124,11 +124,10 @@ transactional. If a dispatch result is ambiguous, the integration checks T3's
 thread snapshot before reporting success. If T3 cannot be reached to verify the
 result, Slack shows an unverified message and the public T3 URL.
 
-New-worktree starts use the server's WebSocket bootstrap workflow. A retry never
-plain-starts a partially prepared worktree thread, so an interrupted bootstrap
-may temporarily report an unverified result while T3 finishes or cleans up. The
-bootstrap can reuse its deterministic branch or worktree on retry, but it does
-not yet provide the HTTP current-workspace path's phase-by-phase replay guarantee.
+New-worktree starts retain partial work after a failed bootstrap so a retry can
+resume the same conversation and worktree. Interrupted starts may report an
+unverified result until T3 can confirm the outcome. Setup scripts do not have a
+durable completion receipt, so check their effects before retrying a failed start.
 Partial Current retries retain the project, model, branch, and exact workspace
 mapping recorded by the deterministic T3 conversation; reopening setup cannot
 retarget that conversation to a different checkout.

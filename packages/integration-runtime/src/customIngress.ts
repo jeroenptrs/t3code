@@ -267,6 +267,7 @@ export const startCustomIngress = Effect.fn("integrationRuntime.startCustomIngre
             ...(config.settings.newWorktreesStartFromOrigin ? { startFromOrigin: true } : {}),
           },
           runSetupScript: true,
+          retainOnFailure: true,
         },
       };
       const result = yield* input.transport.dispatchBootstrap(command).pipe(Effect.result);

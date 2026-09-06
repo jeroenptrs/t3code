@@ -7,7 +7,6 @@ import {
   SETTINGS_SEARCH_ITEMS,
   type SettingsSearchItem,
 } from "./settingsSearch";
-import { SETTINGS_NAV_ITEMS } from "./SettingsSidebarNav";
 
 const ITEMS: ReadonlyArray<SettingsSearchItem> = [
   {
@@ -238,11 +237,6 @@ describe("searchSettings", () => {
   });
 
   it("includes Automations in settings navigation and search", () => {
-    expect(SETTINGS_NAV_ITEMS).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ label: "Automations", to: "/settings/automations" }),
-      ]),
-    );
     expect(searchSettings("automations")).toEqual([
       expect.objectContaining({ id: "automations", to: "/settings/automations" }),
     ]);

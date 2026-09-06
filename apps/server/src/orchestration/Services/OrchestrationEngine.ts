@@ -90,16 +90,6 @@ export interface OrchestrationEngineShape {
   >;
 
   /**
-   * Acquire a domain-event subscription before starting a consumer.
-   * The subscription is ready when this effect returns and closes with the scope.
-   */
-  readonly subscribeDomainEvents: Effect.Effect<
-    Stream.Stream<OrchestrationEvent>,
-    never,
-    Scope.Scope
-  >;
-
-  /**
    * The latest sequence reflected in the engine's authoritative command read
    * model (0 if none). Used to gauge how far behind a resuming client is before
    * choosing between an incremental replay and a fresh projected snapshot.

@@ -1,3 +1,4 @@
+import { CheckpointStore } from "../checkpointing/CheckpointStore.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -14,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -130,9 +132,16 @@ for (const restartPoint of [
       expect(firstIdentity._tag).toBe("Success");
       if (firstIdentity._tag === "Failure") return;
       const acceptedTurnStartCommandIds: string[] = [];
-      const runtimeEvents = yield* PubSub.unbounded<ProviderRuntimeEvent>();
+      const providerSubscribed = yield* Deferred.make<void>();
+      const runtimeEvents = yield* PubSub.unbounded<{
+        readonly event: ProviderRuntimeEvent;
+        readonly enqueued: Deferred.Deferred<void>;
+      }>();
       const unsupportedProviderCall = () => Effect.die("unsupported fake provider call") as never;
       const providerService = ProviderService.of({
+        compactThread: () => Effect.die("unused"),
+        assertConversationRollbackSupported: () => Effect.void,
+        uploadFeedback: () => Effect.die("unused"),
         startSession: () => unsupportedProviderCall(),
         sendTurn: () => unsupportedProviderCall(),
         interruptTurn: () => unsupportedProviderCall(),
@@ -156,7 +165,20 @@ for (const restartPoint of [
         },
         rollbackConversation: () => unsupportedProviderCall(),
         get streamEvents() {
-          return Stream.fromPubSub(runtimeEvents);
+          return Stream.unwrap(
+            Effect.gen(function* () {
+              const subscription = yield* PubSub.subscribe(runtimeEvents);
+              yield* Deferred.succeed(providerSubscribed, undefined);
+              return Stream.fromSubscription(subscription).pipe(
+                Stream.flatMap(({ event, enqueued }) =>
+                  Stream.concat(
+                    Stream.succeed(event),
+                    Stream.fromEffect(Deferred.succeed(enqueued, undefined)).pipe(Stream.drain),
+                  ),
+                ),
+              );
+            }),
+          );
         },
       });
       let restartArmed = true;
@@ -176,6 +198,7 @@ for (const restartPoint of [
           ProjectionThreadActivityRepositoryLive,
           ScheduledAutomationRepositoryLive,
         ).pipe(
+          Layer.provideMerge(Layer.mock(CheckpointStore)({})),
           Layer.provideMerge(ThreadBackgroundLiveness.layer),
           Layer.provideMerge(ThreadPlanProgress.layer),
           Layer.provideMerge(
@@ -413,6 +436,7 @@ for (const restartPoint of [
         );
         const ingestion = Context.get(ingestionContext, ProviderRuntimeIngestionService);
         yield* ingestion.start();
+        yield* Deferred.await(providerSubscribed);
         yield* engine.dispatch({
           type: "thread.session.set",
           commandId: CommandId.make(`${firstThreadId}:command:fixture-session-ready`),
@@ -430,8 +454,9 @@ for (const restartPoint of [
         });
         const emitProviderEvent = Effect.fn("ScheduledAutomationLifecycleTest.emitProviderEvent")(
           function* (event: ProviderRuntimeEvent) {
-            yield* PubSub.publish(runtimeEvents, event);
-            yield* Effect.yieldNow;
+            const enqueued = yield* Deferred.make<void>();
+            yield* PubSub.publish(runtimeEvents, { event, enqueued });
+            yield* Deferred.await(enqueued);
             yield* ingestion.drain;
           },
         );

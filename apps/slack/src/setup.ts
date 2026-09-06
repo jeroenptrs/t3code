@@ -93,7 +93,11 @@ export const loadSetupCatalog = Effect.fn("slack.loadSetupCatalog")(function* (i
     projects: projectOptions(shell),
     refs,
     models: modelEffortOptions({ config, project, integrationDefault: input.integrationDefault }),
-    defaultModelSelection: input.integrationDefault ?? project.defaultModelSelection,
+    defaultModelSelection:
+      input.integrationDefault ??
+      project.defaultModelSelection ??
+      config.settings?.defaultModelSelection ??
+      null,
   } satisfies SetupCatalog;
 });
 

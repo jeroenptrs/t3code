@@ -1,8 +1,9 @@
+import { randomUUID } from "../../lib/utils";
 import {
   SCHEDULED_AUTOMATION_ABANDONED_CODE,
   ProviderInstanceId,
   isScheduledAutomationProviderEligible,
-  type CommandId,
+  CommandId,
   type EnvironmentId,
   type ModelSelection,
   type OrchestrationProject,
@@ -18,7 +19,6 @@ import {
 } from "@t3tools/contracts";
 import { nextScheduledAutomationOccurrence } from "@t3tools/contracts";
 import * as Result from "effect/Result";
-import { newCommandId } from "../../lib/utils";
 
 export interface AutomationProjectOption extends Pick<
   OrchestrationProject,
@@ -185,7 +185,7 @@ export function buildAutomationSaveCommand(input: {
   readonly now: string;
   readonly commandId?: CommandId;
 }): ScheduledAutomationCommand {
-  const commandId = input.commandId ?? newCommandId();
+  const commandId = input.commandId ?? CommandId.make(randomUUID());
   return input.existing
     ? {
         type: "scheduledAutomation.update",
@@ -265,7 +265,7 @@ export function buildAutomationRevisionCommand(
   now: string,
 ): ScheduledAutomationCommand {
   const common = {
-    commandId: newCommandId(),
+    commandId: CommandId.make(randomUUID()),
     automationId: automation.id,
     expectedRevision: automation.revision,
     createdAt: now as ScheduledAutomation["updatedAt"],

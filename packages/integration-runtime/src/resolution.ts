@@ -76,7 +76,11 @@ export const resolveStandardIngressTarget = Effect.fn(
       new IngressFailure("project_not_found", "The configured T3 project no longer exists."),
     );
   }
-  const modelSelection = input.request.target.modelSelection ?? project.defaultModelSelection;
+  const modelSelection =
+    input.request.target.modelSelection ??
+    project.defaultModelSelection ??
+    input.config.settings?.defaultModelSelection ??
+    null;
   if (modelSelection === null || !isUsableModelSelection(modelSelection, input.config.providers)) {
     return yield* Effect.fail(
       new IngressFailure(
