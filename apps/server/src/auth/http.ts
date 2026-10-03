@@ -17,7 +17,6 @@ import {
   EnvironmentScopeRequiredError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
-  ENTRA_SIGN_IN_CALLBACK_PATH,
   ENTRA_SIGN_IN_ERROR_PARAM,
   ENTRA_SIGN_IN_RETURN_TO_PARAM,
   ENTRA_SIGN_IN_START_PATH,
@@ -30,14 +29,12 @@ import type {
   AuthUserId,
   DpopFailureReason,
 } from "@t3tools/contracts";
-import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
 import { parseOAuthScope } from "@t3tools/shared/oauthScope";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -645,9 +642,10 @@ export const layer = HttpApiBuilder.group(
             yield* requireEnvironmentScope(AuthAccessReadScope);
             return yield* users.list();
           },
-          Effect.catchTag("UserRegistryPersistenceError", (error) =>
-            failEnvironmentInternal("users_load_failed", error),
-          ),
+          Effect.catchTags({
+            UserRegistryPersistenceError: (error) =>
+              failEnvironmentInternal("users_load_failed", error),
+          }),
         ),
       )
       .handle(
@@ -658,9 +656,10 @@ export const layer = HttpApiBuilder.group(
             yield* requireEnvironmentScope(AuthAccessReadScope);
             return yield* users.listAccessChanges(args.query);
           },
-          Effect.catchTag("UserRegistryPersistenceError", (error) =>
-            failEnvironmentInternal("users_load_failed", error),
-          ),
+          Effect.catchTags({
+            UserRegistryPersistenceError: (error) =>
+              failEnvironmentInternal("users_load_failed", error),
+          }),
         ),
       )
       .handle(
@@ -734,17 +733,17 @@ const entraSignInStartRoute = HttpRouter.add(
         httpOnly: true,
         secure: entra.secureCookies,
         sameSite: "lax",
-        path: entra.flowCookiePath,
+        path: entra.callbackPath,
         maxAge: started.flowCookieMaxAge,
       }),
     );
   }).pipe(
-    Effect.catchTag("EntraSignInDisabledError", () =>
-      Effect.succeed(HttpServerResponse.text("Not Found", { status: 404 })),
-    ),
-    Effect.catchTag("CookiesError", () =>
-      Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
-    ),
+    Effect.catchTags({
+      EntraSignInDisabledError: () =>
+        Effect.succeed(HttpServerResponse.text("Not Found", { status: 404 })),
+      CookiesError: () =>
+        Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
+    }),
   ),
 );
 
@@ -752,11 +751,8 @@ const entraSignInStartRoute = HttpRouter.add(
  * Finishes sign-in: sets the session cookie and returns to the requested
  * page, or lands on `/?signInError=<reason>` when anything fails.
  */
-const entraSignInCallbackRoute = HttpRouter.add(
-  "GET",
-  ENTRA_SIGN_IN_CALLBACK_PATH,
+const handleEntraSignInCallback = (entra: EntraSignIn.EntraSignIn["Service"]) =>
   Effect.gen(function* () {
-    const entra = yield* EntraSignIn.EntraSignIn;
     const sessions = yield* SessionStore.SessionStore;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const params = Option.match(HttpServerRequest.toURL(request), {
@@ -807,13 +803,25 @@ const entraSignInCallbackRoute = HttpRouter.add(
       httpOnly: true,
       secure: entra.secureCookies,
       sameSite: "lax",
-      path: entra.flowCookiePath,
+      path: entra.callbackPath,
     });
   }).pipe(
-    Effect.catchTag("CookiesError", () =>
-      Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
-    ),
-  ),
+    Effect.catchTags({
+      CookiesError: () =>
+        Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
+    }),
+  );
+
+/**
+ * Registered on the configured callback path. The router tries static routes
+ * before the `*` static and SPA fallback, so the callback is answered by the
+ * server even outside `/api`.
+ */
+const entraSignInCallbackRoute = Layer.unwrap(
+  Effect.gen(function* () {
+    const entra = yield* EntraSignIn.EntraSignIn;
+    return HttpRouter.add("GET", entra.callbackPath, handleEntraSignInCallback(entra));
+  }),
 );
 
 export const layerEntraSignInRoute = Layer.mergeAll(
