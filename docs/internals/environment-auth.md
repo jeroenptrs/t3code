@@ -31,6 +31,15 @@ extra authority: [every RPC declares a required
 scope](../../apps/server/src/auth/RpcAuthorization.ts), and the WebSocket RPC
 group's `RpcScopeAuthorization` middleware checks it before any handler runs.
 
+A socket checks RPCs against the scopes it was opened with, so it must not
+outlive them. The [socket route](../../apps/server/src/ws.ts) races the
+connection against `EnvironmentAuth.awaitSessionAccessChange` and closes it when
+the session is revoked or its user's access changes; the client reconnects and
+is authenticated again. The signal comes from in-process streams, which the
+host CLI, running as a separate process, cannot publish to. Its user commands
+only grant access, so a socket that misses one holds less than it should. A
+session revoked from the CLI keeps its open sockets until they reconnect.
+
 Desktop restarts forget the previous local bearer token, so its reusable
 bootstrap grant replaces earlier sessions for the same subject and method.
 Revocation and insertion share a [database
@@ -56,6 +65,43 @@ Normal credentials keep precedence. A rejected normal credential never falls
 back to the reusable credential. OAuth exchanges create ordinary local bearer
 or DPoP children with normal expiry and revocation. The reusable cookie expires
 after 30 days.
+
+## Portal users
+
+When an operator configures Microsoft Entra ID, people sign in to the web
+portal as themselves. Entra proves identity only. Access comes from the local
+[user registry](../../apps/server/src/auth/UserRegistry.ts): a first sign-in
+creates a pending user with no access, and an administrator approves them with
+a role that maps to a fixed scope set. Users are keyed by tenant and object ID;
+email and display name are labels and never authorize anything.
+
+The local record is authoritative, so permissions are not frozen into the
+browser credential. A [user-bound session](../../apps/server/src/auth/SessionStore.ts)
+stores no scopes of its own. Session lookup already reads the session row on
+every request; it joins the user in that same query and derives scopes from
+the user's current status and role. A role change or disable therefore applies
+to the next HTTP request at no extra cost, and to open sockets through the
+mechanism above. A pending or disabled user stays authenticated with no scopes,
+so the client can show why it sees nothing. User sessions expire after a fixed
+lifetime, and their sockets close at expiry instead of outliving it.
+
+The [sign-in flow](../../apps/server/src/auth/EntraSignIn.ts) builds its
+redirect URI from the configured public URL, never from request or forwarded
+headers. Behind a TLS-terminating platform those headers are whatever the
+client sent.
+
+With Entra on, a browser cookie session must belong to a user. Pairing and the
+reusable dev credential can no longer create a browser session, and existing
+pairing-derived browser sessions stop authenticating. Pairing credentials and
+the token exchange keep working because they are how services such as Slack
+obtain bearer credentials, and only an access administrator or the host can
+mint them. The rule keys on the session method, not on headers or client
+labels, which a client controls.
+
+Changing a user's access needs `access:write` and a session that is itself a
+user, so the audit log can name who made the change. The registry, not the
+transport, refuses to remove the last active administrator; the host CLI is
+the recovery path.
 
 ## The environment is the filesystem boundary
 

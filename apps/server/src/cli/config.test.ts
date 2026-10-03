@@ -21,7 +21,7 @@ import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
-import { resolveServerConfig } from "./config.ts";
+import { EntraSignInConfig, resolveServerConfig } from "./config.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
@@ -1140,3 +1140,36 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       }),
   );
 });
+
+it.effect("Entra sign-in is configured all at once or not at all", () =>
+  Effect.gen(function* () {
+    const load = (env: Record<string, string>) =>
+      EntraSignInConfig.parse(ConfigProvider.fromEnv({ env })).pipe(Effect.result);
+    const complete = {
+      T3CODE_ENTRA_TENANT_ID: "8F2C3A1E-1B2C-4D5E-8F90-123456789ABC",
+      T3CODE_ENTRA_CLIENT_ID: "11111111-2222-4333-8444-555555555555",
+      T3CODE_ENTRA_CLIENT_SECRET: "secret",
+      T3CODE_PUBLIC_URL: "https://t3.example.com/",
+    };
+
+    expect(yield* load({})).toMatchObject({ _tag: "Success", success: undefined });
+    const configured = yield* load(complete);
+    assert(configured._tag === "Success" && configured.success !== undefined);
+    expect(configured.success.tenantId).toBe("8f2c3a1e-1b2c-4d5e-8f90-123456789abc");
+    expect(configured.success.publicUrl.toString()).toBe("https://t3.example.com/");
+    expect(Redacted.value(configured.success.clientSecret)).toBe("secret");
+
+    const { T3CODE_ENTRA_CLIENT_SECRET: _secret, ...partial } = complete;
+    for (const env of [
+      partial,
+      { ...complete, T3CODE_ENTRA_TENANT_ID: "contoso.onmicrosoft.com" },
+      { ...complete, T3CODE_PUBLIC_URL: "http://t3.example.com" },
+      { ...complete, T3CODE_PUBLIC_URL: "https://t3.example.com/portal" },
+    ]) {
+      expect((yield* load(env))._tag).toBe("Failure");
+    }
+    expect((yield* load({ ...complete, T3CODE_PUBLIC_URL: "http://localhost:3773" }))._tag).toBe(
+      "Success",
+    );
+  }),
+);

@@ -20,10 +20,22 @@ import {
   AuthRevokePairingLinkInput,
   AuthEnvironmentScope,
   AuthTokenExchangeRequest,
-  AuthSessionState,
   AuthWebSocketTicketResult,
   ServerAuthSessionMethod,
 } from "./auth.ts";
+import {
+  AuthSessionState,
+  AuthSignOutResult,
+  AuthUser,
+  AuthUserAccessChange,
+  AuthUserAccessChangesQuery,
+  AuthUserApproveInput,
+  AuthUserChangeRoleInput,
+  AuthUserEnableInput,
+  AuthUserId,
+  AuthUserSessionsRevokeResult,
+  AuthUserTargetInput,
+} from "./authUser.ts";
 import {
   ExecutionEnvironmentDescriptor,
   ORCHESTRATION_PROTOCOL_HEADER,
@@ -87,8 +99,13 @@ export const EnvironmentAuthInvalidReason = Schema.Literals([
 ]);
 export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.Type;
 
+/**
+ * - `user_session_required`: changing user access needs a session signed in as
+ *   a user, so the audit log can name who did it
+ */
 export const EnvironmentOperationForbiddenReason = Schema.Literals([
   "current_session_revoke_not_allowed",
+  "user_session_required",
 ]);
 export type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
 
@@ -103,6 +120,10 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "pairing_link_revoke_failed",
   "client_sessions_load_failed",
   "client_session_revoke_failed",
+  "sign_out_failed",
+  "users_load_failed",
+  "user_access_change_failed",
+  "user_sessions_revoke_failed",
   "project_snapshot_failed",
   "project_mutation_failed",
   "orchestration_snapshot_failed",
@@ -205,7 +226,10 @@ export class EnvironmentInternalError extends Schema.TaggedError<EnvironmentInte
   }
 }
 
-export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
+export const EnvironmentResourceNotFoundReason = Schema.Literals([
+  "thread_not_found",
+  "user_not_found",
+]);
 export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
 
 export class EnvironmentResourceNotFoundError extends Schema.TaggedError<EnvironmentResourceNotFoundError>()(
@@ -223,6 +247,41 @@ export class EnvironmentResourceNotFoundError extends Schema.TaggedError<Environ
 
   override get message(): string {
     return `The environment could not find what this request named (${this.reason}).`;
+  }
+}
+
+/**
+ * The user registry refused an access change.
+ * - `invalid_transition`: the user's status does not allow it (approving an
+ *   active user, changing a pending user's role, enabling an enabled user)
+ * - `role_required`: enabling a user who was never approved needs a role
+ * - `last_administrator`: the change would leave no active administrator
+ */
+export const EnvironmentUserAccessConflictReason = Schema.Literals([
+  "invalid_transition",
+  "role_required",
+  "last_administrator",
+]);
+export type EnvironmentUserAccessConflictReason = typeof EnvironmentUserAccessConflictReason.Type;
+
+export class EnvironmentUserAccessConflictError extends Schema.TaggedError<EnvironmentUserAccessConflictError>()(
+  "EnvironmentUserAccessConflictError",
+  {
+    code: Schema.Literal("user_access_conflict"),
+    reason: EnvironmentUserAccessConflictReason,
+    userId: AuthUserId,
+    traceId: TrimmedNonEmptyString,
+  },
+  { httpApiStatus: 409 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(EnvironmentUserAccessConflictError)(this, {
+      status: 409,
+    });
+  }
+
+  override get message(): string {
+    return `The environment refused this user access change (${this.reason}).`;
   }
 }
 
@@ -337,6 +396,13 @@ const EnvironmentSessionRevokeErrors = [
   EnvironmentOperationForbiddenError,
   EnvironmentInternalError,
 ] as const;
+const EnvironmentUserMutationErrors = [
+  EnvironmentScopeRequiredError,
+  EnvironmentOperationForbiddenError,
+  EnvironmentResourceNotFoundError,
+  EnvironmentUserAccessConflictError,
+  EnvironmentInternalError,
+] as const;
 const EnvironmentProjectSnapshotErrors = [
   EnvironmentScopeRequiredError,
   EnvironmentInternalError,
@@ -359,6 +425,8 @@ const EnvironmentProjectMutationErrors = [
 export interface EnvironmentSessionPrincipalShape {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
+  /** Set for sessions issued by Entra sign-in. */
+  readonly userId?: AuthUserId;
   readonly method: ServerAuthSessionMethod;
   readonly scopes: ReadonlySet<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
@@ -505,6 +573,70 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       headers: OptionalBearerHeaders,
       success: AuthOtherClientSessionsRevokeResult,
       error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    // Revokes the presented session and clears the browser cookie. Succeeds
+    // without a valid credential so a client can always reach signed-out.
+    HttpApiEndpoint.post("signOut", "/api/auth/sign-out", {
+      headers: OptionalBearerHeaders,
+      success: AuthSignOutResult,
+      error: [EnvironmentInternalError],
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get("users", "/api/auth/users", {
+      headers: OptionalBearerHeaders,
+      success: Schema.Array(AuthUser),
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("userAccessChanges", "/api/auth/users/access-changes", {
+      headers: OptionalBearerHeaders,
+      query: AuthUserAccessChangesQuery,
+      success: Schema.Array(AuthUserAccessChange),
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("approveUser", "/api/auth/users/approve", {
+      headers: OptionalBearerHeaders,
+      payload: AuthUserApproveInput,
+      success: AuthUser,
+      error: EnvironmentUserMutationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("changeUserRole", "/api/auth/users/change-role", {
+      headers: OptionalBearerHeaders,
+      payload: AuthUserChangeRoleInput,
+      success: AuthUser,
+      error: EnvironmentUserMutationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("disableUser", "/api/auth/users/disable", {
+      headers: OptionalBearerHeaders,
+      payload: AuthUserTargetInput,
+      success: AuthUser,
+      error: EnvironmentUserMutationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("enableUser", "/api/auth/users/enable", {
+      headers: OptionalBearerHeaders,
+      payload: AuthUserEnableInput,
+      success: AuthUser,
+      error: EnvironmentUserMutationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("revokeUserSessions", "/api/auth/users/revoke-sessions", {
+      headers: OptionalBearerHeaders,
+      payload: AuthUserTargetInput,
+      success: AuthUserSessionsRevokeResult,
+      error: EnvironmentUserMutationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 

@@ -3852,9 +3852,18 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             ),
           ),
         );
+        // A socket keeps the scopes it was opened with. When the session is
+        // revoked or its user's access changes, close it so the client
+        // reconnects under its current access.
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
-          () => rpcWebSocketHttpEffect,
+          () =>
+            Effect.raceFirst(
+              rpcWebSocketHttpEffect,
+              serverAuth
+                .awaitSessionAccessChange(session)
+                .pipe(Effect.as(HttpServerResponse.empty())),
+            ),
           () => sessions.markDisconnected(session.sessionId),
         );
       }).pipe(

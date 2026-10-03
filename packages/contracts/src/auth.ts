@@ -135,6 +135,8 @@ export const AuthEnvironmentBootstrapTokenType =
  *   once pairing is complete
  * - `sessionCookieName`: cookie name clients should expect when
  *   `browser-session-cookie` is in use
+ * - `entraSignIn`: browsers sign in with Microsoft Entra ID instead of pairing
+ *   (absent from servers that predate it)
  *
  * This descriptor is intentionally capability-oriented. It lets clients choose
  * the right UX without embedding server-specific auth logic or assuming a
@@ -145,6 +147,7 @@ export const ServerAuthDescriptor = Schema.Struct({
   bootstrapMethods: Schema.Array(ServerAuthBootstrapMethod),
   sessionMethods: Schema.Array(ServerAuthSessionMethod),
   sessionCookieName: TrimmedNonEmptyString,
+  entraSignIn: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerAuthDescriptor = typeof ServerAuthDescriptor.Type;
 
@@ -344,12 +347,3 @@ export const AuthCreatePairingCredentialInput = Schema.Struct({
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
-
-export const AuthSessionState = Schema.Struct({
-  authenticated: Schema.Boolean,
-  auth: ServerAuthDescriptor,
-  scopes: Schema.optionalKey(AuthEnvironmentScopes),
-  sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
-  expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
-});
-export type AuthSessionState = typeof AuthSessionState.Type;

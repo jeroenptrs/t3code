@@ -113,7 +113,12 @@ import * as HeapSnapshot from "./observability/HeapSnapshot.ts";
 import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
-import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./auth/http.ts";
+import {
+  authHttpApiLayer,
+  entraSignInRouteLayer,
+  environmentAuthenticatedAuthLayer,
+} from "./auth/http.ts";
+import * as EntraSignIn from "./auth/EntraSignIn.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -429,7 +434,8 @@ const ServerEnvironmentLayerLive = ServerEnvironment.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
 );
 
-const AuthLayerLive = EnvironmentAuth.layer.pipe(
+const AuthLayerLive = EntraSignIn.layer.pipe(
+  Layer.provideMerge(EnvironmentAuth.layer),
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provide(ServerEnvironmentLayerLive),
   Layer.provide(ServerSecretStore.layer),
@@ -643,6 +649,7 @@ const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
+    entraSignInRouteLayer,
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
     attachmentUploadRouteLayer,

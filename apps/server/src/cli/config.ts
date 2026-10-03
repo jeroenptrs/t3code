@@ -6,7 +6,7 @@ import {
 } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
-import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
+import { DesktopBackendBootstrap, EntraGuid, PortSchema } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -184,6 +184,88 @@ const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
   Config.map(Option.getOrUndefined),
 );
 
+const configError = (message: string) =>
+  new Config.ConfigError(new Schema.SchemaError(new SchemaIssue.InvalidValue({ message })));
+
+const optionalString = (name: string) =>
+  Config.String(name).pipe(
+    Config.option,
+    Config.map(Option.map((value) => value.trim())),
+    Config.map(Option.filter((value) => value.length > 0)),
+    Config.map(Option.getOrUndefined),
+  );
+
+const decodeEntraGuid = Schema.decodeUnknownOption(EntraGuid);
+
+const isLoopbackHostname = (hostname: string) =>
+  hostname === "localhost" || hostname === "[::1]" || hostname.startsWith("127.");
+
+/**
+ * Entra sign-in is on when all four variables are set and off when none are.
+ * Anything in between is a startup error rather than a silently open portal.
+ */
+export const EntraSignInConfig = Config.all({
+  tenantId: optionalString("T3CODE_ENTRA_TENANT_ID"),
+  clientId: optionalString("T3CODE_ENTRA_CLIENT_ID"),
+  clientSecret: Config.Redacted("T3CODE_ENTRA_CLIENT_SECRET").pipe(
+    Config.option,
+    Config.map(Option.filter((secret) => Redacted.value(secret).trim().length > 0)),
+    Config.map(Option.getOrUndefined),
+  ),
+  publicUrl: optionalString("T3CODE_PUBLIC_URL"),
+}).pipe(
+  Config.mapEffect(
+    (raw): Effect.Effect<ServerConfig.EntraSignInConfig | undefined, Config.ConfigError> => {
+      const missing = [
+        raw.tenantId === undefined ? "T3CODE_ENTRA_TENANT_ID" : null,
+        raw.clientId === undefined ? "T3CODE_ENTRA_CLIENT_ID" : null,
+        raw.clientSecret === undefined ? "T3CODE_ENTRA_CLIENT_SECRET" : null,
+        raw.publicUrl === undefined ? "T3CODE_PUBLIC_URL" : null,
+      ].filter((name) => name !== null);
+      if (missing.length === 4) {
+        return Effect.succeed(undefined);
+      }
+      if (missing.length > 0) {
+        return Effect.fail(
+          configError(`Entra sign-in is partially configured. Also set ${missing.join(", ")}.`),
+        );
+      }
+      const tenantId = decodeEntraGuid(raw.tenantId);
+      const clientId = decodeEntraGuid(raw.clientId);
+      if (Option.isNone(tenantId) || Option.isNone(clientId)) {
+        return Effect.fail(
+          configError("T3CODE_ENTRA_TENANT_ID and T3CODE_ENTRA_CLIENT_ID must be GUIDs."),
+        );
+      }
+      const publicUrl = URL.canParse(raw.publicUrl!) ? new URL(raw.publicUrl!) : null;
+      if (
+        publicUrl === null ||
+        !(
+          publicUrl.protocol === "https:" ||
+          (publicUrl.protocol === "http:" && isLoopbackHostname(publicUrl.hostname))
+        ) ||
+        publicUrl.pathname !== "/" ||
+        publicUrl.search !== "" ||
+        publicUrl.hash !== "" ||
+        publicUrl.username !== "" ||
+        publicUrl.password !== ""
+      ) {
+        return Effect.fail(
+          configError(
+            "T3CODE_PUBLIC_URL must be an https origin such as https://t3.example.com (http only for localhost).",
+          ),
+        );
+      }
+      return Effect.succeed({
+        tenantId: tenantId.value,
+        clientId: clientId.value,
+        clientSecret: Redacted.make(Redacted.value(raw.clientSecret!).trim()),
+        publicUrl: new URL(publicUrl.origin),
+      });
+    },
+  ),
+);
+
 export interface CliServerFlags {
   readonly mode: Option.Option<ServerConfig.RuntimeMode>;
   readonly port: Option.Option<number>;
@@ -313,6 +395,7 @@ export const resolveServerConfig = (
     );
     const devAuthToken =
       mode === "web" && devUrl !== undefined ? yield* DevAuthTokenConfig : undefined;
+    const entraSignIn = yield* EntraSignInConfig;
     const explicitBaseDir = resolveOptionPrecedence(
       normalizedFlags.baseDir,
       Option.fromUndefinedOr(env.t3Home),
@@ -458,6 +541,7 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      ...(entraSignIn === undefined ? {} : { entraSignIn }),
     };
 
     return config;
