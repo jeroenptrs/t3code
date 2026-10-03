@@ -67,7 +67,12 @@ export interface EntraSignInConfig {
    * from it, never from request or forwarded headers.
    */
   readonly publicUrl: URL;
+  /** Path on the public URL that Entra redirects back to. */
+  readonly callbackPath: `/${string}`;
 }
+
+/** Callback path used when `T3CODE_ENTRA_CALLBACK_PATH` is unset. */
+export const DEFAULT_ENTRA_CALLBACK_PATH = "/api/auth/entra/callback";
 
 export interface DeriveServerPathsOptions {
   readonly baseDirIsExplicit?: boolean;
