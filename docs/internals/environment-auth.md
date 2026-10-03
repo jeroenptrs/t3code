@@ -35,7 +35,10 @@ A socket checks RPCs against the scopes it was opened with, so it must not
 outlive them. The [socket route](../../apps/server/src/ws.ts) races the
 connection against `EnvironmentAuth.awaitSessionAccessChange` and closes it when
 the session is revoked or its user's access changes; the client reconnects and
-is authenticated again. The signal comes from in-process streams, which the
+is authenticated again. Any other connection that outlives the request that
+authorized it needs the same race; the [device hub
+proxy](../../apps/server/src/device/DeviceHubProxy.ts) applies it to its sockets
+and video streams. The signal comes from in-process streams, which the
 host CLI, running as a separate process, cannot publish to. Its user commands
 only grant access, so a socket that misses one holds less than it should. A
 session revoked from the CLI keeps its open sockets until they reconnect.
@@ -70,7 +73,7 @@ after 30 days.
 
 When an operator configures Microsoft Entra ID, people sign in to the web
 portal as themselves. Entra proves identity only. Access comes from the local
-[user registry](../../apps/server/src/auth/UserRegistry.ts): a first sign-in
+[user registry](../../apps/server/src/auth/UserRegistry.ts). A first sign-in
 creates a pending user with no access, and an administrator approves them with
 a role that maps to a fixed scope set. Users are keyed by tenant and object ID;
 email and display name are labels and never authorize anything.
@@ -92,16 +95,32 @@ client sent.
 
 With Entra on, a browser cookie session must belong to a user. Pairing and the
 reusable dev credential can no longer create a browser session, and existing
-pairing-derived browser sessions stop authenticating. Pairing credentials and
-the token exchange keep working because they are how services such as Slack
-obtain bearer credentials, and only an access administrator or the host can
-mint them. The rule keys on the session method, not on headers or client
-labels, which a client controls.
+pairing-derived browser sessions stop authenticating. Sign-out still revokes
+such a session if its cookie is presented. The rule keys on the session method,
+not on headers or client labels, which a client controls.
 
-Changing a user's access needs `access:write` and a session that is itself a
-user, so the audit log can name who made the change. The registry, not the
-transport, refuses to remove the last active administrator; the host CLI is
-the recovery path.
+Pairing credentials and the token exchange keep working, because they are how
+services such as Slack obtain bearer credentials. Their tokens are not bound to
+a user, so a user must not be able to mint one. It would outlive their access.
+With Entra on, the [pairing route](../../apps/server/src/auth/http.ts) refuses
+user-bound sessions and startup prints no administrator pairing token. A service session with `access:write`
+can still mint them; Slack's credential rotation depends on that. With users
+unable to mint, every such session descends from the host CLI. T3 Connect is a
+separate path: once an environment is linked, the linked cloud account obtains
+pairing credentials through the relay without any environment session. An
+environment that must admit only Entra users must not be linked.
+
+Changing a user's access, including revoking their sessions, needs
+`access:write` and a session that is itself a user, so the audit log can name
+who made the change. The registry, not the transport, refuses to remove the
+last active administrator; the host CLI is the recovery path.
+
+Roles are scope sets, and only Reader restricts what someone can do. An
+Operator holds `terminal:operate` and runs agents, both as the server's OS
+user, so they can reach the host CLI and the state directory and are
+effectively as trusted as an Administrator. Reader does not restrict reading:
+under the filesystem boundary below, a Reader can read text files in the state
+directory, including stored provider and cloud credentials.
 
 ## The environment is the filesystem boundary
 
