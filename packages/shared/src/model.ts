@@ -13,6 +13,15 @@ import * as Schema from "effect/Schema";
 import { copySorted } from "./Array.ts";
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
+const PRIMARY_MODEL_EFFORT_OPTION_IDS = new Set([
+  "reasoningEffort",
+  "effort",
+  "reasoning",
+  "variant",
+]);
+
+export const isPrimaryModelEffortOptionId = (id: string): boolean =>
+  PRIMARY_MODEL_EFFORT_OPTION_IDS.has(id);
 
 /** Choose the command for a model change against the thread's current provider instance. */
 export function modelSelectionCommandType(
