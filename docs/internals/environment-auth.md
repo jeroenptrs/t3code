@@ -118,17 +118,28 @@ last active administrator; the host CLI is the recovery path.
 Roles are scope sets, and only Reader restricts what someone can do. An
 Operator holds `terminal:operate` and runs agents, both as the server's OS
 user, so they can reach the host CLI and the state directory and are
-effectively as trusted as an Administrator. Reader does not restrict reading:
-under the filesystem boundary below, a Reader can read text files in the state
-directory, including stored provider and cloud credentials.
+effectively as trusted as an Administrator. Reader also limits what someone can
+read on the host; see the filesystem boundary below.
 
 ## The environment is the filesystem boundary
 
-Projects are organizational boundaries, not filesystem sandboxes.
-`orchestration:read` permits reading files the server account can read, including
-absolute paths outside a project. This lets clients display artifacts that an
-agent writes in a temporary directory. Relative paths and writes still follow
-the [workspace path rules](../../apps/server/src/workspace/WorkspaceFileSystem.ts).
+For a session that can operate, projects are organizational boundaries, not
+filesystem sandboxes. Such a session runs agents as the server account, so
+`orchestration:operate` also permits reading files that account can read,
+including absolute paths outside a project. This lets clients display artifacts
+that an agent writes in a temporary directory. Relative paths and writes still
+follow the [workspace path rules](../../apps/server/src/workspace/WorkspaceFileSystem.ts).
+
+A session without `orchestration:operate` is confined. Every RPC that reads at a
+client-named path or `cwd` (file reads, listings, search, asset URLs, VCS status
+and refs) first passes it through
+[WorkspaceReadAccess](../../apps/server/src/workspace/WorkspaceReadAccess.ts),
+which admits only paths that, symlinks resolved, lie inside an active project's
+root or one of its threads' worktrees. The state directory is never admitted,
+and neither is anything under a root that contains it. A new RPC that takes a
+path or `cwd` from the client must go through the same check, or a Reader can
+read the host through it. Browsing host folders to pick a project needs
+`orchestration:operate` outright.
 
 Signed asset URLs are bearer credentials. A URL for media on the host grants
 access to one canonical file and its device/inode identity, not its containing directory.

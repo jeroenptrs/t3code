@@ -106,7 +106,7 @@ directory profile and are only labels.
 
 | Role          | What it allows                                                                                                                        |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Reader        | See every project and conversation, and read files on the host, but start or change nothing                                           |
+| Reader        | See every project and conversation, and read the files in project folders, but start or change nothing                                |
 | Operator      | Everything a Reader can do, plus start and steer agents, change settings and providers, use terminals, and run source-control actions |
 | Administrator | Everything an Operator can do, plus manage users, client sessions, and T3 Connect                                                     |
 
@@ -115,10 +115,14 @@ system user. That account can run the host commands on this page and read T3's s
 an Operator can make themselves an administrator. Give Operator only to people you would trust as
 administrators.
 
-**Readers can read host files.** Reading is not limited to project folders: a Reader can open any
-text file the server's operating system user can read. That includes provider and T3 Connect
-credentials stored in T3's state directory. Reader stops someone from acting, not from reading, so
-give it only to people you would trust with those credentials.
+**Readers see project files only.** A Reader can open, list and search files inside a project's
+folder and its conversations' worktrees, and nothing else on the host. Links that point outside
+those folders are refused. T3's state directory, where provider and T3 Connect credentials are
+stored, is never readable by a Reader. A project whose folder contains the state directory, such as
+one opened at the home directory, shows Readers its conversations but not the files in that folder.
+Some provider settings, such as an Antigravity API key or an OpenCode server password, are still
+sent to every signed-in user, Readers included, so do not store secrets there if Readers should not
+see them.
 
 From **Settings → Users** an administrator can also change a role, disable or re-enable a user, and
 revoke a user's sessions. T3 refuses to disable or demote the last active administrator. A sign-in

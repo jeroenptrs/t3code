@@ -86,6 +86,7 @@ import {
   ChatAttachmentId,
   PersistChatAttachmentsError,
   RpcClientId,
+  AuthOrchestrationOperateScope,
   EnvironmentAuthorizationError,
   type ProjectId,
   type ProviderDriverKind,
@@ -187,6 +188,7 @@ import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/Atta
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as WorkspaceReadAccess from "./workspace/WorkspaceReadAccess.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
@@ -1274,6 +1276,8 @@ const makeWsRpcLayer = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const workspaceReadAccess = yield* WorkspaceReadAccess.WorkspaceReadAccess;
+      const path = yield* Path.Path;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -1322,6 +1326,22 @@ const makeWsRpcLayer = (
         currentSession.scopes.includes(requiredScope)
           ? effect
           : Effect.fail(rpcAuthorizationError(requiredScope));
+      // Every RPC that reads at a client-named path or cwd checks it here first, so
+      // a read-only session stays inside known projects (see WorkspaceReadAccess).
+      const ensureReadable = (...targetPaths: ReadonlyArray<string>) =>
+        Effect.forEach(
+          targetPaths,
+          (targetPath) => workspaceReadAccess.ensureReadable(currentSession.scopes, targetPath),
+          { discard: true },
+        ).pipe(
+          Effect.mapError(
+            (error) =>
+              new EnvironmentAuthorizationError({
+                message: error.message,
+                requiredScope: AuthOrchestrationOperateScope,
+              }),
+          ),
+        );
 
       const acpRegistryProject = Effect.fn("ws.acpRegistry.project")(function* (
         projectId: ProjectId,
@@ -2906,7 +2926,10 @@ const makeWsRpcLayer = (
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlLookupRepository,
-            sourceControlRepositories.lookupRepository(input),
+            Effect.andThen(
+              input.cwd === undefined ? Effect.void : ensureReadable(input.cwd),
+              sourceControlRepositories.lookupRepository(input),
+            ),
             {
               "rpc.aggregate": "source-control",
             },
@@ -3014,16 +3037,19 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,
-            workspaceEntries.search(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectSearchEntriesError({
-                    cwd: input.cwd,
-                    queryLength: input.query.length,
-                    limit: input.limit,
-                    ...projectEntriesFailureContext(cause),
-                    cause,
-                  }),
+            Effect.andThen(
+              ensureReadable(input.cwd),
+              workspaceEntries.search(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectSearchEntriesError({
+                      cwd: input.cwd,
+                      queryLength: input.query.length,
+                      limit: input.limit,
+                      ...projectEntriesFailureContext(cause),
+                      cause,
+                    }),
+                ),
               ),
             ),
             { "rpc.aggregate": "workspace" },
@@ -3031,16 +3057,19 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsSearchContents]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchContents,
-            workspaceEntries.searchContents(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectSearchContentsError({
-                    cwd: input.cwd,
-                    queryLength: input.query.length,
-                    limit: input.limit,
-                    ...projectEntriesFailureContext(cause),
-                    cause,
-                  }),
+            Effect.andThen(
+              ensureReadable(input.cwd),
+              workspaceEntries.searchContents(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectSearchContentsError({
+                      cwd: input.cwd,
+                      queryLength: input.query.length,
+                      limit: input.limit,
+                      ...projectEntriesFailureContext(cause),
+                      cause,
+                    }),
+                ),
               ),
             ),
             { "rpc.aggregate": "workspace" },
@@ -3048,14 +3077,17 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsListEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsListEntries,
-            workspaceEntries.list(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectListEntriesError({
-                    ...input,
-                    ...projectEntriesFailureContext(cause),
-                    cause,
-                  }),
+            Effect.andThen(
+              ensureReadable(input.cwd, path.resolve(input.cwd, input.directoryPath ?? "")),
+              workspaceEntries.list(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectListEntriesError({
+                      ...input,
+                      ...projectEntriesFailureContext(cause),
+                      cause,
+                    }),
+                ),
               ),
             ),
             { "rpc.aggregate": "workspace" },
@@ -3063,14 +3095,17 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsReadFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsReadFile,
-            workspaceFileSystem.readFile(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectReadFileError({
-                    ...input,
-                    ...projectFileFailureContext(cause),
-                    cause,
-                  }),
+            Effect.andThen(
+              ensureReadable(path.resolve(input.cwd, input.relativePath)),
+              workspaceFileSystem.readFile(input).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectReadFileError({
+                      ...input,
+                      ...projectFileFailureContext(cause),
+                      cause,
+                    }),
+                ),
               ),
             ),
             { "rpc.aggregate": "workspace" },
@@ -3152,7 +3187,6 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.assetsCreateUrl,
             Effect.gen(function* () {
-              const path = yield* Path.Path;
               // An absolute media path can be linked from a thread on another environment.
               if (
                 input.resource._tag === "attachment" ||
@@ -3161,9 +3195,18 @@ const makeWsRpcLayer = (
                 input.resource._tag === "github-media" ||
                 (input.resource._tag === "media-file" && path.isAbsolute(input.resource.path))
               ) {
+                if (input.resource._tag === "media-file") {
+                  yield* ensureReadable(input.resource.path);
+                }
                 return yield* issueAssetUrl({ resource: input.resource });
               }
               if (input.resource._tag === "draft-workspace-file") {
+                // HTML and PDF URLs serve their directory's assets from under
+                // the root, so the root must be readable as well as the file.
+                yield* ensureReadable(
+                  input.resource.cwd,
+                  path.resolve(input.resource.cwd, input.resource.path),
+                );
                 // A project draft names its workspace directly; there is no
                 // thread to resolve one from.
                 return yield* issueAssetUrl({
@@ -3227,10 +3270,12 @@ const makeWsRpcLayer = (
                   resource: input.resource,
                 });
               }
-              return yield* issueAssetUrl({
-                resource: input.resource,
-                workspaceRoot: thread.thread.worktreePath ?? project.value.workspaceRoot,
-              });
+              const workspaceRoot = thread.thread.worktreePath ?? project.value.workspaceRoot;
+              yield* ensureReadable(
+                workspaceRoot,
+                path.resolve(workspaceRoot, input.resource.path),
+              );
+              return yield* issueAssetUrl({ resource: input.resource, workspaceRoot });
             }),
             { "rpc.aggregate": "workspace" },
           ),
@@ -3241,11 +3286,14 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "orchestration" },
           ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
-          observeRpcStream(
+          observeRpcStreamEffect(
             WS_METHODS.subscribeVcsStatus,
-            vcsStatusBroadcaster.streamStatus(input, {
-              automaticRemoteRefreshInterval: automaticGitFetchInterval,
-            }),
+            Effect.as(
+              ensureReadable(input.cwd),
+              vcsStatusBroadcaster.streamStatus(input, {
+                automaticRemoteRefreshInterval: automaticGitFetchInterval,
+              }),
+            ),
             {
               "rpc.aggregate": "vcs",
             },
@@ -3267,7 +3315,10 @@ const makeWsRpcLayer = (
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsRefreshStatus,
-            vcsStatusBroadcaster.refreshStatus(input.cwd),
+            Effect.andThen(
+              ensureReadable(input.cwd),
+              vcsStatusBroadcaster.refreshStatus(input.cwd),
+            ),
             {
               "rpc.aggregate": "vcs",
             },
@@ -3345,9 +3396,11 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.vcsListRefs]: (input) =>
-          observeRpcEffect(WS_METHODS.vcsListRefs, gitWorkflow.listRefs(input), {
-            "rpc.aggregate": "vcs",
-          }),
+          observeRpcEffect(
+            WS_METHODS.vcsListRefs,
+            Effect.andThen(ensureReadable(input.cwd), gitWorkflow.listRefs(input)),
+            { "rpc.aggregate": "vcs" },
+          ),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateWorktree,
