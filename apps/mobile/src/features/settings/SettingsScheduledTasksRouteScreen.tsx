@@ -89,7 +89,8 @@ const DAYS = [
 function describeSchedule(task: ScheduledTask): string {
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
-  return `${days} at ${formatTime(task.schedule.timeOfDay)}`;
+  const zone = task.schedule.timeZone ? ` (${task.schedule.timeZone.replaceAll("_", " ")})` : "";
+  return `${days} at ${formatTime(task.schedule.timeOfDay)}${zone}`;
 }
 
 function formatTime(value: string): string {

@@ -102,13 +102,24 @@ describe("hasScheduledTaskDraftChanges", () => {
 });
 
 describe("scheduleFromDraft", () => {
+  const SERVER_TIME_SCHEDULE = { ...DEFAULT_SCHEDULE, timeZone: null };
+
+  it("keeps the schedule's time zone", () => {
+    expect(scheduleFromDraft({ ...SERVER_TIME_SCHEDULE, timeZone: "Europe/Amsterdam" })).toEqual({
+      type: "fixed_time",
+      timeOfDay: "09:00",
+      timeZone: "Europe/Amsterdam",
+      weekdays: [1, 2, 3, 4, 5],
+    });
+  });
+
   it("rejects an empty day selection rather than silently scheduling every day", () => {
-    expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, weekdays: [] })).toBeNull();
+    expect(scheduleFromDraft({ ...SERVER_TIME_SCHEDULE, weekdays: [] })).toBeNull();
   });
 
   it("accepts a selected local time and sorts weekdays", () => {
     expect(
-      scheduleFromDraft({ ...DEFAULT_SCHEDULE, timeOfDay: "18:30", weekdays: [5, 1] }),
+      scheduleFromDraft({ ...SERVER_TIME_SCHEDULE, timeOfDay: "18:30", weekdays: [5, 1] }),
     ).toEqual({
       type: "fixed_time",
       timeOfDay: "18:30",
@@ -117,19 +128,25 @@ describe("scheduleFromDraft", () => {
   });
 
   it("stores every day without a weekday restriction", () => {
-    expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, weekdays: [1, 2, 3, 4, 5, 6, 0] })).toEqual({
-      type: "fixed_time",
-      timeOfDay: "09:00",
-    });
+    expect(scheduleFromDraft({ ...SERVER_TIME_SCHEDULE, weekdays: [1, 2, 3, 4, 5, 6, 0] })).toEqual(
+      {
+        type: "fixed_time",
+        timeOfDay: "09:00",
+      },
+    );
   });
 
   it("does not add a missing run day when an existing schedule contains duplicates", () => {
-    expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, weekdays: [1, 2, 3, 4, 5, 6, 6] })).toEqual({
-      type: "fixed_time",
-      timeOfDay: "09:00",
-      weekdays: [1, 2, 3, 4, 5, 6],
-    });
-    expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, weekdays: [0, 1, 2, 3, 4, 5, 6, 6] })).toEqual({
+    expect(scheduleFromDraft({ ...SERVER_TIME_SCHEDULE, weekdays: [1, 2, 3, 4, 5, 6, 6] })).toEqual(
+      {
+        type: "fixed_time",
+        timeOfDay: "09:00",
+        weekdays: [1, 2, 3, 4, 5, 6],
+      },
+    );
+    expect(
+      scheduleFromDraft({ ...SERVER_TIME_SCHEDULE, weekdays: [0, 1, 2, 3, 4, 5, 6, 6] }),
+    ).toEqual({
       type: "fixed_time",
       timeOfDay: "09:00",
     });
@@ -139,18 +156,18 @@ describe("scheduleFromDraft", () => {
     "rejects invalid weekday %s instead of scheduling every day",
     (day) => {
       expect(
-        scheduleFromDraft({ ...DEFAULT_SCHEDULE, weekdays: [0, 1, 2, 3, 4, 5, day] }),
+        scheduleFromDraft({ ...SERVER_TIME_SCHEDULE, weekdays: [0, 1, 2, 3, 4, 5, day] }),
       ).toBeNull();
     },
   );
 
   it("rejects malformed times and sub-minute intervals", () => {
-    expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, timeOfDay: "25:00" })).toBeNull();
+    expect(scheduleFromDraft({ ...SERVER_TIME_SCHEDULE, timeOfDay: "25:00" })).toBeNull();
     expect(
-      scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "interval", intervalMinutes: "0" }),
+      scheduleFromDraft({ ...SERVER_TIME_SCHEDULE, mode: "interval", intervalMinutes: "0" }),
     ).toBeNull();
     expect(
-      scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "interval", intervalMinutes: "15" }),
+      scheduleFromDraft({ ...SERVER_TIME_SCHEDULE, mode: "interval", intervalMinutes: "15" }),
     ).toEqual({
       type: "interval",
       everyMs: 900_000,
@@ -164,7 +181,9 @@ describe("scheduleFromDraft", () => {
     [String(65_000 / 60_000), 65_000],
     [String(123_456 / 60_000), 123_456],
   ])("preserves a valid %s minute interval when saving", (intervalMinutes, everyMs) => {
-    expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "interval", intervalMinutes })).toEqual({
+    expect(
+      scheduleFromDraft({ ...SERVER_TIME_SCHEDULE, mode: "interval", intervalMinutes }),
+    ).toEqual({
       type: "interval",
       everyMs,
     });
@@ -174,7 +193,7 @@ describe("scheduleFromDraft", () => {
     "rejects intervals that cannot be written as safe whole milliseconds: %s",
     (intervalMinutes) => {
       expect(
-        scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "interval", intervalMinutes }),
+        scheduleFromDraft({ ...SERVER_TIME_SCHEDULE, mode: "interval", intervalMinutes }),
       ).toBeNull();
     },
   );

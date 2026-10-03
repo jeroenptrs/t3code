@@ -1,3 +1,5 @@
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
@@ -21,6 +23,16 @@ const TimeOfDay = TrimmedNonEmptyString.check(
   Schema.isPattern(/^([01]?\d|2[0-3]):([0-5]\d)$/),
 ).annotate({ description: "Local wall-clock time in 24-hour HH:MM form, such as 09:30." });
 
+const ScheduledTaskTimeZone = TrimmedNonEmptyString.check(
+  Schema.makeFilter(
+    (value) =>
+      Option.isSome(DateTime.zoneMakeNamed(value)) || "timeZone must be an IANA time zone name.",
+  ),
+).annotate({
+  description:
+    "IANA time zone the wall-clock time is read in, such as Europe/Amsterdam. Omit to use the server's local time zone.",
+});
+
 export const MIN_SCHEDULED_TASK_INTERVAL_MS = 60_000;
 
 const ScheduledTaskIntervalMs = Schema.Int.check(Schema.isGreaterThan(0)).annotate({
@@ -41,6 +53,7 @@ const ScheduledTaskFixedTimeSchedule = Schema.Struct({
     description: "Select a fixed local wall-clock time.",
   }),
   timeOfDay: TimeOfDay,
+  timeZone: Schema.optional(ScheduledTaskTimeZone),
   weekdays: Schema.optional(
     Schema.Array(
       Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 6 })).annotate({
@@ -51,7 +64,7 @@ const ScheduledTaskFixedTimeSchedule = Schema.Struct({
     }),
   ),
 }).annotate({
-  description: "Run at a fixed local wall-clock time on selected weekdays.",
+  description: "Run at a fixed wall-clock time on selected weekdays.",
 });
 
 /**

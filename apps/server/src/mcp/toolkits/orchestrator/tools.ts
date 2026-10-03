@@ -96,7 +96,7 @@ const TaskCancelTool = Tool.make("task_cancel", {
 
 export const ScheduleTaskTool = Tool.make("schedule_task", {
   description:
-    "Create persistent recurring work in the app scheduler, which runs even when no turn is active. Pass schedule as a STRUCTURED OBJECT, never JSON text: {type:'interval', everyMs:3600000} means hourly; {type:'fixed_time', timeOfDay:'09:00', weekdays:[1,2,3,4,5]} means weekday mornings. By default (bindToCurrentThread=true) each run posts into THIS thread; use false only when the user wants a fresh top-level thread per run. Provider, model, and runtime settings inherit from this thread. Report the returned schedule and nextRunAt after success.",
+    "Create persistent recurring work in the app scheduler, which runs even when no turn is active. Pass schedule as a STRUCTURED OBJECT, never JSON text: {type:'interval', everyMs:3600000} means hourly; {type:'fixed_time', timeOfDay:'09:00', weekdays:[1,2,3,4,5]} means weekday mornings in the server's time zone; add timeZone:'Europe/Amsterdam' (any IANA name) when the user names a zone. By default (bindToCurrentThread=true) each run posts into THIS thread; use false only when the user wants a fresh top-level thread per run. Provider, model, and runtime settings inherit from this thread. Report the returned schedule and nextRunAt after success.",
   parameters: OrchestratorMcpScheduleTaskInput,
   success: OrchestratorMcpScheduleTaskResult,
   failure: OrchestratorMcpFailure,

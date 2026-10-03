@@ -44,8 +44,10 @@ import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { ScheduledTaskTimeZonePicker } from "./ScheduledTaskTimeZonePicker";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
+  localTimeZone,
   matchesScheduledTaskScope,
   scheduledTaskDefaultModel,
   taskToDraft,
@@ -101,6 +103,7 @@ const EMPTY_DRAFT: DraftState = {
   scheduleMode: "fixed",
   intervalMinutes: "15",
   timeOfDay: "09:00",
+  timeZone: localTimeZone(),
   weekdays: new Set([1, 2, 3, 4, 5]),
   projectId: "",
   threadId: "",
@@ -157,6 +160,7 @@ function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {
   return {
     type: "fixed_time",
     timeOfDay: draft.timeOfDay || "09:00",
+    ...(draft.timeZone ? { timeZone: draft.timeZone } : {}),
     ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
   };
 }
@@ -175,7 +179,8 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
       : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
         ? "Weekdays"
         : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
-  return `${days} at ${schedule.timeOfDay}`;
+  const zone = schedule.timeZone ? ` (${schedule.timeZone.replaceAll("_", " ")})` : "";
+  return `${days} at ${schedule.timeOfDay}${zone}`;
 }
 
 /**
@@ -848,6 +853,10 @@ function ScheduledTaskEditorDialog({
                       onChange={(event) =>
                         setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
                       }
+                    />
+                    <ScheduledTaskTimeZonePicker
+                      timeZone={draft.timeZone}
+                      onSelect={(timeZone) => setDraft((current) => ({ ...current, timeZone }))}
                     />
                     <span className="text-xs text-muted-foreground">on</span>
                   </div>

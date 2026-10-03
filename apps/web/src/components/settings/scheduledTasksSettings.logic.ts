@@ -44,6 +44,9 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
 }
 
 type ScheduleMode = "fixed" | "interval";
+
+/** The zone new fixed-time schedules start in: wherever the person editing is. */
+export const localTimeZone = () => new Intl.DateTimeFormat().resolvedOptions().timeZone;
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
@@ -54,6 +57,8 @@ export interface DraftState {
   readonly scheduleMode: ScheduleMode;
   readonly intervalMinutes: string;
   readonly timeOfDay: string;
+  /** IANA zone for `timeOfDay`; empty means the server's local zone. */
+  readonly timeZone: string;
   readonly weekdays: ReadonlySet<number>;
   readonly projectId: string;
   readonly threadId: string;
@@ -88,6 +93,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     intervalMinutes:
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
     timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
+    timeZone: schedule.type === "fixed_time" ? (schedule.timeZone ?? "") : localTimeZone(),
     weekdays,
     projectId: task.projectId,
     threadId: task.threadId ?? "",
