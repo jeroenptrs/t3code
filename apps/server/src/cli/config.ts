@@ -7,6 +7,7 @@ import {
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, EntraGuid, PortSchema } from "@t3tools/contracts";
+import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
 import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -203,8 +204,48 @@ const isLoopbackHostname = (hostname: string) =>
   hostname === "localhost" || hostname === "[::1]" || hostname.startsWith("127.");
 
 /**
+ * Top-level paths the server or web app answers. A custom callback must not
+ * take one over; the default callback is the only one allowed under `/api`.
+ */
+const RESERVED_PATH_PREFIXES = [
+  ...DEV_PROXIED_PATH_PREFIXES,
+  "/mcp",
+  "/assets",
+  // Static client routes, from apps/web/src/routes.
+  "/pair",
+  "/connect",
+  "/settings",
+  "/projects",
+  "/draft",
+  "/pull-requests",
+  "/usage",
+  "/welcome",
+];
+const CALLBACK_PATH_SEGMENT = /^[A-Za-z0-9_~.-]+$/;
+
+/** Accepts `/a/b`; rejects `/`, `//a`, `/a/`, `/a/../b`, queries, fragments, and encoded or odd characters. */
+const isValidCallbackPath = (value: string): value is `/${string}` => {
+  const [root, ...segments] = value.split("/");
+  return (
+    root === "" &&
+    segments.length > 0 &&
+    segments.every(
+      (segment) => CALLBACK_PATH_SEGMENT.test(segment) && segment !== "." && segment !== "..",
+    )
+  );
+};
+
+const isReservedPath = (path: string) => {
+  const lower = path.toLowerCase();
+  return RESERVED_PATH_PREFIXES.some(
+    (prefix) => lower === prefix || lower.startsWith(`${prefix}/`),
+  );
+};
+
+/**
  * Entra sign-in is on when all four variables are set and off when none are.
  * Anything in between is a startup error rather than a silently open portal.
+ * The optional callback path needs the other four.
  */
 export const EntraSignInConfig = Config.all({
   tenantId: optionalString("T3CODE_ENTRA_TENANT_ID"),
@@ -215,6 +256,7 @@ export const EntraSignInConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   publicUrl: optionalString("T3CODE_PUBLIC_URL"),
+  callbackPath: optionalString("T3CODE_ENTRA_CALLBACK_PATH"),
 }).pipe(
   Config.mapEffect(
     (raw): Effect.Effect<ServerConfig.EntraSignInConfig | undefined, Config.ConfigError> => {
@@ -225,7 +267,13 @@ export const EntraSignInConfig = Config.all({
         raw.publicUrl === undefined ? "T3CODE_PUBLIC_URL" : null,
       ].filter((name) => name !== null);
       if (missing.length === 4) {
-        return Effect.succeed(undefined);
+        return raw.callbackPath === undefined
+          ? Effect.succeed(undefined)
+          : Effect.fail(
+              configError(
+                `T3CODE_ENTRA_CALLBACK_PATH is set but Entra sign-in is not. Also set ${missing.join(", ")}, or unset it.`,
+              ),
+            );
       }
       if (missing.length > 0) {
         return Effect.fail(
@@ -258,11 +306,30 @@ export const EntraSignInConfig = Config.all({
           ),
         );
       }
+      const callbackPath = raw.callbackPath ?? ServerConfig.DEFAULT_ENTRA_CALLBACK_PATH;
+      if (!isValidCallbackPath(callbackPath)) {
+        return Effect.fail(
+          configError(
+            "T3CODE_ENTRA_CALLBACK_PATH must be a path such as /auth/callback: it starts with a single /, has no query, fragment, empty, . or .. segments, and uses only letters, digits, and - _ . ~",
+          ),
+        );
+      }
+      if (
+        callbackPath !== ServerConfig.DEFAULT_ENTRA_CALLBACK_PATH &&
+        isReservedPath(callbackPath)
+      ) {
+        return Effect.fail(
+          configError(
+            `T3CODE_ENTRA_CALLBACK_PATH ${callbackPath} overlaps a path T3 already serves (${RESERVED_PATH_PREFIXES.join(", ")}).`,
+          ),
+        );
+      }
       return Effect.succeed({
         tenantId: tenantId.value,
         clientId: clientId.value,
         clientSecret: Redacted.make(Redacted.value(raw.clientSecret!).trim()),
         publicUrl: new URL(publicUrl.origin),
+        callbackPath,
       });
     },
   ),
