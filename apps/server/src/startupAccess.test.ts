@@ -3,7 +3,7 @@ import { assert, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import { HttpServer } from "effect/unstable/http";
+import { HttpServer } from "effect/http";
 
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ServerConfig from "./config.ts";
@@ -107,6 +107,7 @@ it.effect("headless startup with Entra sign-in mints and prints no pairing token
                 clientId: "11111111-2222-4333-8444-555555555555",
                 clientSecret: Redacted.make("secret"),
                 publicUrl: new URL("https://t3.example.com"),
+                callbackPath: ServerConfig.DEFAULT_ENTRA_CALLBACK_PATH,
               },
             })),
           ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-startup-" }))),
