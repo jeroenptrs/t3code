@@ -41,6 +41,15 @@ describe("ScheduledTaskUpsertSchedule", () => {
     });
   });
 
+  it("accepts IANA time zones on fixed-time schedules and rejects unknown ones", () => {
+    const fixedTime = { type: "fixed_time", timeOfDay: "09:00" };
+    expect(decodeUpsertSchedule({ ...fixedTime, timeZone: "Europe/Amsterdam" })).toEqual({
+      ...fixedTime,
+      timeZone: "Europe/Amsterdam",
+    });
+    expect(() => decodeUpsertSchedule({ ...fixedTime, timeZone: "Mars/Olympus" })).toThrow();
+  });
+
   it("rejects interval schedules more frequent than once per minute", () => {
     expect(() =>
       decodeUpsertSchedule({
