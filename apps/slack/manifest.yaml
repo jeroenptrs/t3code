@@ -1,0 +1,37 @@
+display_information:
+  name: T3 Code
+features:
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: T3 Code
+    always_online: true
+  slash_commands:
+    - command: /t3
+      description: Start a T3 Code conversation
+      usage_hint: "<prompt>"
+      should_escape: false
+    - command: /t3-custom
+      description: Configure and start a T3 Code conversation
+      usage_hint: "<prompt>"
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - commands
+      - im:history
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_home_opened
+      - app_mention
+      - message.im
+  interactivity:
+    is_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
