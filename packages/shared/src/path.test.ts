@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   workspaceRelativeFilePath,
+  canonicalPathIdentity,
   newProjectFolderName,
   normalizeProjectPathForComparison,
   normalizeProjectPathForDispatch,
@@ -34,6 +35,11 @@ describe("path helpers", () => {
     expect(newProjectFolderName("Con")).toBe("con-project");
     expect(newProjectFolderName("LPT1")).toBe("lpt1-project");
     expect(newProjectFolderName("console")).toBe("console");
+  });
+
+  it("canonicalizes lexical aliases for workspace identity comparisons", () => {
+    expect(canonicalPathIdentity("/repo/./worktrees/../")).toBe("/repo");
+    expect(canonicalPathIdentity("C:\\Repo\\.\\worktree\\..")).toBe("c:/repo");
   });
 });
 
