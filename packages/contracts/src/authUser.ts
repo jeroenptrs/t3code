@@ -3,14 +3,19 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
   AuthAdministrativeScopes,
+  AuthEnvironmentScope,
   AuthEnvironmentScopes,
   AuthOrchestrationReadScope,
   AuthStandardClientScopes,
   ServerAuthDescriptor,
   ServerAuthSessionMethod,
-  type AuthEnvironmentScope,
 } from "./auth.ts";
-import { NonNegativeInt, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import {
+  ForwardCompatibleArray,
+  NonNegativeInt,
+  TrimmedNonEmptyString,
+  TrimmedString,
+} from "./baseSchemas.ts";
 
 /**
  * Entra tenant and object IDs are GUIDs. Decoding lowercases them so an ID
@@ -117,6 +122,7 @@ export const AuthSessionState = Schema.Struct({
   authenticated: Schema.Boolean,
   auth: ServerAuthDescriptor,
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
+  permissions: Schema.optionalKey(ForwardCompatibleArray(AuthEnvironmentScope)),
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
   user: Schema.optionalKey(AuthSessionUser),
@@ -124,12 +130,12 @@ export const AuthSessionState = Schema.Struct({
 export type AuthSessionState = typeof AuthSessionState.Type;
 
 /**
- * Browser navigation targets for Entra sign-in. They are redirects, not API
- * calls. The start route accepts `?returnTo=<same-origin path>`; a failed
- * callback redirects to `/?signInError=<EntraSignInFailureReason>`.
+ * Browser navigation target for Entra sign-in. It is a redirect, not an API
+ * call, and accepts `?returnTo=<same-origin path>`. The callback path is
+ * server configuration; a failed callback redirects to
+ * `/?signInError=<EntraSignInFailureReason>`.
  */
 export const ENTRA_SIGN_IN_START_PATH = "/api/auth/entra/start";
-export const ENTRA_SIGN_IN_CALLBACK_PATH = "/api/auth/entra/callback";
 export const ENTRA_SIGN_IN_RETURN_TO_PARAM = "returnTo";
 export const ENTRA_SIGN_IN_ERROR_PARAM = "signInError";
 
