@@ -30,7 +30,8 @@ In the Microsoft Entra admin center, open **App registrations → New registrati
 - **Supported account types**: accounts in this organizational directory only (single tenant).
 - **Redirect URI**: platform **Web**, value `<public URL>/api/auth/entra/callback`, for example
   `https://t3.example.com/api/auth/entra/callback`. It must use the same origin as
-  `T3CODE_PUBLIC_URL` below.
+  `T3CODE_PUBLIC_URL` below. If your organization registers a different path, such as
+  `/auth/callback`, register that and set `T3CODE_ENTRA_CALLBACK_PATH` to the same path.
 
 Then, on the registration:
 
@@ -51,6 +52,12 @@ Set all four variables in the T3 service's environment. T3 refuses to start if o
 | `T3CODE_ENTRA_CLIENT_ID`     | Application (client) ID                                                |
 | `T3CODE_ENTRA_CLIENT_SECRET` | Client secret value                                                    |
 | `T3CODE_PUBLIC_URL`          | Public HTTPS origin with no path, for example `https://t3.example.com` |
+
+Optionally, set `T3CODE_ENTRA_CALLBACK_PATH` to the path of the registered redirect URI when it is
+not `/api/auth/entra/callback`, for example `/auth/callback`. It needs the four variables above. T3
+refuses to start if the path has a query, fragment, empty or `..` segments, or overlaps a path T3
+already serves, such as `/api`, `/ws`, `/oauth`, `/.well-known`, `/mcp`, or an app page like
+`/pair` or `/settings`.
 
 Keep the client secret in the service's secret store or an environment file readable only by the
 service account, never in a repository or unit file.

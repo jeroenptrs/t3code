@@ -1260,3 +1260,58 @@ it.effect("Entra sign-in is configured all at once or not at all", () =>
     );
   }),
 );
+
+it.effect("Entra callback path defaults, and a custom one must be a safe, unused path", () =>
+  Effect.gen(function* () {
+    const load = (env: Record<string, string>) =>
+      EntraSignInConfig.parse(ConfigProvider.fromEnv({ env })).pipe(Effect.result);
+    const complete = {
+      T3CODE_ENTRA_TENANT_ID: "8f2c3a1e-1b2c-4d5e-8f90-123456789abc",
+      T3CODE_ENTRA_CLIENT_ID: "11111111-2222-4333-8444-555555555555",
+      T3CODE_ENTRA_CLIENT_SECRET: "secret",
+      T3CODE_PUBLIC_URL: "https://t3.example.com",
+    };
+    const callbackPath = (env: Record<string, string>) =>
+      load(env).pipe(
+        Effect.map((result) => (result._tag === "Success" ? result.success?.callbackPath : null)),
+      );
+
+    expect(yield* callbackPath(complete)).toBe("/api/auth/entra/callback");
+    expect(
+      yield* callbackPath({ ...complete, T3CODE_ENTRA_CALLBACK_PATH: " /auth/callback " }),
+    ).toBe("/auth/callback");
+    expect(
+      yield* callbackPath({ ...complete, T3CODE_ENTRA_CALLBACK_PATH: "/api/auth/entra/callback" }),
+    ).toBe("/api/auth/entra/callback");
+
+    for (const invalid of [
+      "auth/callback",
+      "/",
+      "//auth/callback",
+      "/auth/callback/",
+      "/auth//callback",
+      "/auth/../callback",
+      "/auth/./callback",
+      "/auth/callback?x=1",
+      "/auth/callback#x",
+      "/auth/call%20back",
+      "https://t3.example.com/auth/callback",
+      "/api/auth/entra/start",
+      "/api/auth/callback",
+      "/API/callback",
+      "/ws",
+      "/oauth/callback",
+      "/.well-known/callback",
+      "/mcp",
+      "/pair",
+      "/settings/callback",
+    ]) {
+      const result = yield* load({ ...complete, T3CODE_ENTRA_CALLBACK_PATH: invalid });
+      expect(result._tag, invalid).toBe("Failure");
+    }
+
+    const orphan = yield* load({ T3CODE_ENTRA_CALLBACK_PATH: "/auth/callback" });
+    assert(orphan._tag === "Failure");
+    expect(String(orphan.failure)).toContain("T3CODE_ENTRA_CALLBACK_PATH is set");
+  }),
+);
