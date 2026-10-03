@@ -142,7 +142,7 @@ function describeSchedule(
   const days = task.schedule.weekdays?.length
     ? repeatLabel(task.schedule.weekdays, resolve, locale)
     : resolve(msg("Every day"));
-  const zone = scheduleTimeZoneLabel(timeZone, task.nextRunAt);
+  const zone = scheduleTimeZoneLabel(task.schedule.timeZone ?? timeZone, task.nextRunAt);
   const time = formatTime(task.schedule.timeOfDay);
   return zone === undefined
     ? resolve(msg("{days} at {time}", { days, time }))
@@ -785,7 +785,7 @@ function TaskForm({
     draft.task !== null &&
     tasks.data !== null &&
     !tasks.data.tasks.some((task) => task.id === draft.task?.id);
-  const runAtZone = scheduleTimeZoneLabel(tasks.data?.timeZone);
+  const runAtZone = scheduleTimeZoneLabel(draft.schedule.timeZone ?? tasks.data?.timeZone);
   const environmentUnavailable = !availableTargets.some(
     (target) => target.environmentId === environmentId,
   );
