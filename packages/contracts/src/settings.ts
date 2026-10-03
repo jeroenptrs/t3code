@@ -539,6 +539,10 @@ export const makeBinaryPathSetting = (fallback: string) =>
     Schema.withDecodingDefault(Effect.succeed(fallback)),
   );
 
+/**
+ * A `password` field is a secret: the server only uses it, so it is replaced
+ * with `REDACTED_SECRET` before settings reach any client.
+ */
 export type ProviderSettingsFormControl = "text" | "password" | "textarea" | "switch" | "select";
 
 export interface ProviderSettingsFormOption {
@@ -788,6 +792,22 @@ export const AntigravitySettings = makeProviderSettingsSchema(
   { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
+
+/**
+ * Sent to clients in place of a stored secret. A client that sends it back
+ * means "keep what is saved"; an empty value clears the secret.
+ */
+export const REDACTED_SECRET = "\u2022\u2022\u2022\u2022\u2022\u2022";
+
+/** Keys of a provider settings schema whose form control is `password`. */
+export function providerSettingsSecretKeys(schema: {
+  readonly fields: Schema.Struct.Fields;
+}): ReadonlyArray<string> {
+  return Object.entries(schema.fields).flatMap(([key, field]) => {
+    const annotations = Schema.resolveAnnotationsKey(field) ?? Schema.resolveAnnotations(field);
+    return annotations?.providerSettingsForm?.control === "password" ? [key] : [];
+  });
+}
 
 /**
  * A read-only quota source outside this environment's provider CLIs. The
