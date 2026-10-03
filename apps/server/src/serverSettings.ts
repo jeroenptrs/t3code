@@ -27,6 +27,7 @@ import {
   isProviderDriverKind,
   ProviderDriverKind,
   ProviderInstanceId,
+  REDACTED_SECRET,
   resolveProviderInstanceEnabled,
   ResponseStreamingMode,
   ServerSettings,
@@ -71,6 +72,7 @@ import {
   sourceControlHostSecretName,
   writeSecretFieldValues,
 } from "./sourceControl/sourceControlHostSecrets.ts";
+import { PROVIDER_SETTINGS_SECRET_KEYS } from "./provider/providerSettingsSecrets.ts";
 
 export { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
 
@@ -153,18 +155,71 @@ function providerEnvironmentSecretName(input: {
   return `provider-env-${Buffer.from(input.instanceId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
 }
 
-/**
- * On disk a hub key or Bitbucket token is replaced by this marker and the
- * real value lives in the secret store, mirroring provider environment
- * secrets. A client that sends the marker back means "keep what you have".
- */
-const SECRET_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
-
 function usageLimitSourceSecretName(sourceId: string): string {
   return `usage-limit-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
 }
 
-const redactSecret = (value: string) => (value.length > 0 ? SECRET_REDACTED : "");
+// On disk a hub key or source control host secret is replaced by `REDACTED_SECRET` and the real
+// value lives in the secret store, mirroring provider environment secrets.
+const redactSecret = (value: string) => (value.length > 0 ? REDACTED_SECRET : "");
+
+const isConfigRecord = (config: unknown): config is Record<string, unknown> =>
+  config !== null && typeof config === "object" && !Array.isArray(config);
+
+/** Replaces each set secret key of a provider config blob with the marker. */
+function redactProviderConfigSecrets<Config>(config: Config): Config {
+  if (!isConfigRecord(config)) return config;
+  let redacted: Record<string, unknown> | undefined;
+  for (const key of PROVIDER_SETTINGS_SECRET_KEYS) {
+    const value = config[key];
+    if (value === undefined || value === "") continue;
+    redacted ??= { ...config };
+    redacted[key] = REDACTED_SECRET;
+  }
+  return (redacted ?? config) as Config;
+}
+
+/**
+ * Provider config secrets are stored in plain text in settings.json. A client
+ * only ever saw the marker, so a marker coming back keeps the saved value; with
+ * nothing saved for that instance the key is dropped rather than stored.
+ */
+function restoreProviderConfigSecrets<Config>(config: Config, previous: unknown): Config {
+  if (!isConfigRecord(config)) return config;
+  let restored: Record<string, unknown> | undefined;
+  for (const key of PROVIDER_SETTINGS_SECRET_KEYS) {
+    if (config[key] !== REDACTED_SECRET) continue;
+    restored ??= { ...config };
+    const saved = isConfigRecord(previous) ? previous[key] : undefined;
+    if (saved === undefined || saved === REDACTED_SECRET) {
+      delete restored[key];
+    } else {
+      restored[key] = saved;
+    }
+  }
+  return (restored ?? config) as Config;
+}
+
+function restoreRedactedProviderSecrets(
+  current: ServerSettings,
+  next: ServerSettings,
+): ServerSettings {
+  const providerInstances = Object.fromEntries(
+    Object.entries(next.providerInstances).map(([instanceId, instance]) => [
+      instanceId,
+      instance.config === undefined
+        ? instance
+        : {
+            ...instance,
+            config: restoreProviderConfigSecrets(
+              instance.config,
+              current.providerInstances[ProviderInstanceId.make(instanceId)]?.config,
+            ),
+          },
+    ]),
+  ) as ServerSettings["providerInstances"];
+  return { ...next, providerInstances };
+}
 
 /** Each host's settings with every secret slot's value replaced by `map(slot, value)`. */
 function mapSlotValues(
@@ -224,12 +279,15 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
   const providerInstances = Object.fromEntries(
     Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
       instanceId,
-      instance.environment
-        ? {
-            ...instance,
-            environment: instance.environment.map(redactProviderEnvironmentVariable),
-          }
-        : instance,
+      {
+        ...instance,
+        ...(instance.environment
+          ? { environment: instance.environment.map(redactProviderEnvironmentVariable) }
+          : {}),
+        ...(instance.config === undefined
+          ? {}
+          : { config: redactProviderConfigSecrets(instance.config) }),
+      },
     ]),
   );
   // The hub key is a bearer secret; clients only need to know one is set.
@@ -456,7 +514,7 @@ function migrateLegacySourceControlSettings(
   if (legacy.bitbucket !== undefined && sourceControlHosts.bitbucket === undefined) {
     sourceControlHosts.bitbucket = legacy.bitbucket;
     for (const [field, from] of Object.entries(LEGACY_BITBUCKET_SECRET_NAMES)) {
-      if (legacy.bitbucket[field] !== SECRET_REDACTED) continue;
+      if (legacy.bitbucket[field] !== REDACTED_SECRET) continue;
       secretMoves.push({
         from,
         to: sourceControlHostSecretName({ kind: "bitbucket", field, serverHost: null }),
@@ -466,7 +524,7 @@ function migrateLegacySourceControlSettings(
   if (legacy.github !== undefined && sourceControlHosts.github === undefined) {
     sourceControlHosts.github = legacy.github;
     for (const [serverHost, value] of readSecretFieldValues(legacy.github.tokens)) {
-      if (serverHost === null || value !== SECRET_REDACTED) continue;
+      if (serverHost === null || value !== REDACTED_SECRET) continue;
       secretMoves.push({
         from: legacyGitHubTokenSecretName(serverHost),
         to: sourceControlHostSecretName({ kind: "github", field: "tokens", serverHost }),
@@ -810,7 +868,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const moved = new Set<string>();
       for (const slot of sourceControlHostSecretSlots(settings.sourceControlHosts)) {
-        if (slot.value.length === 0 || slot.value === SECRET_REDACTED) continue;
+        if (slot.value.length === 0 || slot.value === REDACTED_SECRET) continue;
         const stored = yield* secretStore
           .set(sourceControlHostSecretName(slot), textEncoder.encode(slot.value))
           .pipe(
@@ -828,7 +886,7 @@ const make = Effect.gen(function* () {
       return {
         ...settings,
         sourceControlHosts: mapSlotValues(settings.sourceControlHosts, (slot, value) =>
-          moved.has(sourceControlHostSecretName(slot)) ? SECRET_REDACTED : value,
+          moved.has(sourceControlHostSecretName(slot)) ? REDACTED_SECRET : value,
         ),
       };
     });
@@ -1022,7 +1080,7 @@ const make = Effect.gen(function* () {
       }
       const usageLimitSources: Record<string, UsageLimitSourceConfig> = {};
       for (const [sourceId, source] of Object.entries(settings.usageLimitSources)) {
-        if (source.managementKey !== SECRET_REDACTED) {
+        if (source.managementKey !== REDACTED_SECRET) {
           usageLimitSources[sourceId] = source;
           continue;
         }
@@ -1040,7 +1098,7 @@ const make = Effect.gen(function* () {
       }
       const storedSecrets = new Map<string, string>();
       for (const slot of sourceControlHostSecretSlots(settings.sourceControlHosts)) {
-        if (slot.value !== SECRET_REDACTED) continue;
+        if (slot.value !== REDACTED_SECRET) continue;
         const secret = yield* secretStore
           .get(sourceControlHostSecretName(slot))
           .pipe(
@@ -1058,7 +1116,7 @@ const make = Effect.gen(function* () {
         providerInstances: providerInstances as ServerSettings["providerInstances"],
         usageLimitSources: usageLimitSources as ServerSettings["usageLimitSources"],
         sourceControlHosts: mapSlotValues(settings.sourceControlHosts, (slot, value) =>
-          value === SECRET_REDACTED
+          value === REDACTED_SECRET
             ? (storedSecrets.get(sourceControlHostSecretName(slot)) ?? "")
             : value,
         ),
@@ -1178,7 +1236,7 @@ const make = Effect.gen(function* () {
       const usageLimitSources: Record<string, UsageLimitSourceConfig> = {};
       for (const [sourceId, source] of Object.entries(next.usageLimitSources)) {
         const secretName = usageLimitSourceSecretName(sourceId);
-        if (source.managementKey === SECRET_REDACTED) {
+        if (source.managementKey === REDACTED_SECRET) {
           usageLimitSources[sourceId] = source;
           continue;
         }
@@ -1192,7 +1250,7 @@ const make = Effect.gen(function* () {
           secretName,
           value: textEncoder.encode(source.managementKey),
         });
-        usageLimitSources[sourceId] = { ...source, managementKey: SECRET_REDACTED };
+        usageLimitSources[sourceId] = { ...source, managementKey: REDACTED_SECRET };
       }
       for (const sourceId of Object.keys(current.usageLimitSources)) {
         if (sourceId in next.usageLimitSources) continue;
@@ -1206,7 +1264,7 @@ const make = Effect.gen(function* () {
       // Hand-edited plaintext not yet in the store, so the redaction marker can move it there.
       const inlineSecrets = new Map(
         sourceControlHostSecretSlots(current.sourceControlHosts).flatMap((slot) =>
-          slot.value.length > 0 && slot.value !== SECRET_REDACTED
+          slot.value.length > 0 && slot.value !== REDACTED_SECRET
             ? [[sourceControlHostSecretName(slot), slot.value] as const]
             : [],
         ),
@@ -1215,10 +1273,10 @@ const make = Effect.gen(function* () {
       const sourceControlHosts = mapSlotValues(next.sourceControlHosts, (slot, raw) => {
         const secretName = sourceControlHostSecretName(slot);
         // The marker keeps what is saved; a hand-edited plaintext value moves into the store.
-        const value = raw === SECRET_REDACTED ? inlineSecrets.get(secretName) : raw;
+        const value = raw === REDACTED_SECRET ? inlineSecrets.get(secretName) : raw;
         if (value === undefined) {
           nextSecretNames.add(secretName);
-          return SECRET_REDACTED;
+          return REDACTED_SECRET;
         }
         if (value.length === 0) {
           changes.push({ kind: "remove", secretName, operation: "remove-secret" });
@@ -1226,7 +1284,7 @@ const make = Effect.gen(function* () {
         }
         nextSecretNames.add(secretName);
         changes.push({ kind: "write", secretName, value: textEncoder.encode(value) });
-        return SECRET_REDACTED;
+        return REDACTED_SECRET;
       });
       for (const slot of sourceControlHostSecretSlots(current.sourceControlHosts)) {
         const secretName = sourceControlHostSecretName(slot);
@@ -1328,7 +1386,7 @@ const make = Effect.gen(function* () {
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* getSettingsFromCache;
-        const updated = yield* update(current);
+        const updated = restoreRedactedProviderSecrets(current, yield* update(current));
         const persisted = yield* persistProviderEnvironmentSecrets(current, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
         const materialized = yield* Effect.uninterruptibleMask(() =>
