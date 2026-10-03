@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import {
   HttpClient,
   HttpClientRequest,
@@ -107,6 +108,9 @@ const authenticate = (requiredScope: AuthEnvironmentScope) =>
     if (!session.scopes.includes(requiredScope)) {
       return yield* failEnvironmentScopeRequired(requiredScope);
     }
+    // Streams outlive the request that authorized them, so like `/ws` they end
+    // when the session is revoked or its user's access changes.
+    return serverAuth.awaitSessionAccessChange(session);
   });
 
 const forwardHeaders = (request: HttpServerRequest.HttpServerRequest, origin: string) => {
@@ -127,6 +131,7 @@ const forwardHeaders = (request: HttpServerRequest.HttpServerRequest, origin: st
 const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
+  accessChanged: Effect.Effect<void>,
 ) {
   const client = yield* request.upgrade;
   const upstream = yield* Socket.makeWebSocket(upstreamUrl, {
@@ -138,10 +143,11 @@ const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
       const writeToUpstream = yield* upstream.writer;
       // Whichever side closes first ends the other via scope teardown: a close
       // fails the pull with a SocketError, which loses the race.
-      return yield* Effect.raceFirst(
+      return yield* Effect.raceAllFirst([
         pumpFrames(upstream, writeToClient),
         pumpFrames(client, writeToUpstream),
-      );
+        accessChanged,
+      ]);
     }),
   ).pipe(Effect.ignoreCause);
   return HttpServerResponse.empty();
@@ -159,6 +165,7 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
   hubOrigin: string,
+  accessChanged: Effect.Effect<void>,
 ) {
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   const method = request.method;
@@ -178,7 +185,7 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   }
   // Long-lived MJPEG and AVCC responses must not be buffered by compression.
   headers["cache-control"] = "no-store, no-transform";
-  return HttpServerResponse.stream(response.stream, {
+  return HttpServerResponse.stream(response.stream.pipe(Stream.interruptWhen(accessChanged)), {
     status: response.status,
     headers,
     ...(headers["content-type"] ? { contentType: headers["content-type"] } : {}),
@@ -206,7 +213,9 @@ const handler = Effect.gen(function* () {
   const controlsDevice =
     (upgrade && hubPath !== "/api/devices/ws") ||
     (!readOnly && /\/api\/(stream-(mode|settings)|fold)$/.test(hubPath));
-  yield* authenticate(controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope);
+  const accessChanged = yield* authenticate(
+    controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
+  );
   const devices = yield* DeviceService.DeviceService;
   const ready = yield* devices.currentReadiness(url.value.searchParams.get("hostId") ?? undefined);
   if (!ready) {
@@ -225,9 +234,15 @@ const handler = Effect.gen(function* () {
     return yield* proxyWebSocket(
       request,
       `${ready.hub.origin.replace(/^http/, "ws")}${upstreamPath}`,
+      accessChanged,
     );
   }
-  return yield* proxyHttp(request, `${ready.hub.origin}${upstreamPath}`, ready.hub.origin);
+  return yield* proxyHttp(
+    request,
+    `${ready.hub.origin}${upstreamPath}`,
+    ready.hub.origin,
+    accessChanged,
+  );
 });
 
 export const deviceHubProxyRouteLayer = HttpRouter.add(

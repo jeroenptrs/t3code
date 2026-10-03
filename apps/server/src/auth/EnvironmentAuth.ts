@@ -522,10 +522,19 @@ export class EnvironmentAuth extends Context.Service<
     readonly revokeOtherClientSessions: (
       currentSessionId: AuthSessionId,
     ) => Effect.Effect<number, ServerAuthInternalError>;
-    /** Revokes the session the request presents, if any. Never fails on a bad credential. */
-    readonly signOut: (
-      request: HttpServerRequest.HttpServerRequest,
-    ) => Effect.Effect<boolean, ServerAuthInternalError>;
+    /**
+     * Revokes every session the request's auth cookies name, whether or not
+     * the portal policy still admits it, and returns every auth cookie name
+     * the server knows so the caller can clear them all. Never fails on a bad
+     * credential.
+     */
+    readonly signOut: (request: HttpServerRequest.HttpServerRequest) => Effect.Effect<
+      {
+        readonly signedOut: boolean;
+        readonly cookieNames: ReadonlyArray<string>;
+      },
+      ServerAuthInternalError
+    >;
     readonly revokeUserSessions: (
       userId: AuthUserId,
     ) => Effect.Effect<number, ServerAuthInternalError>;
@@ -1181,17 +1190,34 @@ export const make = Effect.gen(function* () {
       return yield* authenticateRequest(request);
     });
 
+  const authCookieNames = [
+    sessions.cookieName,
+    ...(sessions.legacyCookieName ? [sessions.legacyCookieName] : []),
+    ...(devAuth ? [devAuth.cookieName] : []),
+  ];
+
+  // Verifies without the portal policy, so a pairing-derived browser session
+  // that Entra no longer admits is still revoked rather than left active.
   const signOut: EnvironmentAuth["Service"]["signOut"] = (request) =>
-    authenticateRequest(request).pipe(
-      Effect.map(Option.some),
-      Effect.catchIf(isServerAuthCredentialError, () => Effect.succeedNone),
-      Effect.flatMap((session) =>
-        // The reusable dev credential is shared across worktrees; signing out
-        // only drops the cookie.
-        Option.isNone(session) || session.value.sessionId === devAuth?.sessionId
-          ? Effect.succeed(false)
-          : sessions.revoke(session.value.sessionId),
-      ),
+    Effect.forEach(
+      authCookieNames.flatMap((name) => request.cookies[name] ?? []),
+      (token) =>
+        sessions.verify(token).pipe(
+          Effect.map(Option.some),
+          Effect.catchIf(SessionStore.isSessionCredentialInvalidError, () => Effect.succeedNone),
+          Effect.flatMap((session) =>
+            // The reusable dev credential is shared across worktrees; signing
+            // out only drops the cookie.
+            Option.isNone(session) || session.value.sessionId === devAuth?.sessionId
+              ? Effect.succeed(false)
+              : sessions.revoke(session.value.sessionId),
+          ),
+        ),
+    ).pipe(
+      Effect.map((revoked) => ({
+        signedOut: revoked.some(Boolean),
+        cookieNames: authCookieNames,
+      })),
       Effect.mapError((cause) => new ServerAuthSignOutError({ cause })),
       Effect.withSpan("EnvironmentAuth.signOut"),
     );

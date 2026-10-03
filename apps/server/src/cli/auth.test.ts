@@ -5,7 +5,8 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
@@ -55,6 +56,50 @@ describe("t3 auth user", () => {
       });
     }).pipe(
       Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer, TestConsole.layer)),
+    ),
+  );
+
+  it.effect("warns when the tenant is not the configured Entra tenant", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-auth-user-test-"));
+      const provision = (tenantId: string) =>
+        runCli([
+          "auth",
+          "user",
+          "provision-admin",
+          "--tenant-id",
+          tenantId,
+          "--object-id",
+          "00000000-0000-4000-8000-00000000000a",
+          "--base-dir",
+          baseDir,
+        ]);
+
+      yield* provision("8F2C3A1E-1B2C-4D5E-8F90-123456789ABC");
+      expect(yield* TestConsole.errorLines).toEqual([]);
+
+      yield* provision("0a0b0c0d-1b2c-4d5e-8f90-123456789abc");
+      expect((yield* TestConsole.errorLines).join("\n")).toContain(
+        "is not the configured Entra tenant",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NetService.layer,
+          TestConsole.layer,
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                T3CODE_ENTRA_TENANT_ID: "8f2c3a1e-1b2c-4d5e-8f90-123456789abc",
+                T3CODE_ENTRA_CLIENT_ID: "11111111-2222-4333-8444-555555555555",
+                T3CODE_ENTRA_CLIENT_SECRET: "secret",
+                T3CODE_PUBLIC_URL: "https://t3.example.com",
+              },
+            }),
+          ),
+        ),
+      ),
     ),
   );
 });

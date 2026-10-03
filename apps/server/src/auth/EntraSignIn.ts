@@ -36,6 +36,10 @@ const FLOW_TTL = Duration.minutes(10);
 const ENTRA_SESSION_TTL = Duration.hours(12);
 /** Entra rotates keys; an unknown `kid` refetches, at most this often. */
 const KEYS_REFRESH_COOLDOWN = Duration.minutes(1);
+/** Keys older than this are refetched before use, so a key Entra removed stops being trusted. */
+const KEYS_MAX_AGE = Duration.hours(24);
+/** OAuth error codes are short snake_case words; anything else is not logged verbatim. */
+const PROVIDER_ERROR_CODE = /^[a-z0-9_]{1,64}$/;
 const ID_TOKEN_CLOCK_TOLERANCE_SECONDS = 60;
 const MAX_RETURN_PATH_LENGTH = 2048;
 
@@ -130,7 +134,13 @@ export function sanitizeReturnPath(value: string | null | undefined): string {
     return "/";
   }
   const url = new URL(value, base);
-  return url.origin === base ? `${url.pathname}${url.search}${url.hash}` : "/";
+  if (url.origin !== base) {
+    return "/";
+  }
+  // Parsing collapses dot segments, so `/.//evil.example` normalizes to a
+  // protocol-relative path. Check the result, not only the input.
+  const path = `${url.pathname}${url.search}${url.hash}`;
+  return path.startsWith("//") ? "/" : path;
 }
 
 const FlowClaims = Schema.Struct({
@@ -335,8 +345,12 @@ const make = Effect.gen(function* () {
 
   const verifyIdToken = (idToken: string, nonce: string) =>
     Effect.gen(function* () {
-      const keys = (yield* Ref.get(keysRef)) ?? (yield* fetchKeys);
+      const cached = yield* Ref.get(keysRef);
       const now = yield* Clock.currentTimeMillis;
+      const keys =
+        cached === null || now - cached.fetchedAt >= Duration.toMillis(KEYS_MAX_AGE)
+          ? yield* fetchKeys
+          : cached;
       const verified = yield* verifyWithKeys(idToken, keys.keys).pipe(
         Effect.catchIf(
           (error) =>
@@ -374,7 +388,10 @@ const make = Effect.gen(function* () {
         return yield* fail("invalid_state", "Callback state does not match this browser's flow.");
       }
       if (input.error !== null) {
-        return yield* fail("provider_error", `Entra returned ${label(input.error) ?? "an error"}.`);
+        return yield* fail(
+          "provider_error",
+          `Entra returned ${PROVIDER_ERROR_CODE.test(input.error) ? input.error : "an error"}.`,
+        );
       }
       if (input.code === null) {
         return yield* fail("provider_error", "Entra returned no authorization code.");

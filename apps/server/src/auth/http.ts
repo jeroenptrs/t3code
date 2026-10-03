@@ -151,7 +151,7 @@ export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope
 }
 
 function failEnvironmentOperationForbidden(
-  reason: "current_session_revoke_not_allowed" | "user_session_required",
+  reason: "current_session_revoke_not_allowed" | "user_session_required" | "host_cli_required",
 ) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
@@ -486,6 +486,16 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+            // A pairing credential becomes a service token that is not bound to
+            // the user who minted it and would outlive their access. With Entra
+            // on, a signed-in user cannot mint one; service sessions, which then
+            // descend only from the host CLI, still can (Slack's rotator does).
+            if (
+              session.userId !== undefined &&
+              (yield* serverAuth.getDescriptor()).entraSignIn === true
+            ) {
+              return yield* failEnvironmentOperationForbidden("host_cli_required");
+            }
             const delegatedScopes = args.payload.scopes ?? AuthStandardClientScopes;
             if (
               delegatedScopes.length === 0 ||
@@ -585,10 +595,12 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
-            const signedOut = yield* serverAuth.signOut(request);
-            yield* expireSessionCookie(sessions.cookieName);
+            const result = yield* serverAuth.signOut(request);
+            for (const cookieName of result.cookieNames) {
+              yield* expireSessionCookie(cookieName);
+            }
             yield* appendCredentialResponseHeaders;
-            return { signedOut };
+            return { signedOut: result.signedOut };
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("sign_out_failed", error),
@@ -658,7 +670,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.auth.revokeUserSessions")(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
-            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            yield* requireUserAdministrator;
             const revokedCount = yield* serverAuth.revokeUserSessions(args.payload.userId);
             return { revokedCount };
           },

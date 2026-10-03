@@ -146,3 +146,21 @@ export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessI
     pairingUrl: buildPairingUrl(connectionString, issued.credential),
   } satisfies HeadlessServeAccessInfo;
 });
+
+/**
+ * What headless startup prints. With Entra sign-in on, it mints and prints no
+ * pairing token: people sign in at the public URL, and the operator issues
+ * administrators and service credentials with the host CLI.
+ */
+export const resolveHeadlessServeOutput = Effect.fn("resolveHeadlessServeOutput")(function* () {
+  const serverConfig = yield* ServerConfig.ServerConfig;
+  if (serverConfig.entraSignIn !== undefined) {
+    return [
+      "T3 Code server is ready.",
+      `Sign in with Microsoft Entra ID at ${serverConfig.entraSignIn.publicUrl.origin}`,
+      "No pairing token is issued while Entra sign-in is on. Use `t3 auth` on this host to provision administrators and issue service credentials.",
+      "",
+    ].join("\n");
+  }
+  return formatHeadlessServeOutput(yield* issueHeadlessServeAccessInfo());
+});

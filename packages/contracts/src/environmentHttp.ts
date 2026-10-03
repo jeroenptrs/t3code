@@ -102,10 +102,13 @@ export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.T
 /**
  * - `user_session_required`: changing user access needs a session signed in as
  *   a user, so the audit log can name who did it
+ * - `host_cli_required`: with Entra sign-in on, a signed-in user cannot mint
+ *   a credential that is not bound to them; the host CLI issues those
  */
 export const EnvironmentOperationForbiddenReason = Schema.Literals([
   "current_session_revoke_not_allowed",
   "user_session_required",
+  "host_cli_required",
 ]);
 export type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
 
@@ -389,6 +392,7 @@ const EnvironmentScopedOperationErrors = [
 ] as const;
 const EnvironmentPairingCredentialErrors = [
   EnvironmentRequestInvalidError,
+  EnvironmentOperationForbiddenError,
   ...EnvironmentScopedOperationErrors,
 ] as const;
 const EnvironmentSessionRevokeErrors = [

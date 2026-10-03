@@ -277,6 +277,11 @@ const PortalUserRow = memo(function PortalUserRow({
             ) : null}
           </div>
           <p className="text-xs text-muted-foreground">{details.join(" · ")}</p>
+          {/* Email and name come from the user's own directory profile; the
+              object ID is the stable identifier to check before approving. */}
+          <p className="text-xs text-muted-foreground">
+            Object ID <span className="font-mono select-all">{user.identity.objectId}</span>
+          </p>
         </div>
         <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
           {canManage && (actions.includes("approve") || actions.includes("enable-with-role")) ? (

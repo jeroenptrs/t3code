@@ -59,7 +59,10 @@ const runWithEnvironmentAuth = <A, E>(
 // whether or not a server is running against the same state directory.
 const runWithUserRegistry = <A, E>(
   flags: CliAuthLocationFlags,
-  run: (userRegistry: UserRegistry.UserRegistry["Service"]) => Effect.Effect<A, E>,
+  run: (
+    userRegistry: UserRegistry.UserRegistry["Service"],
+    config: ServerConfig.ServerConfig["Service"],
+  ) => Effect.Effect<A, E>,
   options?: {
     readonly quietLogs?: boolean;
   },
@@ -70,7 +73,7 @@ const runWithUserRegistry = <A, E>(
     const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
     return yield* Effect.gen(function* () {
       const userRegistry = yield* UserRegistry.UserRegistry;
-      return yield* run(userRegistry);
+      return yield* run(userRegistry, config);
     }).pipe(
       Effect.provide(
         UserRegistry.layer.pipe(
@@ -290,8 +293,14 @@ const userProvisionAdminCommand = Command.make("provision-admin", {
   Command.withHandler((flags) =>
     runWithUserRegistry(
       flags,
-      (userRegistry) =>
+      (userRegistry, config) =>
         Effect.gen(function* () {
+          // Sign-in only admits the configured tenant, so this user could never sign in.
+          if (config.entraSignIn !== undefined && config.entraSignIn.tenantId !== flags.tenantId) {
+            yield* Console.error(
+              `Warning: tenant ${flags.tenantId} is not the configured Entra tenant (${config.entraSignIn.tenantId}). This user cannot sign in until the tenant matches.`,
+            );
+          }
           const user = yield* userRegistry.provisionAdministratorFromHost({
             tenantId: flags.tenantId,
             objectId: flags.objectId,

@@ -211,7 +211,8 @@ const make = Effect.gen(function* () {
   /**
    * Reads the user, lets `decide` pick the next access state (or `null` for a
    * no-op), and writes the change and its audit record in one transaction.
-   * Publishes only after commit.
+   * Publishes only after commit. Uninterruptible, so a change that commits
+   * always reaches the live sockets that watch for it.
    */
   const transition = <E>(
     operation: string,
@@ -251,7 +252,7 @@ const make = Effect.gen(function* () {
         yield* PubSub.publish(changesPubSub, result.changed);
       }
       return result.user;
-    }).pipe(Effect.withSpan(`UserRegistry.${operation}`));
+    }).pipe(Effect.uninterruptible, Effect.withSpan(`UserRegistry.${operation}`));
 
   // Runs inside the transition's transaction, so the count and the write it
   // guards commit together.
@@ -388,7 +389,10 @@ const make = Effect.gen(function* () {
           yield* PubSub.publish(changesPubSub, result.changed);
         }
         return result.user;
-      }).pipe(Effect.withSpan("UserRegistry.provisionAdministratorFromHost"));
+      }).pipe(
+        Effect.uninterruptible,
+        Effect.withSpan("UserRegistry.provisionAdministratorFromHost"),
+      );
 
   return UserRegistry.of({
     recordSignIn,

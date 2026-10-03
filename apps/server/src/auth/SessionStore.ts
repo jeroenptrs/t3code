@@ -1045,6 +1045,8 @@ export const make = Effect.gen(function* () {
       }
       return revoked;
     },
+    // A committed revocation must reach the sockets that watch for it.
+    Effect.uninterruptible,
   );
 
   const revokeAllExcept: SessionStore["Service"]["revokeAllExcept"] = Effect.fn(
@@ -1079,7 +1081,7 @@ export const make = Effect.gen(function* () {
       );
     }
     return revokedSessionIds.length;
-  });
+  }, Effect.uninterruptible);
 
   const revokeForUser: SessionStore["Service"]["revokeForUser"] = Effect.fn(
     "SessionStore.revokeForUser",
@@ -1102,7 +1104,7 @@ export const make = Effect.gen(function* () {
       });
     }
     return revokedSessionIds.length;
-  });
+  }, Effect.uninterruptible);
 
   return SessionStore.of({
     cookieName,

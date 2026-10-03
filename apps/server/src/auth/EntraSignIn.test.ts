@@ -60,7 +60,15 @@ const identity = (suffix: string): AuthUserIdentity => ({
 
 const tenantKey = await generateKeyPair("RS256");
 const strangerKey = await generateKeyPair("RS256");
+const rotatedKey = await generateKeyPair("RS256");
 const publicJwk = { ...(await exportJWK(tenantKey.publicKey)), kid: "tenant-key", alg: "RS256" };
+const rotatedJwk = {
+  ...(await exportJWK(rotatedKey.publicKey)),
+  kid: "rotated-key",
+  alg: "RS256",
+};
+/** The keys the fake tenant publishes right now. */
+let publishedKeys: ReadonlyArray<typeof publicJwk> = [publicJwk];
 const issuedCodes = new Map<string, { readonly idToken: string; readonly challenge: string }>();
 let codeCounter = 0;
 
@@ -70,16 +78,25 @@ const signIdToken = (
     readonly issuer?: string;
     readonly audience?: string;
     readonly expiresAt?: number;
-    readonly key?: "tenant" | "stranger";
+    readonly key?: "tenant" | "stranger" | "rotated";
   },
 ) =>
   new SignJWT({ tid: TENANT, ...claims })
-    .setProtectedHeader({ alg: "RS256", kid: "tenant-key" })
+    .setProtectedHeader({
+      alg: "RS256",
+      kid: options?.key === "rotated" ? "rotated-key" : "tenant-key",
+    })
     .setIssuer(options?.issuer ?? ISSUER)
     .setAudience(options?.audience ?? CLIENT_ID)
     .setIssuedAt()
     .setExpirationTime(options?.expiresAt ?? "10m")
-    .sign(options?.key === "stranger" ? strangerKey.privateKey : tenantKey.privateKey);
+    .sign(
+      options?.key === "stranger"
+        ? strangerKey.privateKey
+        : options?.key === "rotated"
+          ? rotatedKey.privateKey
+          : tenantKey.privateKey,
+    );
 
 const jsonResponse = (
   request: Parameters<typeof HttpClientResponse.fromWeb>[0],
@@ -97,7 +114,7 @@ const fakeEntraHttpClient = Layer.succeed(
     Effect.sync(() => {
       const url = new URL(request.url);
       if (url.pathname === `/${TENANT}/discovery/v2.0/keys`) {
-        return jsonResponse(request, 200, { keys: [publicJwk] });
+        return jsonResponse(request, 200, { keys: publishedKeys });
       }
       if (request.method === "POST" && url.pathname === `/${TENANT}/oauth2/v2.0/token`) {
         const form = new URLSearchParams(
@@ -232,6 +249,10 @@ it("honors only same-origin relative return paths", () => {
     "threads/abc",
     "https://evil.example/",
     "//evil.example/path",
+    "/.//evil.example/x",
+    "/a/..//evil.example",
+    "/%2e//evil.example",
+    "/./%2e//evil.example",
     "/\\evil.example",
     "\\\\evil.example",
     "/path\nwith-newline",
@@ -336,6 +357,55 @@ it.layer(NodeServices.layer)("EntraSignIn", (it) => {
       expect(
         yield* expectFailure(entra.complete({ ...base, code: null, error: "access_denied" })),
       ).toBe("provider_error");
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("follows Entra's key rotation without a restart", () =>
+    Effect.gen(function* () {
+      yield* signInAs("1");
+      publishedKeys = [publicJwk, rotatedJwk];
+
+      // A key rotated in is fetched on first sight, once the cooldown allows.
+      expect(yield* expectFailure(completeSignIn({ oid: objectId("1") }, { key: "rotated" }))).toBe(
+        "invalid_id_token",
+      );
+      yield* TestClock.adjust(Duration.minutes(1));
+      yield* completeSignIn({ oid: objectId("1") }, { key: "rotated" });
+
+      // A key rotated out stays trusted only until the cache ages out.
+      publishedKeys = [rotatedJwk];
+      yield* signInAs("1");
+      yield* TestClock.adjust(Duration.hours(24));
+      expect(yield* expectFailure(signInAs("1"))).toBe("invalid_id_token");
+      yield* completeSignIn({ oid: objectId("1") }, { key: "rotated" });
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => (publishedKeys = [publicJwk]))),
+      Effect.provide(makeLayer()),
+    ),
+  );
+
+  it.effect("logs only a well-formed provider error code", () =>
+    Effect.gen(function* () {
+      const entra = yield* EntraSignIn.EntraSignIn;
+      const started = yield* entra.start({ returnTo: null });
+      const complete = (error: string) =>
+        entra
+          .complete({
+            code: null,
+            state: new URL(started.authorizationUrl).searchParams.get("state"),
+            error,
+            flowCookie: started.flowCookie,
+            client: { deviceType: "desktop" },
+          })
+          .pipe(
+            Effect.flip,
+            Effect.map((failure) =>
+              failure._tag === "EntraSignInError" ? failure.detail : failure.message,
+            ),
+          );
+
+      expect(yield* complete("access_denied")).toBe("Entra returned access_denied.");
+      expect(yield* complete("x\nlevel=error msg=forged")).toBe("Entra returned an error.");
     }).pipe(Effect.provide(makeLayer())),
   );
 
@@ -746,7 +816,87 @@ it.layer(NodeServices.layer)("Entra sign-in HTTP routes", (it) => {
           cookie: asCookie(operatorSession.session.token),
         });
         expect(listAsOperator.status).toBe(403);
+
+        const revokeAsService = await fetch("/api/auth/users/revoke-sessions", {
+          method: "POST",
+          body: JSON.stringify({ userId: userId("2") }),
+          headers: { authorization: `Bearer ${serviceToken.token}` },
+        });
+        expect(revokeAsService.status).toBe(403);
+        expect(await revokeAsService.json()).toMatchObject({ reason: "user_session_required" });
       });
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("with Entra on, signed-in users cannot mint pairing credentials over HTTP", () =>
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const registry = yield* UserRegistry.UserRegistry;
+      yield* registry.provisionAdministratorFromHost(identity("1"));
+      const administrator = yield* signInAs("1");
+      // Slack's rotator: a host-issued service session that renews the daemon's credential.
+      const rotator = yield* auth.issueSession({ label: "t3-slack-rotator" });
+      yield* withWebHandler(async (fetch) => {
+        const mint = (credential: { cookie: string } | { headers: Record<string, string> }) =>
+          fetch("/api/auth/pairing-token", {
+            method: "POST",
+            body: JSON.stringify({ label: "keep me", scopes: ["orchestration:read"] }),
+            ...credential,
+          });
+
+        const asAdministrator = await mint({
+          cookie: `${sessions.cookieName}=${administrator.session.token}`,
+        });
+        expect(asAdministrator.status).toBe(403);
+        expect(await asAdministrator.json()).toMatchObject({ reason: "host_cli_required" });
+
+        const asRotator = await mint({ headers: { authorization: `Bearer ${rotator.token}` } });
+        expect(asRotator.status).toBe(200);
+      });
+      expect((yield* auth.listPairingLinks()).map((link) => link.label)).toEqual(["keep me"]);
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("without Entra, administrators still mint pairing credentials over HTTP", () =>
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const serviceToken = yield* auth.issueSession({ label: "admin" });
+      yield* withWebHandler(async (fetch) => {
+        const response = await fetch("/api/auth/pairing-token", {
+          method: "POST",
+          body: JSON.stringify({ label: "phone" }),
+          headers: { authorization: `Bearer ${serviceToken.token}` },
+        });
+        expect(response.status).toBe(200);
+      });
+      expect(yield* auth.listPairingLinks()).toHaveLength(1);
+    }).pipe(Effect.provide(makeLayer({ entra: false }))),
+  );
+
+  it.effect("sign-out revokes a pairing-derived browser session Entra no longer admits", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const legacy = yield* sessions.issue({
+        method: "browser-session-cookie",
+        subject: "one-time-token",
+      });
+      yield* withWebHandler(async (fetch) => {
+        const signOut = await fetch("/api/auth/sign-out", {
+          method: "POST",
+          cookie: `${sessions.cookieName}=${legacy.token}`,
+        });
+        expect(await signOut.json()).toEqual({ signedOut: true });
+        const cleared = signOut.headers.getSetCookie().join();
+        for (const name of [
+          sessions.cookieName,
+          sessions.legacyCookieName ?? sessions.cookieName,
+        ]) {
+          expect(cleared).toMatch(new RegExp(`${name}=;.*Max-Age=0`));
+        }
+      });
+      const verified = yield* Effect.result(sessions.verify(legacy.token));
+      expect(Result.isFailure(verified)).toBe(true);
     }).pipe(Effect.provide(makeLayer())),
   );
 });
