@@ -83,15 +83,28 @@ describe("scheduleDraftForTask", () => {
 });
 
 describe("scheduleFromDraft", () => {
+  const SERVER_TIME_SCHEDULE = { ...DEFAULT_SCHEDULE, timeZone: null };
+
+  it("keeps the schedule's time zone", () => {
+    expect(scheduleFromDraft({ ...SERVER_TIME_SCHEDULE, timeZone: "Europe/Amsterdam" })).toEqual({
+      type: "fixed_time",
+      timeOfDay: "09:00",
+      timeZone: "Europe/Amsterdam",
+      weekdays: [1, 2, 3, 4, 5],
+    });
+  });
+
   it("rejects an empty day selection rather than silently scheduling every day", () => {
-    expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, weekdays: [] })).toBeNull();
+    expect(scheduleFromDraft({ ...SERVER_TIME_SCHEDULE, weekdays: [] })).toBeNull();
   });
 
   it.each([
     ["1.5", 90_000],
     [String(60_001 / 60_000), 60_001],
   ])("preserves a valid %s minute interval when saving", (intervalMinutes, everyMs) => {
-    expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "interval", intervalMinutes })).toEqual({
+    expect(
+      scheduleFromDraft({ ...SERVER_TIME_SCHEDULE, mode: "interval", intervalMinutes }),
+    ).toEqual({
       type: "interval",
       everyMs,
     });
