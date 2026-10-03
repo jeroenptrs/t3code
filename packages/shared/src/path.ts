@@ -121,3 +121,21 @@ export function resolveWorkspaceFilePath(path: string, workspaceRoot: string): s
     ? `${base}\\${path.replaceAll("/", "\\")}`
     : `${base}/${path}`;
 }
+
+export function canonicalPathIdentity(value: string): string {
+  const normalized = value.trim().replaceAll("\\", "/");
+  const drive = /^[A-Za-z]:/.exec(normalized)?.[0].toLowerCase() ?? "";
+  const absolute = normalized.startsWith("/") || drive.length > 0;
+  const parts: Array<string> = [];
+  for (const part of normalized.slice(drive.length).split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  const prefix = drive ? `${drive}/` : absolute ? "/" : "";
+  const identity = `${prefix}${parts.join("/")}` || ".";
+  return drive || normalized.startsWith("//") ? identity.toLowerCase() : identity;
+}
