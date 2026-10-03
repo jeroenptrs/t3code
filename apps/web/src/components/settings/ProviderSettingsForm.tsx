@@ -3,14 +3,17 @@
 import { useMemo, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type {
-  ProviderSettingsFormAnnotation,
-  ProviderSettingsFormControl,
-  ProviderSettingsFormOption,
-  ProviderSettingsFormSchemaAnnotation,
+import {
+  REDACTED_SECRET,
+  type ProviderSettingsFormAnnotation,
+  type ProviderSettingsFormControl,
+  type ProviderSettingsFormOption,
+  type ProviderSettingsFormSchemaAnnotation,
 } from "@t3tools/contracts";
+import { XIcon } from "lucide-react";
 
 import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -280,6 +283,33 @@ function ProviderSettingsFieldRow({
           placeholder={field.placeholder}
           spellCheck={false}
         />
+      ) : field.control === "password" &&
+        readProviderConfigString(value, field.key) === REDACTED_SECRET ? (
+        // The server never sends a saved secret back. Typing replaces it, the
+        // clear button removes it, and leaving it alone keeps it.
+        <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
+          <DraftInput
+            id={inputId}
+            aria-describedby={descriptionId}
+            size="sm"
+            className="min-w-0 flex-1"
+            type="password"
+            autoComplete="off"
+            value=""
+            onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
+            placeholder="Stored secret - enter a new value to replace"
+            spellCheck={false}
+          />
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost-destructive"
+            onClick={() => onChange(nextProviderConfigWithFieldValue(value, field, ""))}
+            aria-label={`Clear ${field.label}`}
+          >
+            <XIcon className="size-3.5" />
+          </Button>
+        </div>
       ) : (
         <DraftInput
           id={inputId}

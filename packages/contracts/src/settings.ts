@@ -532,6 +532,10 @@ const makeBinaryPathSetting = (fallback: string) =>
     Schema.withDecodingDefault(Effect.succeed(fallback)),
   );
 
+/**
+ * A `password` field is a secret: the server only uses it, so it is replaced
+ * with `REDACTED_SECRET` before settings reach any client.
+ */
 export type ProviderSettingsFormControl = "text" | "password" | "textarea" | "switch" | "select";
 
 export interface ProviderSettingsFormOption {
@@ -967,6 +971,43 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
   },
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
+
+/**
+ * Sent to clients in place of a stored secret. A client that sends it back
+ * means "keep what is saved"; an empty value clears the secret.
+ */
+export const REDACTED_SECRET = "\u2022\u2022\u2022\u2022\u2022\u2022";
+
+/** Every built-in driver's config schema, including drivers outside `providers`. */
+export const PROVIDER_SETTINGS_SCHEMAS = [
+  CodexSettings,
+  ClaudeSettings,
+  CursorSettings,
+  GrokSettings,
+  AntigravitySettings,
+  PiSettings,
+  AcpRegistrySettings,
+  OpenCodeSettings,
+] as const;
+
+/** Keys of a provider settings schema whose form control is `password`. */
+export function providerSettingsSecretKeys(schema: {
+  readonly fields: Schema.Struct.Fields;
+}): ReadonlyArray<string> {
+  return Object.entries(schema.fields).flatMap(([key, field]) => {
+    const annotations = Schema.resolveAnnotationsKey(field) ?? Schema.resolveAnnotations(field);
+    return annotations?.providerSettingsForm?.control === "password" ? [key] : [];
+  });
+}
+
+/**
+ * Secret keys across every provider config. The server redacts these keys in
+ * any provider config blob, whatever its driver, so a fork driver that reuses
+ * a built-in key name is covered too.
+ */
+export const PROVIDER_SETTINGS_SECRET_KEYS: ReadonlySet<string> = new Set(
+  PROVIDER_SETTINGS_SCHEMAS.flatMap(providerSettingsSecretKeys),
+);
 
 /**
  * A read-only quota source outside this environment's provider CLIs. The

@@ -6,6 +6,10 @@ import {
   ProjectScript,
   ProviderDriverKind,
   ProviderInstanceId,
+  PROVIDER_SETTINGS_SCHEMAS,
+  PROVIDER_SETTINGS_SECRET_KEYS,
+  providerSettingsSecretKeys,
+  REDACTED_SECRET,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -27,6 +31,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
+import { BUILT_IN_DRIVERS } from "./provider/builtInDrivers.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
@@ -1564,6 +1569,146 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           "",
         );
       }).pipe(Effect.provide(makeServerSettingsLayerWithSecrets())),
+  );
+
+  it.effect("covers every built-in driver's secret fields in the redaction key set", () =>
+    Effect.sync(() => {
+      for (const driver of BUILT_IN_DRIVERS) {
+        // Unlisted schemas would have their password fields sent to clients.
+        assert.include(PROVIDER_SETTINGS_SCHEMAS, driver.configSchema, String(driver.driverKind));
+        for (const key of providerSettingsSecretKeys(driver.configSchema as never)) {
+          assert.isTrue(PROVIDER_SETTINGS_SECRET_KEYS.has(key), `${driver.driverKind}.${key}`);
+        }
+      }
+      assert.includeMembers([...PROVIDER_SETTINGS_SECRET_KEYS], ["apiKey", "serverPassword"]);
+    }),
+  );
+
+  it.effect("keeps provider config secrets off the wire and on disk across client saves", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const opencode = ProviderInstanceId.make("opencode_work");
+      const antigravity = ProviderInstanceId.make("antigravity_work");
+      const fork = ProviderInstanceId.make("fork_work");
+
+      const saved = yield* serverSettings.updateSettings({
+        providers: {
+          opencode: { serverPassword: "legacy-password" },
+          antigravity: { apiKey: "legacy-key" },
+        },
+        providerInstances: {
+          [opencode]: {
+            driver: ProviderDriverKind.make("opencode"),
+            config: { serverUrl: "http://127.0.0.1:4096", serverPassword: "instance-password" },
+          },
+          [antigravity]: {
+            driver: ProviderDriverKind.make("antigravity"),
+            config: { authMethod: "gemini-api-key", apiKey: "instance-key" },
+          },
+          [fork]: {
+            driver: ProviderDriverKind.make("forkDriver"),
+            config: { apiKey: "fork-key", region: "eu" },
+          },
+        },
+      });
+
+      const forClient = ServerSettingsModule.redactServerSettingsForClient(saved);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      const wire = JSON.stringify(forClient);
+      for (const secret of [
+        "legacy-password",
+        "legacy-key",
+        "instance-password",
+        "instance-key",
+        "fork-key",
+      ]) {
+        assert.notInclude(wire, secret);
+      }
+      assert.equal(forClient.providers.opencode.serverPassword, REDACTED_SECRET);
+      assert.equal(forClient.providers.antigravity.apiKey, REDACTED_SECRET);
+      assert.deepEqual(forClient.providerInstances[opencode]?.config, {
+        serverUrl: "http://127.0.0.1:4096",
+        serverPassword: REDACTED_SECRET,
+      });
+      assert.deepEqual(forClient.providerInstances[fork]?.config, {
+        apiKey: REDACTED_SECRET,
+        region: "eu",
+      });
+      // An unset secret stays unset rather than reading as stored.
+      assert.equal(
+        ServerSettingsModule.redactServerSettingsForClient(DEFAULT_SERVER_SETTINGS).providers
+          .opencode.serverPassword,
+        "",
+      );
+
+      // A client that only saw the markers saves everything back, the way the web
+      // settings page resends the whole instance map.
+      yield* serverSettings.updateSettings({
+        providers: {
+          opencode: { serverPassword: forClient.providers.opencode.serverPassword },
+          antigravity: { apiKey: forClient.providers.antigravity.apiKey },
+        },
+        providerInstances: forClient.providerInstances,
+      });
+      yield* serverSettings.updateProviderInstance({
+        operation: "upsert",
+        instanceId: antigravity,
+        instance: {
+          ...forClient.providerInstances[antigravity]!,
+          displayName: "Antigravity Work",
+        },
+      });
+      const kept = yield* serverSettings.getSettings;
+      assert.equal(kept.providers.opencode.serverPassword, "legacy-password");
+      assert.equal(kept.providers.antigravity.apiKey, "legacy-key");
+      assert.deepEqual(kept.providerInstances[opencode]?.config, {
+        serverUrl: "http://127.0.0.1:4096",
+        serverPassword: "instance-password",
+      });
+      assert.deepEqual(kept.providerInstances[antigravity]?.config, {
+        authMethod: "gemini-api-key",
+        apiKey: "instance-key",
+      });
+      assert.deepEqual(kept.providerInstances[fork]?.config, { apiKey: "fork-key", region: "eu" });
+
+      // Setting a new value and clearing one both still apply.
+      const replaced = yield* serverSettings.updateProviderInstance({
+        operation: "upsert",
+        instanceId: opencode,
+        instance: {
+          driver: ProviderDriverKind.make("opencode"),
+          config: { serverUrl: "http://127.0.0.1:4096", serverPassword: "rotated-password" },
+        },
+      });
+      assert.deepEqual(replaced.providerInstances[opencode]?.config, {
+        serverUrl: "http://127.0.0.1:4096",
+        serverPassword: "rotated-password",
+      });
+      const cleared = yield* serverSettings.updateSettings({
+        providers: { opencode: { serverPassword: "" } },
+        providerInstances: {
+          ...forClient.providerInstances,
+          [antigravity]: {
+            driver: ProviderDriverKind.make("antigravity"),
+            config: { authMethod: "gemini-api-key" },
+          },
+        },
+      });
+      assert.equal(cleared.providers.opencode.serverPassword, "");
+      assert.deepEqual(cleared.providerInstances[antigravity]?.config, {
+        authMethod: "gemini-api-key",
+      });
+
+      // A marker for an instance with nothing saved is dropped, never stored.
+      const copied = yield* serverSettings.updateProviderInstance({
+        operation: "create",
+        instanceId: ProviderInstanceId.make("opencode_copy"),
+        instance: forClient.providerInstances[opencode]!,
+      });
+      assert.deepEqual(copied.providerInstances[ProviderInstanceId.make("opencode_copy")]?.config, {
+        serverUrl: "http://127.0.0.1:4096",
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
   it.effect("removes a Bitbucket secret once its token is cleared by hand in settings.json", () =>

@@ -121,6 +121,15 @@ user, so they can reach the host CLI and the state directory and are
 effectively as trusted as an Administrator. Reader also limits what someone can
 read on the host; see the filesystem boundary below.
 
+Server settings reach every session, Readers included, so a secret the server
+only uses must never be in what clients receive.
+[`redactServerSettingsForClient`](../../apps/server/src/serverSettings.ts)
+replaces each stored secret with `REDACTED_SECRET`, and an update that echoes
+the marker back keeps the saved value. Provider config secrets are found from
+the driver schema: a field with the `password` form control is redacted in
+`providers.*` and in every `providerInstances[*].config`. A new secret field
+outside a provider schema needs its own redaction.
+
 ## The environment is the filesystem boundary
 
 For a session that can operate, projects are organizational boundaries, not

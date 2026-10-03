@@ -7,6 +7,8 @@ import {
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
+  PROVIDER_SETTINGS_SCHEMAS,
+  providerSettingsSecretKeys,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -19,6 +21,19 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+
+describe("provider settings secrets", () => {
+  it("marks every credential-named provider field as a password so the server redacts it", () => {
+    const unmarked = PROVIDER_SETTINGS_SCHEMAS.flatMap((schema) => {
+      const secretKeys = providerSettingsSecretKeys(schema);
+      return Object.keys(schema.fields).filter(
+        (key) =>
+          /(key|token|secret|password|credential)s?$/i.test(key) && !secretKeys.includes(key),
+      );
+    });
+    expect(unmarked).toEqual([]);
+  });
+});
 
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
