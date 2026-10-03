@@ -24,10 +24,16 @@ export function nextScheduledRunAt(
 
   const time = parseTimeOfDay(schedule.timeOfDay);
   if (time === null) return null;
+  // Wall-clock parts and weekdays are read in the zone `from` carries, so a
+  // schedule with its own zone moves `from` there before stepping through days.
+  const start =
+    schedule.timeZone === undefined
+      ? from
+      : DateTime.setZone(from, DateTime.zoneMakeNamedUnsafe(schedule.timeZone));
   const weekdays =
     schedule.weekdays && schedule.weekdays.length > 0 ? new Set(schedule.weekdays) : null;
   for (let offset = 0; offset <= 7; offset += 1) {
-    const candidate = DateTime.setParts(DateTime.add(from, { days: offset }), {
+    const candidate = DateTime.setParts(DateTime.add(start, { days: offset }), {
       hour: time.hour,
       minute: time.minute,
       second: 0,
@@ -69,6 +75,7 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
     bTime !== null &&
     aTime.hour === bTime.hour &&
     aTime.minute === bTime.minute &&
+    a.timeZone === b.timeZone &&
     weekdayKey(a.weekdays) === weekdayKey(b.weekdays)
   );
 }
