@@ -90,6 +90,7 @@ import { resolvePastedPath } from "@t3tools/shared/path";
 import { useManagedPolicy } from "~/state/managedPolicy";
 import { ManagedNotice } from "../ManagedPolicy";
 import { readEnvironmentScope } from "~/state/session";
+import { ScheduledTaskTimeZonePicker } from "./ScheduledTaskTimeZonePicker";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
@@ -103,6 +104,7 @@ import {
   toDateTimeLocalValue,
   webhookDeliveryLabel,
   defaultScheduledTaskProjectId,
+  localTimeZone,
   matchesScheduledTaskScope,
   scheduleFromDraft,
   scheduleLabel,
@@ -194,6 +196,7 @@ const EMPTY_DRAFT: DraftState = {
   timeOfDay: "09:00",
   runAt: "",
   savedRunAt: "",
+  timeZone: localTimeZone(),
   weekdays: new Set([1, 2, 3, 4, 5]),
   projectId: "",
   threadId: "",
@@ -1564,7 +1567,7 @@ function ScheduledTaskEditorForm({
     draft.editingId !== null &&
     tasksQuery.data !== null &&
     !tasksQuery.data.tasks.some((entry) => entry.id === draft.editingId);
-  const runAtZone = scheduleTimeZoneLabel(tasksQuery.data?.timeZone);
+  const serverZoneLabel = scheduleTimeZoneLabel(tasksQuery.data?.timeZone);
   const liveTask = tasksQuery.data
     ? (tasksQuery.data.tasks.find((entry) => entry.id === draft.editingId) ?? null)
     : task;
@@ -2305,9 +2308,6 @@ function ScheduledTaskEditorForm({
                   <Input
                     type="time"
                     id="scheduled-task-time"
-                    aria-describedby={
-                      runAtZone === undefined ? undefined : "scheduled-task-time-zone"
-                    }
                     nativeInput
                     className="w-32"
                     value={draft.timeOfDay}
@@ -2315,11 +2315,11 @@ function ScheduledTaskEditorForm({
                       setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
                     }
                   />
-                  {runAtZone === undefined ? null : (
-                    <span id="scheduled-task-time-zone" className="text-xs text-muted-foreground">
-                      {runAtZone}
-                    </span>
-                  )}
+                  <ScheduledTaskTimeZonePicker
+                    timeZone={draft.timeZone}
+                    serverZoneLabel={serverZoneLabel}
+                    onSelect={(timeZone) => setDraft((current) => ({ ...current, timeZone }))}
+                  />
                   <span className="text-xs text-muted-foreground">
                     <T context="between the run time and the weekday buttons, as in Run at 9:00 on Mon Wed">
                       on
