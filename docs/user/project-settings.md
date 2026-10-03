@@ -81,10 +81,11 @@ branch name remains.
 Open **Settings → Scheduled tasks** to create scheduled tasks or manage existing
 ones across your connected environments. Use the settings filter to narrow the
 list by environment or project. Each task runs on the environment you choose,
-using its project, model, and workspace settings. Fixed-time schedules use that
-environment's time zone, which may differ from your phone's. Choose **Once**
-to run a task a single time at a date and time in your own time zone. If the
-environment is offline then, the task runs when it is back.
+using its project, model, and workspace settings. A new fixed-time schedule uses
+your phone's time zone. To pick a different zone, edit the task in the web or
+desktop app. Tasks saved without a zone follow the environment's time zone.
+Choose **Once** to run a task a single time at a date and time in your own time
+zone. If the environment is offline then, the task runs when it is back.
 
 Under **Destination**, choose where runs go. **New thread each run** keeps every
 run separate. The two one-thread choices start a thread on the first run and post
