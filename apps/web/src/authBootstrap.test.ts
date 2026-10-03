@@ -1,4 +1,5 @@
 import {
+  AuthUserId,
   EnvironmentAuthInvalidError,
   type AuthBrowserSessionResult,
   type AuthCreatePairingCredentialInput,
@@ -33,6 +34,14 @@ const DESKTOP_AUTH = {
   bootstrapMethods: ["desktop-bootstrap"],
   sessionMethods: ["browser-session-cookie"],
   sessionCookieName: "t3_session",
+} as const;
+
+const ENTRA_AUTH = {
+  policy: "remote-reachable",
+  bootstrapMethods: ["one-time-token"],
+  sessionMethods: ["browser-session-cookie"],
+  sessionCookieName: "t3_session",
+  entraSignIn: true,
 } as const;
 
 const SESSION_EXPIRES_AT = DateTime.makeUnsafe("2026-04-05T00:00:00.000Z");
@@ -670,5 +679,91 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(testApi.calls.pairingCredential).toEqual([
       { label: "Julius iPhone", scopes: ["orchestration:read"] },
     ]);
+  });
+});
+
+describe("resolveInitialServerAuthGateState with Entra sign-in", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    installTestBrowser("http://localhost/");
+  });
+
+  afterEach(async () => {
+    await disposeHttpTest?.();
+    disposeHttpTest = undefined;
+    const { __resetServerAuthBootstrapForTests } = await import("./environments/primary");
+    __resetServerAuthBootstrapForTests();
+    __setPrimaryHttpRunnerForTests();
+    vi.restoreAllMocks();
+  });
+
+  const portalUser = (status: "pending" | "active" | "disabled") => ({
+    userId: AuthUserId.make("user-1"),
+    status,
+    role: status === "pending" ? null : ("reader" as const),
+    email: "ada@example.com",
+    displayName: "Ada",
+  });
+
+  it("asks a signed-out browser to sign in and never exchanges a pairing token", async () => {
+    const testApi = await installAuthApi({ session: () => unauthenticatedSession(ENTRA_AUTH) });
+    const testWindow = installTestBrowser("http://localhost/pair#token=pairing-token");
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "portal-sign-in",
+    });
+    expect(testApi.calls.browserSession).toEqual([]);
+    expect(testWindow.location.hash).toBe("");
+  });
+
+  it("reports and strips a failed sign-in from the address bar", async () => {
+    await installAuthApi({ session: () => unauthenticatedSession(ENTRA_AUTH) });
+    const testWindow = installTestBrowser("http://localhost/?signInError=invalid_state&tab=diff");
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "portal-sign-in",
+      signInFailure: "invalid_state",
+    });
+    expect(testWindow.location.href).toBe("http://localhost/?tab=diff");
+  });
+
+  it("holds pending and disabled users at the access screen without caching it", async () => {
+    const testApi = await installAuthApi({
+      session: sequence<AuthSessionState>(
+        { ...authenticatedSession(ENTRA_AUTH), scopes: [], user: portalUser("pending") },
+        { ...authenticatedSession(ENTRA_AUTH), scopes: [], user: portalUser("disabled") },
+      ),
+    });
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "portal-no-access",
+      access: "awaiting-approval",
+      user: portalUser("pending"),
+    });
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "portal-no-access",
+      access: "disabled",
+      user: portalUser("disabled"),
+    });
+    expect(testApi.calls.session).toBe(2);
+  });
+
+  it("marks an active user's gate as portal so access changes are watched", async () => {
+    await installAuthApi({
+      session: () => ({
+        ...authenticatedSession(ENTRA_AUTH),
+        scopes: ["orchestration:read"],
+        user: portalUser("active"),
+      }),
+    });
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "authenticated",
+      portal: true,
+    });
   });
 });

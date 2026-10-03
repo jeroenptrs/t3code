@@ -63,6 +63,9 @@ import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
+import type { AuthGateState } from "../authGate";
+import { PortalNoAccessSurface, PortalSignInSurface } from "../components/auth/PortalAccessSurface";
+import { PortalAccessWatcher } from "../components/auth/PortalAccessWatcher";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { shellEnvironment } from "../state/shell";
@@ -85,7 +88,7 @@ import { installDesktopPasteAsText } from "../lib/desktopPasteAsText";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 
 export const Route = createRootRoute({
-  beforeLoad: async ({ location }) => {
+  beforeLoad: async ({ location }): Promise<{ authGateState: AuthGateState }> => {
     if (location.pathname === "/pair" && hasHostedPairingRequest(new URL(window.location.href))) {
       return {
         authGateState: {
@@ -160,6 +163,27 @@ function RootRouteView() {
     };
   }, [pathname]);
 
+  // Entra sign-in renders on the requested URL, so the path is what the
+  // browser comes back to after signing in.
+  if (authGateState.status === "portal-sign-in") {
+    return (
+      <>
+        <DocumentTitleSync />
+        <PortalSignInSurface
+          {...(authGateState.signInFailure ? { signInFailure: authGateState.signInFailure } : {})}
+        />
+      </>
+    );
+  }
+  if (authGateState.status === "portal-no-access") {
+    return (
+      <>
+        <DocumentTitleSync />
+        <PortalNoAccessSurface access={authGateState.access} user={authGateState.user} />
+      </>
+    );
+  }
+
   if (pathname === "/pair" || pathname === "/connect") {
     return (
       <>
@@ -228,6 +252,9 @@ function RootRouteView() {
           hostedStatic={authGateState.status === "hosted-static"}
         >
           {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
+          {authGateState.status === "authenticated" && authGateState.portal ? (
+            <PortalAccessWatcher />
+          ) : null}
           {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
           {isElectron ? <RunningThreadKeepAlive /> : null}
           <RelayClientInstallDialog />
