@@ -168,6 +168,15 @@ are not. Those RPCs need `filesystem:read` or `terminal:read`, which only
 pairing credentials grant; such a session is still confined, see the
 filesystem boundary below.
 
+Server settings reach every session, Readers included, so a secret the server
+only uses must never be in what clients receive.
+[`redactServerSettingsForClient`](../../apps/server/src/serverSettings.ts)
+replaces each stored secret with `REDACTED_SECRET`, and an update that echoes
+the marker back keeps the saved value. Provider config secrets are found from
+the driver schema: a field with the `password` form control is redacted in
+`providers.*` and in every `providerInstances[*].config`. A new secret field
+outside a provider schema needs its own redaction.
+
 ## The environment is the filesystem boundary
 
 For a session that can operate, projects are organizational boundaries, not
