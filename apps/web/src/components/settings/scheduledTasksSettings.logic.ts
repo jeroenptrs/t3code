@@ -60,7 +60,7 @@ export function scheduleLabel(
       : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
         ? "Weekdays"
         : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
-  const zone = scheduleTimeZoneLabel(timeZone, runAt);
+  const zone = scheduleTimeZoneLabel(schedule.timeZone ?? timeZone, runAt);
   return `${days} at ${schedule.timeOfDay}${zone === undefined ? "" : ` ${zone}`}`;
 }
 
@@ -90,6 +90,9 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
 }
 
 export type ScheduleMode = "fixed" | "once" | "interval" | "webhook";
+
+/** The zone new fixed-time schedules start in: wherever the person editing is. */
+export const localTimeZone = () => new Intl.DateTimeFormat().resolvedOptions().timeZone;
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
@@ -104,6 +107,8 @@ export interface DraftState {
   readonly runAt: string;
   /** The stored ISO run time, sent back unchanged when the field was not edited. */
   readonly savedRunAt: string;
+  /** IANA zone for `timeOfDay`; empty means the server's local zone. */
+  readonly timeZone: string;
   readonly weekdays: ReadonlySet<number>;
   readonly projectId: string;
   readonly threadId: string;
@@ -267,6 +272,7 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
   return {
     type: "fixed_time",
     timeOfDay: draft.timeOfDay || "09:00",
+    ...(draft.timeZone ? { timeZone: draft.timeZone } : {}),
     ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
   };
 }
@@ -290,6 +296,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay.padStart(5, "0") : "09:00",
     runAt: schedule.type === "once" ? toDateTimeLocalValue(new Date(schedule.runAt)) : "",
     savedRunAt: schedule.type === "once" ? schedule.runAt : "",
+    timeZone: schedule.type === "fixed_time" ? (schedule.timeZone ?? "") : localTimeZone(),
     weekdays,
     projectId: task.projectId,
     threadId: task.threadId ?? "",

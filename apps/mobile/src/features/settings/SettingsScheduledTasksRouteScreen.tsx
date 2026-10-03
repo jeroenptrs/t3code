@@ -125,7 +125,7 @@ function describeSchedule(task: ScheduledTask, timeZone?: string): string {
   }
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
-  const zone = scheduleTimeZoneLabel(timeZone, task.nextRunAt);
+  const zone = scheduleTimeZoneLabel(task.schedule.timeZone ?? timeZone, task.nextRunAt);
   return `${days} at ${formatTime(task.schedule.timeOfDay)}${zone === undefined ? "" : ` ${zone}`}`;
 }
 
@@ -683,7 +683,7 @@ function TaskForm({
     draft.task !== null &&
     tasks.data !== null &&
     !tasks.data.tasks.some((task) => task.id === draft.task?.id);
-  const runAtZone = scheduleTimeZoneLabel(tasks.data?.timeZone);
+  const runAtZone = scheduleTimeZoneLabel(draft.schedule.timeZone ?? tasks.data?.timeZone);
   const environmentUnavailable = !availableTargets.some(
     (target) => target.environmentId === environmentId,
   );
