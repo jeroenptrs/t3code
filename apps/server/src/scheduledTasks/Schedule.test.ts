@@ -53,6 +53,34 @@ describe("scheduled task schedule calculation", () => {
     expect(parts?.minute).toBe(0);
   });
 
+  it("reads fixed times in the schedule's own time zone", () => {
+    const schedule = {
+      type: "fixed_time",
+      timeOfDay: "09:00",
+      timeZone: "Europe/Amsterdam",
+      weekdays: [1],
+    } as const;
+    const utcIso = (from: string) => {
+      const next = nextScheduledRunAt(schedule, DateTime.makeUnsafe(from));
+      return next ? DateTime.formatIso(DateTime.toUtc(next)) : null;
+    };
+    // Sunday 23:30 UTC is already Monday in Amsterdam (CEST, UTC+2).
+    expect(utcIso("2026-07-05T23:30:00.000Z")).toBe("2026-07-06T07:00:00.000Z");
+    // After the autumn DST change the same wall-clock time is UTC+1.
+    expect(utcIso("2026-10-24T12:00:00.000Z")).toBe("2026-10-26T08:00:00.000Z");
+  });
+
+  it("treats a time zone change as a schedule change", () => {
+    const fixedTime = { type: "fixed_time", timeOfDay: "09:00" } as const;
+    expect(isSameSchedule(fixedTime, { ...fixedTime, timeZone: "Europe/Amsterdam" })).toBe(false);
+    expect(
+      isSameSchedule(
+        { ...fixedTime, timeZone: "Europe/Amsterdam" },
+        { ...fixedTime, timeZone: "Europe/Amsterdam" },
+      ),
+    ).toBe(true);
+  });
+
   it("skips fixed-time runs missed by more than the grace window", () => {
     const fixedTime = { type: "fixed_time", timeOfDay: "09:00" } as const;
     const dueAt = DateTime.makeUnsafe("2026-07-01T09:00:00.000Z");

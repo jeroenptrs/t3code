@@ -41,6 +41,8 @@ export function scheduledTaskDefaultModel(
 export type ScheduleDraft = {
   readonly mode: "fixed_time" | "interval" | "webhook";
   readonly timeOfDay: string;
+  /** IANA zone for `timeOfDay`; null means the server's local zone. */
+  readonly timeZone: string | null;
   readonly weekdays: ReadonlyArray<number>;
   readonly intervalMinutes: string;
   /** A webhook signature check configured elsewhere; mobile keeps it but does not edit it. */
@@ -52,6 +54,8 @@ export type ScheduleDraft = {
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
   mode: "fixed_time",
   timeOfDay: "09:00",
+  // New schedules follow the device, not whichever machine hosts the server.
+  timeZone: new Intl.DateTimeFormat().resolvedOptions().timeZone,
   weekdays: [1, 2, 3, 4, 5],
   intervalMinutes: "15",
   signature: null,
@@ -64,6 +68,7 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
       return {
         ...DEFAULT_SCHEDULE,
         timeOfDay: task.schedule.timeOfDay,
+        timeZone: task.schedule.timeZone ?? null,
         weekdays: task.schedule.weekdays?.length
           ? [...new Set(task.schedule.weekdays)].sort((a, b) => a - b)
           : [0, 1, 2, 3, 4, 5, 6],
@@ -122,6 +127,7 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
   return {
     type: "fixed_time",
     timeOfDay: draft.timeOfDay,
+    ...(draft.timeZone ? { timeZone: draft.timeZone } : {}),
     ...(weekdays.length === 7 ? {} : { weekdays }),
   };
 }
@@ -155,6 +161,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
       .map((option) => [option.id, option.value]),
     draft.schedule.mode,
     draft.schedule.timeOfDay,
+    draft.schedule.timeZone,
     [...draft.schedule.weekdays].sort((a, b) => a - b),
     draft.schedule.intervalMinutes,
     draft.schedule.maxDeliveryAgeMinutes,
