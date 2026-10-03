@@ -21,6 +21,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from "jose";
@@ -69,7 +70,11 @@ const rotatedJwk = {
 };
 /** The keys the fake tenant publishes right now. */
 let publishedKeys: ReadonlyArray<typeof publicJwk> = [publicJwk];
-const issuedCodes = new Map<string, { readonly idToken: string; readonly challenge: string }>();
+/** Each code redeems only with the verifier and redirect URI its authorization request used. */
+const issuedCodes = new Map<
+  string,
+  { readonly idToken: string; readonly challenge: string; readonly redirectUri: string | null }
+>();
 let codeCounter = 0;
 
 const signIdToken = (
@@ -130,7 +135,7 @@ const fakeEntraHttpClient = Layer.succeed(
           issued.challenge !== challenge ||
           form.get("client_id") !== CLIENT_ID ||
           form.get("client_secret") !== CLIENT_SECRET ||
-          form.get("redirect_uri") !== `${PUBLIC_URL}/api/auth/entra/callback`
+          form.get("redirect_uri") !== issued.redirectUri
         ) {
           return jsonResponse(request, 400, { error: "invalid_grant", error_codes: [54005] });
         }
@@ -143,7 +148,7 @@ const fakeEntraHttpClient = Layer.succeed(
 
 // ---------------------------------------------------------------------------
 
-const configLayer = (entra: boolean) =>
+const configLayer = (entra: boolean, callbackPath: `/${string}`) =>
   Layer.effect(
     ServerConfig.ServerConfig,
     Effect.gen(function* () {
@@ -159,6 +164,7 @@ const configLayer = (entra: boolean) =>
                 clientId: CLIENT_ID,
                 clientSecret: Redacted.make(CLIENT_SECRET),
                 publicUrl: new URL(PUBLIC_URL),
+                callbackPath,
               },
             }
           : {}),
@@ -166,13 +172,18 @@ const configLayer = (entra: boolean) =>
     }),
   ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-entra-test-" })));
 
-const makeLayer = (options?: { readonly entra?: boolean }) =>
+const makeLayer = (options?: { readonly entra?: boolean; readonly callbackPath?: `/${string}` }) =>
   EntraSignIn.layer.pipe(
     Layer.provideMerge(EnvironmentAuth.layer),
     Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provide(ServerEnvironment.identityLayer),
-    Layer.provideMerge(configLayer(options?.entra ?? true)),
+    Layer.provideMerge(
+      configLayer(
+        options?.entra ?? true,
+        options?.callbackPath ?? ServerConfig.DEFAULT_ENTRA_CALLBACK_PATH,
+      ),
+    ),
     Layer.provide(fakeEntraHttpClient),
   );
 
@@ -209,6 +220,7 @@ const completeSignIn = (
     issuedCodes.set(code, {
       idToken: yield* Effect.promise(() => signIdToken({ nonce: flow.nonce, ...claims }, options)),
       challenge: authorize.searchParams.get("code_challenge") ?? "",
+      redirectUri: authorize.searchParams.get("redirect_uri"),
     });
     return yield* entra.complete({
       code,
@@ -282,6 +294,22 @@ it.layer(NodeServices.layer)("EntraSignIn", (it) => {
       expect(url.searchParams.get("code_challenge")).toBeTruthy();
       expect(started.flowCookie).not.toContain(url.searchParams.get("code_challenge"));
     }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect(
+    "sends a configured callback path as the redirect URI at start and token exchange",
+    () =>
+      Effect.gen(function* () {
+        const entra = yield* EntraSignIn.EntraSignIn;
+        expect(entra.callbackPath).toBe("/auth/callback");
+        const started = yield* entra.start({ returnTo: null });
+        expect(new URL(started.authorizationUrl).searchParams.get("redirect_uri")).toBe(
+          `${PUBLIC_URL}/auth/callback`,
+        );
+        // The fake tenant redeems a code only with the redirect URI it was issued for.
+        const completed = yield* completeSignIn({ oid: objectId("1") });
+        expect(completed.session.token).toBeTruthy();
+      }).pipe(Effect.provide(makeLayer({ callbackPath: "/auth/callback" }))),
   );
 
   it.effect("rejects callbacks whose state does not belong to this browser", () =>
@@ -633,6 +661,8 @@ const withWebHandler = <A>(
         Layer.provide(authHttpApiLayer),
         Layer.provide(environmentAuthenticatedAuthLayer),
       ),
+      // Stands in for the static and SPA fallback, which answers every other GET.
+      HttpRouter.add("GET", "*", HttpServerResponse.text("index.html")),
       entraSignInRouteLayer,
     ).pipe(
       Layer.provide(Layer.succeedContext(context)),
@@ -690,6 +720,7 @@ it.layer(NodeServices.layer)("Entra sign-in HTTP routes", (it) => {
         const authorize = new URL(start.headers.get("location") ?? "");
         const flowCookie = cookiePair(start, entra.flowCookieName);
         expect(start.headers.getSetCookie().join()).toMatch(/HttpOnly.*Secure|Secure.*HttpOnly/);
+        expect(start.headers.getSetCookie().join()).toContain("Path=/api/auth/entra/callback");
 
         const code = `code-${++codeCounter}`;
         issuedCodes.set(code, {
@@ -699,6 +730,7 @@ it.layer(NodeServices.layer)("Entra sign-in HTTP routes", (it) => {
             name: "Ada",
           }),
           challenge: authorize.searchParams.get("code_challenge") ?? "",
+          redirectUri: authorize.searchParams.get("redirect_uri"),
         });
         const callback = await fetch(
           `/api/auth/entra/callback?code=${code}&state=${authorize.searchParams.get("state")}`,
@@ -737,6 +769,55 @@ it.layer(NodeServices.layer)("Entra sign-in HTTP routes", (it) => {
         expect(await after.json()).toMatchObject({ authenticated: false });
       });
     }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("serves a configured callback path ahead of the SPA fallback", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const entra = yield* EntraSignIn.EntraSignIn;
+      yield* withWebHandler(async (fetch) => {
+        const start = await fetch("/api/auth/entra/start", { redirect: "manual" });
+        expect(start.status).toBe(302);
+        const authorize = new URL(start.headers.get("location") ?? "");
+        expect(authorize.searchParams.get("redirect_uri")).toBe(`${PUBLIC_URL}/auth/callback`);
+        const flowSetCookie = start.headers
+          .getSetCookie()
+          .find((cookie) => cookie.startsWith(`${entra.flowCookieName}=`));
+        expect(flowSetCookie).toContain("Path=/auth/callback");
+        const flowCookie = cookiePair(start, entra.flowCookieName) ?? "";
+
+        const callbackQuery = (code: string) =>
+          `?code=${code}&state=${authorize.searchParams.get("state")}`;
+        const code = `code-${++codeCounter}`;
+        issuedCodes.set(code, {
+          idToken: await signIdToken({
+            oid: objectId("1"),
+            nonce: authorize.searchParams.get("nonce"),
+          }),
+          challenge: authorize.searchParams.get("code_challenge") ?? "",
+          redirectUri: authorize.searchParams.get("redirect_uri"),
+        });
+
+        // The old default path falls through to the SPA like any unknown page.
+        const oldPath = await fetch(`/api/auth/entra/callback${callbackQuery(code)}`, {
+          cookie: flowCookie,
+        });
+        expect(await oldPath.text()).toBe("index.html");
+        expect(oldPath.headers.getSetCookie()).toEqual([]);
+
+        const callback = await fetch(`/auth/callback${callbackQuery(code)}`, {
+          cookie: flowCookie,
+        });
+        expect(callback.status).toBe(302);
+        expect(callback.headers.get("location")).toBe("/");
+        expect(cookiePair(callback, sessions.cookieName)).toBeDefined();
+        const expired = callback.headers
+          .getSetCookie()
+          .find((cookie) => cookie.startsWith(`${entra.flowCookieName}=`));
+        expect(expired).toMatch(/Max-Age=0/);
+        expect(expired).toContain("Path=/auth/callback");
+      });
+    }).pipe(Effect.provide(makeLayer({ callbackPath: "/auth/callback" }))),
   );
 
   it.effect("refuses a pairing credential at the browser-session route", () =>

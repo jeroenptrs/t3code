@@ -74,7 +74,7 @@ const fail = (reason: EntraSignInFailureReason, detail: string, cause?: unknown)
 
 export interface EntraSignInStart {
   readonly authorizationUrl: string;
-  /** Binds the callback to this browser. HttpOnly, scoped to the callback path. */
+  /** Binds the callback to this browser. HttpOnly, scoped to `callbackPath`. */
   readonly flowCookie: string;
   readonly flowCookieMaxAge: Duration.Duration;
 }
@@ -89,7 +89,8 @@ export class EntraSignIn extends Context.Service<
   {
     readonly enabled: boolean;
     readonly flowCookieName: string;
-    readonly flowCookiePath: string;
+    /** Where Entra returns the browser. The flow cookie is scoped to it. */
+    readonly callbackPath: `/${string}`;
     /** True when the public URL is HTTPS, so cookies set by these routes are `Secure`. */
     readonly secureCookies: boolean;
     /** Starts an authorization code flow with PKCE against the configured tenant. */
@@ -183,7 +184,7 @@ const label = (value: unknown): string | null => {
 const disabled = EntraSignIn.of({
   enabled: false,
   flowCookieName: "t3_entra_flow",
-  flowCookiePath: "/api/auth/entra",
+  callbackPath: ServerConfig.DEFAULT_ENTRA_CALLBACK_PATH,
   secureCookies: false,
   start: () => Effect.fail(new EntraSignInDisabledError()),
   complete: () => Effect.fail(new EntraSignInDisabledError()),
@@ -203,7 +204,7 @@ const make = Effect.gen(function* () {
   const flowSigningKey = yield* secretStore.getOrCreateRandom(FLOW_SIGNING_SECRET_NAME, 32);
   const tenantBase = `${ENTRA_AUTHORITY}/${config.tenantId}`;
   const issuer = `${tenantBase}/v2.0`;
-  const redirectUri = new URL("/api/auth/entra/callback", config.publicUrl).toString();
+  const redirectUri = new URL(config.callbackPath, config.publicUrl).toString();
   const flowCookieName = `${sessions.cookieName}_entra_flow`;
   const keysRef = yield* Ref.make<{ keys: JSONWebKeySet; fetchedAt: number } | null>(null);
 
@@ -433,7 +434,7 @@ const make = Effect.gen(function* () {
   return EntraSignIn.of({
     enabled: true,
     flowCookieName,
-    flowCookiePath: "/api/auth/entra",
+    callbackPath: config.callbackPath,
     secureCookies: config.publicUrl.protocol === "https:",
     start,
     complete,

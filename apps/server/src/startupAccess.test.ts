@@ -107,6 +107,7 @@ it.effect("headless startup with Entra sign-in mints and prints no pairing token
                 clientId: "11111111-2222-4333-8444-555555555555",
                 clientSecret: Redacted.make("secret"),
                 publicUrl: new URL("https://t3.example.com"),
+                callbackPath: ServerConfig.DEFAULT_ENTRA_CALLBACK_PATH,
               },
             })),
           ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-startup-" }))),

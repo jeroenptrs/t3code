@@ -21,7 +21,6 @@ import {
   EnvironmentScopeRequiredError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
-  ENTRA_SIGN_IN_CALLBACK_PATH,
   ENTRA_SIGN_IN_ERROR_PARAM,
   ENTRA_SIGN_IN_RETURN_TO_PARAM,
   ENTRA_SIGN_IN_START_PATH,
@@ -704,7 +703,7 @@ const entraSignInStartRoute = HttpRouter.add(
         httpOnly: true,
         secure: entra.secureCookies,
         sameSite: "lax",
-        path: entra.flowCookiePath,
+        path: entra.callbackPath,
         maxAge: started.flowCookieMaxAge,
       }),
     );
@@ -722,11 +721,8 @@ const entraSignInStartRoute = HttpRouter.add(
  * Finishes sign-in: sets the session cookie and returns to the requested
  * page, or lands on `/?signInError=<reason>` when anything fails.
  */
-const entraSignInCallbackRoute = HttpRouter.add(
-  "GET",
-  ENTRA_SIGN_IN_CALLBACK_PATH,
+const handleEntraSignInCallback = (entra: EntraSignIn.EntraSignIn["Service"]) =>
   Effect.gen(function* () {
-    const entra = yield* EntraSignIn.EntraSignIn;
     const sessions = yield* SessionStore.SessionStore;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const params = Option.match(HttpServerRequest.toURL(request), {
@@ -777,13 +773,24 @@ const entraSignInCallbackRoute = HttpRouter.add(
       httpOnly: true,
       secure: entra.secureCookies,
       sameSite: "lax",
-      path: entra.flowCookiePath,
+      path: entra.callbackPath,
     });
   }).pipe(
     Effect.catchTag("CookiesError", () =>
       Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
     ),
-  ),
+  );
+
+/**
+ * Registered on the configured callback path. The router tries static routes
+ * before the `*` static and SPA fallback, so the callback is answered by the
+ * server even outside `/api`.
+ */
+const entraSignInCallbackRoute = Layer.unwrap(
+  Effect.gen(function* () {
+    const entra = yield* EntraSignIn.EntraSignIn;
+    return HttpRouter.add("GET", entra.callbackPath, handleEntraSignInCallback(entra));
+  }),
 );
 
 export const entraSignInRouteLayer = Layer.mergeAll(

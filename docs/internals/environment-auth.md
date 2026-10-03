@@ -93,6 +93,14 @@ redirect URI from the configured public URL, never from request or forwarded
 headers. Behind a TLS-terminating platform those headers are whatever the
 client sent.
 
+The callback path is configurable so the redirect URI can follow an
+organization's app registration convention. A path outside `/api` still reaches
+the server because the router tries static routes before the `*` static and
+SPA fallback. Under `vp run dev` it does not: Vite proxies only the
+[dev-proxied prefixes](../../packages/shared/src/devProxy.ts), so a custom
+callback path outside them is answered by Vite with the SPA. Leave it unset in
+dev.
+
 With Entra on, a browser cookie session must belong to a user. Pairing and the
 reusable dev credential can no longer create a browser session, and existing
 pairing-derived browser sessions stop authenticating. Sign-out still revokes
