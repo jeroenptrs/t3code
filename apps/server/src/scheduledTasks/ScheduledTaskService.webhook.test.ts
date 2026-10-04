@@ -63,7 +63,14 @@ const withService = <A, E>(
     readonly service: ScheduledTaskService.ScheduledTaskService["Service"];
     readonly launches: Queue.Queue<LaunchInput>;
   }) => Effect.Effect<A, E, never>,
-  options: { readonly gate?: Deferred.Deferred<void> } = {},
+  options: {
+    readonly gate?: Deferred.Deferred<void>;
+    readonly origin?: Effect.Effect<{
+      readonly environmentId: string;
+      readonly relayUrl: string | null;
+      readonly publicUrl: string | null;
+    }>;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const launches = yield* Queue.unbounded<LaunchInput>();
@@ -78,6 +85,9 @@ const withService = <A, E>(
           ),
       }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      options.origin
+        ? Layer.succeed(ScheduledTaskService.ScheduledTaskWebhookOrigin, options.origin)
+        : Layer.empty,
     );
     return yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
@@ -92,7 +102,7 @@ it.effect("dispatches exactly the rendered prompt and logs the delivery", () =>
       assert.equal(task.nextRunAt, null);
       assert.isDefined(task.webhook);
       assert.isTrue(task.webhook!.path.startsWith("/api/hooks/scheduled-task%3Ahook/"));
-      // Not linked to T3 Connect in tests.
+      // Neither linked to T3 Connect nor given a public URL in tests.
       assert.equal(task.webhook!.url, null);
 
       const result = yield* service.triggerWebhook(requestFor(task));
@@ -117,6 +127,46 @@ it.effect("dispatches exactly the rendered prompt and logs the delivery", () =>
       assert.equal(delivery.body, new TextDecoder().decode(pullRequestBody));
       assert.equal(delivery.renderedPrompt, launched.initialMessage?.text);
     }),
+  ),
+);
+
+it.effect("builds the URL from the relay when linked, even with a public URL", () =>
+  withService(
+    ({ service }) =>
+      Effect.gen(function* () {
+        const { task } = yield* service.upsert(yield* webhookTaskInput());
+        const token = task.webhook!.path.split("/").at(-1);
+        assert.equal(
+          task.webhook!.url,
+          `https://relay.example.com/v1/hooks/env-1/scheduled-task%3Ahook/${token}`,
+        );
+      }),
+    {
+      origin: Effect.succeed({
+        environmentId: "env-1",
+        relayUrl: "https://relay.example.com/",
+        publicUrl: "https://t3.example.com",
+      }),
+    },
+  ),
+);
+
+it.effect("builds the URL from the public URL when not linked", () =>
+  withService(
+    ({ service }) =>
+      Effect.gen(function* () {
+        const { task } = yield* service.upsert(yield* webhookTaskInput());
+        assert.equal(task.webhook!.url, `https://t3.example.com${task.webhook!.path}`);
+        const listed = yield* service.list();
+        assert.equal(listed.tasks[0]?.webhook?.url, task.webhook!.url);
+      }),
+    {
+      origin: Effect.succeed({
+        environmentId: "env-1",
+        relayUrl: null,
+        publicUrl: "https://t3.example.com",
+      }),
+    },
   ),
 );
 

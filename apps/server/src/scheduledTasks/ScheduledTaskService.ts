@@ -54,10 +54,14 @@ const WEBHOOK_MAX_QUEUED_PER_TASK = 20;
 /** Accepted deliveries per task per minute, enforced here as well as on the relay because the tunnel hostname is public too. */
 const WEBHOOK_RATE_LIMIT_PER_MINUTE = 60;
 
-/** Where a webhook task's public URL points. `relayUrl` is null when the environment is not linked to T3 Connect. */
+/**
+ * Where a webhook task's public URL points. `relayUrl` is null when the environment is not linked to T3 Connect.
+ * `publicUrl` is the server's own configured origin, used when there is no relay.
+ */
 interface WebhookOrigin {
   readonly environmentId: string;
   readonly relayUrl: string | null;
+  readonly publicUrl?: string | null | undefined;
 }
 
 export class ScheduledTaskWebhookOrigin extends Context.Reference<Effect.Effect<WebhookOrigin>>(
@@ -245,11 +249,15 @@ function webhookEndpoint(
 ): ScheduledTask["webhook"] {
   if (row.webhook_token === null) return undefined;
   const relayUrl = origin?.relayUrl?.replace(/\/+$/, "") ?? null;
+  const publicUrl = origin?.publicUrl?.replace(/\/+$/, "") ?? null;
+  const path = webhookPath(row.task_id, row.webhook_token);
   return {
-    path: webhookPath(row.task_id, row.webhook_token),
+    path,
     url:
       relayUrl === null || origin === null
-        ? null
+        ? publicUrl === null
+          ? null
+          : `${publicUrl}${path}`
         : `${relayUrl}/v1/hooks/${encodeURIComponent(origin.environmentId)}/${encodeURIComponent(row.task_id)}/${row.webhook_token}`,
     hasSecret: row.webhook_secret !== null,
   };
