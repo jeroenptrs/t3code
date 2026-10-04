@@ -460,11 +460,14 @@ const layerCloudManagedEndpointRuntime = Layer.mergeAll(
 );
 
 // Webhook URLs go through the relay only when the managed tunnel it forwards
-// to is configured; otherwise clients show the environment-relative path.
+// to is configured; otherwise they use the configured public URL, and without
+// one clients show the environment-relative path.
 const layerScheduledTaskWebhookOrigin = Layer.effect(
   ScheduledTaskWebhookOrigin,
   Effect.gen(function* () {
     const secrets = yield* ServerSecretStore.ServerSecretStore;
+    // Only the Entra portal config carries a public URL in this fork.
+    const publicUrl = (yield* ServerConfig.ServerConfig).entraSignIn?.publicUrl.origin ?? null;
     // The reference holds an effect so each read sees the current link state.
     return Effect.gen(function* () {
       const [relayUrl, tunnelConfig] = yield* Effect.all([
@@ -472,7 +475,7 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
         secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
       ]).pipe(Effect.orElseSucceed(() => [Option.none(), Option.none()] as const));
       if (Option.isNone(relayUrl) || Option.isNone(tunnelConfig)) {
-        return { relayHookBaseUrl: null };
+        return { relayHookBaseUrl: null, publicUrl };
       }
       const config = decodeRuntimeConfig(new TextDecoder().decode(tunnelConfig.value));
       return {
@@ -480,6 +483,7 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
           relayUrl: new TextDecoder().decode(relayUrl.value),
           tunnelName: Option.isSome(config) ? config.value.tunnelName : undefined,
         }),
+        publicUrl,
       };
     });
   }),
