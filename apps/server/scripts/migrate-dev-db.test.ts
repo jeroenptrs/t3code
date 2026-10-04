@@ -140,6 +140,11 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
       yield* sql`INSERT INTO scheduled_task_webhook_pending
         (delivery_id, task_id, coalesce_key, due_at, task_json, request_json, delivery_ids_json)
         VALUES ('delivery-1', 'task-1', 'key-1', 1900000000000, '{}', '{}', '[]')`;
+      yield* sql`INSERT INTO scheduled_task_webhook_deliveries
+        (delivery_id, task_id, received_at, method, query, headers_json, body, body_bytes,
+          body_truncated, outcome, signature_verified, missing_fields_json)
+        VALUES ('delivery-1', 'task-1', '2026-08-01', 'POST', '', '{}', '{"secret":1}', 12,
+          0, 'accepted', 0, '[]')`;
       yield* sql`INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
         VALUES ('session-1', 'user', '[]', 'pairing', '2026-08-01', '2027-08-01')`;
       if (toMigrationInclusive === undefined) yield* insertPeerLink(sql);
@@ -184,6 +189,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
             auth: number;
             tasks: number;
             webhooks: number;
+            deliveries: number;
             transfers: number;
             links: number;
           }>`
@@ -192,6 +198,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
               (SELECT COUNT(*) FROM scheduled_tasks) AS tasks,
               (SELECT COUNT(*) FROM scheduled_task_webhook_replay_keys) +
                 (SELECT COUNT(*) FROM scheduled_task_webhook_pending) AS webhooks,
+              (SELECT COUNT(*) FROM scheduled_task_webhook_deliveries) AS deliveries,
               (SELECT COUNT(*) FROM orchestration_v2_projection_context_transfers) AS transfers,
               (SELECT COUNT(*) FROM peer_environment_links) AS links`;
           return { threads, events, sessions, pullRequest, project, leftovers };
@@ -238,6 +245,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         auth: 0,
         tasks: 0,
         webhooks: 0,
+        deliveries: 0,
         transfers: 0,
         links: 0,
       });
