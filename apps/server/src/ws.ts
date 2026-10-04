@@ -605,6 +605,20 @@ const MAX_CLIENT_APP_VERSION_LENGTH = 64;
 const MAX_CLIENT_BROWSER_LENGTH = 64;
 const MAX_CLIENT_DEVICE_MODEL_LENGTH = 80;
 
+/**
+ * A webhook URL starts agent runs, so only sessions that may operate see it,
+ * along with who created the hook and rotated its token. Read-only sessions
+ * still see the task itself.
+ */
+export function visibleScheduledTasks(
+  result: ScheduledTaskListResult,
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+): ScheduledTaskListResult {
+  return scopes.includes(AuthOrchestrationOperateScope)
+    ? result
+    : { tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task) };
+}
+
 export function hasCompatibleOrchestrationProtocol(url: URL): boolean {
   return (
     url.searchParams.get(ORCHESTRATION_PROTOCOL_QUERY_PARAM) ===
@@ -1328,14 +1342,8 @@ const layerWsRpc = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const relayClient = yield* RelayClient.RelayClient;
-      // A webhook URL starts agent runs, so only sessions that may operate
-      // see it; read-only sessions still see the task itself.
-      const withVisibleWebhookUrls = (result: ScheduledTaskListResult): ScheduledTaskListResult =>
-        currentSession.scopes.includes(AuthOrchestrationOperateScope)
-          ? result
-          : {
-              tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task),
-            };
+      const withVisibleWebhookUrls = (result: ScheduledTaskListResult) =>
+        visibleScheduledTasks(result, currentSession.scopes);
       // RpcScopeAuthorization checks each RPC's declared scope before its handler
       // runs. This covers the one RPC whose scope depends on its input.
       const authorizeEffect = <A, E, R>(
@@ -2063,7 +2071,8 @@ const layerWsRpc = (
           scheduledTasks.list().pipe(Effect.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
-        [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
+        [WS_METHODS.scheduledTasksUpsert]: (input) =>
+          scheduledTasks.upsert(input, currentSession.userId ?? null),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.setEnabled(input)),
@@ -2078,7 +2087,7 @@ const layerWsRpc = (
           ),
         [WS_METHODS.scheduledTasksRotateWebhookToken]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
-            Effect.andThen(scheduledTasks.rotateWebhookToken(input)),
+            Effect.andThen(scheduledTasks.rotateWebhookToken(input, currentSession.userId ?? null)),
           ),
         [WS_METHODS.secretsAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
@@ -2630,61 +2639,61 @@ const layerWsRpc = (
         [WS_METHODS.projectsSearchEntries]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd),
-          workspaceEntries.search(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectSearchEntriesError({
-                  cwd: input.cwd,
-                  queryLength: input.query.length,
-                  limit: input.limit,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
-            ),
+            workspaceEntries.search(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectSearchEntriesError({
+                    cwd: input.cwd,
+                    queryLength: input.query.length,
+                    limit: input.limit,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
           ),
         [WS_METHODS.projectsSearchContents]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd),
-          workspaceEntries.searchContents(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectSearchContentsError({
-                  cwd: input.cwd,
-                  queryLength: input.query.length,
-                  limit: input.limit,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
-            ),
+            workspaceEntries.searchContents(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectSearchContentsError({
+                    cwd: input.cwd,
+                    queryLength: input.query.length,
+                    limit: input.limit,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
           ),
         [WS_METHODS.projectsListEntries]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd, path.resolve(input.cwd, input.directoryPath ?? "")),
-          workspaceEntries.list(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectListEntriesError({
-                  ...input,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
-            ),
+            workspaceEntries.list(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectListEntriesError({
+                    ...input,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
           ),
         [WS_METHODS.projectsReadFile]: (input) =>
           Effect.andThen(
             ensureReadable(path.resolve(input.cwd, input.relativePath)),
-          workspaceFileSystem.readFile(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectReadFileError({
-                  ...input,
-                  ...projectFileFailureContext(cause),
-                  cause,
-                }),
-            ),
+            workspaceFileSystem.readFile(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectReadFileError({
+                    ...input,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
           ),
         [WS_METHODS.projectsWriteFile]: (input) =>
