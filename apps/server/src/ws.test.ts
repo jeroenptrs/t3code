@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthSessionId,
   EnvironmentId,
   ProjectId,
@@ -13,6 +15,7 @@ import {
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationProjectShell,
+  ScheduledTaskListResult,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerProvider,
@@ -23,6 +26,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/http";
@@ -118,9 +122,51 @@ import {
   layerWsRpc,
   subscribeOrchestrationV2Shell,
   subscribeOrchestrationV2Thread,
+  visibleScheduledTasks,
   WS_RPC_SERVER_OPTIONS,
   withLateEditorConfig,
 } from "./ws.ts";
+
+it("shows a webhook's URL and audit trail only to sessions that may operate", () => {
+  const result = Schema.decodeUnknownSync(ScheduledTaskListResult)({
+    tasks: [
+      {
+        id: "scheduled-task:hook",
+        title: "Review PRs",
+        prompt: "Review {{body}}",
+        enabled: true,
+        schedule: { type: "webhook", signature: null },
+        projectId: "project-1",
+        threadId: null,
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        nextRunAt: null,
+        lastRunAt: null,
+        lastRunStatus: "never",
+        lastRunError: null,
+        runCount: 0,
+        webhook: {
+          path: "/api/hooks/scheduled-task%3Ahook/token",
+          url: null,
+          hasSecret: false,
+          createdByUser: { userId: "user-1", name: "Ada" },
+          tokenRotatedAt: "2026-01-02T00:00:00.000Z",
+          tokenRotatedByUser: { userId: "user-2", name: null },
+        },
+      },
+    ],
+  });
+  assert.deepStrictEqual(visibleScheduledTasks(result, [AuthOrchestrationOperateScope]), result);
+  const readOnly = visibleScheduledTasks(result, [AuthOrchestrationReadScope]);
+  assert.equal(readOnly.tasks.length, 1);
+  assert.notProperty(readOnly.tasks[0], "webhook");
+});
 
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
   ({ availableEditors: [], settings: {}, ...fields }) as unknown as ServerConfig;
