@@ -7,6 +7,7 @@ import {
   ScheduledTaskId,
   ThreadId,
   ScheduledTaskWebhookDeliveryId,
+  type AuthUserId,
   type ScheduledTaskDeleteInput,
   type ScheduledTaskDeleteResult,
   type ScheduledTaskGetWebhookDeliveryInput,
@@ -175,6 +176,12 @@ interface ScheduledTaskRow {
   readonly run_count: number;
   readonly webhook_token: string | null;
   readonly webhook_secret: string | null;
+  readonly created_by_user_id: string | null;
+  readonly webhook_token_rotated_by_user_id: string | null;
+  readonly webhook_token_rotated_at: string | null;
+  /** Resolved from auth_users by the list and get queries; absent elsewhere. */
+  readonly created_by_user_name?: string | null;
+  readonly webhook_token_rotated_by_user_name?: string | null;
 }
 
 interface WebhookDeliveryRow {
@@ -199,8 +206,10 @@ export class ScheduledTaskService extends Context.Service<
   {
     readonly list: () => Effect.Effect<ScheduledTaskListResult, ScheduledTaskError>;
     readonly subscribeList: () => Stream.Stream<ScheduledTaskListResult, ScheduledTaskError>;
+    /** `actingUserId` is recorded as the creator of a new task; edits keep the original. */
     readonly upsert: (
       input: ScheduledTaskUpsertInput,
+      actingUserId?: AuthUserId | null,
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
     readonly setEnabled: (
       input: ScheduledTaskSetEnabledInput,
@@ -215,6 +224,7 @@ export class ScheduledTaskService extends Context.Service<
     ) => Effect.Effect<ScheduledTaskRunNowResult, ScheduledTaskError>;
     readonly rotateWebhookToken: (
       input: ScheduledTaskRotateWebhookTokenInput,
+      actingUserId?: AuthUserId | null,
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
     readonly listWebhookDeliveries: (
       input: ScheduledTaskListWebhookDeliveriesInput,
@@ -272,10 +282,8 @@ function webhookPath(taskId: string, token: string): string {
   return `${WEBHOOK_ROUTE_PREFIX}/${encodeURIComponent(taskId)}/${token}`;
 }
 
-function webhookEndpoint(
-  row: Pick<ScheduledTaskRow, "task_id" | "webhook_token" | "webhook_secret">,
-  origin: WebhookOrigin | null,
-): ScheduledTask["webhook"] {
+/** Decoded with the rest of the row, so stored ids and times are checked there. */
+function webhookEndpoint(row: ScheduledTaskRow, origin: WebhookOrigin | null) {
   if (row.webhook_token === null) return undefined;
   const base = origin?.relayHookBaseUrl ?? null;
   const publicUrl = origin?.publicUrl?.replace(/\/+$/, "") ?? null;
@@ -289,6 +297,25 @@ function webhookEndpoint(
           ? null
           : `${publicUrl}${path}`,
     hasSecret: row.webhook_secret !== null,
+    ...(row.created_by_user_id === null
+      ? {}
+      : {
+          createdByUser: {
+            userId: row.created_by_user_id,
+            name: row.created_by_user_name ?? null,
+          },
+        }),
+    ...(row.webhook_token_rotated_at === null
+      ? {}
+      : { tokenRotatedAt: row.webhook_token_rotated_at }),
+    ...(row.webhook_token_rotated_by_user_id === null
+      ? {}
+      : {
+          tokenRotatedByUser: {
+            userId: row.webhook_token_rotated_by_user_id,
+            name: row.webhook_token_rotated_by_user_name ?? null,
+          },
+        }),
   };
 }
 
@@ -395,6 +422,13 @@ export const layer = Layer.effect(
     const changesPubSub = yield* PubSub.sliding<void>(1);
     const notifyChanged = PubSub.publish(changesPubSub, undefined).pipe(Effect.asVoid);
 
+    // Audit names come from the user registry's table, so the client never
+    // needs the user list; a removed user resolves to NULL.
+    const userName = (column: string) =>
+      sql.literal(
+        `(SELECT COALESCE(display_name, email) FROM auth_users WHERE auth_users.user_id = scheduled_tasks.${column})`,
+      );
+
     const selectAllRows = () => sql<ScheduledTaskRow>`
       SELECT
         task_id,
@@ -418,7 +452,12 @@ export const layer = Layer.effect(
         last_run_error,
         run_count,
         webhook_token,
-        webhook_secret
+        webhook_secret,
+        created_by_user_id,
+        webhook_token_rotated_by_user_id,
+        webhook_token_rotated_at,
+        ${userName("created_by_user_id")} AS created_by_user_name,
+        ${userName("webhook_token_rotated_by_user_id")} AS webhook_token_rotated_by_user_name
       FROM scheduled_tasks
       ORDER BY updated_at DESC, task_id ASC
     `;
@@ -452,7 +491,12 @@ export const layer = Layer.effect(
         last_run_error,
         run_count,
         webhook_token,
-        webhook_secret
+        webhook_secret,
+        created_by_user_id,
+        webhook_token_rotated_by_user_id,
+        webhook_token_rotated_at,
+        ${userName("created_by_user_id")} AS created_by_user_name,
+        ${userName("webhook_token_rotated_by_user_id")} AS webhook_token_rotated_by_user_name
       FROM scheduled_tasks
       WHERE task_id = ${id}
     `;
@@ -500,6 +544,7 @@ export const layer = Layer.effect(
     // that landed after upsert loaded the previous task.
     const saveTask = (
       task: ScheduledTask,
+      createdByUserId: AuthUserId | null,
       requireExisting: boolean,
       webhook: {
         readonly token: string | null;
@@ -530,7 +575,8 @@ export const layer = Layer.effect(
           last_run_error,
           run_count,
           webhook_token,
-          webhook_secret
+          webhook_secret,
+          created_by_user_id
         )
         SELECT
           ${task.id},
@@ -554,7 +600,8 @@ export const layer = Layer.effect(
           ${task.lastRunError},
           ${task.runCount},
           ${webhook.token},
-          ${webhook.secret}
+          ${webhook.secret},
+          ${createdByUserId}
         WHERE ${requireExisting ? 0 : 1} = 1
            OR EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${task.id})
         ON CONFLICT (task_id)
@@ -581,6 +628,15 @@ export const layer = Layer.effect(
           webhook_secret = CASE
             WHEN ${webhook.secretChanged ? 1 : 0} = 1 THEN excluded.webhook_secret
             ELSE scheduled_tasks.webhook_secret
+          END,
+          -- Rotation history describes the live token and goes with it.
+          webhook_token_rotated_by_user_id = CASE
+            WHEN excluded.webhook_token IS NULL THEN NULL
+            ELSE scheduled_tasks.webhook_token_rotated_by_user_id
+          END,
+          webhook_token_rotated_at = CASE
+            WHEN excluded.webhook_token IS NULL THEN NULL
+            ELSE scheduled_tasks.webhook_token_rotated_at
           END
         RETURNING task_id
       `.pipe(
@@ -955,7 +1011,7 @@ export const layer = Layer.effect(
 
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
-    )(function* (input) {
+    )(function* (input, actingUserId = null) {
       const now = yield* localNow;
       const uuid =
         input.commandId === undefined
@@ -1063,7 +1119,7 @@ export const layer = Layer.effect(
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
       };
-      yield* saveTask(task, input.requireExisting === true, webhook);
+      yield* saveTask(task, actingUserId, input.requireExisting === true, webhook);
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
     });
@@ -1169,7 +1225,7 @@ export const layer = Layer.effect(
 
     const rotateWebhookToken: ScheduledTaskService["Service"]["rotateWebhookToken"] = Effect.fn(
       "ScheduledTaskService.rotateWebhookToken",
-    )(function* (input) {
+    )(function* (input, actingUserId = null) {
       const task = yield* loadTask(input.id);
       if (task.schedule.type !== "webhook") {
         return yield* taskError("Only webhook tasks have a URL token.", { taskId: input.id });
@@ -1180,7 +1236,10 @@ export const layer = Layer.effect(
       // and recreated under the same id since it was loaded.
       const updated = yield* sql<{ task_id: string }>`
           UPDATE scheduled_tasks
-          SET webhook_token = ${token}, updated_at = ${iso(now)}
+          SET webhook_token = ${token},
+              updated_at = ${iso(now)},
+              webhook_token_rotated_at = ${iso(now)},
+              webhook_token_rotated_by_user_id = ${actingUserId}
           WHERE task_id = ${input.id} AND created_at = ${task.createdAt}
           RETURNING task_id
         `.pipe(
