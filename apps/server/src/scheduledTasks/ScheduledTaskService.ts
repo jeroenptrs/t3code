@@ -92,6 +92,8 @@ const LEGACY_DELIVERY_OUTCOMES: ReadonlySet<string> = new Set([
 
 interface WebhookOrigin {
   readonly relayHookBaseUrl: string | null;
+  /** The server's own configured origin, used when there is no relay. */
+  readonly publicUrl?: string | null | undefined;
 }
 
 const ENDPOINT_KEY = /^[0-9a-f]{16}$/;
@@ -313,9 +315,16 @@ function webhookEndpoint(
 ): ScheduledTask["webhook"] {
   if (row.webhook_token === null) return undefined;
   const base = origin?.relayHookBaseUrl ?? null;
+  const publicUrl = origin?.publicUrl?.replace(/\/+$/, "") ?? null;
+  const path = webhookPath(row.task_id, row.webhook_token);
   return {
-    path: webhookPath(row.task_id, row.webhook_token),
-    url: base === null ? null : `${base}/${encodeURIComponent(row.task_id)}/${row.webhook_token}`,
+    path,
+    url:
+      base !== null
+        ? `${base}/${encodeURIComponent(row.task_id)}/${row.webhook_token}`
+        : publicUrl === null
+          ? null
+          : `${publicUrl}${path}`,
     hasSecret: row.webhook_secret !== null,
   };
 }
