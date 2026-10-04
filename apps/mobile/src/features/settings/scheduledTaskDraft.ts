@@ -5,6 +5,7 @@ import type {
   RuntimeMode,
   ScheduledTask,
   ScheduledTaskUpsertSchedule,
+  ScheduledTaskWebhookSignature,
 } from "@t3tools/contracts";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
@@ -37,12 +38,14 @@ export function scheduledTaskDefaultModel(
 }
 
 export type ScheduleDraft = {
-  readonly mode: "fixed_time" | "interval";
+  readonly mode: "fixed_time" | "interval" | "webhook";
   readonly timeOfDay: string;
   /** IANA zone for `timeOfDay`; null means the server's local zone. */
   readonly timeZone: string | null;
   readonly weekdays: ReadonlyArray<number>;
   readonly intervalMinutes: string;
+  /** A webhook signature check configured elsewhere; mobile keeps it but does not edit it. */
+  readonly signature: ScheduledTaskWebhookSignature | null;
 };
 
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
@@ -52,26 +55,49 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   timeZone: new Intl.DateTimeFormat().resolvedOptions().timeZone,
   weekdays: [1, 2, 3, 4, 5],
   intervalMinutes: "15",
+  signature: null,
 };
 
+/** Prompt a new webhook task starts with: the whole request, which the user can narrow down. */
+export const DEFAULT_WEBHOOK_PROMPT = "Handle this webhook:\n{{request}}";
+
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
-  return task.schedule.type === "fixed_time"
-    ? {
+  switch (task.schedule.type) {
+    case "fixed_time":
+      return {
         ...DEFAULT_SCHEDULE,
         timeOfDay: task.schedule.timeOfDay,
         timeZone: task.schedule.timeZone ?? null,
         weekdays: task.schedule.weekdays?.length
           ? [...new Set(task.schedule.weekdays)].sort((a, b) => a - b)
           : [0, 1, 2, 3, 4, 5, 6],
-      }
-    : {
+      };
+    case "interval":
+      return {
         ...DEFAULT_SCHEDULE,
         mode: "interval",
         intervalMinutes: String(Math.max(1, task.schedule.everyMs / 60_000)),
       };
+    case "webhook":
+      return { ...DEFAULT_SCHEDULE, mode: "webhook", signature: task.schedule.signature };
+  }
 }
 
 export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
+  if (draft.mode === "webhook") {
+    // No secret is sent, so the server keeps the stored one.
+    return {
+      type: "webhook",
+      signature:
+        draft.signature === null
+          ? null
+          : {
+              header: draft.signature.header,
+              encoding: draft.signature.encoding,
+              prefix: draft.signature.prefix,
+            },
+    };
+  }
   if (draft.mode === "interval") {
     const minutes = Number(draft.intervalMinutes);
     // Undo floating-point noise from displaying existing millisecond intervals as minutes.
