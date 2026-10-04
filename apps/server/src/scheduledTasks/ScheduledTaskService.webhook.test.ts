@@ -54,6 +54,28 @@ const requestFor = (
   ...overrides,
 });
 
+/** A service whose launches are pushed to `launches`, each then running `hold`. */
+const serviceLayer = (
+  launches: Queue.Queue<LaunchInput>,
+  hold: Effect.Effect<void> = Effect.void,
+) =>
+  ScheduledTaskService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodePlatformCrypto.layer,
+        Scheduler.layer,
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          launch: (input) =>
+            Queue.offer(launches, input).pipe(
+              Effect.andThen(hold),
+              Effect.as({ threadId: "thread-1", resumed: false } as never),
+            ),
+        }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      ),
+    ),
+  );
+
 /**
  * Runs `body` against a service whose launches are pushed to `launches`;
  * `gate`, when given, holds each launch until the test releases it.
@@ -74,25 +96,20 @@ const withService = <A, E>(
 ) =>
   Effect.gen(function* () {
     const launches = yield* Queue.unbounded<LaunchInput>();
-    const dependencies = Layer.mergeAll(
-      NodePlatformCrypto.layer,
-      Scheduler.layer,
-      Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-        launch: (input) =>
-          Queue.offer(launches, input).pipe(
-            Effect.andThen(options.gate ? Deferred.await(options.gate) : Effect.void),
-            Effect.as({ threadId: "thread-1", resumed: false } as never),
-          ),
-      }),
-      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
-      options.origin
-        ? Layer.succeed(ScheduledTaskService.ScheduledTaskWebhookOrigin, options.origin)
-        : Layer.empty,
-    );
     return yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       return yield* body({ service, launches });
-    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(dependencies))));
+    }).pipe(
+      Effect.provide(
+        serviceLayer(launches, options.gate ? Deferred.await(options.gate) : Effect.void).pipe(
+          Layer.provide(
+            options.origin
+              ? Layer.succeed(ScheduledTaskService.ScheduledTaskWebhookOrigin, options.origin)
+              : Layer.empty,
+          ),
+        ),
+      ),
+    );
   }).pipe(Effect.provide(SqlitePersistenceMemory));
 
 it.effect("dispatches exactly the rendered prompt and logs the delivery", () =>
@@ -491,4 +508,57 @@ it.effect("deleting a task removes its delivery log", () =>
       assert.equal((yield* service.listWebhookDeliveries({ id: task.id })).deliveries.length, 0);
     }),
   ),
+);
+
+it.effect("dispatches accepted deliveries a restart cut off, in order and once", () =>
+  Effect.gen(function* () {
+    const launches = yield* Queue.unbounded<LaunchInput>();
+    // Each launch finishes once it takes a token, so the test picks which
+    // launch is still mid-dispatch when a run stops.
+    const tokens = yield* Queue.unbounded<void>();
+    const held = Queue.take(tokens);
+    const service = ScheduledTaskService.ScheduledTaskService;
+    const deliveryId = (result: ScheduledTaskService.WebhookTriggerResult) =>
+      result._tag === "accepted" ? result.deliveryId : assert.fail(result._tag);
+    const commandIdOf = (id: string) => `scheduled-task:scheduled-task:hook:webhook:${id}`;
+    const nextLaunch = Queue.take(launches).pipe(Effect.map((launch) => launch.commandId));
+
+    // First run: one delivery is mid-dispatch and one waits behind it when
+    // the server stops; both were already answered 202.
+    const first = yield* Effect.gen(function* () {
+      const { task } = yield* (yield* service).upsert(yield* webhookTaskInput());
+      const running = deliveryId(yield* (yield* service).triggerWebhook(requestFor(task)));
+      const queued = deliveryId(yield* (yield* service).triggerWebhook(requestFor(task)));
+      assert.equal(yield* nextLaunch, commandIdOf(running));
+      return { task, running, queued };
+    }).pipe(Effect.provide(serviceLayer(launches, held)));
+
+    // Second run: both dispatch in arrival order before a new delivery, the
+    // interrupted one under its original command id so a committed dispatch
+    // replays instead of running twice.
+    const inFlight = yield* Effect.gen(function* () {
+      yield* Queue.offerAll(tokens, [undefined, undefined, undefined]);
+      const fresh = deliveryId(yield* (yield* service).triggerWebhook(requestFor(first.task)));
+      assert.deepEqual(
+        [yield* nextLaunch, yield* nextLaunch, yield* nextLaunch],
+        [first.running, first.queued, fresh].map(commandIdOf),
+      );
+      // Queued behind `fresh`, so it launches only after `fresh` is recorded
+      // as dispatched. It is mid-dispatch when this run stops.
+      const last = deliveryId(yield* (yield* service).triggerWebhook(requestFor(first.task)));
+      assert.equal(yield* nextLaunch, commandIdOf(last));
+      return last;
+    }).pipe(Effect.provide(serviceLayer(launches, held)));
+
+    // Third run: only the delivery still mid-dispatch runs again.
+    yield* Effect.gen(function* () {
+      const fresh = deliveryId(yield* (yield* service).triggerWebhook(requestFor(first.task)));
+      assert.deepEqual([yield* nextLaunch, yield* nextLaunch], [inFlight, fresh].map(commandIdOf));
+      const { deliveries } = yield* (yield* service).listWebhookDeliveries({ id: first.task.id });
+      assert.deepEqual(
+        deliveries.map((delivery) => delivery.outcome),
+        Array.from({ length: 5 }, () => "accepted"),
+      );
+    }).pipe(Effect.provide(serviceLayer(launches)));
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );

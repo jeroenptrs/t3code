@@ -19,7 +19,8 @@
  *
  * Fork columns on upstream tables: `auth_sessions.user_id` (002);
  * `scheduled_tasks.created_by_user_id`, `webhook_token_rotated_by_user_id`,
- * `webhook_token_rotated_at` (003).
+ * `webhook_token_rotated_at` (003);
+ * `scheduled_task_webhook_deliveries.dispatched_at` (004).
  */
 
 import * as Migrator from "effect/unstable/sql/Migrator";
@@ -29,6 +30,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import ForkMigration0001 from "./ForkMigrations/001_AuthUsers.ts";
 import ForkMigration0002 from "./ForkMigrations/002_AuthSessionUsers.ts";
 import ForkMigration0003 from "./ForkMigrations/003_ScheduledTaskUserAudit.ts";
+import ForkMigration0004 from "./ForkMigrations/004_WebhookDeliveryDispatchedAt.ts";
 
 export const forkMigrationsTable = "fork_sql_migrations";
 
@@ -36,6 +38,7 @@ export const forkMigrationEntries = [
   [1, "AuthUsers", ForkMigration0001],
   [2, "AuthSessionUsers", ForkMigration0002],
   [3, "ScheduledTaskUserAudit", ForkMigration0003],
+  [4, "WebhookDeliveryDispatchedAt", ForkMigration0004],
 ] as const;
 
 export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);
