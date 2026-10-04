@@ -69,9 +69,11 @@ Leaving an edited form asks before discarding unsaved changes.
 In **Settings → Scheduled tasks**, choose **On webhook** as a task's schedule to run it whenever another service
 calls its URL, such as GitHub on a new pull request or a CI job that failed.
 After you save the task, copy its URL from the editor. If the environment uses a
-[T3 Connect](remote-access.md) managed tunnel, the URL is public; otherwise it
-works anywhere the environment itself is reachable. **Rotate** replaces the URL and
-the old one stops working.
+[T3 Connect](remote-access.md) managed tunnel, the URL is public. Without one, a
+server deployed with a public URL (`T3CODE_PUBLIC_URL`, see
+[the portal deployment](slack-conversation-portal-deployment.md)) builds the URL
+on that address. Otherwise it works anywhere the environment itself is
+reachable. **Rotate** replaces the URL and the old one stops working.
 
 The prompt decides what the agent sees. Placeholders pull values out of the
 request: `{{body.path}}` for a JSON or form field, `{{headers.name}}`,
