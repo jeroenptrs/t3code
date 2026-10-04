@@ -72,6 +72,7 @@ import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionS
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "~/state/session";
 import { ScheduledTaskTimeZonePicker } from "./ScheduledTaskTimeZonePicker";
+import { ScheduledTaskWebhookAudit } from "./ScheduledTaskWebhookAudit";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
@@ -1077,6 +1078,7 @@ function WebhookEndpointField({
       </div>
       {note !== null ? <p className="text-xs text-muted-foreground">{note}</p> : null}
       {endpoint.url !== null ? <WebhookDeliveryMode environmentId={environmentId} /> : null}
+      <ScheduledTaskWebhookAudit endpoint={endpoint} />
     </div>
   );
 }
