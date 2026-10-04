@@ -69,10 +69,13 @@ const WEBHOOK_RATE_LIMIT_PER_MINUTE = 60;
 
 /**
  * Where a webhook task's public URL points: `${relayHookBaseUrl}/${taskId}/${token}`.
- * Null when the environment has no managed tunnel on T3 Connect; clients then show the path.
+ * Without a managed tunnel on T3 Connect it falls back to `${publicUrl}${path}`, and
+ * without a public URL either, clients show the path.
  */
 interface WebhookOrigin {
   readonly relayHookBaseUrl: string | null;
+  /** The server's own configured origin, used when there is no relay. */
+  readonly publicUrl?: string | null | undefined;
 }
 
 const ENDPOINT_KEY = /^[0-9a-f]{16}$/;
@@ -301,9 +304,16 @@ function webhookEndpoint(
 ): ScheduledTask["webhook"] {
   if (row.webhook_token === null) return undefined;
   const base = origin?.relayHookBaseUrl ?? null;
+  const publicUrl = origin?.publicUrl?.replace(/\/+$/, "") ?? null;
+  const path = webhookPath(row.task_id, row.webhook_token);
   return {
-    path: webhookPath(row.task_id, row.webhook_token),
-    url: base === null ? null : `${base}/${encodeURIComponent(row.task_id)}/${row.webhook_token}`,
+    path,
+    url:
+      base !== null
+        ? `${base}/${encodeURIComponent(row.task_id)}/${row.webhook_token}`
+        : publicUrl === null
+          ? null
+          : `${publicUrl}${path}`,
     hasSecret: row.webhook_secret !== null,
   };
 }
