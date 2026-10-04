@@ -55,6 +55,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ScheduledTaskTimeZonePicker } from "./ScheduledTaskTimeZonePicker";
+import { ScheduledTaskWebhookAudit } from "./ScheduledTaskWebhookAudit";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   localTimeZone,
@@ -734,6 +735,7 @@ function WebhookEndpointField({
           environment is reachable.
         </p>
       ) : null}
+      <ScheduledTaskWebhookAudit endpoint={endpoint} />
     </div>
   );
 }
