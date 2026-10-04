@@ -81,6 +81,9 @@ The hosting platform is the only public entry point. It must:
   uses `/ws`, and device streams use paths under `/api/device-hub/`;
 - pass cookies and responses through unchanged. T3 sets its own HttpOnly session cookie, marked
   `Secure` because the public URL is HTTPS;
+- forward webhook requests under `/api/hooks/` with method, body, and headers unchanged. Signature
+  checks run over the exact request bytes. These requests carry no session: the per-hook token in
+  the URL and the optional signing secret are the credential, and Entra sign-in does not apply;
 - keep T3's listener unreachable except through the platform, so browsers always use TLS and the
   platform's rate limits and logging apply to every request.
 
