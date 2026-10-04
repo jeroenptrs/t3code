@@ -251,6 +251,9 @@ const RECOVERY_KINDS: ReadonlyArray<ProjectionStore.ProjectionRecoveryKind> = [
 const CLEARED_TABLES: ReadonlyArray<string> = [
   // Pending work the dev server would otherwise pick up and run.
   "scheduled_tasks",
+  // Logged webhook requests carry their bodies and headers. The snapshot is
+  // already migrated, so the table exists even for a pre-057 source.
+  "scheduled_task_webhook_deliveries",
   "orchestration_v2_effect_outbox",
   "orchestration_v2_thread_launch_workflows",
   "orchestration_command_receipts",
