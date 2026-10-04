@@ -602,6 +602,20 @@ const MAX_CLIENT_APP_VERSION_LENGTH = 64;
 const MAX_CLIENT_BROWSER_LENGTH = 64;
 const MAX_CLIENT_DEVICE_MODEL_LENGTH = 80;
 
+/**
+ * A webhook URL starts agent runs, so only sessions that may operate see it,
+ * along with who created the hook and rotated its token. Read-only sessions
+ * still see the task itself.
+ */
+export function visibleScheduledTasks(
+  result: ScheduledTaskListResult,
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+): ScheduledTaskListResult {
+  return scopes.includes(AuthOrchestrationOperateScope)
+    ? result
+    : { tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task) };
+}
+
 export function hasCompatibleOrchestrationProtocol(url: URL): boolean {
   return (
     url.searchParams.get(ORCHESTRATION_PROTOCOL_QUERY_PARAM) ===
@@ -1318,14 +1332,8 @@ const makeWsRpcLayer = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const relayClient = yield* RelayClient.RelayClient;
-      // A webhook URL starts agent runs, so only sessions that may operate
-      // see it; read-only sessions still see the task itself.
-      const withVisibleWebhookUrls = (result: ScheduledTaskListResult): ScheduledTaskListResult =>
-        currentSession.scopes.includes(AuthOrchestrationOperateScope)
-          ? result
-          : {
-              tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task),
-            };
+      const withVisibleWebhookUrls = (result: ScheduledTaskListResult) =>
+        visibleScheduledTasks(result, currentSession.scopes);
       // RpcScopeAuthorization checks each RPC's declared scope before its handler
       // runs. This covers the one RPC whose scope depends on its input.
       const authorizeEffect = <A, E, R>(
@@ -2077,9 +2085,13 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "scheduledTasks" },
           ),
         [WS_METHODS.scheduledTasksUpsert]: (input) =>
-          observeRpcEffect(WS_METHODS.scheduledTasksUpsert, scheduledTasks.upsert(input), {
-            "rpc.aggregate": "scheduledTasks",
-          }),
+          observeRpcEffect(
+            WS_METHODS.scheduledTasksUpsert,
+            scheduledTasks.upsert(input, currentSession.userId ?? null),
+            {
+              "rpc.aggregate": "scheduledTasks",
+            },
+          ),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           observeRpcEffect(WS_METHODS.scheduledTasksSetEnabled, scheduledTasks.setEnabled(input), {
             "rpc.aggregate": "scheduledTasks",
@@ -2098,7 +2110,7 @@ const makeWsRpcLayer = (
         [WS_METHODS.scheduledTasksRotateWebhookToken]: (input) =>
           observeRpcEffect(
             WS_METHODS.scheduledTasksRotateWebhookToken,
-            scheduledTasks.rotateWebhookToken(input),
+            scheduledTasks.rotateWebhookToken(input, currentSession.userId ?? null),
             { "rpc.aggregate": "scheduledTasks", "scheduled_task.id": input.id },
           ),
         [WS_METHODS.scheduledTasksListWebhookDeliveries]: (input) =>

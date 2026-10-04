@@ -61,6 +61,16 @@ export const AuthUser = Schema.Struct({
 });
 export type AuthUser = typeof AuthUser.Type;
 
+/**
+ * A portal user named in an audit field, resolved by the server. `name` is the
+ * user's display name or email, or null when the user no longer exists.
+ */
+export const AuthUserReference = Schema.Struct({
+  userId: AuthUserId,
+  name: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type AuthUserReference = typeof AuthUserReference.Type;
+
 /** Who changed a user's access: another portal user, or the host-local CLI. */
 export const AuthUserAccessActor = Schema.Union([
   Schema.Struct({ type: Schema.Literal("user"), userId: AuthUserId }),

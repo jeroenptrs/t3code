@@ -11,6 +11,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { AuthUserReference } from "./authUser.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
   OrchestrationV2Actor,
@@ -162,6 +163,12 @@ export const ScheduledTaskWebhookEndpoint = Schema.Struct({
   /** Public T3 Connect URL, or null when the environment is not linked to T3 Connect. */
   url: Schema.NullOr(TrimmedNonEmptyString),
   hasSecret: Schema.Boolean,
+  /** Portal user who created the task; absent when it was not created from a user session. */
+  createdByUser: Schema.optionalKey(AuthUserReference),
+  /** When the URL token was last rotated; absent until the first rotation. */
+  tokenRotatedAt: Schema.optionalKey(IsoDateTime),
+  /** Portal user who last rotated the token; absent when that session had no user. */
+  tokenRotatedByUser: Schema.optionalKey(AuthUserReference),
 });
 export type ScheduledTaskWebhookEndpoint = typeof ScheduledTaskWebhookEndpoint.Type;
 
