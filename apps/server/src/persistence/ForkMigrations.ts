@@ -17,7 +17,9 @@
  * upstream migrations for rebuilds of tables listed below and add a fork
  * migration that restores the fork columns.
  *
- * Fork columns on upstream tables: `auth_sessions.user_id` (002).
+ * Fork columns on upstream tables: `auth_sessions.user_id` (002);
+ * `scheduled_tasks.created_by_user_id`, `webhook_token_rotated_by_user_id`,
+ * `webhook_token_rotated_at` (003).
  */
 
 import * as Migrator from "effect/sql/Migrator";
@@ -26,12 +28,14 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import ForkMigration0001 from "./ForkMigrations/001_AuthUsers.ts";
 import ForkMigration0002 from "./ForkMigrations/002_AuthSessionUsers.ts";
+import ForkMigration0003 from "./ForkMigrations/003_ScheduledTaskUserAudit.ts";
 
 export const forkMigrationsTable = "fork_sql_migrations";
 
 export const forkMigrationEntries = [
   [1, "AuthUsers", ForkMigration0001],
   [2, "AuthSessionUsers", ForkMigration0002],
+  [3, "ScheduledTaskUserAudit", ForkMigration0003],
 ] as const;
 
 export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);
