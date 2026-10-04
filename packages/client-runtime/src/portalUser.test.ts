@@ -15,6 +15,7 @@ import {
   canReadPortalUsers,
   describeUserAccessChange,
   describeUserAdminError,
+  describeWebhookAudit,
   portalReturnPath,
   portalUserActions,
   readEntraSignInFailure,
@@ -252,5 +253,34 @@ describe("describeUserAdminError", () => {
         }),
       ),
     ).toMatch(/Microsoft account/);
+  });
+});
+
+describe("describeWebhookAudit", () => {
+  const formatDate = (isoDate: string) => isoDate.slice(0, 10);
+  const endpoint = { path: "/api/hooks/task/token", url: null, hasSecret: false };
+
+  it("says nothing for a hook with no recorded users or rotation", () => {
+    expect(describeWebhookAudit(endpoint, formatDate)).toEqual([]);
+  });
+
+  it("names the creator and rotator, and falls back for a removed user", () => {
+    expect(
+      describeWebhookAudit(
+        {
+          ...endpoint,
+          createdByUser: { userId: AuthUserId.make("user-1"), name: "Ada" },
+          tokenRotatedAt: "2026-10-04T09:00:00.000Z",
+          tokenRotatedByUser: { userId: AuthUserId.make("user-2"), name: null },
+        },
+        formatDate,
+      ),
+    ).toEqual(["Created by Ada", "Token last rotated by a removed user on 2026-10-04"]);
+  });
+
+  it("dates a rotation even when no user made it", () => {
+    expect(
+      describeWebhookAudit({ ...endpoint, tokenRotatedAt: "2026-10-04T09:00:00.000Z" }, formatDate),
+    ).toEqual(["Token last rotated on 2026-10-04"]);
   });
 });
