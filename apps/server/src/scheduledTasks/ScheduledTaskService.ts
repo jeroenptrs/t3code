@@ -50,6 +50,7 @@ import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import { forkParked } from "../serverActivation.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 import {
   redactHeaders,
@@ -1520,6 +1521,8 @@ export const layer = Layer.effect(
             yield* sql`
             DELETE FROM scheduled_task_webhook_deliveries
             WHERE task_id = ${input.taskId} AND ${rowBucket} = ${retentionBucket}
+              -- A delivery still waiting to dispatch stays until it has run.
+              AND NOT (outcome = 'accepted' AND dispatched_at IS NULL)
               AND delivery_id NOT IN (
                 SELECT delivery_id FROM scheduled_task_webhook_deliveries
                 WHERE task_id = ${input.taskId} AND ${rowBucket} = ${retentionBucket}
@@ -1542,6 +1545,18 @@ export const layer = Layer.effect(
         SET outcome = 'dispatch_failed', error = ${message}
         WHERE delivery_id = ${deliveryId}
       `.pipe(Effect.ignore);
+
+    const markDeliveryDispatched = (deliveryId: string) =>
+      localNow.pipe(
+        Effect.flatMap(
+          (now) => sql`
+            UPDATE scheduled_task_webhook_deliveries
+            SET dispatched_at = ${iso(now)}
+            WHERE delivery_id = ${deliveryId}
+          `,
+        ),
+        Effect.ignore,
+      );
 
     /** Sliding one-minute window for deliveries that can start work. */
     const takeRateSlot = (
@@ -1647,7 +1662,7 @@ export const layer = Layer.effect(
                 Effect.andThen(markDeliveryFailed(deliveryId, "The run failed to start.")),
                 Effect.andThen(releaseFailedDelivery(deliveryId)),
               )
-            : runOutcome("started"),
+            : runOutcome("started").pipe(Effect.andThen(markDeliveryDispatched(deliveryId))),
         ),
         Effect.catchTags({
           WebhookDeliverySkipped: (skipped) =>
@@ -1658,7 +1673,10 @@ export const layer = Layer.effect(
         }),
         Effect.as(true),
         // Dispatch success owns the replay key even if later bookkeeping fails.
-        Effect.catchCause((cause) =>
+        // An interrupted dispatch stays undispatched, so the next startup runs it.
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
           Effect.gen(function* () {
             const started = yield* Ref.get(dispatched);
             yield* Effect.logWarning("Webhook dispatch failed", { taskId: task.id, cause });
@@ -2198,6 +2216,60 @@ export const layer = Layer.effect(
       );
     });
     yield* scheduler.register("webhook-coalescing", dispatchPending());
+
+    // A delivery is answered once it is logged, before it runs, and senders do
+    // not retry an accepted delivery. Ones a restart cut off, queued or
+    // mid-dispatch, run now in arrival order, ahead of requests that arrive
+    // after startup. A webhook run is keyed by its delivery, so one whose
+    // dispatch had already committed replays it rather than running twice.
+    // Coalesced deliveries resume from scheduled_task_webhook_pending instead.
+    yield* Effect.gen(function* () {
+      const pending = yield* sql<{
+        readonly delivery_id: string;
+        readonly task_id: string;
+        readonly rendered_prompt: string | null;
+      }>`
+        SELECT delivery_id, task_id, rendered_prompt
+        FROM scheduled_task_webhook_deliveries
+        WHERE outcome = 'accepted' AND dispatched_at IS NULL
+          AND delivery_id NOT IN (SELECT delivery_id FROM scheduled_task_webhook_pending)
+        ORDER BY received_at, rowid
+      `;
+      const byTask = Map.groupBy(pending, (row) => ScheduledTaskId.make(row.task_id));
+      yield* Effect.forEach(
+        byTask,
+        ([taskId, deliveries]) =>
+          Effect.gen(function* () {
+            // Taken before startup finishes, so new deliveries queue behind.
+            const permit = yield* webhookPermit(taskId);
+            yield* permit.take(1);
+            yield* forkParked(
+              Effect.forEach(
+                deliveries,
+                (delivery) =>
+                  Effect.gen(function* () {
+                    const task = yield* findTask(taskId);
+                    if (task === null || delivery.rendered_prompt === null) {
+                      yield* markDeliveryFailed(delivery.delivery_id, "The run failed to start.");
+                      return yield* releaseFailedDelivery(delivery.delivery_id);
+                    }
+                    yield* runWebhookDelivery(task, delivery.delivery_id, delivery.rendered_prompt);
+                  }).pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning("Could not resume webhook delivery", { taskId, cause }),
+                    ),
+                  ),
+                { discard: true },
+              ).pipe(Effect.ensuring(permit.release(1))),
+            );
+          }),
+        { discard: true },
+      );
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not resume interrupted webhook deliveries", { cause }),
+      ),
+    );
 
     return ScheduledTaskService.of({
       list,
