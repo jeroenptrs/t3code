@@ -152,6 +152,33 @@ const requestFor = (
   ...overrides,
 });
 
+/** A service whose launches are pushed to `launches`, each then running `hold`. */
+const serviceLayer = (
+  launches: Queue.Queue<LaunchInput>,
+  hold: Effect.Effect<void> = Effect.void,
+) =>
+  ScheduledTaskService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodePlatformCrypto.layer,
+        Scheduler.layer,
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          launch: (input) =>
+            Queue.offer(launches, input).pipe(
+              Effect.andThen(hold),
+              Effect.as({ threadId: "thread-1", resumed: false } as never),
+            ),
+        }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: () => Effect.succeed(false),
+        }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+      ),
+    ),
+  );
+
 const withService = <A, E>(
   body: (input: {
     readonly service: ScheduledTaskService.ScheduledTaskService["Service"];
@@ -329,16 +356,16 @@ it("builds the relay hook URL from the managed tunnel's key, never the environme
 it.effect(
   "gives webhook tasks a relay URL when the environment has a managed tunnel, even with a public URL",
   () =>
-  withService(
-    ({ service }) =>
-      Effect.gen(function* () {
-        const { task } = yield* service.upsert(yield* webhookTaskInput());
-        const token = task.webhook!.path.split("/").at(-1);
-        assert.equal(
-          task.webhook?.url,
-          `https://relay.example.com/v1/hooks/0123456789abcdef/scheduled-task%3Ahook/${token}`,
-        );
-      }),
+    withService(
+      ({ service }) =>
+        Effect.gen(function* () {
+          const { task } = yield* service.upsert(yield* webhookTaskInput());
+          const token = task.webhook!.path.split("/").at(-1);
+          assert.equal(
+            task.webhook?.url,
+            `https://relay.example.com/v1/hooks/0123456789abcdef/scheduled-task%3Ahook/${token}`,
+          );
+        }),
       {
         relayHookBaseUrl: "https://relay.example.com/v1/hooks/0123456789abcdef",
         publicUrl: "https://t3.example.com",
@@ -1229,7 +1256,9 @@ it.effect("main retention keeps fifty runs and preserves filtered and dedupe buc
       yield* Queue.take(launches);
       for (const outcome of ["filtered", "duplicate"]) {
         yield* sql`WITH RECURSIVE n(value) AS (SELECT 1 UNION ALL SELECT value + 1 FROM n WHERE value < 20)
-        INSERT INTO scheduled_task_webhook_deliveries
+        INSERT INTO scheduled_task_webhook_deliveries (delivery_id, task_id, received_at, method, query,
+          headers_json, body, body_bytes, body_truncated, outcome, signature_verified,
+          missing_fields_json, rendered_prompt, error)
         SELECT ${outcome} || n.value, d.task_id, d.received_at, d.method, d.query, d.headers_json, d.body,
           d.body_bytes, d.body_truncated, ${outcome}, d.signature_verified, d.missing_fields_json, d.rendered_prompt, d.error
         FROM n CROSS JOIN (SELECT * FROM scheduled_task_webhook_deliveries WHERE outcome = 'accepted' LIMIT 1) d`;
@@ -1745,13 +1774,16 @@ it.effect.each([false, true])(
                     yield* sql`UPDATE scheduled_tasks SET model_selection_json = ${before!.model_selection_json} WHERE task_id = ${task.id}`;
                   yield* drainPendingDispatch(restartedWorkers);
                   assert.equal(yield* Queue.size(recoveredLaunches), 0);
-                  assert.equal((yield* restarted.list()).tasks[0]!.runCount, 2);
+                  // Fork: the interrupted immediate delivery was never marked dispatched, so
+                  // startup dispatches it again (replaying its committed launch), which counts
+                  // a run beside the interrupted one.
+                  assert.equal((yield* restarted.list()).tasks[0]!.runCount, 3);
                   assert.equal(
                     (yield* sql`SELECT 1 FROM scheduled_task_webhook_pending`).length,
                     0,
                   );
                   yield* restartedWorkers.get("webhook-coalescing")!;
-                  assert.equal((yield* restarted.list()).tasks[0]!.runCount, 2);
+                  assert.equal((yield* restarted.list()).tasks[0]!.runCount, 3);
                 }),
               { sql, workers: restartedWorkers, completedLaunches },
             );
@@ -1979,3 +2011,56 @@ it.effect("filters run before replay and coalescing without claiming ignored del
     { workers },
   );
 });
+
+it.effect("dispatches accepted deliveries a restart cut off, in order and once", () =>
+  Effect.gen(function* () {
+    const launches = yield* Queue.unbounded<LaunchInput>();
+    // Each launch finishes once it takes a token, so the test picks which
+    // launch is still mid-dispatch when a run stops.
+    const tokens = yield* Queue.unbounded<void>();
+    const held = Queue.take(tokens);
+    const service = ScheduledTaskService.ScheduledTaskService;
+    const deliveryId = (result: ScheduledTaskService.WebhookTriggerResult) =>
+      result._tag === "accepted" ? result.deliveryId : assert.fail(result._tag);
+    const commandIdOf = (id: string) => `scheduled-task:scheduled-task:hook:webhook:${id}`;
+    const nextLaunch = Queue.take(launches).pipe(Effect.map((launch) => launch.commandId));
+
+    // First run: one delivery is mid-dispatch and one waits behind it when
+    // the server stops; both were already answered 202.
+    const first = yield* Effect.gen(function* () {
+      const { task } = yield* (yield* service).upsert(yield* webhookTaskInput());
+      const running = deliveryId(yield* (yield* service).triggerWebhook(requestFor(task)));
+      const queued = deliveryId(yield* (yield* service).triggerWebhook(requestFor(task)));
+      assert.equal(yield* nextLaunch, commandIdOf(running));
+      return { task, running, queued };
+    }).pipe(Effect.provide(serviceLayer(launches, held)));
+
+    // Second run: both dispatch in arrival order before a new delivery, the
+    // interrupted one under its original command id so a committed dispatch
+    // replays instead of running twice.
+    const inFlight = yield* Effect.gen(function* () {
+      yield* Queue.offerAll(tokens, [undefined, undefined, undefined]);
+      const fresh = deliveryId(yield* (yield* service).triggerWebhook(requestFor(first.task)));
+      assert.deepEqual(
+        [yield* nextLaunch, yield* nextLaunch, yield* nextLaunch],
+        [first.running, first.queued, fresh].map(commandIdOf),
+      );
+      // Queued behind `fresh`, so it launches only after `fresh` is recorded
+      // as dispatched. It is mid-dispatch when this run stops.
+      const last = deliveryId(yield* (yield* service).triggerWebhook(requestFor(first.task)));
+      assert.equal(yield* nextLaunch, commandIdOf(last));
+      return last;
+    }).pipe(Effect.provide(serviceLayer(launches, held)));
+
+    // Third run: only the delivery still mid-dispatch runs again.
+    yield* Effect.gen(function* () {
+      const fresh = deliveryId(yield* (yield* service).triggerWebhook(requestFor(first.task)));
+      assert.deepEqual([yield* nextLaunch, yield* nextLaunch], [inFlight, fresh].map(commandIdOf));
+      const { deliveries } = yield* (yield* service).listWebhookDeliveries({ id: first.task.id });
+      assert.deepEqual(
+        deliveries.map((delivery) => delivery.outcome),
+        Array.from({ length: 5 }, () => "accepted"),
+      );
+    }).pipe(Effect.provide(serviceLayer(launches)));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
