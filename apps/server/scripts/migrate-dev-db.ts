@@ -351,6 +351,9 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
             AND stream_id NOT IN (SELECT project_id FROM kept_projects))`;
       // Pending work the dev server would otherwise pick up and run.
       yield* sql`DELETE FROM scheduled_tasks`;
+      // Logged webhook requests carry their bodies and headers. The snapshot is
+      // already migrated, so the table exists even for a pre-057 source.
+      yield* sql`DELETE FROM scheduled_task_webhook_deliveries`;
       yield* sql`DELETE FROM orchestration_v2_effect_outbox`;
       yield* sql`DELETE FROM orchestration_v2_thread_launch_workflows`;
       yield* sql`DELETE FROM orchestration_command_receipts`;
