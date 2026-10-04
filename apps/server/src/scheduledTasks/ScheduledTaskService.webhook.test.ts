@@ -66,7 +66,11 @@ const withService = <A, E>(
     readonly launches: Queue.Queue<LaunchInput>;
     readonly secretsByRef: Map<string, string>;
   }) => Effect.Effect<A, E, never>,
-  options: { readonly gate?: Deferred.Deferred<void>; readonly relayHookBaseUrl?: string } = {},
+  options: {
+    readonly gate?: Deferred.Deferred<void>;
+    readonly relayHookBaseUrl?: string;
+    readonly publicUrl?: string;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const launches = yield* Queue.unbounded<LaunchInput>();
@@ -93,7 +97,10 @@ const withService = <A, E>(
       }),
       Layer.succeed(
         ScheduledTaskService.ScheduledTaskWebhookOrigin,
-        Effect.succeed({ relayHookBaseUrl: options.relayHookBaseUrl ?? null }),
+        Effect.succeed({
+          relayHookBaseUrl: options.relayHookBaseUrl ?? null,
+          publicUrl: options.publicUrl ?? null,
+        }),
       ),
     );
     return yield* Effect.gen(function* () {
@@ -156,18 +163,36 @@ it("builds the relay hook URL from the managed tunnel's key, never the environme
   }
 });
 
-it.effect("gives webhook tasks a relay URL when the environment has a managed tunnel", () =>
+it.effect(
+  "gives webhook tasks a relay URL when the environment has a managed tunnel, even with a public URL",
+  () =>
+    withService(
+      ({ service }) =>
+        Effect.gen(function* () {
+          const { task } = yield* service.upsert(yield* webhookTaskInput());
+          const token = task.webhook!.path.split("/").at(-1);
+          assert.equal(
+            task.webhook?.url,
+            `https://relay.example.com/v1/hooks/0123456789abcdef/scheduled-task%3Ahook/${token}`,
+          );
+        }),
+      {
+        relayHookBaseUrl: "https://relay.example.com/v1/hooks/0123456789abcdef",
+        publicUrl: "https://t3.example.com",
+      },
+    ),
+);
+
+it.effect("builds the URL from the public URL when not linked", () =>
   withService(
     ({ service }) =>
       Effect.gen(function* () {
         const { task } = yield* service.upsert(yield* webhookTaskInput());
-        const token = task.webhook!.path.split("/").at(-1);
-        assert.equal(
-          task.webhook?.url,
-          `https://relay.example.com/v1/hooks/0123456789abcdef/scheduled-task%3Ahook/${token}`,
-        );
+        assert.equal(task.webhook!.url, `https://t3.example.com${task.webhook!.path}`);
+        const listed = yield* service.list();
+        assert.equal(listed.tasks[0]?.webhook?.url, task.webhook!.url);
       }),
-    { relayHookBaseUrl: "https://relay.example.com/v1/hooks/0123456789abcdef" },
+    { publicUrl: "https://t3.example.com" },
   ),
 );
 
