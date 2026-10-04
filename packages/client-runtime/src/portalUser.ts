@@ -16,9 +16,11 @@ import {
   type AuthUser,
   type AuthUserAccessActor,
   type AuthUserAccessChange,
+  type AuthUserReference,
   type AuthUserRole,
   type AuthUserStatus,
   type EnvironmentUserAccessConflictReason,
+  type ScheduledTaskWebhookEndpoint,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -260,4 +262,30 @@ export function describeUserAccessChange(
     return `Role changed from ${previous} to ${role ?? "no role"}`;
   }
   return "Access updated";
+}
+
+function userReferenceLabel(user: AuthUserReference): string {
+  return user.name ?? "a removed user";
+}
+
+/**
+ * Who created a webhook task and last rotated its token, one line each, for
+ * whatever the server knows. `formatDate` renders the rotation's ISO time.
+ */
+export function describeWebhookAudit(
+  endpoint: ScheduledTaskWebhookEndpoint,
+  formatDate: (isoDate: string) => string,
+): ReadonlyArray<string> {
+  const lines: string[] = [];
+  if (endpoint.createdByUser !== undefined) {
+    lines.push(`Created by ${userReferenceLabel(endpoint.createdByUser)}`);
+  }
+  if (endpoint.tokenRotatedAt !== undefined) {
+    const by =
+      endpoint.tokenRotatedByUser === undefined
+        ? ""
+        : ` by ${userReferenceLabel(endpoint.tokenRotatedByUser)}`;
+    lines.push(`Token last rotated${by} on ${formatDate(endpoint.tokenRotatedAt)}`);
+  }
+  return lines;
 }
