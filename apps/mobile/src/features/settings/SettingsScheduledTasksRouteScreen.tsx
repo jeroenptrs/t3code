@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
 import { DateTimePicker } from "@expo/ui/community/datetime-picker";
+import { describeWebhookAudit } from "@t3tools/client-runtime/portal-user";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -1153,6 +1154,8 @@ function TaskForm({
   );
 }
 
+const rotatedOnFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+
 function WebhookScheduleDetails({
   environmentId,
   task,
@@ -1203,6 +1206,15 @@ function WebhookScheduleDetails({
           {resolved.note !== null ? (
             <Text className="text-sm text-foreground-muted">{resolved.note}</Text>
           ) : null}
+          {webhook === undefined
+            ? null
+            : describeWebhookAudit(webhook, (isoDate) =>
+                rotatedOnFormatter.format(new Date(isoDate)),
+              ).map((line) => (
+                <Text key={line} className="text-sm text-foreground-muted">
+                  {line}
+                </Text>
+              ))}
           <Button
             label={rotating ? "Rotating…" : "Rotate URL"}
             tone="danger"
