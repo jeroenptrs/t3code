@@ -230,6 +230,7 @@ import * as LayoutCommandApprovalWrites from "./workspace/LayoutCommandApprovalW
 import * as TaskFolders from "./workspace/TaskFolders.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as WorkspaceReadAccess from "./workspace/WorkspaceReadAccess.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
@@ -1603,6 +1604,8 @@ export const layerWsRpc = (
       const layoutCommandApprovalWrites =
         yield* LayoutCommandApprovalWrites.LayoutCommandApprovalWrites;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+      const workspaceReadAccess = yield* WorkspaceReadAccess.WorkspaceReadAccess;
+      const path = yield* Path.Path;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
       const rpcClientIds = yield* Ref.make(new Set<RpcClientId>());
@@ -1661,6 +1664,22 @@ export const layerWsRpc = (
         currentSession.scopes.includes(requiredScope)
           ? effect
           : Effect.fail(rpcAuthorizationError(requiredScope));
+      // Every RPC that reads at a client-named path or cwd checks it here first, so
+      // a read-only session stays inside known projects (see WorkspaceReadAccess).
+      const ensureReadable = (...targetPaths: ReadonlyArray<string>) =>
+        Effect.forEach(
+          targetPaths,
+          (targetPath) => workspaceReadAccess.ensureReadable(currentSession.scopes, targetPath),
+          { discard: true },
+        ).pipe(
+          Effect.mapError(
+            (error) =>
+              new EnvironmentAuthorizationError({
+                message: error.message,
+                requiredScope: AuthOrchestrationOperateScope,
+              }),
+          ),
+        );
 
       const listAcpRegistrySessions = Effect.fn("ws.acpRegistry.listSessions")(function* (
         input: AcpRegistryListSessionsInput,
@@ -2999,7 +3018,10 @@ export const layerWsRpc = (
         [WS_METHODS.pullRequestsSetLabels]: (input) =>
           withPullRequestViewer(input, pullRequests.setLabels(input)),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
+          Effect.andThen(
+            input.cwd === undefined ? Effect.void : ensureReadable(input.cwd),
           sourceControlRepositories.lookupRepository(input),
+          ),
         [WS_METHODS.sourceControlCloneRepository]: (input) =>
           sourceControlRepositories.cloneRepository(input),
         [WS_METHODS.sourceControlSignInStart]: (input) => sourceControlSignIn.start(input),
@@ -3083,6 +3105,8 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
+          Effect.andThen(
+            ensureReadable(input.cwd),
           workspaceEntries.search(input).pipe(
             Effect.mapError(
               (cause) =>
@@ -3095,7 +3119,10 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+          ),
         [WS_METHODS.projectsSearchContents]: (input) =>
+          Effect.andThen(
+            ensureReadable(input.cwd),
           workspaceEntries.searchContents(input).pipe(
             Effect.mapError(
               (cause) =>
@@ -3108,7 +3135,10 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+          ),
         [WS_METHODS.projectsListEntries]: (input) =>
+          Effect.andThen(
+            ensureReadable(input.cwd, path.resolve(input.cwd, input.directoryPath ?? "")),
           workspaceEntries.list(input).pipe(
             Effect.mapError(
               (cause) =>
@@ -3119,7 +3149,10 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+          ),
         [WS_METHODS.projectsListIgnoredFiles]: (input) =>
+          Effect.andThen(
+            ensureReadable(input.cwd),
           workspaceEntries.listIgnoredFiles(input).pipe(
             Effect.mapError(
               (cause) =>
@@ -3130,7 +3163,10 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+          ),
         [WS_METHODS.projectsReadFile]: (input) =>
+          Effect.andThen(
+            ensureReadable(path.resolve(input.cwd, input.relativePath)),
           workspaceFileSystem.readFile(input).pipe(
             Effect.mapError(
               (cause) =>
@@ -3140,6 +3176,7 @@ export const layerWsRpc = (
                   cause,
                 }),
             ),
+          ),
           ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           workspaceFileSystem.writeFile(input).pipe(
@@ -3168,7 +3205,29 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.shellOpenInEditor]: (input) => externalLauncher.launchEditor(input),
-        [WS_METHODS.filesystemGetMetadata]: (input) => workspaceFileSystem.getMetadata(input),
+        [WS_METHODS.filesystemGetMetadata]: (input) =>
+          Effect.gen(function* () {
+            // Paths a confined session cannot read report no metadata, like a missing file,
+            // so one outside path does not fail the whole batch.
+            const readable = yield* Effect.forEach(
+              input.paths,
+              (targetPath) =>
+                workspaceReadAccess.ensureReadable(currentSession.scopes, targetPath).pipe(
+                  Effect.as(true),
+                  Effect.orElseSucceed(() => false),
+                ),
+              { concurrency: 8 },
+            );
+            const paths = input.paths.filter((_, index) => readable[index]);
+            const { entries } =
+              paths.length === 0
+                ? { entries: [] }
+                : yield* workspaceFileSystem.getMetadata({ paths });
+            let next = 0;
+            return {
+              entries: readable.map((allowed) => (allowed ? (entries[next++] ?? null) : null)),
+            };
+          }),
         [WS_METHODS.filesystemBrowse]: (input) =>
           workspaceEntries.browse(input).pipe(
             Effect.mapError(
@@ -3181,9 +3240,13 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.workspaceListFolders]: (input) => workspaceFolders.list(input),
-        [WS_METHODS.workspaceScanFolders]: (input) => workspaceFolders.scan(input),
+        [WS_METHODS.workspaceScanFolders]: (input) =>
+          Effect.andThen(ensureReadable(input.workspaceRoot), workspaceFolders.scan(input)),
         [WS_METHODS.workspaceTaskFolder]: (input) =>
+          Effect.andThen(
+            ensureReadable(input.worktreePath),
           taskFolders.find(input.worktreePath).pipe(Effect.map((taskFolder) => ({ taskFolder }))),
+          ),
         [WS_METHODS.workspaceAddTaskFolderRepository]: (input) => taskFolders.addRepository(input),
         [WS_METHODS.workspaceLayoutCommands]: (input) =>
           taskFolders.layoutCommands(input.projectId),
@@ -3215,9 +3278,18 @@ export const layerWsRpc = (
                 path.isAbsolute(input.resource.path) &&
                 !isNetworkPath(input.resource.path))
             ) {
+              if (input.resource._tag === "media-file") {
+                yield* ensureReadable(input.resource.path);
+              }
               return yield* issueAssetUrl({ resource: input.resource });
             }
             if (input.resource._tag === "draft-workspace-file") {
+              // HTML and PDF URLs serve their directory's assets from under
+              // the root, so the root must be readable as well as the file.
+              yield* ensureReadable(
+                input.resource.cwd,
+                path.resolve(input.resource.cwd, input.resource.path),
+              );
               return yield* issueAssetUrl({
                 resource: input.resource,
                 workspaceRoot: input.resource.cwd,
@@ -3277,24 +3349,35 @@ export const layerWsRpc = (
                 resource: input.resource,
               });
             }
-            return yield* issueAssetUrl({
-              resource: input.resource,
-              workspaceRoot: thread.thread.worktreePath ?? project.value.workspaceRoot,
-            });
+            const workspaceRoot = thread.thread.worktreePath ?? project.value.workspaceRoot;
+            yield* ensureReadable(workspaceRoot, path.resolve(workspaceRoot, input.resource.path));
+            return yield* issueAssetUrl({ resource: input.resource, workspaceRoot });
           }),
         [WS_METHODS.assetsPersistChatAttachments]: (input) =>
           persistChatAttachments(input).pipe(Effect.map((attachments) => ({ attachments }))),
-        [WS_METHODS.subscribeVcsBranch]: (input) => vcsStatusBroadcaster.streamBranchStatus(input),
+        [WS_METHODS.subscribeVcsBranch]: (input) =>
+          Stream.unwrap(
+            Effect.as(ensureReadable(input.cwd), vcsStatusBroadcaster.streamBranchStatus(input)),
+          ),
         [WS_METHODS.vcsRefreshBranch]: (input) =>
-          vcsStatusBroadcaster.refreshBranchStatus(input).pipe(Effect.asVoid),
-        [WS_METHODS.subscribeVcsStatus]: (input) => vcsStatusBroadcaster.streamStatus(input),
+          ensureReadable(input.cwd).pipe(
+            Effect.andThen(vcsStatusBroadcaster.refreshBranchStatus(input)),
+            Effect.asVoid,
+          ),
+        [WS_METHODS.subscribeVcsStatus]: (input) =>
+          Stream.unwrap(
+            Effect.as(ensureReadable(input.cwd), vcsStatusBroadcaster.streamStatus(input)),
+          ),
         [WS_METHODS.subscribeWorktreeSetup]: (input) => worktreeSetupTracker.stream(input.threadId),
         [WS_METHODS.worktreeSetupCancel]: (input) =>
           worktreeSetupTracker
             .cancel(input.threadId)
             .pipe(Effect.map((cancelled) => ({ cancelled }))),
         [WS_METHODS.vcsRefreshStatus]: (input) =>
+          Effect.andThen(
+            ensureReadable(input.cwd),
           vcsStatusBroadcaster.refreshStatus(input.cwd, { localOnly: input.localOnly ?? false }),
+          ),
         [WS_METHODS.vcsPull]: (input) =>
           gitWorkflow.pullCurrentBranch(input.cwd).pipe(
             Effect.matchCauseEffect({
@@ -3359,7 +3442,8 @@ export const layerWsRpc = (
             Effect.andThen(gitWorkflow.preparePullRequestThread(input)),
             Effect.tap(() => refreshGitStatus(input.cwd)),
           ),
-        [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
+        [WS_METHODS.vcsListRefs]: (input) =>
+          Effect.andThen(ensureReadable(input.cwd), gitWorkflow.listRefs(input)),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           // A project that tracks repositories gets a task folder, as its new worktree threads do.
           taskFolders.createForProjectFolder(input, { projectCommands }).pipe(
@@ -3937,18 +4021,17 @@ export const layer = Layer.unwrap(
             }),
           ),
         );
+        // A socket keeps the scopes it was opened with. When the session is
+        // revoked or its user's access changes, close it so the client
+        // reconnects under its current access.
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
           () =>
             Effect.raceFirst(
               framedRpcWebSocketHttpEffect,
-              sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint).pipe(
-                Effect.as(HttpServerResponse.empty()),
-                Effect.catchTags({
-                  SessionCredentialVerificationError: (error) =>
-                    failEnvironmentInternal("internal_error", error),
-                }),
-              ),
+              serverAuth
+                .awaitSessionAccessChange(session)
+                .pipe(Effect.as(HttpServerResponse.empty())),
             ),
           () => sessions.markDisconnected(session.sessionId),
         );

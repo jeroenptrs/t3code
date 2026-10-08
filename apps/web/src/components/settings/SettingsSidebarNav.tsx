@@ -31,6 +31,7 @@ import {
   ShieldCheckIcon,
   SmartphoneIcon,
   WrenchIcon,
+  UsersRoundIcon,
   XIcon,
 } from "lucide-react";
 import { resolveEventKeys } from "@t3tools/shared/keybindings";
@@ -65,6 +66,7 @@ import {
 } from "./useAvailableSettingsSearchItems";
 import { handleSettingsSectionKeyDown } from "./settingsSectionNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
+import { useCanReadPortalUsers } from "./useCanReadPortalUsers";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -114,6 +116,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/maintenance": WrenchIcon,
   "/settings/labs": FlaskConicalIcon,
   "/settings/about": InfoIcon,
+  "/settings/users": UsersRoundIcon,
   "/settings/archived": ArchiveIcon,
 };
 
@@ -140,6 +143,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
+  const canReadUsers = useCanReadPortalUsers();
+  const navGroups = SETTINGS_NAV_GROUPS.map((group) => ({
+    ...group,
+    paths: group.paths.filter((to) => to !== "/settings/users" || canReadUsers),
+  }));
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   // Below md the nav is an icon rail; searching expands it over the page.

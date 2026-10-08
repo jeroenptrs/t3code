@@ -3,6 +3,8 @@ import {
   AuthAdministrativeClientScopes,
   AuthStandardClientScopes,
   AuthEnvironmentScopes,
+  AuthUserId,
+  authUserEffectiveScopes,
   type AuthClientMetadata,
   type AuthClientSession,
   type AuthEnvironmentScope,
@@ -60,11 +62,14 @@ export interface VerifiedSession {
   readonly client: AuthClientMetadata;
   readonly expiresAt?: DateTime.DateTime;
   readonly subject: string;
+  /** For a user-bound session, the user's access at the moment of verification. */
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly runtimeModeCeiling?: RuntimeMode;
   /** An MCP client that is another T3 Code environment's peer link. */
   readonly peerLink?: true;
+  /** The portal user the session belongs to, as stored right now. */
+  readonly user?: AuthSessions.AuthSessionUserRecord;
 }
 
 export interface VerifiedWebSocketTicket extends VerifiedSession {
@@ -379,6 +384,18 @@ export class ProofKeySessionsError extends Schema.TaggedError<ProofKeySessionsEr
   }
 }
 
+export class UserSessionsRevocationError extends Schema.TaggedError<UserSessionsRevocationError>()(
+  "UserSessionsRevocationError",
+  {
+    userId: AuthUserId,
+    ...sessionCredentialInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke the user's sessions.";
+  }
+}
+
 export const SessionCredentialInternalError = Schema.Union([
   SessionClaimsEncodingError,
   SessionCredentialIssueError,
@@ -389,6 +406,7 @@ export const SessionCredentialInternalError = Schema.Union([
   SessionRevocationError,
   OtherSessionsRevocationError,
   ProofKeySessionsError,
+  UserSessionsRevocationError,
 ]);
 export type SessionCredentialInternalError = typeof SessionCredentialInternalError.Type;
 
@@ -408,6 +426,11 @@ export class SessionStore extends Context.Service<
       readonly subject?: string;
       readonly method?: ServerAuthSessionMethod;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+      /**
+       * Binds the session to a portal user. Its scopes then come from the
+       * user's record on every verification, and `scopes` is ignored.
+       */
+      readonly user?: AuthSessions.AuthSessionUserRecord;
       readonly client?: AuthClientMetadata;
       readonly proofKeyThumbprint?: string;
       readonly runtimeModeCeiling?: RuntimeMode;
@@ -464,6 +487,10 @@ export class SessionStore extends Context.Service<
       ReadonlyArray<AuthClientSession>,
       SessionCredentialInternalError
     >;
+    /** The session as stored now, with its user's current scopes; none once revoked or expired. */
+    readonly getActive: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<Option.Option<AuthClientSession>, SessionCredentialInternalError>;
     readonly streamChanges: Stream.Stream<SessionCredentialChange>;
     /** Completes when a live socket's session is revoked or expires without a renewal for its DPoP key. */
     readonly awaitInvalidation: (
@@ -482,6 +509,9 @@ export class SessionStore extends Context.Service<
     /** Revokes every session bound to this DPoP key, so a device it belongs to is cut off now. */
     readonly revokeByProofKey: (
       proofKeyThumbprint: string,
+    ) => Effect.Effect<number, SessionCredentialInternalError>;
+    readonly revokeForUser: (
+      userId: AuthUserId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
@@ -505,6 +535,7 @@ const SessionClaims = Schema.Struct({
   plk: Schema.optionalKey(Schema.Literal(1)),
   /** Signed, so only sessions issued as renewable can renew. */
   rnw: Schema.optionalKey(Schema.Literal(1)),
+  uid: Schema.optionalKey(AuthUserId),
   iat: Schema.Number,
   exp: Schema.Number,
 });
@@ -546,6 +577,17 @@ function toClientMetadata(record: {
     ...(record.os ? { os: record.os } : {}),
     ...(record.browser ? { browser: record.browser } : {}),
   };
+}
+
+/**
+ * A user-bound session carries no scopes of its own; it has whatever its user
+ * has now. Other sessions keep the scopes they were issued with.
+ */
+function sessionScopes(record: {
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  readonly user: AuthSessions.AuthSessionUserRecord | null;
+}): ReadonlyArray<AuthEnvironmentScope> {
+  return record.user === null ? record.scopes : authUserEffectiveScopes(record.user);
 }
 
 function toAuthClientSession(input: Omit<AuthClientSession, "current">): AuthClientSession {
@@ -635,7 +677,7 @@ const make = Effect.gen(function* () {
       toAuthClientSession({
         sessionId: row.value.sessionId,
         subject: row.value.subject,
-        scopes: row.value.scopes,
+        scopes: sessionScopes(row.value),
         method: row.value.method,
         client: toClientMetadata(row.value.client),
         issuedAt: row.value.issuedAt,
@@ -738,20 +780,23 @@ const make = Effect.gen(function* () {
       const sessionExpiresAt = input?.renewalWindow
         ? DateTime.add(issuedAt, { milliseconds: Duration.toMillis(input.renewalWindow) })
         : expiresAt;
+      const user = input?.user;
       const claims: SessionClaims = {
         v: 1,
         kind: "session",
         sid: sessionId,
         sub: input?.subject ?? "browser",
-        scopes: input?.scopes ?? AuthStandardClientScopes,
+        scopes: user ? [] : (input?.scopes ?? AuthStandardClientScopes),
         method: input?.method ?? "browser-session-cookie",
         ...(input?.proofKeyThumbprint ? { jkt: input.proofKeyThumbprint } : {}),
         ...(input?.runtimeModeCeiling ? { rtc: input.runtimeModeCeiling } : {}),
         ...(input?.peerLink === true ? { plk: 1 as const } : {}),
         ...(input?.renewalWindow ? { rnw: 1 as const } : {}),
+        ...(user ? { uid: user.userId } : {}),
         iat: issuedAt.epochMilliseconds,
         exp: expiresAt.epochMilliseconds,
       };
+      const scopes = sessionScopes({ scopes: claims.scopes, user: user ?? null });
 
       const token = yield* signClaims(claims);
       const client = input?.client ?? createDefaultClientMetadata();
@@ -771,6 +816,7 @@ const make = Effect.gen(function* () {
         issuedAt,
         expiresAt: sessionExpiresAt,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
+        ...(user ? { userId: user.userId } : {}),
       } satisfies AuthSessions.CreateAuthSessionInput;
       const replacedSessionIds = yield* (
         input?.replaceSessionId !== undefined || input?.replaceActiveForSubjectAndMethod
@@ -801,7 +847,7 @@ const make = Effect.gen(function* () {
         toAuthClientSession({
           sessionId,
           subject: claims.sub,
-          scopes: claims.scopes,
+          scopes,
           method: claims.method,
           client,
           issuedAt,
@@ -817,7 +863,7 @@ const make = Effect.gen(function* () {
         method: claims.method,
         client,
         expiresAt: expiresAt,
-        scopes: claims.scopes,
+        scopes,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
       } satisfies IssuedSession;
     },
@@ -920,6 +966,8 @@ const make = Effect.gen(function* () {
         });
       }
 
+      // The row's user binding is authoritative; the claim only mirrors it.
+      const user = row.value.user;
       return {
         sessionId: claims.sid,
         token,
@@ -927,10 +975,11 @@ const make = Effect.gen(function* () {
         client: toClientMetadata(row.value.client),
         expiresAt: rowHoldsDeadline ? row.value.expiresAt : expiresAt.value,
         subject: claims.sub,
-        scopes: row.value.scopes,
+        scopes: sessionScopes(row.value),
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
         ...(claims.rtc ? { runtimeModeCeiling: claims.rtc } : {}),
         ...(claims.plk === 1 ? { peerLink: true as const } : {}),
+        ...(user ? { user } : {}),
       } satisfies VerifiedSession;
     },
   );
@@ -1149,7 +1198,8 @@ const make = Effect.gen(function* () {
       client: toClientMetadata(row.value.client),
       expiresAt: row.value.expiresAt,
       subject: row.value.subject,
-      scopes: row.value.scopes,
+      scopes: sessionScopes(row.value),
+      ...(row.value.user ? { user: row.value.user } : {}),
       ...(claims.aud ? { audience: claims.aud } : {}),
       ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
     } satisfies VerifiedWebSocketTicket;
@@ -1168,7 +1218,7 @@ const make = Effect.gen(function* () {
         toAuthClientSession({
           sessionId: row.sessionId,
           subject: row.subject,
-          scopes: row.scopes,
+          scopes: sessionScopes(row),
           method: row.method,
           client: toClientMetadata(row.client),
           issuedAt: row.issuedAt,
@@ -1200,6 +1250,8 @@ const make = Effect.gen(function* () {
       }
       return revoked;
     },
+    // A committed revocation must reach the sockets that watch for it.
+    Effect.uninterruptible,
   );
 
   const proofKeyThumbprintOf: SessionStore["Service"]["proofKeyThumbprintOf"] = (sessionId) =>
@@ -1255,7 +1307,30 @@ const make = Effect.gen(function* () {
       );
     }
     return revokedSessionIds.length;
-  });
+  }, Effect.uninterruptible);
+
+  const revokeForUser: SessionStore["Service"]["revokeForUser"] = Effect.fn(
+    "SessionStore.revokeForUser",
+  )(function* (userId) {
+    const revokedAt = yield* DateTime.now;
+    const revokedSessionIds = yield* authSessions
+      .revokeAllForUser({ userId, revokedAt })
+      .pipe(Effect.mapError((cause) => new UserSessionsRevocationError({ userId, cause })));
+    if (revokedSessionIds.length > 0) {
+      yield* Ref.update(connectedSessionsRef, (current) => {
+        const next = new Map(current);
+        for (const revokedSessionId of revokedSessionIds) {
+          next.delete(revokedSessionId);
+        }
+        return next;
+      });
+      yield* Effect.forEach(revokedSessionIds, emitRemoved, {
+        concurrency: "unbounded",
+        discard: true,
+      });
+    }
+    return revokedSessionIds.length;
+  }, Effect.uninterruptible);
 
   const awaitInvalidation = Effect.fn(function* (
     sessionId: AuthSessionId,
@@ -1349,6 +1424,11 @@ const make = Effect.gen(function* () {
     verifyWebSocketToken,
     listActive,
     awaitInvalidation,
+    getActive: (sessionId) =>
+      loadActiveSession(sessionId).pipe(
+        Effect.mapError((cause) => new SessionCredentialVerificationError({ sessionId, cause })),
+        Effect.withSpan("SessionStore.getActive"),
+      ),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },
@@ -1356,6 +1436,7 @@ const make = Effect.gen(function* () {
     revokeAllExcept,
     proofKeyThumbprintOf,
     revokeByProofKey,
+    revokeForUser,
     markConnected,
     markDisconnected,
   });
