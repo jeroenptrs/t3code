@@ -21,6 +21,7 @@ import {
 import * as Socket from "effect/socket/Socket";
 
 import { authenticateMediaRequest } from "../auth/http.ts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { assetResponseHeaders } from "../http.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
@@ -71,6 +72,7 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
     return HttpServerResponse.text("Not Found", { status: 404 });
   }
   const session = yield* authenticateMediaRequest(AuthOrchestrationReadScope);
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const params = url.value.searchParams;
   const canOperate =
     session.scopes.includes(AuthPreviewOperateScope) && params.get("interactive") !== "false";
@@ -198,7 +200,12 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
       const receiveInput = reader.pull.pipe(
         Effect.flatMap((chunks) => Effect.forEach(chunks, receive, { discard: true })),
       );
-      return yield* Effect.raceFirst(Effect.forever(sendOutput), Effect.forever(receiveInput));
+      // The stream outlives the request that authorized it, so like `/ws` it
+      // ends when the session is revoked or its user's access changes.
+      return yield* Effect.raceFirst(
+        Effect.raceFirst(Effect.forever(sendOutput), Effect.forever(receiveInput)),
+        serverAuth.awaitSessionAccessChange(session),
+      ).pipe(Effect.as(HttpServerResponse.empty()));
     }),
   ).pipe(
     Effect.catchTags({
