@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  AuthUserId,
   CommandId,
   type ModelSelection,
   NodeId,
@@ -79,6 +80,7 @@ function makeParentThread(): OrchestrationV2AppThread {
     snoozedAt,
     deletedAt: null,
     historyOrigin: "v1_import",
+    createdByUserId: AuthUserId.make("user-ada"),
   };
 }
 
@@ -114,6 +116,7 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
   assert.deepEqual(childThread.modelSelection, childModelSelection);
   assert.equal(childThread.activeProviderThreadId, childProviderThreadId);
   assert.isUndefined(childThread.historyOrigin);
+  assert.isUndefined(childThread.createdByUserId);
   assert.deepEqual(childThread.lineage, {
     parentThreadId,
     relationshipToParent: "subagent",
