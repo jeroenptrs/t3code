@@ -8,10 +8,10 @@ import {
   AuthGrantScopes,
   AuthStandardClientScopes,
   authScopeResponse,
-  AuthSessionState,
   sessionGrantsScope,
   sessionHasLegacyPermissions,
 } from "./auth.ts";
+import { AuthSessionState } from "./authUser.ts";
 
 describe("authorization grants", () => {
   it("decodes legacy review credentials without offering them in new grants", () => {

@@ -54,6 +54,21 @@ export interface ServerDerivedPaths {
   readonly secretsDir: string;
 }
 
+/**
+ * Microsoft Entra ID sign-in for browsers. When set, human browser access
+ * requires a user-bound session. See docs/internals/environment-auth.md.
+ */
+export interface EntraSignInConfig {
+  readonly tenantId: string;
+  readonly clientId: string;
+  readonly clientSecret: Redacted.Redacted<string>;
+  /**
+   * Canonical public origin of the portal. The OAuth redirect URI is built
+   * from it, never from request or forwarded headers.
+   */
+  readonly publicUrl: URL;
+}
+
 export interface DeriveServerPathsOptions {
   readonly baseDirIsExplicit?: boolean;
 }
@@ -105,6 +120,7 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    readonly entraSignIn?: EntraSignInConfig | undefined;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */

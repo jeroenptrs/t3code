@@ -22,6 +22,10 @@ const fixture = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   fail = false,
   authError?: EnvironmentAuth.ServerAuthCredentialError | EnvironmentAuth.ServerAuthInternalError,
+  options?: {
+    readonly accessChanged?: Promise<void>;
+    readonly upstreamBody?: () => ReadableStream<Uint8Array>;
+  },
 ) => {
   let finalized = 0;
   const requests: string[] = [];
@@ -32,7 +36,10 @@ const fixture = (
         finalized++;
       });
       if (fail) return yield* Effect.die(new Error("upstream failed"));
-      return HttpClientResponse.fromWeb(request, new Response("frame"));
+      return HttpClientResponse.fromWeb(
+        request,
+        new Response(options?.upstreamBody?.() ?? "frame"),
+      );
     }),
   );
   const { handler, dispose } = HttpRouter.toWebHandler(
@@ -48,6 +55,8 @@ const fixture = (
                   method: "bearer-access-token",
                   scopes,
                 }),
+          awaitSessionAccessChange: () =>
+            options?.accessChanged ? Effect.promise(() => options.accessChanged!) : Effect.never,
         } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
       ),
       Layer.provideMerge(
@@ -129,6 +138,29 @@ describe("device hub proxy", () => {
     expect(operator.requests).toEqual([
       "http://hub.test/vendor/serve-emu/api/fold?device=emulator-5554",
     ]);
+  });
+
+  it("ends a device stream when the session's access changes", async () => {
+    let changeAccess = () => {};
+    const accessChanged = new Promise<void>((resolve) => {
+      changeAccess = resolve;
+    });
+    const { handler } = fixture([AuthOrchestrationReadScope], false, undefined, {
+      accessChanged,
+      // An MJPEG stream: one frame, then open until someone closes it.
+      upstreamBody: () =>
+        new ReadableStream({
+          start: (controller) => controller.enqueue(new TextEncoder().encode("frame")),
+        }),
+    });
+    const response = await handler(
+      new Request("http://t3.test/api/device-hub/vendor/serve-sim/helper/sim-1/stream.mjpeg"),
+    );
+    const reader = response.body!.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe("frame");
+
+    changeAccess();
+    expect((await reader.read()).done).toBe(true);
   });
 
   it("never forwards the vendor shell endpoint", async () => {

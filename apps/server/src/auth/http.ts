@@ -17,6 +17,18 @@ import {
   EnvironmentScopeRequiredError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
+  ENTRA_SIGN_IN_CALLBACK_PATH,
+  ENTRA_SIGN_IN_ERROR_PARAM,
+  ENTRA_SIGN_IN_RETURN_TO_PARAM,
+  ENTRA_SIGN_IN_START_PATH,
+  EnvironmentUserAccessConflictError,
+  type EnvironmentUserAccessConflictReason,
+} from "@t3tools/contracts";
+import type {
+  AuthEnvironmentScope,
+  AuthUserAccessActor,
+  AuthUserId,
+  DpopFailureReason,
 } from "@t3tools/contracts";
 import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
 import { parseOAuthScope } from "@t3tools/shared/oauthScope";
@@ -27,13 +39,17 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Cookies from "effect/http/Cookies";
 import * as HttpEffect from "effect/http/HttpEffect";
-import { HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
+import * as EntraSignIn from "./EntraSignIn.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
+import * as UserRegistry from "./UserRegistry.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
@@ -133,7 +149,9 @@ export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope
   );
 }
 
-function failEnvironmentOperationForbidden(reason: "current_session_revoke_not_allowed") {
+function failEnvironmentOperationForbidden(
+  reason: "current_session_revoke_not_allowed" | "user_session_required" | "host_cli_required",
+) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
       Effect.fail(
@@ -184,6 +202,20 @@ export const authenticateMediaRequest = (requiredScope: AuthEnvironmentScope) =>
     }
     return session;
   });
+function failUserAccessConflict(reason: EnvironmentUserAccessConflictReason, userId: AuthUserId) {
+  return currentEnvironmentTraceId.pipe(
+    Effect.flatMap((traceId) =>
+      Effect.fail(
+        new EnvironmentUserAccessConflictError({
+          code: "user_access_conflict",
+          reason,
+          userId,
+          traceId,
+        }),
+      ),
+    ),
+  );
+}
 
 export function failEnvironmentInternal(reason: EnvironmentInternalErrorReason, error?: unknown) {
   return Effect.gen(function* () {
@@ -226,6 +258,56 @@ export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope"
   return session;
 });
 
+/**
+ * Changing a user's access needs `access:write` and a session that is itself a
+ * user, so the audit log names the administrator who made the change.
+ */
+const requireUserAdministrator = Effect.gen(function* () {
+  const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+  if (session.userId === undefined) {
+    return yield* failEnvironmentOperationForbidden("user_session_required");
+  }
+  return { type: "user", userId: session.userId } satisfies AuthUserAccessActor;
+});
+
+type UserAccessChangeError =
+  | UserRegistry.AuthUserNotFoundError
+  | UserRegistry.AuthUserTransitionError
+  | UserRegistry.AuthUserRoleRequiredError
+  | UserRegistry.LastAdministratorError
+  | UserRegistry.UserRegistryPersistenceError;
+
+const mapUserAccessErrors = <A>(effect: Effect.Effect<A, UserAccessChangeError>) =>
+  effect.pipe(
+    Effect.catchTags({
+      AuthUserNotFoundError: () => failEnvironmentNotFound("user_not_found"),
+      AuthUserTransitionError: (error: UserRegistry.AuthUserTransitionError) =>
+        failUserAccessConflict("invalid_transition", error.userId),
+      AuthUserRoleRequiredError: (error: UserRegistry.AuthUserRoleRequiredError) =>
+        failUserAccessConflict("role_required", error.userId),
+      LastAdministratorError: (error: UserRegistry.LastAdministratorError) =>
+        failUserAccessConflict("last_administrator", error.userId),
+      UserRegistryPersistenceError: (error: UserRegistry.UserRegistryPersistenceError) =>
+        failEnvironmentInternal("user_access_change_failed", error),
+    }),
+  );
+
+const expireSessionCookie = (cookieName: string) =>
+  Effect.fromResult(
+    Cookies.expireCookie(Cookies.empty, cookieName, {
+      httpOnly: true,
+      path: "/",
+      sameSite: "lax",
+    }),
+  ).pipe(
+    Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")),
+    Effect.flatMap((cookies) =>
+      HttpEffect.appendPreResponseHandler((_request, response) =>
+        Effect.succeed(HttpServerResponse.mergeCookies(response, cookies)),
+      ),
+    ),
+  );
+
 export const layerAuthenticatedAuth = Layer.effect(
   EnvironmentAuthenticatedAuth,
   Effect.gen(function* () {
@@ -265,6 +347,7 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const users = yield* UserRegistry.UserRegistry;
 
     return handlers
       .handle(
@@ -432,6 +515,16 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+            // A pairing credential becomes a service token that is not bound to
+            // the user who minted it and would outlive their access. With Entra
+            // on, a signed-in user cannot mint one; service sessions, which then
+            // descend only from the host CLI, still can (Slack's rotator does).
+            if (
+              session.userId !== undefined &&
+              (yield* serverAuth.getDescriptor()).entraSignIn === true
+            ) {
+              return yield* failEnvironmentOperationForbidden("host_cli_required");
+            }
             const delegatedScopes = args.payload.scopes ?? AuthStandardClientScopes;
             if (
               delegatedScopes.length === 0 ||
@@ -525,6 +618,205 @@ export const layer = HttpApiBuilder.group(
             failEnvironmentInternal("client_session_revoke_failed", error),
           ),
         ),
+      )
+      .handle(
+        "signOut",
+        Effect.fn("environment.auth.signOut")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            const result = yield* serverAuth.signOut(request);
+            for (const cookieName of result.cookieNames) {
+              yield* expireSessionCookie(cookieName);
+            }
+            yield* appendCredentialResponseHeaders;
+            return { signedOut: result.signedOut };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("sign_out_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "users",
+        Effect.fn("environment.auth.users")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessReadScope);
+            return yield* users.list();
+          },
+          Effect.catchTag("UserRegistryPersistenceError", (error) =>
+            failEnvironmentInternal("users_load_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "userAccessChanges",
+        Effect.fn("environment.auth.userAccessChanges")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessReadScope);
+            return yield* users.listAccessChanges(args.query);
+          },
+          Effect.catchTag("UserRegistryPersistenceError", (error) =>
+            failEnvironmentInternal("users_load_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "approveUser",
+        Effect.fn("environment.auth.approveUser")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          const actor = yield* requireUserAdministrator;
+          return yield* mapUserAccessErrors(users.approve({ ...args.payload, actor }));
+        }),
+      )
+      .handle(
+        "changeUserRole",
+        Effect.fn("environment.auth.changeUserRole")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          const actor = yield* requireUserAdministrator;
+          return yield* mapUserAccessErrors(users.changeRole({ ...args.payload, actor }));
+        }),
+      )
+      .handle(
+        "disableUser",
+        Effect.fn("environment.auth.disableUser")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          const actor = yield* requireUserAdministrator;
+          return yield* mapUserAccessErrors(users.disable({ ...args.payload, actor }));
+        }),
+      )
+      .handle(
+        "enableUser",
+        Effect.fn("environment.auth.enableUser")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          const actor = yield* requireUserAdministrator;
+          return yield* mapUserAccessErrors(users.enable({ ...args.payload, actor }));
+        }),
+      )
+      .handle(
+        "revokeUserSessions",
+        Effect.fn("environment.auth.revokeUserSessions")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireUserAdministrator;
+            const revokedCount = yield* serverAuth.revokeUserSessions(args.payload.userId);
+            return { revokedCount };
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("user_sessions_revoke_failed", error),
+          ),
+        ),
       );
   }),
+);
+
+const ENTRA_NO_STORE_HEADERS = { "cache-control": "no-store", "referrer-policy": "no-referrer" };
+
+/** Redirects the browser to Entra. 404 when Entra sign-in is not configured. */
+const entraSignInStartRoute = HttpRouter.add(
+  "GET",
+  ENTRA_SIGN_IN_START_PATH,
+  Effect.gen(function* () {
+    const entra = yield* EntraSignIn.EntraSignIn;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    const started = yield* entra.start({
+      returnTo: Option.isSome(url)
+        ? url.value.searchParams.get(ENTRA_SIGN_IN_RETURN_TO_PARAM)
+        : null,
+    });
+    return yield* HttpServerResponse.redirect(started.authorizationUrl, {
+      headers: ENTRA_NO_STORE_HEADERS,
+    }).pipe(
+      HttpServerResponse.setCookie(entra.flowCookieName, started.flowCookie, {
+        httpOnly: true,
+        secure: entra.secureCookies,
+        sameSite: "lax",
+        path: entra.flowCookiePath,
+        maxAge: started.flowCookieMaxAge,
+      }),
+    );
+  }).pipe(
+    Effect.catchTag("EntraSignInDisabledError", () =>
+      Effect.succeed(HttpServerResponse.text("Not Found", { status: 404 })),
+    ),
+    Effect.catchTag("CookiesError", () =>
+      Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
+    ),
+  ),
+);
+
+/**
+ * Finishes sign-in: sets the session cookie and returns to the requested
+ * page, or lands on `/?signInError=<reason>` when anything fails.
+ */
+const entraSignInCallbackRoute = HttpRouter.add(
+  "GET",
+  ENTRA_SIGN_IN_CALLBACK_PATH,
+  Effect.gen(function* () {
+    const entra = yield* EntraSignIn.EntraSignIn;
+    const sessions = yield* SessionStore.SessionStore;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const params = Option.match(HttpServerRequest.toURL(request), {
+      onNone: () => new URLSearchParams(),
+      onSome: (url) => url.searchParams,
+    });
+    const result = yield* entra
+      .complete({
+        code: params.get("code"),
+        state: params.get("state"),
+        error: params.get("error"),
+        flowCookie: request.cookies[entra.flowCookieName],
+        client: deriveAuthClientMetadata({ request }),
+      })
+      .pipe(Effect.result);
+    if (Result.isFailure(result)) {
+      const reason =
+        result.failure._tag === "EntraSignInError" ? result.failure.reason : "internal_error";
+      yield* Effect.logWarning("Entra sign-in failed.", {
+        reason,
+        detail: result.failure.message,
+        ...(result.failure._tag === "EntraSignInError" ? { cause: result.failure.detail } : {}),
+      });
+      if (result.failure._tag === "EntraSignInDisabledError") {
+        return HttpServerResponse.text("Not Found", { status: 404 });
+      }
+    }
+    const response = Result.isSuccess(result)
+      ? yield* HttpServerResponse.redirect(result.success.returnTo, {
+          headers: ENTRA_NO_STORE_HEADERS,
+        }).pipe(
+          HttpServerResponse.setCookie(sessions.cookieName, result.success.session.token, {
+            httpOnly: true,
+            secure: entra.secureCookies,
+            sameSite: "lax",
+            path: "/",
+            expires: DateTime.toDate(result.success.session.expiresAt),
+          }),
+        )
+      : HttpServerResponse.redirect(
+          `/?${new URLSearchParams({
+            [ENTRA_SIGN_IN_ERROR_PARAM]:
+              result.failure._tag === "EntraSignInError" ? result.failure.reason : "internal_error",
+          }).toString()}`,
+          { headers: ENTRA_NO_STORE_HEADERS },
+        );
+    return yield* HttpServerResponse.expireCookie(response, entra.flowCookieName, {
+      httpOnly: true,
+      secure: entra.secureCookies,
+      sameSite: "lax",
+      path: entra.flowCookiePath,
+    });
+  }).pipe(
+    Effect.catchTag("CookiesError", () =>
+      Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
+    ),
+  ),
+);
+
+export const layerEntraSignInRoute = Layer.mergeAll(
+  entraSignInStartRoute,
+  entraSignInCallbackRoute,
 );
