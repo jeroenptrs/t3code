@@ -118,7 +118,15 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
             .handle("revokeClient", () => unexpectedEndpoint("auth.revokeClient"))
             .handle("revokeOtherClients", () => unexpectedEndpoint("auth.revokeOtherClients"))
             .handle("approveConnectDevice", () => unexpectedEndpoint("auth.approveConnectDevice"))
-            .handle("revokeConnectDevice", () => unexpectedEndpoint("auth.revokeConnectDevice")),
+            .handle("revokeConnectDevice", () => unexpectedEndpoint("auth.revokeConnectDevice"))
+            .handle("signOut", () => unexpectedEndpoint("auth.signOut"))
+            .handle("users", () => unexpectedEndpoint("auth.users"))
+            .handle("userAccessChanges", () => unexpectedEndpoint("auth.userAccessChanges"))
+            .handle("approveUser", () => unexpectedEndpoint("auth.approveUser"))
+            .handle("changeUserRole", () => unexpectedEndpoint("auth.changeUserRole"))
+            .handle("disableUser", () => unexpectedEndpoint("auth.disableUser"))
+            .handle("enableUser", () => unexpectedEndpoint("auth.enableUser"))
+            .handle("revokeUserSessions", () => unexpectedEndpoint("auth.revokeUserSessions")),
         ),
       ]),
       Effect.provideService(EnvironmentAuthenticatedAuth, authenticatedAuth),

@@ -86,7 +86,7 @@ Open a delegated task or thread link on a linked machine to follow it live (read
 
 ## Manage or revoke access
 
-Manage pairing links and active client sessions in **Settings → Sharing & access** or via `t3 auth --help`.
+Manage pairing links and active client sessions in **Settings → Sharing & access** or via `t3 auth --help`. On a server where people sign in with Microsoft Entra ID, browsers sign in instead of pairing, and pairing links are issued from the host rather than in Settings; see [Deploying the Slack conversation portal](./slack-conversation-portal-deployment.md).
 
 - **Scoped tokens**: Pass `--scope <scope>` (repeatable) to `t3 pair`, `t3 auth pairing create`, or `t3 auth session issue` to restrict permissions (e.g. `orchestration:read`, `source-control:write`, `filesystem:read`, `filesystem:write`, `terminal:operate`, `relay:configure`). Re-pair with a fresh link to change an existing client's scopes.
 - **Deregister from T3 Connect**: Open your account menu → **T3 Connect → Deregister** (or `t3 connect unlink` / `t3 connect logout` on CLI hosts). Idle tunnels are automatically cleaned up after 5–10 minutes offline and recreated on reconnect (hosts on older versions offline for 7+ days need an update first).

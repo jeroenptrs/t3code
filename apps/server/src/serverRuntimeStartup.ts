@@ -349,8 +349,13 @@ const resolveStartupBrowserTarget = Effect.gen(function* () {
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const baseTarget =
     serverConfig.devUrl?.toString() ?? resolveLocalOrigin(serverConfig.host, serverConfig.port);
-  return serverConfig.mode === "desktop"
-    ? baseTarget
+  if (serverConfig.mode === "desktop") {
+    return baseTarget;
+  }
+  // With Entra sign-in on, browsers sign in as users; no administrator
+  // pairing token is minted.
+  return serverConfig.entraSignIn !== undefined
+    ? serverConfig.entraSignIn.publicUrl.origin
     : yield* serverAuth.issueStartupPairingUrl(baseTarget);
 });
 
@@ -645,7 +650,11 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
         } else {
           yield* Effect.logDebug("startup phase: browser open check");
           const startupBrowserTarget = yield* resolveStartupBrowserTarget;
-          if (serverConfig.mode !== "desktop") {
+          if (serverConfig.mode !== "desktop" && serverConfig.entraSignIn !== undefined) {
+            yield* Effect.logInfo("Sign in to T3 Code with Microsoft Entra ID.").pipe(
+              Effect.annotateLogs({ url: startupBrowserTarget }),
+            );
+          } else if (serverConfig.mode !== "desktop") {
             yield* announceStartupPairingUrl(startupBrowserTarget);
           }
           yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));
