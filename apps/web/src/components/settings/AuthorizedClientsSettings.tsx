@@ -588,6 +588,8 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
 
 type AuthorizedClientsHeaderActionProps = {
   environmentId: EnvironmentId;
+  /** False with Entra sign-in on: only the host CLI issues pairing credentials there. */
+  canCreatePairingLinks: boolean;
   onPairingLinkCreated: (result: AuthPairingCredentialResult) => void;
   clientSessions: ReadonlyArray<ServerClientSessionRecord> | null;
   isRevokingOtherClients: boolean;
@@ -597,6 +599,7 @@ type AuthorizedClientsHeaderActionProps = {
 
 export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderAction({
   environmentId,
+  canCreatePairingLinks,
   onPairingLinkCreated,
   clientSessions,
   isRevokingOtherClients,
@@ -689,7 +692,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
       >
         {isRevokingOtherClients ? gt("Revoking…") : gt("Revoke others")}
       </Button>
-      {pairingDenial !== undefined ? (
+      {canCreatePairingLinks && pairingDenial !== undefined ? (
         <ManagedControl reason={pairingDenial}>
           <Button size="xs" variant="default" disabled>
             <PlusIcon className="size-3" />
@@ -701,7 +704,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
         open={dialogOpen && pairingDenial === undefined}
         onOpenChange={handlePairingDialogOpenChange}
       >
-        {pairingDenial === undefined ? (
+        {canCreatePairingLinks && pairingDenial === undefined ? (
           <DialogTrigger
             render={
               <Button size="xs" variant="default">
