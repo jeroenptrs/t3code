@@ -4,6 +4,7 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  type AuthUserId,
   type ChatAttachment,
   type MessageId,
   type ModelSelection,
@@ -131,6 +132,8 @@ export interface ThreadLaunchInput {
   readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
   /** The workflow run this thread is an agent step of. */
   readonly workflowRun?: OrchestrationV2WorkflowOrigin;
+  /** Portal user whose session launched the thread; recorded on create only. */
+  readonly createdByUserId?: AuthUserId | null | undefined;
 }
 
 type PreparationInput = Pick<
@@ -1591,6 +1594,9 @@ const make = Effect.gen(function* () {
                 ...(initialMessage === undefined
                   ? {}
                   : { initialMessage: { ...initialMessage, workspaceStrategy } }),
+                ...(input.createdByUserId == null
+                  ? {}
+                  : { createdByUserId: input.createdByUserId }),
               });
         const claimed = yield* claimDispatch.pipe(
           Effect.mapError(
