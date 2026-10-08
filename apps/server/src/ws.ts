@@ -38,6 +38,7 @@ import {
   AuthProvidersManageScope,
   type AuthEnvironmentScope,
   ProviderDriverKind,
+  type AuthUserId,
   type ScheduledTaskListResult,
   WorkflowRequestError,
   AuthSessionId,
@@ -824,6 +825,19 @@ export function visibleScheduledTasks(
   return scopes.includes(AuthOrchestrationOperateScope)
     ? result
     : { ...result, tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task) };
+}
+
+/**
+ * Records the session's portal user as the creator of a thread it creates.
+ * The server owns this audit field, so a value the client sent is replaced.
+ */
+export function withSessionThreadCreator(
+  command: OrchestrationV2Command,
+  userId: AuthUserId | null,
+): OrchestrationV2Command {
+  if (command.type !== "thread.create") return command;
+  const { createdByUserId: _clientValue, ...rest } = command;
+  return userId === null ? rest : { ...rest, createdByUserId: userId };
 }
 
 function hasCompatibleOrchestrationProtocol(url: URL): boolean {
@@ -2106,11 +2120,14 @@ export const layerWsRpc = (
                   (command.type === "prepared-run.retry"
                     ? threadLaunch.retryPreparation(command)
                     : ThreadMessageIntake.dispatchCommand(
-                        ThreadManagementService.withCreationProvenance(command, {
-                          createdBy: "user",
-                          creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
-                        }),
+                        withSessionThreadCreator(
+                          ThreadManagementService.withCreationProvenance(command, {
+                            createdBy: "user",
+                            creationSource:
+                              "creationSource" in command ? command.creationSource : "web",
+                          }),
+                          currentSession.userId ?? null,
+                        ),
                         {
                           managesProviders:
                             currentSession.scopes.includes(AuthProvidersManageScope),
@@ -2320,6 +2337,7 @@ export const layerWsRpc = (
                               }),
                           createdBy: "user",
                           creationSource: input.creationSource ?? "web",
+                          createdByUserId: currentSession.userId ?? null,
                         }),
                       ),
                       Effect.provide(intakeContext),
@@ -2545,7 +2563,9 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({
             "provider.instance_id": input.instanceId,
             "project.id": input.projectId,
-          }).pipe(Effect.andThen(acpRegistrySessions.importSession(input))),
+          }).pipe(
+            Effect.andThen(acpRegistrySessions.importSession(input, currentSession.userId ?? null)),
+          ),
         [WS_METHODS.serverDeleteAcpRegistrySession]: (input) =>
           Effect.annotateCurrentSpan({
             "provider.instance_id": input.instanceId,
@@ -3029,7 +3049,7 @@ export const layerWsRpc = (
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           Effect.andThen(
             input.cwd === undefined ? Effect.void : ensureReadable(input.cwd),
-          sourceControlRepositories.lookupRepository(input),
+            sourceControlRepositories.lookupRepository(input),
           ),
         [WS_METHODS.sourceControlCloneRepository]: (input) =>
           sourceControlRepositories.cloneRepository(input),
@@ -3116,76 +3136,76 @@ export const layerWsRpc = (
         [WS_METHODS.projectsSearchEntries]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd),
-          workspaceEntries.search(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectSearchEntriesError({
-                  cwd: input.cwd,
-                  queryLength: input.query.length,
-                  limit: input.limit,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
+            workspaceEntries.search(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectSearchEntriesError({
+                    cwd: input.cwd,
+                    queryLength: input.query.length,
+                    limit: input.limit,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsSearchContents]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd),
-          workspaceEntries.searchContents(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectSearchContentsError({
-                  cwd: input.cwd,
-                  queryLength: input.query.length,
-                  limit: input.limit,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
+            workspaceEntries.searchContents(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectSearchContentsError({
+                    cwd: input.cwd,
+                    queryLength: input.query.length,
+                    limit: input.limit,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsListEntries]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd, path.resolve(input.cwd, input.directoryPath ?? "")),
-          workspaceEntries.list(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectListEntriesError({
-                  ...input,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
+            workspaceEntries.list(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectListEntriesError({
+                    ...input,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsListIgnoredFiles]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd),
-          workspaceEntries.listIgnoredFiles(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectListEntriesError({
-                  ...input,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
+            workspaceEntries.listIgnoredFiles(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectListEntriesError({
+                    ...input,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsReadFile]: (input) =>
           Effect.andThen(
             ensureReadable(path.resolve(input.cwd, input.relativePath)),
-          workspaceFileSystem.readFile(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectReadFileError({
-                  ...input,
-                  ...projectFileFailureContext(cause),
-                  cause,
-                }),
+            workspaceFileSystem.readFile(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectReadFileError({
+                    ...input,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           workspaceFileSystem.writeFile(input).pipe(
@@ -3254,7 +3274,7 @@ export const layerWsRpc = (
         [WS_METHODS.workspaceTaskFolder]: (input) =>
           Effect.andThen(
             ensureReadable(input.worktreePath),
-          taskFolders.find(input.worktreePath).pipe(Effect.map((taskFolder) => ({ taskFolder }))),
+            taskFolders.find(input.worktreePath).pipe(Effect.map((taskFolder) => ({ taskFolder }))),
           ),
         [WS_METHODS.workspaceAddTaskFolderRepository]: (input) => taskFolders.addRepository(input),
         [WS_METHODS.workspaceLayoutCommands]: (input) =>
@@ -3385,7 +3405,7 @@ export const layerWsRpc = (
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd),
-          vcsStatusBroadcaster.refreshStatus(input.cwd, { localOnly: input.localOnly ?? false }),
+            vcsStatusBroadcaster.refreshStatus(input.cwd, { localOnly: input.localOnly ?? false }),
           ),
         [WS_METHODS.vcsPull]: (input) =>
           gitWorkflow.pullCurrentBranch(input.cwd).pipe(
