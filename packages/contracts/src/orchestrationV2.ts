@@ -1,3 +1,4 @@
+import { AuthUserId, AuthUserReference } from "./authUser.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
@@ -465,6 +466,11 @@ const OrchestrationV2LastTitleRegeneration = Schema.Struct({
 
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
+  /**
+   * Portal user whose session started the thread. Audit only; absent for
+   * agents, scheduled runs, forks, child tasks and sessions without a user.
+   */
+  createdByUserId: Schema.optional(AuthUserId),
   id: ThreadId,
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
@@ -2171,6 +2177,8 @@ export type OrchestrationV2LatestVisibleMessageSummary =
 
 export const OrchestrationV2ThreadShell = Schema.Struct({
   ...OrchestrationV2CreationFields,
+  /** Portal user who started the thread, named on read; absent when no user did. */
+  createdByUser: Schema.optional(AuthUserReference),
   id: ThreadId,
   projectId: ProjectId,
   title: Schema.String,
@@ -3064,6 +3072,8 @@ export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("thread.create"),
     ...OrchestrationV2CreationFields,
+    /** Set by the server from the creating session; a client-sent value is replaced. */
+    createdByUserId: Schema.optional(AuthUserId),
     commandId: CommandId,
     threadId: ThreadId,
     projectId: ProjectId,
