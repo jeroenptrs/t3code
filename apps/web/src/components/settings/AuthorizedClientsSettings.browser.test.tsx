@@ -51,6 +51,7 @@ const renderHeader = (environmentId: EnvironmentId) =>
   render(
     <AuthorizedClientsHeaderAction
       environmentId={environmentId}
+      canCreatePairingLinks
       onPairingLinkCreated={() => {}}
       clientSessions={null}
       isRevokingOtherClients={false}
