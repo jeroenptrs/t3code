@@ -294,10 +294,21 @@ const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(f
 /**
  * What `t3 serve` prints once it is ready. A terminal gets pairing details. The background
  * service's output is its log file, so it gets the address and the command that pairs a device.
+ * With Entra sign-in on, it mints and prints no pairing token: people sign in at the public URL,
+ * and the operator issues administrators and service credentials with the host CLI.
  */
 export const headlessServeOutput = Effect.fn("headlessServeOutput")(function* (options: {
   readonly serviceManaged: boolean;
 }) {
+  const serverConfig = yield* ServerConfig.ServerConfig;
+  if (serverConfig.entraSignIn !== undefined) {
+    return [
+      "T3 Code server is ready.",
+      `Sign in with Microsoft Entra ID at ${serverConfig.entraSignIn.publicUrl.origin}`,
+      "No pairing token is issued while Entra sign-in is on. Use `t3 auth` on this host to provision administrators and issue service credentials.",
+      "",
+    ].join("\n");
+  }
   if (!options.serviceManaged) {
     return formatHeadlessServeOutput(yield* issueHeadlessServeAccessInfo());
   }
