@@ -19,6 +19,7 @@ import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
 import { rebuildMessageSearch } from "../src/orchestration-v2/messageSearchIndex.ts";
 import { runMigrations } from "../src/persistence/Migrations.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { runForkMigrations } from "../src/persistence/ForkMigrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDevDbNotInWorktreeError>()(
@@ -684,7 +685,12 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
       const sql = yield* SqlClient.SqlClient;
       yield* sql.unsafe("PRAGMA foreign_keys = ON").unprepared;
       yield* forgetPeerLinksPreviewHistory();
-      return yield* runMigrations();
+      const upstream = yield* runMigrations();
+      const fork = yield* runForkMigrations();
+      return [
+        ...upstream.map(([id, name]) => `${id}_${name}`),
+        ...fork.map(([id, name]) => `fork_${id}_${name}`),
+      ];
     }).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
       wrapPhase("migrate", snapshotPath),
@@ -732,7 +738,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     sizeBytes: Number(size),
     projects: pruned.projects,
     eventCount: pruned.eventCount,
-    executedMigrations: executedMigrations.map(([id, name]) => `${id}_${name}`),
+    executedMigrations,
   };
 });
 

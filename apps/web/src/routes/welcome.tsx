@@ -8,13 +8,14 @@ import { NoProjectsHero } from "../components/NoProjectsHero";
 import { WelcomePage } from "../components/onboarding/WelcomePage";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import { requiresPairingRedirect } from "../authGate";
 
 const decodeEnvironmentId = Schema.decodeOption(EnvironmentId);
 
 export const Route = createFileRoute("/welcome")({
   beforeLoad: ({ context }) => {
     const { authGateState } = context;
-    if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
+    if (requiresPairingRedirect(authGateState)) {
       throw redirect({ to: "/pair", replace: true });
     }
   },

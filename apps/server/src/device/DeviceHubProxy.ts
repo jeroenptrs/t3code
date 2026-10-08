@@ -18,8 +18,8 @@ import * as Socket from "effect/socket/Socket";
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
-import { authenticateMediaRequest, failEnvironmentInternal } from "../auth/http.ts";
-import * as SessionStore from "../auth/SessionStore.ts";
+import { authenticateMediaRequest } from "../auth/http.ts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as DeviceService from "./DeviceService.ts";
 import { repeatStillFrame } from "./mjpegStillFrame.ts";
 
@@ -216,13 +216,9 @@ const handler = Effect.gen(function* () {
   const session = yield* authenticateMediaRequest(
     controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
   );
-  const sessions = yield* SessionStore.SessionStore;
-  const invalidated = sessions.awaitInvalidation(session.sessionId).pipe(
-    Effect.catchTags({
-      SessionCredentialVerificationError: (error) =>
-        failEnvironmentInternal("internal_error", error).pipe(Effect.ignore),
-    }),
-  );
+  // Like `/ws`, the streams also end when the user's access changes.
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const invalidated = serverAuth.awaitSessionAccessChange(session);
   const devices = yield* DeviceService.DeviceService;
   const ready = yield* devices.currentReadiness(url.value.searchParams.get("hostId") ?? undefined);
   if (!ready) {
