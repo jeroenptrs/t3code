@@ -6,6 +6,7 @@ import {
   getGitActionDisabledReason,
   requiresDefaultBranchConfirmation,
 } from "@t3tools/client-runtime/state/vcs";
+import { describeThreadCreator } from "@t3tools/client-runtime/portal-user";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../../../lib/changeRequestTerm";
@@ -104,6 +105,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     gitStatus.data?.refName ?? selectedThread?.branch ?? gt("Detached HEAD");
   const currentStatusSummary = statusSummary(gitStatus.data, m);
   const currentWorktreePath = selectedThreadWorktreePath;
+  const creatorLabel = describeThreadCreator(selectedThread?.source.createdByUser);
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
   const isRepo = gitStatus.data?.isRepo ?? true;
@@ -382,6 +384,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             {currentWorktreePath}
           </Text>
         </ListSection>
+      ) : null}
+      {creatorLabel !== null ? (
+        <Text textRole="footnote" className="px-4 text-foreground-muted">
+          {creatorLabel}
+        </Text>
       ) : null}
     </NativeScrollView>
   );

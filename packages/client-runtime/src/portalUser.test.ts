@@ -14,6 +14,7 @@ import {
   canManagePortalUsers,
   canReadPortalUsers,
   describeUserAccessChange,
+  describeThreadCreator,
   describeUserAdminError,
   describeWebhookAudit,
   portalReturnPath,
@@ -282,5 +283,17 @@ describe("describeWebhookAudit", () => {
     expect(
       describeWebhookAudit({ ...endpoint, tokenRotatedAt: "2026-10-04T09:00:00.000Z" }, formatDate),
     ).toEqual(["Token last rotated on 2026-10-04"]);
+  });
+});
+
+describe("describeThreadCreator", () => {
+  it("names the user who started a thread, and falls back for a removed user", () => {
+    expect(describeThreadCreator(undefined)).toBeNull();
+    expect(describeThreadCreator({ userId: AuthUserId.make("user-1"), name: "Ada" })).toBe(
+      "Started by Ada",
+    );
+    expect(describeThreadCreator({ userId: AuthUserId.make("user-2"), name: null })).toBe(
+      "Started by a removed user",
+    );
   });
 });
