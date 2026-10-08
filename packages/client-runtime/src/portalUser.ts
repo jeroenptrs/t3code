@@ -289,3 +289,8 @@ export function describeWebhookAudit(
   }
   return lines;
 }
+
+/** "Started by <name>" for a thread a portal user started; null when none did. */
+export function describeThreadCreator(createdByUser: AuthUserReference | undefined): string | null {
+  return createdByUser === undefined ? null : `Started by ${userReferenceLabel(createdByUser)}`;
+}
