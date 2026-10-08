@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  AuthUserId,
   CommandId,
   EnvironmentId,
   type ModelSelection,
@@ -80,6 +81,7 @@ function makeParentThread(): OrchestrationV2AppThread {
     snoozedAt,
     deletedAt: null,
     historyOrigin: "v1_import",
+    createdByUserId: AuthUserId.make("user-ada"),
   };
 }
 
@@ -121,6 +123,7 @@ it("resets a subagent child's snooze, title job and remote delegation but keeps 
   assert.deepEqual(childThread.modelSelection, childModelSelection);
   assert.equal(childThread.activeProviderThreadId, childProviderThreadId);
   assert.isUndefined(childThread.historyOrigin);
+  assert.isUndefined(childThread.createdByUserId);
   assert.deepEqual(childThread.lineage, {
     parentThreadId,
     relationshipToParent: "subagent",
