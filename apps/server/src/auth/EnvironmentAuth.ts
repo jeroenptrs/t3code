@@ -19,6 +19,8 @@ import {
   type AuthSessionId,
   type AuthSessionState,
   authScopeResponse,
+  type AuthSessionUser,
+  type AuthUserId,
   type ServerAuthDescriptor,
   type ServerAuthSessionMethod,
   type AuthWebSocketTicketResult,
@@ -29,11 +31,13 @@ import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -42,6 +46,7 @@ import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
+import * as UserRegistry from "./UserRegistry.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -111,6 +116,9 @@ export interface AuthenticatedSession {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
+  /** Set for sessions issued by Entra sign-in. */
+  readonly userId?: AuthUserId;
+  readonly user?: AuthSessionUser;
 }
 
 const serverAuthInternalErrorContext = {
@@ -235,6 +243,28 @@ export class ServerAuthOtherSessionsRevocationError extends Schema.TaggedError<S
 ) {
   override get message(): string {
     return "Failed to revoke other sessions.";
+  }
+}
+
+export class ServerAuthSignOutError extends Schema.TaggedError<ServerAuthSignOutError>()(
+  "ServerAuthSignOutError",
+  {
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to sign out.";
+  }
+}
+
+export class ServerAuthUserSessionsRevocationError extends Schema.TaggedError<ServerAuthUserSessionsRevocationError>()(
+  "ServerAuthUserSessionsRevocationError",
+  {
+    ...serverAuthInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke the user's sessions.";
   }
 }
 
@@ -365,6 +395,8 @@ export const ServerAuthInternalError = Schema.Union([
   ServerAuthSessionsListError,
   ServerAuthSessionRevocationError,
   ServerAuthOtherSessionsRevocationError,
+  ServerAuthSignOutError,
+  ServerAuthUserSessionsRevocationError,
   ServerAuthWebSocketTokenIssueError,
   ServerAuthDpopReplayStateRecordError,
   ServerAuthDpopReplayKeyCalculationError,
@@ -545,6 +577,30 @@ export class EnvironmentAuth extends Context.Service<
     readonly revokeOtherClientSessions: (
       currentSessionId: AuthSessionId,
     ) => Effect.Effect<number, ServerAuthInternalError>;
+    /**
+     * Revokes every session the request's auth cookies name, whether or not
+     * the portal policy still admits it, and returns every auth cookie name
+     * the server knows so the caller can clear them all. Never fails on a bad
+     * credential.
+     */
+    readonly signOut: (request: HttpServerRequest.HttpServerRequest) => Effect.Effect<
+      {
+        readonly signedOut: boolean;
+        readonly cookieNames: ReadonlyArray<string>;
+      },
+      ServerAuthInternalError
+    >;
+    readonly revokeUserSessions: (
+      userId: AuthUserId,
+    ) => Effect.Effect<number, ServerAuthInternalError>;
+    /**
+     * Completes once the session no longer carries the access it was
+     * authenticated with: it was revoked, its user's status or role changed,
+     * or, for a user-bound session, it expired. A long-lived connection races
+     * against this and closes, so the client reconnects under its current
+     * access.
+     */
+    readonly awaitSessionAccessChange: (session: AuthenticatedSession) => Effect.Effect<void>;
     readonly authenticateHttpRequest: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
@@ -692,11 +748,50 @@ export const make = Effect.gen(function* () {
   const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
   const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
   const sessions = yield* SessionStore.SessionStore;
+  const users = yield* UserRegistry.UserRegistry;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const crypto = yield* Crypto.Crypto;
   const descriptor = yield* policy.getDescriptor();
   const config = yield* ServerConfig.ServerConfig;
   const devAuth = resolveReusableDevAuth(config);
+  const entraSignIn = config.entraSignIn !== undefined;
+
+  const toAuthenticatedSession = (session: SessionStore.VerifiedSession): AuthenticatedSession => ({
+    sessionId: session.sessionId,
+    subject: session.subject,
+    method: session.method,
+    scopes: session.scopes,
+    ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
+    ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+    ...(session.user
+      ? {
+          userId: session.user.userId,
+          user: {
+            userId: session.user.userId,
+            status: session.user.status,
+            role: session.user.role,
+            email: session.user.email?.trim() || null,
+            displayName: session.user.displayName?.trim() || null,
+          },
+        }
+      : {}),
+  });
+
+  /**
+   * With Entra sign-in on, a browser cookie session must belong to a user.
+   * Pairing and the reusable dev token can still mint bearer credentials for
+   * services, but no longer a browser login.
+   */
+  const enforcePortalPolicy = (
+    session: AuthenticatedSession,
+  ): Effect.Effect<AuthenticatedSession, ServerAuthInvalidCredentialError> =>
+    entraSignIn && session.method === "browser-session-cookie" && session.userId === undefined
+      ? Effect.fail(
+          new ServerAuthInvalidCredentialError({
+            diagnostic: "Browser sessions require Entra sign-in on this server.",
+          }),
+        )
+      : Effect.succeed(session);
 
   const authenticateToken = (
     token: string,
@@ -716,14 +811,8 @@ export const make = Effect.gen(function* () {
       ),
       mapSessionVerificationErrors,
       Effect.flatMap(rejectMcpClientAudience),
-      Effect.map((session) => ({
-        sessionId: session.sessionId,
-        subject: session.subject,
-        method: session.method,
-        scopes: session.scopes,
-        ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
-        ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
-      })),
+      Effect.map(toAuthenticatedSession),
+      Effect.flatMap(enforcePortalPolicy),
     );
 
   const authenticateRequest = (
@@ -789,6 +878,7 @@ export const make = Effect.gen(function* () {
             ...authScopeResponse(session.scopes),
             sessionMethod: session.method,
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
+            ...(session.user ? { user: session.user } : {}),
           }) satisfies AuthSessionState,
       ),
       Effect.catchIf(isServerAuthCredentialError, () =>
@@ -803,6 +893,15 @@ export const make = Effect.gen(function* () {
   const createBrowserSession: EnvironmentAuth["Service"]["createBrowserSession"] = Effect.fn(
     "EnvironmentAuth.createBrowserSession",
   )(function* (credential, requestMetadata, previousSessionToken) {
+    if (entraSignIn) {
+      // Refuse before consuming, so a pairing credential sent here by mistake
+      // can still be exchanged for a service token.
+      return yield* Effect.fail(
+        new ServerAuthInvalidCredentialError({
+          diagnostic: "Browser sessions require Entra sign-in on this server.",
+        }),
+      );
+    }
     if (devAuth?.matches(credential)) {
       return yield* sessions.verify(credential).pipe(
         mapSessionVerificationErrors,
@@ -1191,13 +1290,8 @@ export const make = Effect.gen(function* () {
           return yield* sessions.verifyWebSocketToken(websocketTicket).pipe(
             mapSessionVerificationErrors,
             Effect.flatMap(rejectMcpClientAudience),
-            Effect.map((session) => ({
-              sessionId: session.sessionId,
-              subject: session.subject,
-              method: session.method,
-              scopes: session.scopes,
-              ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
-            })),
+            Effect.map(toAuthenticatedSession),
+            Effect.flatMap(enforcePortalPolicy),
           );
         }
       }
@@ -1284,6 +1378,101 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.consumeMcpApprovalCode"),
     );
 
+  const authCookieNames = [
+    sessions.cookieName,
+    ...(sessions.legacyCookieName ? [sessions.legacyCookieName] : []),
+    ...(devAuth ? [devAuth.cookieName] : []),
+  ];
+
+  // Verifies without the portal policy, so a pairing-derived browser session
+  // that Entra no longer admits is still revoked rather than left active.
+  const signOut: EnvironmentAuth["Service"]["signOut"] = (request) =>
+    Effect.forEach(
+      authCookieNames.flatMap((name) => request.cookies[name] ?? []),
+      (token) =>
+        sessions.verify(token).pipe(
+          Effect.map(Option.some),
+          Effect.catchIf(SessionStore.isSessionCredentialInvalidError, () => Effect.succeedNone),
+          Effect.flatMap((session) =>
+            // The reusable dev credential is shared across worktrees; signing
+            // out only drops the cookie.
+            Option.isNone(session) || session.value.sessionId === devAuth?.sessionId
+              ? Effect.succeed(false)
+              : sessions.revoke(session.value.sessionId),
+          ),
+        ),
+    ).pipe(
+      Effect.map((revoked) => ({
+        signedOut: revoked.some(Boolean),
+        cookieNames: authCookieNames,
+      })),
+      Effect.mapError((cause) => new ServerAuthSignOutError({ cause })),
+      Effect.withSpan("EnvironmentAuth.signOut"),
+    );
+
+  const revokeUserSessions: EnvironmentAuth["Service"]["revokeUserSessions"] = (userId) =>
+    sessions.revokeForUser(userId).pipe(
+      Effect.mapError((cause) => new ServerAuthUserSessionsRevocationError({ cause })),
+      Effect.withSpan("EnvironmentAuth.revokeUserSessions"),
+    );
+
+  const sameScopes = (
+    left: ReadonlyArray<AuthEnvironmentScope>,
+    right: ReadonlyArray<AuthEnvironmentScope>,
+  ) => left.length === right.length && left.every((scope) => right.includes(scope));
+
+  const awaitSessionAccessChange: EnvironmentAuth["Service"]["awaitSessionAccessChange"] = (
+    session,
+  ) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const changed = yield* Deferred.make<void>();
+        const signal = Deferred.succeed(changed, undefined);
+        // Subscribe before rechecking the stored session, so a change that
+        // commits in between is caught by one or the other.
+        yield* Effect.forkScoped(
+          sessions.streamChanges.pipe(
+            Stream.filter(
+              (change) => change.type === "clientRemoved" && change.sessionId === session.sessionId,
+            ),
+            Stream.take(1),
+            Stream.runForEach(() => signal),
+          ),
+          { startImmediately: true },
+        );
+        if (session.userId !== undefined) {
+          yield* Effect.forkScoped(
+            users.streamAccessChanges.pipe(
+              Stream.filter((change) => change.user.userId === session.userId),
+              Stream.take(1),
+              Stream.runForEach(() => signal),
+            ),
+            { startImmediately: true },
+          );
+        }
+        const current = yield* sessions.getActive(session.sessionId).pipe(Effect.option);
+        if (
+          Option.isNone(current) ||
+          Option.isNone(current.value) ||
+          !sameScopes(current.value.value.scopes, session.scopes)
+        ) {
+          return;
+        }
+        // A socket closes when its session expires, so the client proves its
+        // identity again.
+        if (session.expiresAt !== undefined) {
+          const remaining =
+            session.expiresAt.epochMilliseconds - (yield* DateTime.now).epochMilliseconds;
+          yield* Effect.raceFirst(
+            Deferred.await(changed),
+            Effect.sleep(Duration.millis(Math.max(0, remaining))),
+          );
+          return;
+        }
+        yield* Deferred.await(changed);
+      }),
+    ).pipe(Effect.withSpan("EnvironmentAuth.awaitSessionAccessChange"));
+
   return EnvironmentAuth.of({
     getDescriptor: () =>
       Effect.succeed(descriptor).pipe(Effect.withSpan("EnvironmentAuth.getDescriptor")),
@@ -1302,6 +1491,9 @@ export const make = Effect.gen(function* () {
     listClientSessions,
     revokeClientSession,
     revokeOtherClientSessions,
+    signOut,
+    revokeUserSessions,
+    awaitSessionAccessChange,
     authenticateHttpRequest,
     authenticateWebSocketUpgrade,
     issueWebSocketTicket,
@@ -1313,9 +1505,12 @@ export const make = Effect.gen(function* () {
   });
 });
 
+// The user registry is built here, once per server, because each instance
+// owns the PubSub that live sessions watch for access changes.
 export const layer = Layer.effect(EnvironmentAuth, make).pipe(
   Layer.provideMerge(PairingGrantStore.layer),
   Layer.provideMerge(SessionStore.layer),
+  Layer.provideMerge(UserRegistry.layer),
   Layer.provideMerge(EnvironmentAuthPolicy.layer),
 );
 
