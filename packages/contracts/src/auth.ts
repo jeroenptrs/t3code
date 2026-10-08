@@ -181,6 +181,7 @@ export const ServerAuthDescriptor = Schema.Struct({
   sessionCookieName: TrimmedNonEmptyString,
   /** Older servers omit this and authorize self-updates with orchestration:operate. */
   serverUpdateScope: Schema.optionalKey(Schema.Literal(AuthEnvironmentMaintainScope)),
+  entraSignIn: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerAuthDescriptor = typeof ServerAuthDescriptor.Type;
 
@@ -380,16 +381,6 @@ export const AuthCreatePairingCredentialInput = Schema.Struct({
   scopes: Schema.optionalKey(AuthGrantScopes),
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
-
-export const AuthSessionState = Schema.Struct({
-  authenticated: Schema.Boolean,
-  auth: ServerAuthDescriptor,
-  scopes: Schema.optionalKey(AuthEnvironmentScopes),
-  permissions: authScopeResponseFields.permissions,
-  sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
-  expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
-});
-export type AuthSessionState = typeof AuthSessionState.Type;
 
 export const AuthMcpClientAccess = Schema.Literals([
   "read-only",
