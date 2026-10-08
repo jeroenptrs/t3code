@@ -1345,6 +1345,7 @@ function ConnectionsSettingsContent({
                 canWriteAccess ? (
                   <AuthorizedClientsHeaderAction
                     environmentId={accessEnvironmentId}
+                    canCreatePairingLinks={accessSessionState.data?.auth.entraSignIn !== true}
                     delegatableScopes={currentSessionScopes ?? []}
                     onPairingLinkCreated={handlePairingLinkCreated}
                     clientSessions={

@@ -101,8 +101,8 @@ that restart after atomically replacing the source file.
 For production service, timer, rotation, recovery, and alerting instructions,
 see the [Slack ingress operations runbook](../../operations/slack-ingress.md).
 
-To make the linked T3 conversation UI available without a T3 pairing prompt, deploy the public web
-origin behind a reverse proxy that supplies a separate narrow portal credential. See
+To open linked conversations in a browser, deploy the T3 web client at a public address where
+people sign in with Microsoft Entra ID. See
 [Deploying the Slack conversation portal](../slack-conversation-portal-deployment.md).
 
 `/live` reports whether the process is alive. `/ready` becomes successful after

@@ -9,7 +9,8 @@ import type {
   BrowserImportSource,
   BrowserImportSourceId,
 } from "./browserImport.ts";
-import { AuthAccessTokenResult, AuthSessionState } from "./auth.ts";
+import { AuthAccessTokenResult } from "./auth.ts";
+import { AuthSessionState } from "./authUser.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";

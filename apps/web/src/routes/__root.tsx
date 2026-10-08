@@ -50,6 +50,9 @@ import { useUiStateStore } from "../uiStateStore";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { GUEST_PAGE_PATH } from "../guestPage";
+import type { AuthGateState } from "../authGate";
+import { PortalNoAccessSurface, PortalSignInSurface } from "../components/auth/PortalAccessSurface";
+import { PortalAccessWatcher } from "../components/auth/PortalAccessWatcher";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { useHostedPromptLinkLanding } from "../components/promptLinks/HostedPromptLinkLanding";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
@@ -62,7 +65,7 @@ import { isChunkLoadError } from "../lib/chunkReloadGuard";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 
 export const Route = createRootRoute({
-  beforeLoad: async ({ location }) => {
+  beforeLoad: async ({ location }): Promise<{ authGateState: AuthGateState }> => {
     // Guest links open on the owner's tunnel host in a browser with no T3 session, and must
     // not trigger pairing or an environment connection.
     if (location.pathname === GUEST_PAGE_PATH) {
@@ -155,6 +158,18 @@ function RootRouteBranch() {
   );
 
   if (pathname === GUEST_PAGE_PATH) return <Outlet />;
+  // Entra sign-in renders on the requested URL, so the path is what the
+  // browser comes back to after signing in.
+  if (authGateState.status === "portal-sign-in") {
+    return (
+      <PortalSignInSurface
+        {...(authGateState.signInFailure ? { signInFailure: authGateState.signInFailure } : {})}
+      />
+    );
+  }
+  if (authGateState.status === "portal-no-access") {
+    return <PortalNoAccessSurface access={authGateState.access} user={authGateState.user} />;
+  }
 
   if (
     pathname === "/pair" ||
@@ -179,6 +194,9 @@ function RootRouteBranch() {
   // first-run gate and the event router, whose first navigation would leave the page.
   const appHosts = (
     <>
+      {authGateState.status === "authenticated" && authGateState.portal ? (
+        <PortalAccessWatcher />
+      ) : null}
       {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
       {primaryEnvironmentAuthenticated || localEnvironmentDisabled ? (
         <DesktopWebLinkCoordinator />

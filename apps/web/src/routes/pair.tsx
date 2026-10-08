@@ -15,11 +15,9 @@ export const Route = createFileRoute("/pair")({
       };
     }
 
-    if (
-      authGateState.status === "authenticated" ||
-      authGateState.status === "hosted-static" ||
-      authGateState.status === "guest"
-    ) {
+    // Signed-in browsers have nothing to pair, and with Entra sign-in on the
+    // root shows sign-in instead of the pairing screen.
+    if (authGateState.status !== "requires-auth") {
       throw redirect({ to: "/", replace: true });
     }
     return {
@@ -40,6 +38,9 @@ function PairRouteView() {
 
   if (authGateState.status === "hosted-pairing") {
     return <HostedPairingRouteSurface />;
+  }
+  if (authGateState.status !== "requires-auth") {
+    return null;
   }
 
   return (
