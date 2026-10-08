@@ -50,6 +50,7 @@ it.effect("preserves binary input and admission frames through the real socket p
                 method: "bearer-access-token",
                 scopes: [AuthOrchestrationOperateScope],
               }),
+            awaitSessionAccessChange: () => Effect.never,
           } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
         ),
         Layer.provide(
