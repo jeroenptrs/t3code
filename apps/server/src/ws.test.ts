@@ -3,19 +3,22 @@ import { assert, it } from "@effect/vitest";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthUserId,
+  CommandId,
   AuthSessionId,
   EnvironmentId,
-  ProjectId,
-  ThreadId,
   ProviderDriverKind,
-  ProviderInstanceId,
+  type OrchestrationV2Command,
   WS_METHODS,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationProjectShell,
+  ProjectId,
+  ProviderInstanceId,
   ScheduledTaskListResult,
+  ThreadId,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerProvider,
@@ -129,7 +132,36 @@ import {
   visibleScheduledTasks,
   WS_RPC_SERVER_OPTIONS,
   withLateEditorConfig,
+  withSessionThreadCreator,
 } from "./ws.ts";
+
+it("records the session's user as a thread's creator, never the client's claim", () => {
+  const ada = AuthUserId.make("user-ada");
+  const create: OrchestrationV2Command = {
+    type: "thread.create",
+    commandId: CommandId.make("create"),
+    threadId: ThreadId.make("thread:new"),
+    projectId: ProjectId.make("project-1"),
+    title: "New thread",
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+    createdByUserId: AuthUserId.make("user-spoofed"),
+  };
+  assert.propertyVal(withSessionThreadCreator(create, ada), "createdByUserId", ada);
+  assert.notProperty(withSessionThreadCreator(create, null), "createdByUserId");
+
+  const archive: OrchestrationV2Command = {
+    type: "thread.archive",
+    commandId: CommandId.make("archive"),
+    threadId: ThreadId.make("thread:new"),
+  };
+  assert.strictEqual(withSessionThreadCreator(archive, ada), archive);
+});
 
 it("shows a webhook's URL and audit trail only to sessions that may operate", () => {
   const result = Schema.decodeUnknownSync(ScheduledTaskListResult)({

@@ -4,6 +4,7 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  type AuthUserId,
   type ChatAttachment,
   type MessageId,
   type ModelSelection,
@@ -103,6 +104,8 @@ export interface ThreadLaunchInput {
   readonly linkOrigin?: OrchestrationV2LinkOrigin;
   /** The parent there, when that environment's agent delegated this as a task. */
   readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
+  /** Portal user whose session launched the thread; recorded on create only. */
+  readonly createdByUserId?: AuthUserId | null | undefined;
 }
 
 type PreparationInput = Pick<
@@ -925,6 +928,9 @@ const make = Effect.gen(function* () {
                   : { delegatedFrom: input.delegatedFrom }),
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
+                ...(input.createdByUserId == null
+                  ? {}
+                  : { createdByUserId: input.createdByUserId }),
               });
         const claimed = yield* claimDispatch.pipe(
           Effect.mapError(
