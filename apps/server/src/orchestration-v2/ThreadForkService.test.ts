@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  AuthUserId,
   CommandId,
   ContextTransferId,
   MessageId,
@@ -61,6 +62,7 @@ function makeSourceThread(): OrchestrationV2AppThread {
     snoozedUntil,
     snoozedAt,
     deletedAt: null,
+    createdByUserId: AuthUserId.make("user-ada"),
   };
 }
 
@@ -147,6 +149,7 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
     assert.equal(result.targetThread.branch, sourceThread.branch);
     assert.equal(result.targetThread.worktreePath, sourceThread.worktreePath);
     assert.isNull(result.targetThread.activeProviderThreadId);
+    assert.isUndefined(result.targetThread.createdByUserId);
     assert.deepEqual(result.targetThread.lineage, {
       parentThreadId: sourceThreadId,
       relationshipToParent: "fork",
