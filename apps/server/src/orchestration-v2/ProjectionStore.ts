@@ -1078,6 +1078,7 @@ type ShellThreadRow = {
   readonly has_actionable_proposed_plan: number;
   readonly item_count: number;
   readonly runless_item_count: number;
+  readonly created_by_user_name: string | null;
 };
 
 type ShellRunRow = {
@@ -1568,6 +1569,7 @@ export function threadShellFromProjection(
     runs: projection.runs,
     pullRequests: projection.thread.pullRequests,
   });
+  // createdByUser is named from auth_users, so only the SQL shell reads carry it.
   return {
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
@@ -1719,6 +1721,7 @@ type ShellThreadState = {
   readonly pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
   readonly providerInstanceHistory: OrchestrationV2ThreadShell["providerInstanceHistory"];
   readonly goal: OrchestrationV2ThreadShell["goal"];
+  readonly createdByUser: OrchestrationV2ThreadShell["createdByUser"];
   readonly itemCount: number;
   readonly runlessItemCount: number;
   readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
@@ -1829,6 +1832,9 @@ function shellFromState(input: {
   return {
     createdBy: input.state.thread.createdBy,
     creationSource: input.state.thread.creationSource,
+    ...(input.state.createdByUser === undefined
+      ? {}
+      : { createdByUser: input.state.createdByUser }),
     id: input.state.thread.id,
     projectId: input.state.thread.projectId,
     title: input.state.thread.title,
@@ -5781,7 +5787,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_turn_items i
                 WHERE i.thread_id = t.thread_id
                   AND i.run_id IS NULL
-              ) AS runless_item_count
+              ) AS runless_item_count,
+              -- Audit name from the fork's user registry; NULL once the user is removed.
+              (
+                SELECT COALESCE(u.display_name, u.email)
+                FROM auth_users u
+                WHERE u.user_id = json_extract(t.payload_json, '$.createdByUserId')
+              ) AS created_by_user_name
             FROM orchestration_v2_projection_threads t
             LEFT JOIN orchestration_v2_projection_runs active ON active.run_id = (
               SELECT r.run_id
@@ -6275,6 +6287,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             providerThreadsByThreadId.get(thread.id) ?? [],
             thread.activeProviderThreadId,
           ),
+          createdByUser:
+            thread.createdByUserId === undefined
+              ? undefined
+              : { userId: thread.createdByUserId, name: row.created_by_user_name },
           itemCount: row.item_count,
           runlessItemCount: row.runless_item_count,
           updatedAt: thread.updatedAt,
