@@ -4,6 +4,7 @@ import { AuthOrchestrationReadScope, AuthOrchestrationOperateScope } from "@t3to
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import {
   HttpClient,
   HttpClientRequest,
@@ -15,6 +16,7 @@ import * as Socket from "effect/socket/Socket";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 
 import { authenticateMediaRequest } from "../auth/http.ts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as DeviceService from "./DeviceService.ts";
 import { repeatStillFrame } from "./mjpegStillFrame.ts";
 
@@ -96,6 +98,7 @@ export const upstreamWebSocketConstructor = Layer.effect(
 const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
+  accessChanged: Effect.Effect<void>,
   protocols: ReadonlyArray<string> = [],
   headers: Readonly<Record<string, string>> = {},
 ) {
@@ -109,10 +112,11 @@ const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
     Effect.gen(function* () {
       const writeToClient = yield* client.writer;
       const writeToUpstream = yield* upstream.writer;
-      return yield* Effect.raceFirst(
+      return yield* Effect.raceAllFirst([
         pumpFrames(upstream, writeToClient),
         pumpFrames(client, writeToUpstream),
-      );
+        accessChanged,
+      ]);
     }),
   ).pipe(Effect.ignoreCause);
   return HttpServerResponse.empty();
@@ -130,6 +134,7 @@ const pumpFrames =
 const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
+  accessChanged: Effect.Effect<void>,
   extraHeaders: Readonly<Record<string, string>> = {},
 ) {
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
@@ -166,7 +171,7 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   const body = headers["content-type"]?.startsWith("multipart/x-mixed-replace")
     ? repeatStillFrame(response.stream)
     : response.stream;
-  return HttpServerResponse.stream(body, {
+  return HttpServerResponse.stream(body.pipe(Stream.interruptWhen(accessChanged)), {
     status: response.status,
     headers,
     ...(headers["content-type"] ? { contentType: headers["content-type"] } : {}),
@@ -195,9 +200,13 @@ const handler = Effect.gen(function* () {
   const controlsDevice =
     (upgrade && hubPath !== "/api/devices/ws") ||
     (!readOnly && /\/api\/(stream-(mode|settings)|fold)$/.test(hubPath));
-  yield* authenticateMediaRequest(
+  const session = yield* authenticateMediaRequest(
     controlsDevice ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope,
   );
+  // Streams outlive the request that authorized them, so like `/ws` they end
+  // when the session is revoked or its user's access changes.
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const accessChanged = serverAuth.awaitSessionAccessChange(session);
   const devices = yield* DeviceService.DeviceService;
   const ready = yield* devices.currentReadiness(url.value.searchParams.get("hostId") ?? undefined);
   if (!ready) {
@@ -218,11 +227,12 @@ const handler = Effect.gen(function* () {
     return yield* proxyWebSocket(
       request,
       upstreamUrl.replace(/^http/, "ws"),
+      accessChanged,
       routed?.protocols,
       routed?.headers,
     );
   }
-  return yield* proxyHttp(request, upstreamUrl, routed?.headers);
+  return yield* proxyHttp(request, upstreamUrl, accessChanged, routed?.headers);
 });
 
 export const layer = HttpRouter.add("*", `${DeviceService.DEVICE_HUB_ROUTE_PREFIX}/*`, handler);
