@@ -1,4 +1,5 @@
 import {
+  type AuthUserId,
   AcpRegistryOperationError,
   CommandId,
   type AcpRegistryImportSessionInput,
@@ -53,6 +54,7 @@ export class AcpRegistrySessions extends Context.Service<
      */
     readonly importSession: (
       input: AcpRegistryImportSessionInput,
+      createdByUserId?: AuthUserId | null,
     ) => Effect.Effect<AcpRegistryImportSessionResult, AcpRegistryOperationError>;
   }
 >()("t3/provider/AcpRegistrySessions") {}
@@ -110,6 +112,7 @@ const make = Effect.gen(function* () {
 
   const importSession = Effect.fn("AcpRegistrySessions.importSession")(function* (
     input: AcpRegistryImportSessionInput,
+    createdByUserId: AuthUserId | null = null,
   ) {
     const { workspaceRoot } = yield* project(input.projectId);
     const { instance } = yield* sessionManager(input.instanceId);
@@ -189,6 +192,7 @@ const make = Effect.gen(function* () {
           },
           createdBy: "user",
           creationSource: "web",
+          createdByUserId,
         }),
       ),
     );
