@@ -47,12 +47,7 @@ import { forkParked, forkParkedFiber } from "./serverActivation.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
-import {
-  formatHeadlessServeOutput,
-  formatHostForUrl,
-  isWildcardHost,
-  issueHeadlessServeAccessInfo,
-} from "./startupAccess.ts";
+import { formatHostForUrl, isWildcardHost, resolveHeadlessServeOutput } from "./startupAccess.ts";
 
 export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeStartupError>()(
   "ServerRuntimeStartupError",
@@ -322,8 +317,13 @@ const resolveStartupBrowserTarget = Effect.gen(function* () {
       ? `http://${formatHostForUrl(serverConfig.host)}:${serverConfig.port}`
       : localUrl;
   const baseTarget = serverConfig.devUrl?.toString() ?? bindUrl;
-  return serverConfig.mode === "desktop"
-    ? baseTarget
+  if (serverConfig.mode === "desktop") {
+    return baseTarget;
+  }
+  // With Entra sign-in on, browsers sign in as users; no administrator
+  // pairing token is minted.
+  return serverConfig.entraSignIn !== undefined
+    ? serverConfig.entraSignIn.publicUrl.origin
     : yield* serverAuth.issueStartupPairingUrl(baseTarget);
 });
 
@@ -587,15 +587,16 @@ const make = (options?: StartupOptions) =>
           );
           if (serverConfig.startupPresentation === "headless") {
             yield* Effect.logDebug("startup phase: headless access info");
-            const accessInfo = yield* issueHeadlessServeAccessInfo();
-            yield* runStartupPhase(
-              "headless.output",
-              Console.log(formatHeadlessServeOutput(accessInfo)),
-            );
+            const output = yield* resolveHeadlessServeOutput();
+            yield* runStartupPhase("headless.output", Console.log(output));
           } else {
             yield* Effect.logDebug("startup phase: browser open check");
             const startupBrowserTarget = yield* resolveStartupBrowserTarget;
-            if (serverConfig.mode !== "desktop") {
+            if (serverConfig.mode !== "desktop" && serverConfig.entraSignIn !== undefined) {
+              yield* Effect.logInfo("Sign in to T3 Code with Microsoft Entra ID.").pipe(
+                Effect.annotateLogs({ url: startupBrowserTarget }),
+              );
+            } else if (serverConfig.mode !== "desktop") {
               yield* Effect.logInfo(
                 "Authentication required. Open T3 Code using the pairing URL.",
               ).pipe(Effect.annotateLogs({ pairingUrl: startupBrowserTarget }));
