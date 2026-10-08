@@ -52,6 +52,7 @@ export const make = Effect.gen(function* () {
       environmentId: yield* serverEnvironment.getEnvironmentId,
       development: config.devUrl !== undefined,
     }),
+    entraSignIn: config.entraSignIn !== undefined,
   };
 
   return EnvironmentAuthPolicy.of({

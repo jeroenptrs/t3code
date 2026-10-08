@@ -139,6 +139,10 @@
       "types": "./src/scheduledTaskWorktree.ts",
       "default": "./src/scheduledTaskWorktree.ts"
     },
+    "./portal-user": {
+      "types": "./src/portalUser.ts",
+      "default": "./src/portalUser.ts"
+    },
     "./connection": {
       "types": "./src/connection/index.ts",
       "default": "./src/connection/index.ts"
