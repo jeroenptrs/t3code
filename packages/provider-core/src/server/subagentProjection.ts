@@ -58,6 +58,8 @@ export function makeSubagentChildThread(input: {
     ...input.parentThread,
     createdBy: input.createdBy,
     creationSource: input.creationSource,
+    // Child threads are started by an agent, not by the parent's portal user.
+    createdByUserId: undefined,
     id: input.childThreadId,
     title: input.title,
     linkedPullRequest: null,
