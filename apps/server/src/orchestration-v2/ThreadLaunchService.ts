@@ -4,6 +4,7 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  type AuthUserId,
   type ChatAttachment,
   type MessageId,
   type ModelSelection,
@@ -94,6 +95,8 @@ export interface ThreadLaunchInput {
   };
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  /** Portal user whose session launched the thread; recorded on create only. */
+  readonly createdByUserId?: AuthUserId | null | undefined;
 }
 
 /** What workspace preparation reads from a launch; a retry rebuilds it from the run. */
@@ -848,6 +851,9 @@ const make = Effect.gen(function* () {
                   : { importedNativeThread: input.importedNativeThread }),
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
+                ...(input.createdByUserId == null
+                  ? {}
+                  : { createdByUserId: input.createdByUserId }),
               });
         const claimed = yield* claimDispatch.pipe(
           Effect.mapError(
