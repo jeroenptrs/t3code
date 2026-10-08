@@ -7,7 +7,14 @@ import type {
   ServerAuthSessionMethod,
   AuthSessionId,
   AuthSessionState,
+  AuthSessionUser,
+  EntraSignInFailureReason,
 } from "@t3tools/contracts";
+import {
+  readEntraSignInFailure,
+  resolvePortalAccess,
+  stripEntraSignInFailure,
+} from "@t3tools/client-runtime/portal-user";
 import { EnvironmentHttpCommonError, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import type { EnvironmentHttpCommonError as EnvironmentHttpCommonErrorType } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -131,12 +138,22 @@ export interface ServerClientSessionRecord {
   readonly current: boolean;
 }
 
-type ServerAuthGateState =
-  | { status: "authenticated" }
+/**
+ * `portal-*` states come from Entra sign-in. The root renders them on the
+ * requested URL instead of redirecting, so a deep link survives sign-in.
+ */
+export type ServerAuthGateState =
+  | { status: "authenticated"; portal?: true }
   | {
       status: "requires-auth";
       auth: AuthSessionState["auth"];
       errorMessage?: string;
+    }
+  | { status: "portal-sign-in"; signInFailure?: EntraSignInFailureReason }
+  | {
+      status: "portal-no-access";
+      access: "awaiting-approval" | "disabled";
+      user: AuthSessionUser;
     };
 
 let bootstrapPromise: Promise<ServerAuthGateState> | null = null;
@@ -309,8 +326,50 @@ function isTransientBootstrapError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+/** Reads and clears a failed Entra callback's reason from the address bar. */
+function takeEntraSignInFailureFromUrl(): EntraSignInFailureReason | null {
+  const url = new URL(window.location.href);
+  const failure = readEntraSignInFailure(url);
+  const next = stripEntraSignInFailure(url);
+  if (next) {
+    window.history.replaceState(window.history.state, document.title, next.toString());
+  }
+  return failure;
+}
+
+/**
+ * With Entra sign-in on, the session alone decides the gate. Pairing tokens
+ * cannot create a browser session there, so they are never exchanged.
+ */
+export function portalGateStateFromSession(
+  session: AuthSessionState,
+  signInFailure: EntraSignInFailureReason | null,
+): ServerAuthGateState | null {
+  const access = resolvePortalAccess(session);
+  switch (access.kind) {
+    case "not-portal":
+      return null;
+    case "signed-out":
+      return signInFailure
+        ? { status: "portal-sign-in", signInFailure }
+        : { status: "portal-sign-in" };
+    case "awaiting-approval":
+    case "disabled":
+      return { status: "portal-no-access", access: access.kind, user: access.user };
+    case "signed-in":
+      return { status: "authenticated", portal: true };
+  }
+}
+
 async function bootstrapServerAuth(urlCredential: string | null): Promise<ServerAuthGateState> {
   const currentSession = await fetchSessionState();
+  const portalGateState = portalGateStateFromSession(
+    currentSession,
+    currentSession.auth.entraSignIn === true ? takeEntraSignInFailureFromUrl() : null,
+  );
+  if (portalGateState) {
+    return portalGateState;
+  }
   if (currentSession.authenticated && !urlCredential) {
     return { status: "authenticated" };
   }
@@ -441,7 +500,12 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
   }
   if (explicitPairingRequested) {
     const currentSession = await fetchSessionState();
-    return { status: "requires-auth", auth: currentSession.auth };
+    // With Entra sign-in on, a pairing token cannot open a browser session.
+    // Fall through so the bootstrap strips it and asks for sign-in instead.
+    if (currentSession.auth.entraSignIn !== true) {
+      return { status: "requires-auth", auth: currentSession.auth };
+    }
+    explicitPairingRequested = false;
   }
 
   const urlCredential = takePairingTokenFromUrl();
@@ -479,6 +543,25 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
         bootstrapPromise = null;
       }
     });
+}
+
+/**
+ * Forgets the resolved gate so the next root `beforeLoad` reads the session
+ * again. Call before `router.invalidate()` when portal access has changed.
+ */
+export function resetServerAuthGate() {
+  bootstrapPromise = null;
+  resolvedAuthenticatedGateState = null;
+}
+
+/** Ends this browser's T3 session. The Entra single sign-on session stays. */
+export async function signOutPrimarySession(): Promise<void> {
+  await runPrimaryHttp(
+    PrimaryEnvironmentHttpClient.pipe(
+      Effect.flatMap((client) => client.auth.signOut({ headers: {} })),
+    ),
+  );
+  resetServerAuthGate();
 }
 
 export function __resetServerAuthBootstrapForTests() {
