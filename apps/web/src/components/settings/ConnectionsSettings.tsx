@@ -1167,6 +1167,7 @@ export function ConnectionsSettings() {
               control={
                 canWriteAccess ? (
                   <AuthorizedClientsHeaderAction
+                    canCreatePairingLinks={primarySessionState.data?.auth.entraSignIn !== true}
                     delegatableScopes={currentSessionScopes ?? []}
                     onPairingLinkCreated={handlePairingLinkCreated}
                     clientSessions={
