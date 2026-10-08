@@ -34,6 +34,7 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+import { requiresPairingRedirect } from "../authGate";
 
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
@@ -236,10 +237,7 @@ function ChatRouteLayout() {
 
 export const Route = createFileRoute("/_chat")({
   beforeLoad: async ({ context, location }) => {
-    if (
-      context.authGateState.status !== "authenticated" &&
-      context.authGateState.status !== "hosted-static"
-    ) {
+    if (requiresPairingRedirect(context.authGateState)) {
       throw redirect({ to: "/pair", replace: true });
     }
     return { appModalPage: isAppModalPage(location.pathname) };

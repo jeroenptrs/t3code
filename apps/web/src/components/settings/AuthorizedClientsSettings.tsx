@@ -578,6 +578,8 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
 });
 
 type AuthorizedClientsHeaderActionProps = {
+  /** False with Entra sign-in on: only the host CLI issues pairing credentials there. */
+  canCreatePairingLinks: boolean;
   onPairingLinkCreated: (result: AuthPairingCredentialResult) => void;
   clientSessions: ReadonlyArray<ServerClientSessionRecord> | null;
   isRevokingOtherClients: boolean;
@@ -586,6 +588,7 @@ type AuthorizedClientsHeaderActionProps = {
 };
 
 export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderAction({
+  canCreatePairingLinks,
   onPairingLinkCreated,
   clientSessions,
   isRevokingOtherClients,
@@ -662,6 +665,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
           }
         }}
       >
+        {canCreatePairingLinks ? (
         <DialogTrigger
           render={
             <Button size="xs" variant="default">
@@ -670,6 +674,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
             </Button>
           }
         />
+        ) : null}
         <DialogPopup className="max-w-md">
           <DialogHeader>
             <DialogTitle>Create pairing link</DialogTitle>
