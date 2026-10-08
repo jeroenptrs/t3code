@@ -11,6 +11,9 @@ import {
   AuthClientMetadataDeviceType,
   AuthEnvironmentScopes,
   AuthSessionId,
+  AuthUserId,
+  AuthUserRole,
+  AuthUserStatus,
   ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 
@@ -31,6 +34,16 @@ export const AuthSessionClientMetadataRecord = Schema.Struct({
 });
 export type AuthSessionClientMetadataRecord = typeof AuthSessionClientMetadataRecord.Type;
 
+/** The portal user a session belongs to, read with the session in one query. */
+export const AuthSessionUserRecord = Schema.Struct({
+  userId: AuthUserId,
+  status: AuthUserStatus,
+  role: Schema.NullOr(AuthUserRole),
+  email: Schema.NullOr(Schema.String),
+  displayName: Schema.NullOr(Schema.String),
+});
+export type AuthSessionUserRecord = typeof AuthSessionUserRecord.Type;
+
 export const AuthSessionRecord = Schema.Struct({
   sessionId: AuthSessionId,
   subject: Schema.String,
@@ -41,6 +54,7 @@ export const AuthSessionRecord = Schema.Struct({
   expiresAt: Schema.DateTimeUtcFromString,
   lastConnectedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  user: Schema.NullOr(AuthSessionUserRecord),
 });
 export type AuthSessionRecord = typeof AuthSessionRecord.Type;
 
@@ -52,6 +66,7 @@ export const CreateAuthSessionInput = Schema.Struct({
   client: AuthSessionClientMetadataRecord,
   issuedAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
+  userId: Schema.optionalKey(AuthUserId),
 });
 export type CreateAuthSessionInput = typeof CreateAuthSessionInput.Type;
 
@@ -86,6 +101,12 @@ export const RevokeOtherAuthSessionsInput = Schema.Struct({
 });
 export type RevokeOtherAuthSessionsInput = typeof RevokeOtherAuthSessionsInput.Type;
 
+export const RevokeUserAuthSessionsInput = Schema.Struct({
+  userId: AuthUserId,
+  revokedAt: Schema.DateTimeUtcFromString,
+});
+export type RevokeUserAuthSessionsInput = typeof RevokeUserAuthSessionsInput.Type;
+
 export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
   sessionId: AuthSessionId,
   lastConnectedAt: Schema.DateTimeUtcFromString,
@@ -116,6 +137,9 @@ export class AuthSessionRepository extends Context.Service<
     readonly revokeAllExcept: (
       input: RevokeOtherAuthSessionsInput,
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
+    readonly revokeAllForUser: (
+      input: RevokeUserAuthSessionsInput,
+    ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
@@ -137,6 +161,11 @@ const AuthSessionDbRow = Schema.Struct({
   expiresAt: Schema.DateTimeUtcFromString,
   lastConnectedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   revokedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  userId: Schema.NullOr(AuthUserId),
+  userStatus: Schema.NullOr(AuthUserStatus),
+  userRole: Schema.NullOr(AuthUserRole),
+  userEmail: Schema.NullOr(Schema.String),
+  userDisplayName: Schema.NullOr(Schema.String),
 });
 
 const AuthSessionRawDbRow = Schema.Struct({
@@ -154,6 +183,11 @@ const AuthSessionRawDbRow = Schema.Struct({
   expiresAt: Schema.Unknown,
   lastConnectedAt: Schema.Unknown,
   revokedAt: Schema.Unknown,
+  userId: Schema.Unknown,
+  userStatus: Schema.Unknown,
+  userRole: Schema.Unknown,
+  userEmail: Schema.Unknown,
+  userDisplayName: Schema.Unknown,
 });
 
 const decodeAuthSessionDbRow = Schema.decodeUnknownEffect(AuthSessionDbRow);
@@ -176,6 +210,17 @@ function toAuthSessionRecord(row: typeof AuthSessionDbRow.Type): AuthSessionReco
     expiresAt: row.expiresAt,
     lastConnectedAt: row.lastConnectedAt,
     revokedAt: row.revokedAt,
+    // The foreign key keeps the joined user present whenever user_id is set.
+    user:
+      row.userId === null || row.userStatus === null
+        ? null
+        : {
+            userId: row.userId,
+            status: row.userStatus,
+            role: row.userRole,
+            email: row.userEmail,
+            displayName: row.userDisplayName,
+          },
   };
 }
 
@@ -197,6 +242,29 @@ function toPersistenceSqlOrDecodeError(
 /** @public */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  // Every session read joins its user, so verifying a session resolves the
+  // user's current access in the same query.
+  const sessionColumns = sql.literal(`
+    s.session_id AS "sessionId",
+    s.subject AS "subject",
+    s.scopes AS "scopes",
+    s.method AS "method",
+    s.client_label AS "clientLabel",
+    s.client_ip_address AS "clientIpAddress",
+    s.client_user_agent AS "clientUserAgent",
+    s.client_device_type AS "clientDeviceType",
+    s.client_os AS "clientOs",
+    s.client_browser AS "clientBrowser",
+    s.issued_at AS "issuedAt",
+    s.expires_at AS "expiresAt",
+    s.last_connected_at AS "lastConnectedAt",
+    s.revoked_at AS "revokedAt",
+    s.user_id AS "userId",
+    u.status AS "userStatus",
+    u.role AS "userRole",
+    u.email AS "userEmail",
+    u.display_name AS "userDisplayName"
+  `);
 
   const insertSessionRow = (ignoreExisting: boolean) =>
     SqlSchema.void({
@@ -216,7 +284,8 @@ export const make = Effect.gen(function* () {
           client_browser,
           issued_at,
           expires_at,
-          revoked_at
+          revoked_at,
+          user_id
         )
         VALUES (
           ${input.sessionId},
@@ -231,7 +300,8 @@ export const make = Effect.gen(function* () {
           ${input.client.browser},
           ${input.issuedAt},
           ${input.expiresAt},
-          NULL
+          NULL,
+          ${input.userId ?? null}
         )
         ${ignoreExisting ? sql`ON CONFLICT(session_id) DO NOTHING` : sql``}
       `,
@@ -244,23 +314,10 @@ export const make = Effect.gen(function* () {
     Result: AuthSessionRawDbRow,
     execute: ({ sessionId }) =>
       sql`
-        SELECT
-          session_id AS "sessionId",
-          subject AS "subject",
-          scopes AS "scopes",
-          method AS "method",
-          client_label AS "clientLabel",
-          client_ip_address AS "clientIpAddress",
-          client_user_agent AS "clientUserAgent",
-          client_device_type AS "clientDeviceType",
-          client_os AS "clientOs",
-          client_browser AS "clientBrowser",
-          issued_at AS "issuedAt",
-          expires_at AS "expiresAt",
-          last_connected_at AS "lastConnectedAt",
-          revoked_at AS "revokedAt"
-        FROM auth_sessions
-        WHERE session_id = ${sessionId}
+        SELECT ${sessionColumns}
+        FROM auth_sessions s
+        LEFT JOIN auth_users u ON u.user_id = s.user_id
+        WHERE s.session_id = ${sessionId}
       `,
   });
 
@@ -288,25 +345,12 @@ export const make = Effect.gen(function* () {
     Result: AuthSessionRawDbRow,
     execute: ({ now, connectedSessionIds = [] }) =>
       sql`
-        SELECT
-          session_id AS "sessionId",
-          subject AS "subject",
-          scopes AS "scopes",
-          method AS "method",
-          client_label AS "clientLabel",
-          client_ip_address AS "clientIpAddress",
-          client_user_agent AS "clientUserAgent",
-          client_device_type AS "clientDeviceType",
-          client_os AS "clientOs",
-          client_browser AS "clientBrowser",
-          issued_at AS "issuedAt",
-          expires_at AS "expiresAt",
-          last_connected_at AS "lastConnectedAt",
-          revoked_at AS "revokedAt"
-        FROM auth_sessions
-        WHERE revoked_at IS NULL
-          AND (expires_at > ${now} OR ${sql.in("session_id", connectedSessionIds)})
-        ORDER BY issued_at DESC, session_id DESC
+        SELECT ${sessionColumns}
+        FROM auth_sessions s
+        LEFT JOIN auth_users u ON u.user_id = s.user_id
+        WHERE s.revoked_at IS NULL
+          AND (s.expires_at > ${now} OR ${sql.in("s.session_id", connectedSessionIds)})
+        ORDER BY s.issued_at DESC, s.session_id DESC
       `,
   });
 
@@ -342,6 +386,19 @@ export const make = Effect.gen(function* () {
         UPDATE auth_sessions
         SET revoked_at = ${revokedAt}
         WHERE session_id <> ${currentSessionId}
+          AND revoked_at IS NULL
+        RETURNING session_id AS "sessionId"
+      `,
+  });
+
+  const revokeUserSessionRows = SqlSchema.findAll({
+    Request: RevokeUserAuthSessionsInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ userId, revokedAt }) =>
+      sql`
+        UPDATE auth_sessions
+        SET revoked_at = ${revokedAt}
+        WHERE user_id = ${userId}
           AND revoked_at IS NULL
         RETURNING session_id AS "sessionId"
       `,
@@ -469,6 +526,17 @@ export const make = Effect.gen(function* () {
       Effect.map((rows) => rows.map((row) => row.sessionId)),
     );
 
+  const revokeAllForUser: AuthSessionRepository["Service"]["revokeAllForUser"] = (input) =>
+    revokeUserSessionRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.revokeAllForUser:query",
+          "AuthSessionRepository.revokeAllForUser:decodeRows",
+        ),
+      ),
+      Effect.map((rows) => rows.map((row) => row.sessionId)),
+    );
+
   const setLastConnectedAt: AuthSessionRepository["Service"]["setLastConnectedAt"] = (input) =>
     setLastConnectedAtRow(input).pipe(
       Effect.mapError(
@@ -488,6 +556,7 @@ export const make = Effect.gen(function* () {
     listActive,
     revoke,
     revokeAllExcept,
+    revokeAllForUser,
     setLastConnectedAt,
   } satisfies AuthSessionRepository["Service"];
 });
