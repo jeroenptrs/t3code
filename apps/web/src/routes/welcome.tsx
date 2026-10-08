@@ -7,13 +7,14 @@ import * as Option from "effect/Option";
 import { NoProjectsHero } from "../components/NoProjectsHero";
 import { WelcomeWizard } from "../components/onboarding/WelcomeWizard";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { requiresPairingRedirect } from "../authGate";
 
 const decodeEnvironmentId = Schema.decodeOption(EnvironmentId);
 
 export const Route = createFileRoute("/welcome")({
   beforeLoad: ({ context }) => {
     const { authGateState } = context;
-    if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
+    if (requiresPairingRedirect(authGateState)) {
       throw redirect({ to: "/pair", replace: true });
     }
   },
