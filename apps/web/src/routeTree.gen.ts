@@ -21,6 +21,7 @@ import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as ChatSettingsUsersRouteImport } from './routes/_chat.settings.users'
 import { Route as ChatSettingsStorageRouteImport } from './routes/_chat.settings.storage'
 import { Route as ChatSettingsSourceControlRouteImport } from './routes/_chat.settings.source-control'
 import { Route as ChatSettingsSnapShotRouteImport } from './routes/_chat.settings.snap-shot'
@@ -97,6 +98,11 @@ const ChatNewRoute = ChatNewRouteImport.update({
   id: '/new',
   path: '/new',
   getParentRoute: () => ChatRoute,
+} as any)
+const ChatSettingsUsersRoute = ChatSettingsUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => ChatSettingsRoute,
 } as any)
 const ChatSettingsStorageRoute = ChatSettingsStorageRouteImport.update({
   id: '/storage',
@@ -218,6 +224,7 @@ export interface FileRoutesByFullPath {
   '/settings/snap-shot': typeof ChatSettingsSnapShotRoute
   '/settings/source-control': typeof ChatSettingsSourceControlRoute
   '/settings/storage': typeof ChatSettingsStorageRoute
+  '/settings/users': typeof ChatSettingsUsersRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -248,6 +255,7 @@ export interface FileRoutesByTo {
   '/settings/snap-shot': typeof ChatSettingsSnapShotRoute
   '/settings/source-control': typeof ChatSettingsSourceControlRoute
   '/settings/storage': typeof ChatSettingsStorageRoute
+  '/settings/users': typeof ChatSettingsUsersRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -280,6 +288,7 @@ export interface FileRoutesById {
   '/_chat/settings/snap-shot': typeof ChatSettingsSnapShotRoute
   '/_chat/settings/source-control': typeof ChatSettingsSourceControlRoute
   '/_chat/settings/storage': typeof ChatSettingsStorageRoute
+  '/_chat/settings/users': typeof ChatSettingsUsersRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -312,6 +321,7 @@ export interface FileRouteTypes {
     | '/settings/snap-shot'
     | '/settings/source-control'
     | '/settings/storage'
+    | '/settings/users'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -342,6 +352,7 @@ export interface FileRouteTypes {
     | '/settings/snap-shot'
     | '/settings/source-control'
     | '/settings/storage'
+    | '/settings/users'
   id:
     | '__root__'
     | '/_chat'
@@ -373,6 +384,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/snap-shot'
     | '/_chat/settings/source-control'
     | '/_chat/settings/storage'
+    | '/_chat/settings/users'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -470,6 +482,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/new'
       preLoaderRoute: typeof ChatNewRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/_chat/settings/users': {
+      id: '/_chat/settings/users'
+      path: '/users'
+      fullPath: '/settings/users'
+      preLoaderRoute: typeof ChatSettingsUsersRouteImport
+      parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/storage': {
       id: '/_chat/settings/storage'
@@ -609,6 +628,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsSnapShotRoute: typeof ChatSettingsSnapShotRoute
   ChatSettingsSourceControlRoute: typeof ChatSettingsSourceControlRoute
   ChatSettingsStorageRoute: typeof ChatSettingsStorageRoute
+  ChatSettingsUsersRoute: typeof ChatSettingsUsersRoute
 }
 
 const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
@@ -627,6 +647,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsSnapShotRoute: ChatSettingsSnapShotRoute,
   ChatSettingsSourceControlRoute: ChatSettingsSourceControlRoute,
   ChatSettingsStorageRoute: ChatSettingsStorageRoute,
+  ChatSettingsUsersRoute: ChatSettingsUsersRoute,
 }
 
 const ChatSettingsRouteWithChildren = ChatSettingsRoute._addFileChildren(
