@@ -29,6 +29,7 @@ import {
   type AuthAccessStreamEvent,
   AuthOrchestrationOperateScope,
   type AuthEnvironmentScope,
+  type AuthUserId,
   type ScheduledTaskListResult,
   AuthSessionId,
   ClientConnectionMethod,
@@ -748,6 +749,19 @@ export function visibleScheduledTasks(
   return scopes.includes(AuthOrchestrationOperateScope)
     ? result
     : { tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task) };
+}
+
+/**
+ * Records the session's portal user as the creator of a thread it creates.
+ * The server owns this audit field, so a value the client sent is replaced.
+ */
+export function withSessionThreadCreator(
+  command: OrchestrationV2Command,
+  userId: AuthUserId | null,
+): OrchestrationV2Command {
+  if (command.type !== "thread.create") return command;
+  const { createdByUserId: _clientValue, ...rest } = command;
+  return userId === null ? rest : { ...rest, createdByUserId: userId };
 }
 
 function hasCompatibleOrchestrationProtocol(url: URL): boolean {
@@ -1745,6 +1759,7 @@ export const layerWsRpc = (
                   },
                   createdBy: "user",
                   creationSource: "web",
+                  createdByUserId: currentSession.userId ?? null,
                 }),
               ),
             );
@@ -2095,11 +2110,14 @@ export const layerWsRpc = (
                   (command.type === "prepared-run.retry"
                     ? threadLaunch.retryPreparation(command)
                     : ThreadMessageIntake.dispatchCommand(
+                        withSessionThreadCreator(
                         ThreadManagementService.withCreationProvenance(command, {
                           createdBy: "user",
                           creationSource:
                             "creationSource" in command ? command.creationSource : "web",
                         }),
+                          currentSession.userId ?? null,
+                        ),
                       )
                   ).pipe(Effect.provide(intakeContext)),
                 )
@@ -2286,6 +2304,7 @@ export const layerWsRpc = (
                         }),
                     createdBy: "user",
                     creationSource: input.creationSource ?? "web",
+                    createdByUserId: currentSession.userId ?? null,
                   }).pipe(Effect.provide(intakeContext)),
                 )
                 .pipe(
