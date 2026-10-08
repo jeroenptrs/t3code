@@ -9,6 +9,7 @@ import {
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
 } from "@t3tools/shared/threadPullRequests";
+import { describeThreadCreator } from "@t3tools/client-runtime/portal-user";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   CommonActions,
@@ -106,6 +107,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
   const currentStatusSummary = statusSummary(gitStatus.data);
   const currentWorktreePath = selectedThreadWorktreePath;
+  const creatorLabel = describeThreadCreator(selectedThread?.source.createdByUser);
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
   const isRepo = gitStatus.data?.isRepo ?? true;
@@ -401,6 +403,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       ) : null}
 
       {currentWorktreePath ? <MetaCard label="Worktree" value={currentWorktreePath} /> : null}
+      {creatorLabel !== null ? (
+        <Text className="px-1 text-xs text-foreground-muted">{creatorLabel}</Text>
+      ) : null}
     </ScrollView>
   );
 
