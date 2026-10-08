@@ -1,15 +1,21 @@
 export {
   peekPairingTokenFromUrl,
+  portalGateStateFromSession,
   PrimaryEnvironmentPairingCredentialRejectedError,
   PrimaryEnvironmentRequestError,
+  resetServerAuthGate,
   resolveInitialServerAuthGateState,
+  signOutPrimarySession,
   stripPairingTokenFromUrl,
   submitServerAuthCredential,
   takePairingTokenFromUrl,
+  type ServerAuthGateState,
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
   __resetServerAuthBootstrapForTests,
 } from "./auth";
+
+export { refreshPrimarySessionState, usePrimarySessionState } from "./sessionState";
 
 export {
   DesktopEnvironmentBootstrapIncompleteError,
