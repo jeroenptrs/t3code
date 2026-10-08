@@ -1,4 +1,9 @@
-import type { AuthClientMetadata, AuthClientSession, AuthPairingLink } from "@t3tools/contracts";
+import type {
+  AuthClientMetadata,
+  AuthClientSession,
+  AuthPairingLink,
+  AuthUser,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import type { IssuedBearerSession, IssuedPairingLink } from "./auth/EnvironmentAuth.ts";
@@ -185,6 +190,68 @@ export function formatSessionList(
             session.lastConnectedAt ? toIsoString(session.lastConnectedAt) : "never"
           }`,
           `  expires: ${toIsoString(session.expiresAt)}`,
+        ].join(newline),
+      )
+      .join(`${newline}${newline}`) + newline
+  );
+}
+
+function toUserJson(user: AuthUser) {
+  return {
+    userId: user.userId,
+    tenantId: user.identity.tenantId,
+    objectId: user.identity.objectId,
+    status: user.status,
+    role: user.role,
+    email: user.email,
+    displayName: user.displayName,
+    createdAt: toIsoString(user.createdAt),
+    lastSignInAt: user.lastSignInAt ? toIsoString(user.lastSignInAt) : null,
+  };
+}
+
+export function formatProvisionedAdministrator(
+  user: AuthUser,
+  options?: {
+    readonly json?: boolean;
+  },
+): string {
+  if (options?.json) {
+    return `${JSON.stringify(toUserJson(user), null, 2)}${newline}`;
+  }
+  return (
+    [
+      `User ${user.userId} is an active administrator.`,
+      `Tenant: ${user.identity.tenantId}`,
+      `Object: ${user.identity.objectId}`,
+      ...(user.lastSignInAt === null ? ["They have not signed in yet."] : []),
+    ].join(newline) + newline
+  );
+}
+
+export function formatUserList(
+  users: ReadonlyArray<AuthUser>,
+  options?: {
+    readonly json?: boolean;
+  },
+): string {
+  if (options?.json) {
+    return `${JSON.stringify(users.map(toUserJson), null, 2)}${newline}`;
+  }
+
+  if (users.length === 0) {
+    return `No portal users.${newline}`;
+  }
+
+  return (
+    users
+      .map((user) =>
+        [
+          `${user.userId} ${user.status}${user.role ? ` ${user.role}` : ""}`,
+          `  name: ${user.displayName ?? "unknown"}${user.email ? ` <${user.email}>` : ""}`,
+          `  tenant: ${user.identity.tenantId}`,
+          `  object: ${user.identity.objectId}`,
+          `  last sign-in: ${user.lastSignInAt ? toIsoString(user.lastSignInAt) : "never"}`,
         ].join(newline),
       )
       .join(`${newline}${newline}`) + newline
