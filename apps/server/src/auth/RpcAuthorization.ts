@@ -149,7 +149,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsCreateNew]: AuthOrchestrationOperateScope,
   [WS_METHODS.shellOpenInEditor]: AuthOrchestrationOperateScope,
-  [WS_METHODS.filesystemBrowse]: AuthFilesystemReadScope,
+  // Browsing walks host folders to pick a new project, which only operating sessions can add.
+  [WS_METHODS.filesystemBrowse]: AuthOrchestrationOperateScope,
   [WS_METHODS.agentSessionsScan]: AuthOrchestrationReadScope,
   [WS_METHODS.agentSessionsImport]: AuthOrchestrationOperateScope,
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,

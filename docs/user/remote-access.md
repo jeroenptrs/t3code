@@ -237,7 +237,10 @@ threads on an environment through its MCP server. See
 ## Manage or revoke access
 
 On the host, **Settings → Connections** lets authorized administrators create
-pairing links and revoke client sessions. Revoking an unused link prevents new
+pairing links and revoke client sessions. On a server where people sign in with
+Microsoft Entra ID, browsers sign in instead of pairing, and pairing links are
+issued from the host rather than in Settings; see
+[Deploying the Slack conversation portal](./slack-conversation-portal-deployment.md). Revoking an unused link prevents new
 pairings; revoke a device's session to remove its existing access. Command-line
 management is available through `t3 auth --help`.
 
