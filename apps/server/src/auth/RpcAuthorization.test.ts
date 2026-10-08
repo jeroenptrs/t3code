@@ -50,6 +50,12 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("requires operate access to browse host folders for a new project", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.filesystemBrowse)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("separates passive terminal observation from operations that can change a shell", () => {
     for (const method of [WS_METHODS.terminalObserve, WS_METHODS.subscribeTerminalMetadata]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);
