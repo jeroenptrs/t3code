@@ -1116,6 +1116,8 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
 });
 
 type AuthorizedClientsHeaderActionProps = {
+  /** False with Entra sign-in on: only the host CLI issues pairing credentials there. */
+  canCreatePairingLinks: boolean;
   onPairingLinkCreated: (result: AuthPairingCredentialResult) => void;
   clientSessions: ReadonlyArray<ServerClientSessionRecord> | null;
   isRevokingOtherClients: boolean;
@@ -1124,6 +1126,7 @@ type AuthorizedClientsHeaderActionProps = {
 };
 
 const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderAction({
+  canCreatePairingLinks,
   onPairingLinkCreated,
   clientSessions,
   isRevokingOtherClients,
@@ -1199,14 +1202,16 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
           }
         }}
       >
-        <DialogTrigger
-          render={
-            <Button size="xs" variant="default">
-              <PlusIcon className="size-3" />
-              Create link
-            </Button>
-          }
-        />
+        {canCreatePairingLinks ? (
+          <DialogTrigger
+            render={
+              <Button size="xs" variant="default">
+                <PlusIcon className="size-3" />
+                Create link
+              </Button>
+            }
+          />
+        ) : null}
         <DialogPopup className="max-w-md">
           <DialogHeader>
             <DialogTitle>Create pairing link</DialogTitle>
@@ -3787,6 +3792,7 @@ export function ConnectionsSettings() {
               control={
                 canWriteAccess ? (
                   <AuthorizedClientsHeaderAction
+                    canCreatePairingLinks={primarySessionState.data?.auth.entraSignIn !== true}
                     delegatableScopes={currentSessionScopes ?? []}
                     onPairingLinkCreated={handlePairingLinkCreated}
                     clientSessions={
