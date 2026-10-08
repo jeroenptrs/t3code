@@ -2,6 +2,7 @@ import {
   AuthAdministrativeScopes,
   AuthSessionId,
   AuthStandardClientScopes,
+  EntraGuid,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -11,12 +12,16 @@ import * as References from "effect/References";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as UserRegistry from "../auth/UserRegistry.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 
 import {
   formatIssuedPairingCredential,
   formatIssuedSession,
   formatPairingCredentialList,
+  formatProvisionedAdministrator,
   formatSessionList,
+  formatUserList,
 } from "../cliAuthFormat.ts";
 import * as ServerConfig from "../config.ts";
 import { authScopesFlag } from "./authScopes.ts";
@@ -44,6 +49,36 @@ const runWithEnvironmentAuth = <A, E>(
     }).pipe(
       Effect.provide(
         Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
+          Layer.provide(ServerConfig.layer(config)),
+          Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
+        ),
+      ),
+    );
+  });
+
+// Opens the local state directly, like the other auth commands, so it works
+// whether or not a server is running against the same state directory.
+const runWithUserRegistry = <A, E>(
+  flags: CliAuthLocationFlags,
+  run: (
+    userRegistry: UserRegistry.UserRegistry["Service"],
+    config: ServerConfig.ServerConfig["Service"],
+  ) => Effect.Effect<A, E>,
+  options?: {
+    readonly quietLogs?: boolean;
+  },
+) =>
+  Effect.gen(function* () {
+    const logLevel = yield* GlobalFlag.LogLevel;
+    const config = yield* resolveCliAuthConfig(flags, logLevel);
+    const minimumLogLevel = options?.quietLogs ? "Error" : config.logLevel;
+    return yield* Effect.gen(function* () {
+      const userRegistry = yield* UserRegistry.UserRegistry;
+      return yield* run(userRegistry, config);
+    }).pipe(
+      Effect.provide(
+        UserRegistry.layer.pipe(
+          Layer.provide(SqlitePersistence.layerConfig),
           Layer.provide(ServerConfig.layer(config)),
           Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
         ),
@@ -243,7 +278,71 @@ const sessionCommand = Command.make("session").pipe(
   Command.withSubcommands([sessionIssueCommand, sessionListCommand, sessionRevokeCommand]),
 );
 
+const userProvisionAdminCommand = Command.make("provision-admin", {
+  ...authLocationFlags,
+  tenantId: Flag.String("tenant-id").pipe(
+    Flag.withSchema(EntraGuid),
+    Flag.withDescription("Entra tenant ID (GUID) of the user."),
+  ),
+  objectId: Flag.String("object-id").pipe(
+    Flag.withSchema(EntraGuid),
+    Flag.withDescription("Entra object ID (GUID) of the user."),
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "Make an Entra user an active administrator. Works before their first sign-in, and re-enables or promotes an existing user.",
+  ),
+  Command.withHandler((flags) =>
+    runWithUserRegistry(
+      flags,
+      (userRegistry, config) =>
+        Effect.gen(function* () {
+          // Sign-in only admits the configured tenant, so this user could never sign in.
+          if (config.entraSignIn !== undefined && config.entraSignIn.tenantId !== flags.tenantId) {
+            yield* Console.error(
+              `Warning: tenant ${flags.tenantId} is not the configured Entra tenant (${config.entraSignIn.tenantId}). This user cannot sign in until the tenant matches.`,
+            );
+          }
+          const user = yield* userRegistry.provisionAdministratorFromHost({
+            tenantId: flags.tenantId,
+            objectId: flags.objectId,
+          });
+          yield* Console.log(formatProvisionedAdministrator(user, { json: flags.json }));
+        }),
+      {
+        quietLogs: flags.json,
+      },
+    ),
+  ),
+);
+
+const userListCommand = Command.make("list", {
+  ...authLocationFlags,
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription("List portal users with their status and role."),
+  Command.withHandler((flags) =>
+    runWithUserRegistry(
+      flags,
+      (userRegistry) =>
+        Effect.gen(function* () {
+          const users = yield* userRegistry.list();
+          yield* Console.log(formatUserList(users, { json: flags.json }));
+        }),
+      {
+        quietLogs: flags.json,
+      },
+    ),
+  ),
+);
+
+const userCommand = Command.make("user").pipe(
+  Command.withDescription("Manage portal users who sign in with Entra ID."),
+  Command.withSubcommands([userProvisionAdminCommand, userListCommand]),
+);
+
 export const authCommand = Command.make("auth").pipe(
   Command.withDescription("Manage the local auth control plane for headless deployments."),
-  Command.withSubcommands([pairingCommand, sessionCommand]),
+  Command.withSubcommands([pairingCommand, sessionCommand, userCommand]),
 );
