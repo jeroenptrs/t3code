@@ -29,6 +29,7 @@ import {
   ShieldCheckIcon,
   SmartphoneIcon,
   WrenchIcon,
+  UsersRoundIcon,
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -56,6 +57,7 @@ import {
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
+import { useCanReadPortalUsers } from "./useCanReadPortalUsers";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -103,6 +105,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/maintenance": WrenchIcon,
   "/settings/labs": FlaskConicalIcon,
   "/settings/about": InfoIcon,
+  "/settings/users": UsersRoundIcon,
   "/settings/archived": ArchiveIcon,
 };
 
@@ -128,6 +131,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
+  const canReadUsers = useCanReadPortalUsers();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   // Below md the nav is an icon rail; searching expands it over the page.
@@ -378,7 +382,9 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       </h3>
                     ) : null}
                     <SidebarMenu>
-                      {group.paths.map((to) => {
+                      {group.paths
+                        .filter((to) => to !== "/settings/users" || canReadUsers)
+                        .map((to) => {
                         const Icon = SETTINGS_SECTION_ICONS[to];
                         const isActive = activePath === to || activePath.startsWith(`${to}/`);
                         return (

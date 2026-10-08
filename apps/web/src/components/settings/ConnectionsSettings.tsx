@@ -1163,6 +1163,7 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
               control={
                 canWriteAccess ? (
                   <AuthorizedClientsHeaderAction
+                    canCreatePairingLinks={primarySessionState.data?.auth.entraSignIn !== true}
                     delegatableScopes={currentSessionScopes ?? []}
                     onPairingLinkCreated={handlePairingLinkCreated}
                     clientSessions={

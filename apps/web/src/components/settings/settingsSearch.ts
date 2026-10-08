@@ -36,6 +36,7 @@ export type SettingsPath =
   | "/settings/maintenance"
   | "/settings/labs"
   | "/settings/about"
+  | "/settings/users"
   | "/settings/archived";
 
 export type SettingsSearchScope =
@@ -102,6 +103,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/maintenance": "Maintenance",
   "/settings/labs": "Labs",
   "/settings/about": "About",
+  "/settings/users": "Users",
   "/settings/archived": "Archive",
 };
 
@@ -135,7 +137,10 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: "Code",
     paths: ["/settings/projects", "/settings/source-control", "/settings/worktrees"],
   },
-  { heading: "Connections", paths: ["/settings/connections", "/settings/access"] },
+  {
+    heading: "Connections",
+    paths: ["/settings/connections", "/settings/access", "/settings/users"],
+  },
   {
     heading: null,
     paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
@@ -1129,6 +1134,8 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/worktrees": "project-defaults",
   "/settings/connections": "connections",
   "/settings/access": "connections",
+  // Portal users live on the primary environment; there is no scope to pick.
+  "/settings/users": null,
   "/settings/scheduled-tasks": null,
   "/settings/maintenance": null,
   "/settings/labs": null,
