@@ -89,6 +89,8 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           ...input.sourceProjection.thread,
           createdBy: input.createdBy,
           creationSource: input.creationSource,
+          // A fork is a new thread; whoever started the source did not start it.
+          createdByUserId: undefined,
           id: input.targetThreadId,
           title: input.title ?? `${input.sourceProjection.thread.title} fork`,
           activeProviderThreadId: null,
