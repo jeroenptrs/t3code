@@ -113,6 +113,13 @@ import {
   OrchestrationGetTurnDiffError,
 } from "./checkpointDiff.ts";
 import {
+  DiffWalkthroughError,
+  DiffWalkthroughGetInput,
+  DiffWalkthroughGetResult,
+  DiffWalkthroughPutInput,
+  DiffWalkthroughPutResult,
+} from "./diffWalkthrough.ts";
+import {
   WorktreeSetupCancelInput,
   WorktreeSetupCancelResult,
   WorktreeSetupStreamEvent,
@@ -563,6 +570,9 @@ export const WS_METHODS = {
   pullRequestsRequestReviewers: "pullRequests.requestReviewers",
   pullRequestsLabelCandidates: "pullRequests.labelCandidates",
   pullRequestsSetLabels: "pullRequests.setLabels",
+
+  diffWalkthroughSubscribe: "diffWalkthrough.subscribe",
+  diffWalkthroughPut: "diffWalkthrough.put",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1164,6 +1174,20 @@ const WsPullRequestsSetLabelsRpc = Rpc.make(WS_METHODS.pullRequestsSetLabels, {
   payload: PullRequestLabelChangeInput,
   success: Schema.Void,
   error: PullRequestRpcError,
+});
+
+/** Streams the stored walkthrough for a target, then every replacement an agent writes. */
+const WsDiffWalkthroughSubscribeRpc = Rpc.make(WS_METHODS.diffWalkthroughSubscribe, {
+  payload: DiffWalkthroughGetInput,
+  success: DiffWalkthroughGetResult,
+  error: Schema.Union([DiffWalkthroughError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsDiffWalkthroughPutRpc = Rpc.make(WS_METHODS.diffWalkthroughPut, {
+  payload: DiffWalkthroughPutInput,
+  success: DiffWalkthroughPutResult,
+  error: Schema.Union([DiffWalkthroughError, EnvironmentAuthorizationError]),
 });
 
 const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLookupRepository, {
@@ -2016,6 +2040,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsRequestReviewersRpc,
   WsPullRequestsLabelCandidatesRpc,
   WsPullRequestsSetLabelsRpc,
+  WsDiffWalkthroughSubscribeRpc,
+  WsDiffWalkthroughPutRpc,
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
