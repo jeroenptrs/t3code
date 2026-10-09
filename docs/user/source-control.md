@@ -54,6 +54,15 @@ Turn on **Settings → Source control & issues → Review guides** to add a **Gu
 - On web, select lines in any stop to add review comments or ask an agent about that stop.
 - Agents can also generate guides for multiple PRs when asked. Choose **Rewrite guide** from the PR's **⋯** menu after new pushes.
 
+### Walkthroughs
+
+A walkthrough is an agent's guide to a diff: changed files grouped by purpose in a suggested reading order, with a one-line summary on each change worth reading. It opens in a rail beside the diff, next to the file tree; pick an entry to jump to that change.
+
+- **Get one**: Choose **Generate walkthrough** from the PR's menu or the empty rail in the **Code** tab. Like **Explain this PR**, this puts a request in a thread's composer for you to read and send. Any agent can also write one with the `write_diff_walkthrough` tool.
+- **Out of date**: A walkthrough describes the commit it was written for. After a push it shows as out of date until you choose **Regenerate**. Files the agent did not group appear under **Other**.
+- **Thread diffs**: In a thread's **Diff** panel, walkthroughs cover one turn's changes. Uncommitted changes and branch diffs keep changing, so they don't get one.
+- Web and desktop only.
+
 ### Pull request sharing across environments
 
 Disabled by default. In **Settings → Environments → Pull request sharing** (**Pull request routing** on mobile), opt in trusted environments to **Read PRs** or **Read and act** so review reads/actions can route through another connected environment signed into the same account on the same host (credentials never leave their machines). Enable on both source and target environments; only grant **Read and act** to environments you control.
