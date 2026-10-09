@@ -132,7 +132,7 @@ export const resolveProjectId = (context: Caller, projectId: ProjectId | undefin
           }),
         );
 
-const resolveThreadId = (context: Caller, threadId: ThreadId | undefined) =>
+export const resolveThreadId = (context: Caller, threadId: ThreadId | undefined) =>
   threadId !== undefined
     ? Effect.succeed(threadId)
     : context.caller !== undefined
