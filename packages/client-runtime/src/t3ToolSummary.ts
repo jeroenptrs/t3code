@@ -425,6 +425,12 @@ export function summarizeT3ToolCalls(
     case "read-pr-guide":
       label = phrase("Read", "read", quantity(selected.length, "review guide"));
       break;
+    case "diff-walkthrough-write":
+      label = phrase("Wrote", "write", quantity(selected.length, "diff walkthrough"));
+      break;
+    case "thread-diff-read":
+      label = phrase("Read", "read", quantity(selected.length, "thread diff"));
+      break;
     case "browser":
       label = phrase("Used", "use", `browser ${times}`);
       break;
