@@ -664,6 +664,40 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "diff-walkthrough-write": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Wrote {count} diff walkthrough} other {Wrote {count} diff walkthroughs}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to write {count} diff walkthrough} other {Tried to write {count} diff walkthroughs}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "thread-diff-read": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Read {count} thread diff} other {Read {count} thread diffs}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to read {count} thread diff} other {Tried to read {count} thread diffs}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "list-issues": {
       const count = selected.length;
       label = done
