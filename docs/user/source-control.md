@@ -176,6 +176,26 @@ server, but the host's own site will not show them, and the count reads **viewed
 The **Code** tab is a web and desktop surface. The mobile app reports a pull request's status but
 does not show its diff, so marks are made and read on web and desktop.
 
+### Walkthroughs
+
+A walkthrough is an agent's guide to a diff. It groups the changed files by purpose in a
+suggested reading order and adds a one-line summary to each change worth reading, with a longer
+explanation where one helps. It opens in a rail beside the diff, next to the file tree. Pick an
+entry to jump to that change.
+
+To get one, choose **Generate walkthrough** from the pull request's menu, or from the empty
+walkthrough rail in the **Code** tab. Like **Explain this PR**, this puts a request in a thread's
+composer for you to read and send. Any agent can also write one with the `write_diff_walkthrough`
+tool.
+
+A walkthrough describes the commit it was written for. After a new push, it shows as out of date
+until you choose **Regenerate**. Files the agent did not group appear under **Other**.
+
+In a thread's **Diff** panel, walkthroughs cover one turn's changes. Pick a turn, open the
+walkthrough rail, and choose **Generate walkthrough** to put the request in that thread's composer.
+Uncommitted changes and branch diffs keep changing, so they don't get one. Walkthroughs are
+available on web and desktop only.
+
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
