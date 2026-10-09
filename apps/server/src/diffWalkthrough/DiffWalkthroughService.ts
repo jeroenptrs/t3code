@@ -1,7 +1,8 @@
 import {
   DiffWalkthrough,
   DiffWalkthroughError,
-  type DiffWalkthroughTarget,
+  type DiffWalkthroughThreadDiffTarget,
+  type DiffWalkthroughTargetIdentity,
   type ProjectId,
   SourceControlProviderKind,
   diffWalkthroughTargetKey,
@@ -39,7 +40,7 @@ export class DiffWalkthroughService extends Context.Service<
   {
     /** The stored walkthrough for the target's key, which may predate the target's revision. */
     readonly get: (
-      target: DiffWalkthroughTarget,
+      target: DiffWalkthroughTargetIdentity,
     ) => Effect.Effect<DiffWalkthrough | null, DiffWalkthroughError>;
     /** Validates, stores, and announces a walkthrough, replacing any for the same key. */
     readonly put: (
@@ -47,7 +48,7 @@ export class DiffWalkthroughService extends Context.Service<
     ) => Effect.Effect<DiffWalkthrough, DiffWalkthroughError>;
     /** The stored walkthrough, then every replacement of it. */
     readonly subscribe: (
-      target: DiffWalkthroughTarget,
+      target: DiffWalkthroughTargetIdentity,
     ) => Stream.Stream<DiffWalkthrough | null, DiffWalkthroughError>;
   }
 >()("t3/diffWalkthrough/DiffWalkthroughService") {}
@@ -81,13 +82,13 @@ const make = Effect.gen(function* () {
    * otherwise a reference with and without the host would be two walkthroughs. A project whose
    * host cannot be told keeps the contract's project-scoped key.
    */
-  const resolveTarget = (target: DiffWalkthroughTarget) =>
+  const resolveTarget = <Target extends DiffWalkthroughTargetIdentity>(
+    target: Target,
+  ): Effect.Effect<Target> =>
     target.kind !== "pull-request" || target.host !== undefined
       ? Effect.succeed(target)
       : projectHostOf(target.projectId).pipe(
-          Effect.map((host): DiffWalkthroughTarget =>
-            host === null ? target : { ...target, host },
-          ),
+          Effect.map((host) => (host === null ? target : { ...target, host })),
         );
 
   const readByKey = (key: string) =>
@@ -98,7 +99,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const requireThread = (target: Extract<DiffWalkthroughTarget, { kind: "thread-diff" }>) =>
+  const requireThread = (target: DiffWalkthroughThreadDiffTarget) =>
     orchestrator.getThreadShell(target.threadId).pipe(
       Effect.mapError(
         (cause) => new DiffWalkthroughError({ message: "Could not read the thread.", cause }),
