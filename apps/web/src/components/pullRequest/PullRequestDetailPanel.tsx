@@ -33,6 +33,7 @@ import {
   MessageCircleQuestionIcon,
   MessageSquareIcon,
   LinkIcon,
+  MapIcon,
   MoreHorizontalIcon,
   PanelRightIcon,
   PlayIcon,
@@ -129,6 +130,7 @@ import {
   buildAddSelectionToAgentHandoff,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
+  buildGenerateWalkthroughHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   buildResolveConflictsPrompt,
@@ -1353,6 +1355,26 @@ export function PullRequestDetailPanel({
     });
   };
 
+  const generateWalkthrough = () => {
+    if (!detail) return;
+    void startAsk(
+      "walkthrough",
+      buildGenerateWalkthroughHandoff({
+        provider: detail.provider,
+        number: detail.number,
+        title: detail.title,
+        url: detail.url,
+        headBranch: detail.headBranch,
+        baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
+      }),
+    );
+  };
+  // Sending the task is a turn, so a client that cannot operate threads would only be handed a
+  // composer it cannot send from.
+  const canGenerateWalkthrough = canOperateThread;
+
   const addSelectionToAgent = (selection: PullRequestAgentSelectionInput) => {
     if (!detail) return;
     void startAsk(
@@ -2110,6 +2132,19 @@ export function PullRequestDetailPanel({
                       </span>
                     </span>
                   </MenuItem>
+                  {canGenerateWalkthrough ? (
+                    <MenuItem disabled={handoff !== null} onClick={generateWalkthrough}>
+                      <MapIcon className="mt-1 size-3.5 shrink-0 self-start" />
+                      <span className="flex min-w-0 flex-col">
+                        <span>
+                          {handoff === "walkthrough" ? "Opening..." : "Generate walkthrough"}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          Notes on each change, in the Code tab's walkthrough rail.
+                        </span>
+                      </span>
+                    </MenuItem>
+                  ) : null}
                   <MenuItem
                     disabled={handoff !== null || !canFixFindings}
                     onClick={startFixFindings}
@@ -2859,6 +2894,9 @@ export function PullRequestDetailPanel({
                     pendingFinding={handoff}
                     fixFindingLabel={handoffLabels.fixFinding}
                     {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
+                    {...(canGenerateWalkthrough && handoff === null
+                      ? { onGenerateWalkthrough: generateWalkthrough }
+                      : {})}
                     onRefresh={refreshDetail}
                     refreshToken={codeRefreshToken}
                   />
