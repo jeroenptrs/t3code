@@ -1,9 +1,9 @@
-import type { CodeViewScrollTarget } from "@pierre/diffs";
+import type { CodeViewScrollTarget, SelectedLineRange } from "@pierre/diffs";
 import { useState } from "react";
 
 interface FileRevealHandle {
   getInstance(): object | undefined;
-  getItem(id: string): object | undefined;
+  getItem(id: string): unknown;
   scrollTo(target: CodeViewScrollTarget): void;
 }
 
@@ -15,11 +15,14 @@ interface FileRevealHandle {
  */
 export function createCodeViewFileReveal() {
   let viewer: FileRevealHandle | null = null;
-  let pending: string | null = null;
+  let pending: { fileKey: string; range: SelectedLineRange | undefined } | null = null;
   const flush = () => {
     if (pending === null || viewer === null) return;
-    if (!viewer.getInstance() || viewer.getItem(pending) === undefined) return;
-    viewer.scrollTo({ type: "item", id: pending, align: "start" });
+    if (!viewer.getInstance() || viewer.getItem(pending.fileKey) === undefined) return;
+    viewer.scrollTo({ type: "item", id: pending.fileKey, align: "start" });
+    if (pending.range !== undefined) {
+      viewer.scrollTo({ type: "range", id: pending.fileKey, range: pending.range, align: "center" });
+    }
     pending = null;
   };
   return {
@@ -28,8 +31,8 @@ export function createCodeViewFileReveal() {
       viewer = next;
       flush();
     },
-    request(fileKey: string) {
-      pending = fileKey;
+    request(fileKey: string, range?: SelectedLineRange) {
+      pending = { fileKey, range };
       flush();
     },
     flush,
