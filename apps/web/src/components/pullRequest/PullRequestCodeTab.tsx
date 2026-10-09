@@ -261,6 +261,7 @@ function PullRequestCodeTab({
   fixFindingLabel = "Fix in a thread",
   onFixFinding,
   onAddToAgentSelection,
+  onGenerateWalkthrough,
   onRefresh,
   refreshToken = 0,
   backgroundRefreshToken = 0,
@@ -276,6 +277,8 @@ function PullRequestCodeTab({
   fixFindingLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
   onAddToAgentSelection?: (input: PullRequestAgentSelectionInput) => void;
+  /** Hands the walkthrough request to an agent. Absent where this client cannot start one. */
+  onGenerateWalkthrough?: () => void;
   onRefresh: () => void;
   refreshToken?: number;
   backgroundRefreshToken?: number;
@@ -1614,6 +1617,7 @@ function PullRequestCodeTab({
                 cwd={detail.workspaceRoot}
                 environmentId={environmentId}
                 footer={loadMoreFilesFooter}
+                onGenerate={onGenerateWalkthrough}
               />
             ) : (
               <div className="flex flex-1 flex-col items-start gap-2 p-3 text-xs text-muted-foreground">
