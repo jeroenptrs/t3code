@@ -1,19 +1,26 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
-import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
+import type { FileDiffContentsLoader, FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
 import { useParams } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import type { ScopedThreadRef, RunId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type DiffWalkthroughNote,
+  type DiffWalkthroughTargetIdentity,
+  type RunId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,
   ChevronDownIcon,
   Columns2Icon,
   FolderTreeIcon,
+  MapIcon,
   PilcrowIcon,
   Rows3Icon,
   TextWrapIcon,
@@ -26,7 +33,7 @@ import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { useFileContextMenuHandler } from "../fileContextMenu";
-import { type DraftId } from "../composerDraftStore";
+import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { openDiffFilePrimaryAction } from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
@@ -55,7 +62,11 @@ import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./Dif
 import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
 import { DiffFileTree } from "./diffs/DiffFileTree";
+import { DiffWalkthroughRail } from "./diffs/DiffWalkthroughRail";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
+import { diffWalkthroughNotesByPath } from "./diffs/diffWalkthroughRail.logic";
+import { buildThreadDiffWalkthroughPrompt } from "./diffs/threadDiffWalkthrough.logic";
+import { useDiffWalkthroughActiveEntry } from "./diffs/useDiffWalkthroughActiveEntry";
 import { Button } from "./ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
@@ -79,8 +90,11 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "./ui/menu";
+import { toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { diffWalkthroughAtom } from "../state/diffWalkthrough";
 import { useEnvironmentQuery } from "../state/query";
+import { useEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
@@ -95,6 +109,7 @@ import { DiffFileStatus } from "./diffs/DiffFileStatus";
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
 const DIFF_FILE_TREE_STORAGE_KEY = "t3code.diffFileTreeOpen";
+const DIFF_WALKTHROUGH_STORAGE_KEY = "t3code.diffWalkthroughOpen";
 const fileEntryCache = new WeakMap<
   FileDiffMetadata,
   { fileDiff: FileDiffMetadata; fileKey: string; fileVersion: number }
@@ -204,11 +219,26 @@ export default function DiffPanel({
   const updateClientSettings = useUpdateClientSettings();
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
-  const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
+  const [storedFileTreeOpen, setFileTreeOpen] = useLocalStorage(
     DIFF_FILE_TREE_STORAGE_KEY,
     false,
     Schema.Boolean,
   );
+  const [walkthroughOpen, setWalkthroughOpen] = useLocalStorage(
+    DIFF_WALKTHROUGH_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
+  // The file tree and the walkthrough share the one aside; opening either closes the other.
+  const fileTreeOpen = storedFileTreeOpen && !walkthroughOpen;
+  const changeFileTreeOpen = (open: boolean) => {
+    setFileTreeOpen(open);
+    if (open) setWalkthroughOpen(false);
+  };
+  const changeWalkthroughOpen = (open: boolean) => {
+    setWalkthroughOpen(open);
+    if (open) setFileTreeOpen(false);
+  };
   const [baseRefQuery, setBaseRefQuery] = useState("");
   const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
     scopeKey: null,
@@ -587,7 +617,7 @@ export default function DiffPanel({
     codeViewFiles.map((file) => file.fileKey),
   );
   const revealDiffFile = useCallback(
-    (filePath: string) => {
+    (filePath: string, range?: SelectedLineRange) => {
       const index = renderableFileEntries.findIndex(
         (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
       );
@@ -603,7 +633,7 @@ export default function DiffPanel({
       if (lazySource && index >= settledFileCount) {
         requestFile(index);
       }
-      requestTreeReveal(file.fileKey);
+      requestTreeReveal(file.fileKey, range);
     },
     [
       renderableFileEntries,
@@ -687,6 +717,90 @@ export default function DiffPanel({
       return { scopeKey: collapseScopeKey, fileKeys: next };
     });
   }, []);
+
+  // A turn's diff is a checkpoint pair, so a walkthrough of it never goes stale. The git scopes
+  // move with the working tree and have no revision to pin one to.
+  const walkthroughTarget = useMemo<DiffWalkthroughTargetIdentity | null>(
+    () =>
+      activeThreadId !== null && selectedCheckpointRange !== null
+        ? { kind: "thread-diff", threadId: activeThreadId, ...selectedCheckpointRange }
+        : null,
+    [activeThreadId, selectedCheckpointRange],
+  );
+  const walkthroughEnvironmentId = activeThread?.environmentId ?? null;
+  // Followed only while the rail is open: a walkthrough can run to thousands of notes.
+  const walkthroughAtom = useMemo(
+    () =>
+      walkthroughOpen && walkthroughTarget !== null && walkthroughEnvironmentId !== null
+        ? diffWalkthroughAtom(walkthroughEnvironmentId, walkthroughTarget)
+        : null,
+    [walkthroughEnvironmentId, walkthroughOpen, walkthroughTarget],
+  );
+  const walkthroughQuery = useEnvironmentQuery(walkthroughAtom);
+  const walkthrough = walkthroughQuery.data?.walkthrough ?? null;
+  const walkthroughNotesByPath = useMemo(
+    () =>
+      walkthroughAtom !== null && walkthrough !== null
+        ? diffWalkthroughNotesByPath(walkthrough)
+        : null,
+    [walkthrough, walkthroughAtom],
+  );
+  const walkthroughFiles = useMemo(
+    () =>
+      renderableFileEntries.map(({ fileDiff, fileKey }) => ({
+        id: fileKey,
+        path: resolveFileDiffPath(fileDiff),
+      })),
+    [renderableFileEntries],
+  );
+  const walkthroughPaths = useMemo(
+    () => walkthroughFiles.map((file) => file.path),
+    [walkthroughFiles],
+  );
+  const activeWalkthroughEntry = useDiffWalkthroughActiveEntry(
+    codeView,
+    walkthroughFiles,
+    walkthroughNotesByPath,
+  );
+  const revealWalkthroughNote = useCallback(
+    (note: DiffWalkthroughNote) => {
+      const file = walkthroughFiles.find((candidate) => candidate.path === note.path);
+      if (!file) return;
+      const range = {
+        start: note.startLine,
+        end: note.endLine,
+        side: note.side,
+        endSide: note.side,
+      };
+      revealDiffFile(note.path, range);
+      if (codeView?.getInstance()) codeView.setSelectedLines({ id: file.id, range });
+    },
+    [codeView, revealDiffFile, walkthroughFiles],
+  );
+  // Sending the task is a turn, so a client that cannot operate threads would only be handed a
+  // composer it cannot send from.
+  const canGenerateWalkthrough = useEnvironmentScope(
+    walkthroughEnvironmentId,
+    AuthOrchestrationOperateScope,
+  );
+  const generateWalkthrough = useCallback(() => {
+    if (selectedCheckpointRange === null) return;
+    const task = buildThreadDiffWalkthroughPrompt(selectedCheckpointRange);
+    const store = useComposerDraftStore.getState();
+    const prompt = store.getComposerDraft(composerDraftTarget)?.prompt ?? "";
+    // A second press leaves the task that is already there rather than stacking another copy.
+    if (!prompt.includes(task)) {
+      store.setPrompt(
+        composerDraftTarget,
+        prompt.trim().length === 0 ? task : `${prompt.trimEnd()}\n\n${task}`,
+      );
+    }
+    toastManager.add({
+      type: "success",
+      title: "Added to the composer",
+      description: "The walkthrough task is in the composer — read it over, then send.",
+    });
+  }, [composerDraftTarget, selectedCheckpointRange]);
 
   const toggleDiffFileCollapse = useCallback(() => {
     setCodeViewRevision((current) => current + 1);
@@ -1025,7 +1139,7 @@ export default function DiffPanel({
                   variant="ghost"
                   size="sm"
                   pressed={fileTreeOpen}
-                  onPressedChange={(pressed) => setFileTreeOpen(Boolean(pressed))}
+                  onPressedChange={(pressed) => changeFileTreeOpen(Boolean(pressed))}
                 />
               }
             >
@@ -1033,6 +1147,26 @@ export default function DiffPanel({
             </TooltipTrigger>
             <TooltipPopup side="top">
               {fileTreeOpen ? "Hide file tree" : "Show file tree"}
+            </TooltipPopup>
+          </Tooltip>
+        )}
+        {diffFileKeys.length > 0 && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label={walkthroughOpen ? "Hide walkthrough" : "Show walkthrough"}
+                  variant="ghost"
+                  size="sm"
+                  pressed={walkthroughOpen}
+                  onPressedChange={(pressed) => changeWalkthroughOpen(Boolean(pressed))}
+                />
+              }
+            >
+              <MapIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {walkthroughOpen ? "Hide walkthrough" : "Show walkthrough"}
             </TooltipPopup>
           </Tooltip>
         )}
@@ -1215,7 +1349,42 @@ export default function DiffPanel({
                     }}
                   />
                 </div>
-                {fileTreeOpen ? (
+                {walkthroughOpen ? (
+                  <aside className="flex w-[min(20rem,40%)] min-w-48 shrink-0 border-l border-border/60">
+                    {walkthroughTarget !== null ? (
+                      <DiffWalkthroughRail
+                        walkthrough={walkthrough}
+                        loading={walkthroughQuery.data === null && walkthroughQuery.error === null}
+                        error={walkthroughQuery.error}
+                        changedPaths={walkthroughPaths}
+                        activeEntryKey={activeWalkthroughEntry}
+                        staleNotice={null}
+                        onRevealFile={revealDiffFile}
+                        onRevealNote={revealWalkthroughNote}
+                        onGenerate={canGenerateWalkthrough ? generateWalkthrough : undefined}
+                        cwd={activeCwd}
+                        environmentId={walkthroughEnvironmentId ?? undefined}
+                      />
+                    ) : (
+                      <div className="flex flex-1 flex-col items-start gap-2 p-3 text-xs text-muted-foreground">
+                        <p>
+                          Walkthroughs cover a single turn. Uncommitted and branch changes move with
+                          the working tree, so a walkthrough of them would soon be out of date.
+                        </p>
+                        {latestTurn ? (
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            onClick={() => selectTurn(latestTurn.runId)}
+                          >
+                            Show latest turn
+                          </Button>
+                        ) : null}
+                      </div>
+                    )}
+                  </aside>
+                ) : fileTreeOpen ? (
                   <aside className="flex w-[min(16rem,40%)] min-w-40 shrink-0 border-l border-border/60">
                     <DiffFileTree
                       ariaLabel={`${reviewSectionTitle} files`}
