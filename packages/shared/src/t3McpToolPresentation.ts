@@ -75,6 +75,8 @@ export type T3McpToolSummaryAction =
   | "link-issue"
   | "unlink-issue"
   | "list-thread-issues"
+  | "diff-walkthrough-write"
+  | "thread-diff-read"
   | "browser"
   | "device"
   | "html-preview"
@@ -163,6 +165,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   link_issue: tool(["Link", "Linking", "Linked", "an issue"], "link-issue"),
   unlink_issue: tool(["Unlink", "Unlinking", "Unlinked", "an issue"], "unlink-issue"),
   list_thread_issues: tool(["Check", "Checking", "Checked", "linked issues"], "list-thread-issues"),
+  write_diff_walkthrough: tool(
+    ["Write", "Writing", "Wrote", "a diff walkthrough"],
+    "diff-walkthrough-write",
+  ),
+  read_thread_diff: tool(["Read", "Reading", "Read", "a thread diff"], "thread-diff-read"),
   orchestrator_capabilities: tool(
     ["Get", "Getting", "Got", "orchestration capabilities"],
     "capabilities",
