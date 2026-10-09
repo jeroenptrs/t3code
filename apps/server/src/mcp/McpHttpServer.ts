@@ -79,6 +79,8 @@ import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import * as ToolSearchHandlers from "./toolkits/toolSearch/handlers.ts";
 import { ToolSearchToolkit } from "./toolkits/toolSearch/tools.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
+import * as DiffWalkthroughHandlers from "./toolkits/diffWalkthrough/handlers.ts";
+import { DiffWalkthroughToolkit } from "./toolkits/diffWalkthrough/tools.ts";
 import * as DeviceHandlers from "./toolkits/device/handlers.ts";
 import {
   DeviceScreenshotTool,
@@ -1276,6 +1278,11 @@ export const layerPullRequestsToolkit = toolkitRegistration(
   PullRequestsHandlers.layer,
 ).pipe(Layer.provide(PullRequestWatchService.layer));
 
+const layerDiffWalkthroughToolkit = toolkitRegistration(
+  DiffWalkthroughToolkit,
+  DiffWalkthroughHandlers.layer,
+);
+
 const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceStandardToolkit,
   DeviceHandlers.layerStandard,
@@ -1333,6 +1340,7 @@ export const layerTools = Layer.mergeAll(
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,
+  layerDiffWalkthroughToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
   layerMessageToolkit,
