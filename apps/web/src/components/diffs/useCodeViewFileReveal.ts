@@ -1,4 +1,4 @@
-import type { CodeViewScrollTarget } from "@pierre/diffs";
+import type { CodeViewScrollTarget, SelectedLineRange } from "@pierre/diffs";
 import { useEffect, useRef, useState } from "react";
 
 interface FileRevealHandle {
@@ -11,7 +11,11 @@ export function useCodeViewFileReveal<TScope>(
   scope: TScope,
   readyFileKeys?: ReadonlyArray<string>,
 ) {
-  const [request, setRequest] = useState<{ fileKey: string; scope: TScope } | null>(null);
+  const [request, setRequest] = useState<{
+    fileKey: string;
+    range: SelectedLineRange | undefined;
+    scope: TScope;
+  } | null>(null);
   const handledRequest = useRef<typeof request>(null);
 
   useEffect(() => {
@@ -24,8 +28,16 @@ export function useCodeViewFileReveal<TScope>(
       return;
 
     viewer.scrollTo({ type: "item", id: request.fileKey, align: "start" });
+    if (request.range !== undefined) {
+      viewer.scrollTo({
+        type: "range",
+        id: request.fileKey,
+        range: request.range,
+        align: "center",
+      });
+    }
     handledRequest.current = request;
   }, [request, scope, viewer, readyFileKeys]);
 
-  return (fileKey: string) => setRequest({ fileKey, scope });
+  return (fileKey: string, range?: SelectedLineRange) => setRequest({ fileKey, range, scope });
 }
