@@ -61,6 +61,8 @@ export type T3McpToolSummaryAction =
   | "unwatch-pr"
   | "write-pr-guides"
   | "read-pr-guide"
+  | "diff-walkthrough-write"
+  | "thread-diff-read"
   | "browser"
   | "device"
   | "html-preview"
@@ -121,6 +123,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "read-pr-guide",
     "pull-request",
   ),
+  write_diff_walkthrough: tool(
+    ["Write", "Writing", "Wrote", "a diff walkthrough"],
+    "diff-walkthrough-write",
+  ),
+  read_thread_diff: tool(["Read", "Reading", "Read", "a thread diff"], "thread-diff-read"),
   orchestrator_capabilities: tool(
     ["Get", "Getting", "Got", "orchestration capabilities"],
     "capabilities",
