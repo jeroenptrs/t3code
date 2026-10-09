@@ -17,6 +17,7 @@ import {
   AuthTerminalOperateScope,
   WS_METHODS,
   WsRpcGroup,
+  clientRpcRequiredScopes,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -146,6 +147,18 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.pullRequestsSetFilesViewed)).toBe(
       AuthSourceControlWriteScope,
     );
+  });
+
+  it("lets readers watch diff walkthroughs and operators write them", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.diffWalkthroughSubscribe)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.diffWalkthroughPut)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(clientRpcRequiredScopes(WS_METHODS.diffWalkthroughPut, undefined)).toEqual([
+      AuthOrchestrationOperateScope,
+    ]);
   });
 
   it("separates preview control from observation", () => {
