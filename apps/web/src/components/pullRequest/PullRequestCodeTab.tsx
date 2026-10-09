@@ -200,6 +200,7 @@ function PullRequestCodeTab({
   fixFindingLabel = "Fix in a thread",
   onFixFinding,
   onAddToAgentSelection,
+  onGenerateWalkthrough,
   onRefresh,
   refreshToken = 0,
   revealRequest = null,
@@ -217,6 +218,8 @@ function PullRequestCodeTab({
   onFixFinding?: (finding: PullRequestFinding) => void;
   /** Absent where there is no active agent composer to receive a local comment. */
   onAddToAgentSelection?: (input: PullRequestAgentSelectionInput) => void;
+  /** Hands the walkthrough request to an agent. Absent where this client cannot start one. */
+  onGenerateWalkthrough?: () => void;
   onRefresh: () => void;
   /** Bumped by the panel's refresh button: drop the accumulated pages and re-read the diff. */
   refreshToken?: number;
@@ -1743,6 +1746,7 @@ function PullRequestCodeTab({
                 cwd={detail.workspaceRoot}
                 environmentId={environmentId}
                 footer={loadMoreFilesFooter}
+                onGenerate={onGenerateWalkthrough}
               />
             ) : (
               <div className="flex flex-1 flex-col items-start gap-2 p-3 text-xs text-muted-foreground">
