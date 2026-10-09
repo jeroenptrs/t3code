@@ -47,12 +47,30 @@ const assertScheduledTaskAuditSchema = Effect.gen(function* () {
   }
 });
 
+const assertDiffWalkthroughSchema = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const columns = yield* sql<{ readonly name: string; readonly pk: number }>`
+    PRAGMA table_info(fork_diff_walkthroughs)
+  `;
+  assert.deepStrictEqual(
+    columns.map(({ name, pk }) => [name, pk]),
+    [
+      ["target_key", 1],
+      ["target_kind", 0],
+      ["thread_id", 0],
+      ["walkthrough_json", 0],
+      ["updated_at", 0],
+    ],
+  );
+});
+
 it.effect("server startup records upstream and fork migrations in separate ledgers", () =>
   Effect.gen(function* () {
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     assert.deepStrictEqual(yield* readLedger(forkMigrationsTable), forkMigrationManifest);
     yield* assertEntraSchema;
     yield* assertScheduledTaskAuditSchema;
+    yield* assertDiffWalkthroughSchema;
     assert.deepStrictEqual(yield* runForkMigrations(), []);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
@@ -65,10 +83,12 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [2, "AuthSessionUsers"],
       [3, "ScheduledTaskUserAudit"],
       [4, "WebhookDeliveryDispatchedAt"],
+      [5, "DiffWalkthroughs"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
     yield* assertScheduledTaskAuditSchema;
+    yield* assertDiffWalkthroughSchema;
   }).pipe(Effect.provide(memoryDatabase())),
 );
 
