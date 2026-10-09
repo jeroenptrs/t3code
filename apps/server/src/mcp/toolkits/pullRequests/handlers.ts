@@ -72,7 +72,7 @@ function projectHostAndProvider(project: OrchestrationProjectShell | undefined):
  * thread's project host, which is where an agent working in that checkout
  * almost always opened the pull request.
  */
-const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
+export const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
   input: PullRequestTargetInput,
   project: OrchestrationProjectShell | undefined,
 ) {
