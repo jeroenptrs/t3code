@@ -15,6 +15,8 @@ import type {
 } from "@pierre/diffs";
 import type { CodeViewAnnotationArgs, CodeViewDiffItem } from "@pierre/diffs/react";
 import type {
+  DiffWalkthroughNote,
+  DiffWalkthroughPullRequestIdentity,
   EnvironmentId,
   PullRequestDetailView,
   PullRequestDiffSide,
@@ -33,6 +35,7 @@ import {
   FlaskConicalOffIcon,
   FolderTreeIcon,
   InfoIcon,
+  MapIcon,
   MessageSquareOffIcon,
   PilcrowIcon,
   Rows3Icon,
@@ -91,6 +94,7 @@ import {
   resolveDiffReviewAnchor,
   type ReviewCommentContext,
 } from "~/reviewCommentContext";
+import { diffWalkthroughAtom } from "~/state/diffWalkthrough";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -101,6 +105,12 @@ import { useDiffWorkerPool } from "../DiffWorkerPoolProvider";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import { FileExplorerPane } from "../files/FileExplorerPane";
+import { DiffWalkthroughRail } from "../diffs/DiffWalkthroughRail";
+import {
+  diffWalkthroughNotesByPath,
+  diffWalkthroughStaleNotice,
+} from "../diffs/diffWalkthroughRail.logic";
+import { useDiffWalkthroughActiveEntry } from "../diffs/useDiffWalkthroughActiveEntry";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
 import { diffFileTreeEntries, orderDiffFilesLikeTree } from "../diffs/diffFileTree.logic";
@@ -160,6 +170,7 @@ type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
 const COMMIT_PAGE_SIZE = 10;
 
 const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
+const PULL_REQUEST_WALKTHROUGH_STORAGE_KEY = "t3code.pullRequestWalkthroughOpen";
 
 interface DiffSlice {
   readonly source: PullRequestDiffResult;
@@ -407,12 +418,27 @@ function PullRequestCodeTab({
   const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
   const wordWrap = wordWrapOverride ?? settings.wordWrap;
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
-  const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
+  const [storedFileTreeOpen, setFileTreeOpen] = useLocalStorage(
     PULL_REQUEST_FILE_TREE_STORAGE_KEY,
     false,
     Schema.Boolean,
   );
   const [hideTestFiles, setHideTestFiles] = useHideTestFiles();
+  const [walkthroughOpen, setWalkthroughOpen] = useLocalStorage(
+    PULL_REQUEST_WALKTHROUGH_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
+  // The file tree and the walkthrough share the one aside; opening either closes the other.
+  const fileTreeOpen = storedFileTreeOpen && !walkthroughOpen;
+  const changeFileTreeOpen = (open: boolean) => {
+    setFileTreeOpen(open);
+    if (open) setWalkthroughOpen(false);
+  };
+  const changeWalkthroughOpen = (open: boolean) => {
+    setWalkthroughOpen(open);
+    if (open) setFileTreeOpen(false);
+  };
   const [selectedLines, setSelectedLines] = useState<{
     id: string;
     range: SelectedLineRange;
@@ -880,6 +906,66 @@ function PullRequestCodeTab({
     if (range) setSelectedLines({ id: item.id, range });
     codeViewReveal.request(item.id, range);
   };
+
+  // The walkthrough covers the whole change, so a single commit's diff is not one it can guide.
+  const walkthroughShown = walkthroughOpen && commit === null;
+  const liveHeadSha = detail.headSha ?? null;
+  const walkthroughTarget = useMemo<DiffWalkthroughPullRequestIdentity>(
+    () => ({
+      kind: "pull-request",
+      projectId: reference.projectId,
+      ...(reference.host === undefined ? {} : { host: reference.host }),
+      repository: reference.repository,
+      number: reference.number,
+    }),
+    [reference.host, reference.number, reference.projectId, reference.repository],
+  );
+  // Followed only while the rail is open: a walkthrough can run to thousands of notes.
+  const walkthroughAtom = useMemo(
+    () => (walkthroughShown ? diffWalkthroughAtom(environmentId, walkthroughTarget) : null),
+    [environmentId, walkthroughShown, walkthroughTarget],
+  );
+  const walkthroughQuery = useEnvironmentQuery(walkthroughAtom);
+  const walkthrough = walkthroughQuery.data?.walkthrough ?? null;
+  const walkthroughStaleNotice =
+    walkthrough === null
+      ? null
+      : diffWalkthroughStaleNotice(
+          walkthrough,
+          // A head the host did not report cannot show the walkthrough to be stale.
+          liveHeadSha === null ? null : { ...walkthroughTarget, headSha: liveHeadSha },
+        );
+  const walkthroughNotesByPath = useMemo(
+    () =>
+      walkthroughShown && walkthrough !== null ? diffWalkthroughNotesByPath(walkthrough) : null,
+    [walkthrough, walkthroughShown],
+  );
+  const walkthroughFiles = useMemo(
+    () =>
+      files.map((file) => ({ id: buildFileDiffRenderKey(file), path: resolveFileDiffPath(file) })),
+    [files],
+  );
+  const activeWalkthroughEntry = useDiffWalkthroughActiveEntry(
+    viewer,
+    walkthroughFiles,
+    walkthroughNotesByPath,
+  );
+  const revealWalkthroughNote = useCallback(
+    (note: DiffWalkthroughNote) => {
+      const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === note.path);
+      if (item === undefined) return;
+      if (item.collapsed === true) toggleFile(item.id);
+      const range = {
+        start: note.startLine,
+        end: note.endLine,
+        side: note.side,
+        endSide: note.side,
+      };
+      setSelectedLines({ id: item.id, range });
+      codeViewReveal.request(item.id, range);
+    },
+    [items, codeViewReveal, toggleFile],
+  );
 
   const toggleAllFiles = () => {
     setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
@@ -1497,7 +1583,7 @@ function PullRequestCodeTab({
                   variant="ghost"
                   size="sm"
                   pressed={fileTreeOpen}
-                  onPressedChange={(pressed) => setFileTreeOpen(Boolean(pressed))}
+                  onPressedChange={(pressed) => changeFileTreeOpen(Boolean(pressed))}
                 />
               }
             >
@@ -1505,6 +1591,26 @@ function PullRequestCodeTab({
             </TooltipTrigger>
             <TooltipPopup side="top">
               {fileTreeOpen ? "Hide file tree" : "Show file tree"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
+        {fileKeys.length > 0 ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label={walkthroughOpen ? "Hide walkthrough" : "Show walkthrough"}
+                  variant="ghost"
+                  size="sm"
+                  pressed={walkthroughOpen}
+                  onPressedChange={(pressed) => changeWalkthroughOpen(Boolean(pressed))}
+                />
+              }
+            >
+              <MapIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {walkthroughOpen ? "Hide walkthrough" : "Show walkthrough"}
             </TooltipPopup>
           </Tooltip>
         ) : null}
@@ -1611,6 +1717,28 @@ function PullRequestCodeTab({
       </p>,
     );
   }
+
+  // The aside lists only what has arrived; a footer says so while the diff is still paging, and
+  // lets the reader pull the rest in without scrolling for it.
+  const loadMoreFilesFooter =
+    nextCursor === null ? null : (
+      <div className="shrink-0 border-t border-border/60 p-2">
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          className="w-full"
+          disabled={diffQuery.isPending}
+          onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
+        >
+          {diffQuery.error !== null
+            ? "Retry"
+            : diffQuery.isPending
+              ? "Loading more files..."
+              : "Load more files"}
+        </Button>
+      </div>
+    );
 
   const orphanThreads = detail.reviewThreads.filter((thread) => !placedThreadIds.has(thread.id));
   const orphanFiles = new Map<string, PullRequestReviewThread[]>();
@@ -1722,7 +1850,45 @@ function PullRequestCodeTab({
             />
           </FileViewedToggleContext>
         </div>
-        {fileTreeOpen ? (
+        {walkthroughOpen ? (
+          <FileExplorerPane
+            resizable
+            storageKey="t3code:diff-file-tree-width"
+            defaultWidth={320}
+            defaultWidthFraction={0.4}
+            minWidth={192}
+            resizeLabel="Resize PR Code files"
+          >
+            {commit === null ? (
+              <DiffWalkthroughRail
+                walkthrough={walkthrough}
+                loading={walkthroughQuery.data === null && walkthroughQuery.error === null}
+                error={walkthroughQuery.error}
+                changedPaths={filePaths}
+                isFileViewed={filesViewedEnabled ? isFileViewed : undefined}
+                activeEntryKey={activeWalkthroughEntry}
+                staleNotice={walkthroughStaleNotice}
+                onRevealFile={revealFile}
+                onRevealNote={revealWalkthroughNote}
+                cwd={detail.workspaceRoot}
+                environmentId={environmentId}
+                footer={loadMoreFilesFooter}
+              />
+            ) : (
+              <div className="flex flex-1 flex-col items-start gap-2 p-3 text-xs text-muted-foreground">
+                <p>The walkthrough covers the whole pull request, not one commit.</p>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={() => onSelectedCommitChange(null)}
+                >
+                  Show all changes
+                </Button>
+              </div>
+            )}
+          </FileExplorerPane>
+        ) : fileTreeOpen ? (
           <FileExplorerPane
             resizable
             storageKey="t3code:diff-file-tree-width"
@@ -1735,26 +1901,7 @@ function PullRequestCodeTab({
               ariaLabel={`${capitalizeTerm(term)} #${detail.number} files`}
               entries={fileTreeEntries}
               onSelectFile={revealFile}
-              footer={
-                nextCursor === null ? null : (
-                  <div className="shrink-0 border-t border-border/60 p-2">
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      className="w-full"
-                      disabled={diffQuery.isPending}
-                      onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
-                    >
-                      {diffQuery.error !== null
-                        ? "Retry"
-                        : diffQuery.isPending
-                          ? "Loading more files..."
-                          : "Load more files"}
-                    </Button>
-                  </div>
-                )
-              }
+              footer={loadMoreFilesFooter}
             />
           </FileExplorerPane>
         ) : null}
