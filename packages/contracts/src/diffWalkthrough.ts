@@ -20,13 +20,18 @@ import { TurnCountRange } from "./checkpointDiff.ts";
  * `diffWalkthroughTargetKey`: storage holds one walkthrough per pull request, and a client tells
  * a stale one by comparing `headSha` with the live `PullRequestDetail.headSha`.
  */
-export const DiffWalkthroughPullRequestTarget = Schema.Struct({
+export const DiffWalkthroughPullRequestIdentity = Schema.Struct({
   kind: Schema.Literal("pull-request"),
   projectId: ProjectId,
   /** Absent means the project's own host, as on `PullRequestRef`. */
   host: Schema.optional(TrimmedNonEmptyString),
   repository: TrimmedNonEmptyString,
   number: PositiveInt,
+});
+export type DiffWalkthroughPullRequestIdentity = typeof DiffWalkthroughPullRequestIdentity.Type;
+
+export const DiffWalkthroughPullRequestTarget = Schema.Struct({
+  ...DiffWalkthroughPullRequestIdentity.fields,
   headSha: TrimmedNonEmptyString,
 });
 export type DiffWalkthroughPullRequestTarget = typeof DiffWalkthroughPullRequestTarget.Type;
@@ -48,6 +53,16 @@ export const DiffWalkthroughTarget = Schema.Union([
 export type DiffWalkthroughTarget = typeof DiffWalkthroughTarget.Type;
 
 /**
+ * A target without its revision: what storage is keyed by and what a reader follows, so a pull
+ * request moving to a new head neither changes what is read nor restarts a subscription.
+ */
+export const DiffWalkthroughTargetIdentity = Schema.Union([
+  DiffWalkthroughPullRequestIdentity,
+  DiffWalkthroughThreadDiffTarget,
+]);
+export type DiffWalkthroughTargetIdentity = typeof DiffWalkthroughTargetIdentity.Type;
+
+/**
  * The storage identity of a target, without its revision, so writing a walkthrough for a new
  * head replaces the old one.
  *
@@ -57,7 +72,7 @@ export type DiffWalkthroughTarget = typeof DiffWalkthroughTarget.Type;
  * on one walkthrough. Unresolved, the key falls back to the project, which never collides with a
  * host-level one.
  */
-export function diffWalkthroughTargetKey(target: DiffWalkthroughTarget): string {
+export function diffWalkthroughTargetKey(target: DiffWalkthroughTargetIdentity): string {
   switch (target.kind) {
     case "pull-request": {
       const repository = target.repository.trim().toLowerCase();
@@ -226,8 +241,8 @@ export function groupDiffWalkthroughFiles(
 }
 
 export const DiffWalkthroughGetInput = Schema.Struct({
-  /** The live target: storage is looked up by key, and the result may predate this revision. */
-  target: DiffWalkthroughTarget,
+  /** The result is whatever is stored for this target, whichever revision it was written for. */
+  target: DiffWalkthroughTargetIdentity,
 });
 export type DiffWalkthroughGetInput = typeof DiffWalkthroughGetInput.Type;
 
