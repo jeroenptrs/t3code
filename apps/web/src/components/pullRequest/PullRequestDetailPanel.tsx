@@ -114,6 +114,7 @@ import {
   buildAskAboutGuideStopHandoff,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
+  buildGenerateWalkthroughHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   buildResolveConflictsPrompt,
@@ -1023,6 +1024,26 @@ export function PullRequestDetailPanel({
     );
   };
 
+  const generateWalkthrough = () => {
+    if (!detail) return;
+    void startAsk(
+      "walkthrough",
+      buildGenerateWalkthroughHandoff({
+        provider: detail.provider,
+        number: detail.number,
+        title: detail.title,
+        url: detail.url,
+        headBranch: detail.headBranch,
+        baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
+      }),
+    );
+  };
+  // Sending the task is a turn, so a client that cannot operate threads would only be handed a
+  // composer it cannot send from.
+  const canGenerateWalkthrough = canOperateThread;
+
   const addSelectionToAgent = (
     selection: PullRequestAgentSelectionInput,
     options?: { readonly keepGuide?: boolean },
@@ -1364,6 +1385,7 @@ export function PullRequestDetailPanel({
                 attachesToComposer={attachTarget !== null}
                 askAboutPullRequest={askAboutPullRequest}
                 explainPullRequest={explainPullRequest}
+                {...(canGenerateWalkthrough ? { generateWalkthrough } : {})}
                 canFixFindings={canFixFindings}
                 startFixFindings={startFixFindings}
                 handoffLabels={handoffLabels}
@@ -1831,6 +1853,9 @@ export function PullRequestDetailPanel({
                     pendingFinding={handoff}
                     fixFindingLabel={handoffLabels.fixFinding}
                     {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
+                    {...(canGenerateWalkthrough && handoff === null
+                      ? { onGenerateWalkthrough: generateWalkthrough }
+                      : {})}
                     onRefresh={refreshDetail}
                     refreshToken={refreshToken}
                     backgroundRefreshToken={turnRefresh ?? 0}
