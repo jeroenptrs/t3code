@@ -44,6 +44,8 @@ import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as PullRequestReviewGuides from "./persistence/PullRequestReviewGuides.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
+import * as DiffWalkthroughs from "./persistence/DiffWalkthroughs.ts";
+import * as DiffWalkthroughService from "./diffWalkthrough/DiffWalkthroughService.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
@@ -355,6 +357,10 @@ const layerPullRequestService = PullRequestService.layer.pipe(
   Layer.provide(PullRequestReadCache.layer),
   Layer.provide(layerSourceControlProviderRegistry),
   Layer.provide(SourceControlRateLimit.layer),
+);
+
+const layerDiffWalkthroughService = DiffWalkthroughService.layer.pipe(
+  Layer.provide(DiffWalkthroughs.layer),
 );
 
 const layerGitManager = GitManager.layer.pipe(
@@ -728,6 +734,9 @@ const layerMakeRoutes = Layer.mergeAll(
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(layerPullRequestService),
+  // One instance for both transports, so a walkthrough an agent writes over MCP reaches every
+  // WebSocket subscriber.
+  Layer.provide(layerDiffWalkthroughService),
   Layer.provide(ServerBrowser.layer.pipe(Layer.provide(DesktopBrowserChannel.layer))),
   Layer.provide(PreviewBrowser.layer),
   Layer.provide(PreviewAutomationBroker.layer),
