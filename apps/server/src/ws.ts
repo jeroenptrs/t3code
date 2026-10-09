@@ -226,6 +226,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import * as DiffWalkthroughService from "./diffWalkthrough/DiffWalkthroughService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -1254,6 +1255,7 @@ const layerWsRpc = (
       const secretRequests = yield* SecretRequests.SecretRequests;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
+      const diffWalkthroughs = yield* DiffWalkthroughService.DiffWalkthroughService;
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
@@ -2588,6 +2590,14 @@ const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.labelCandidates(input)),
         [WS_METHODS.pullRequestsSetLabels]: (input) =>
           withPullRequestViewer(input, pullRequests.setLabels(input)),
+        [WS_METHODS.diffWalkthroughSubscribe]: (input) =>
+          diffWalkthroughs
+            .subscribe(input.target)
+            .pipe(Stream.map((walkthrough) => ({ walkthrough }))),
+        [WS_METHODS.diffWalkthroughPut]: (input) =>
+          diffWalkthroughs
+            .put(input.walkthrough)
+            .pipe(Effect.map((walkthrough) => ({ walkthrough }))),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           Effect.andThen(
             input.cwd === undefined ? Effect.void : ensureReadable(input.cwd),
@@ -3208,6 +3218,7 @@ export const layer = Layer.unwrap(
     const serverBrowser = yield* ServerBrowser.ServerBrowser;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const diffWalkthroughs = yield* DiffWalkthroughService.DiffWalkthroughService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3274,6 +3285,10 @@ export const layer = Layer.unwrap(
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.
               Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
+              // Shared with MCP, so an agent's write reaches every subscribed client.
+              Layer.provide(
+                Layer.succeed(DiffWalkthroughService.DiffWalkthroughService, diffWalkthroughs),
+              ),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
