@@ -69,7 +69,7 @@ function projectHostAndProvider(project: OrchestrationProjectShell | undefined):
   };
 }
 
-const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
+export const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
   input: PullRequestTargetInput,
   project: OrchestrationProjectShell | undefined,
 ) {
