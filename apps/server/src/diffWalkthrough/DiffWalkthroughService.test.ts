@@ -165,6 +165,30 @@ describe("DiffWalkthroughService", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("keeps one walkthrough per branch, replaced when either end of the range moves", () =>
+    Effect.gen(function* () {
+      const service = yield* DiffWalkthroughService.DiffWalkthroughService;
+      const branchRange = {
+        kind: "branch-range",
+        projectId: PROJECT_ID,
+        branch: "feature/walkthrough",
+        baseSha: "base111",
+        headSha: "head111",
+      } as const;
+      yield* service.put(walkthroughFor(branchRange, "Old head"));
+      yield* service.put(walkthroughFor({ ...branchRange, headSha: "head222" }, "New head"));
+      yield* service.put(walkthroughFor({ ...branchRange, branch: "main" }, "Another branch"));
+      const current = yield* service.get({
+        kind: "branch-range",
+        projectId: PROJECT_ID,
+        branch: "feature/walkthrough",
+      });
+      assert.strictEqual(current?.summary, "New head");
+      assert.deepStrictEqual(current?.target, { ...branchRange, headSha: "head222" });
+      assert.strictEqual(yield* rowCount, 2);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("keeps one walkthrough for a pull request named with and without its host", () =>
     Effect.gen(function* () {
       const service = yield* DiffWalkthroughService.DiffWalkthroughService;
