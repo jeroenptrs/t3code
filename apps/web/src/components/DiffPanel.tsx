@@ -746,10 +746,20 @@ export default function DiffPanel({
     if (selectedGitScope !== "branch" || activeProjectId === null) return null;
     // Unknown until the branch diff has been read.
     if (selectedGitSource === undefined) return null;
+    // Agents write branch walkthroughs against the automatic merge base, so against any other
+    // base every one would read as stale.
+    if (selectedBaseRef !== null) {
+      return {
+        kind: "unavailable",
+        reason:
+          "Walkthroughs follow the automatic base branch. Compare against Automatic to see it.",
+      };
+    }
     return branchRangeWalkthroughTarget(activeProjectId, selectedGitSource);
   }, [
     activeProjectId,
     activeThreadId,
+    selectedBaseRef,
     selectedCheckpointRange,
     selectedGitScope,
     selectedGitSource,
