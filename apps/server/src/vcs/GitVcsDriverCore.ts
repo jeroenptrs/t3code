@@ -2821,6 +2821,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       input.file?.sourceKind === "working-tree"
         ? { baseRef: input.baseRef ?? null, mergeBase: null }
         : yield* resolveReviewMergeBase(cwd, repository.currentBranch, input.baseRef);
+    // The commits the branch range spans, so a client can tell when it has moved. With no base
+    // the range starts at HEAD; an unborn HEAD has no commits to name.
+    const rangeShas = yield* Effect.gen(function* () {
+      if (review.mergeBase === null) return {};
+      const head = yield* executeGit(
+        "GitVcsDriver.getReviewDiffPreview.head",
+        cwd,
+        ["rev-parse", "--verify", "--quiet", "HEAD"],
+        { allowNonZeroExit: true },
+      );
+      const headSha = head.stdout.trim();
+      if (head.exitCode !== 0 || headSha.length === 0) return {};
+      return { baseSha: review.mergeBase === "HEAD" ? headSha : review.mergeBase, headSha };
+    });
 
     const diffArgs = [
       ...REVIEW_DIFF_ARGS,
@@ -2935,6 +2949,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...(baseFiles === undefined ? {} : { files: baseFiles }),
         diffHash: baseDiffHash,
         truncated: baseResult.stdoutTruncated,
+        ...rangeShas,
       },
     ];
 
