@@ -56,6 +56,7 @@ import { primaryServerKeybindingsAtom } from "~/state/server";
 import { usePullRequestDefaultMergeMethodResolver } from "./usePullRequestActions";
 import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
 import { usePreparePullRequestThreadAction } from "~/state/sourceControlActions";
+import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
@@ -499,6 +500,16 @@ export function PullRequestDetailPanel({
   };
   const [handoff, setHandoff] = useState<string | null>(null);
   const turnRefresh = usePullRequestTurnRefresh(environmentId);
+  // One set of viewed ticks for the Code and Walkthrough tabs, so a file cleared in one is
+  // cleared in the other at once rather than after the host's next answer. Read only once a tab
+  // that shows them has been opened.
+  const filesViewed = usePullRequestFilesViewed({
+    environmentId,
+    reference,
+    enabled:
+      detail?.capabilities.viewedFiles !== undefined &&
+      (mountedTabs.has("code") || mountedTabs.has("walkthrough")),
+  });
   const handoffSummary = detail ?? sharedSummary;
   const terminology = sourceControlClients.get(
     handoffSummary?.provider ?? listEntry?.provider ?? repositoryIdentity?.provider,
@@ -1887,6 +1898,7 @@ export function PullRequestDetailPanel({
                     refreshToken={refreshToken}
                     backgroundRefreshToken={turnRefresh ?? 0}
                     revealRequest={codeRevealRequest}
+                    filesViewed={filesViewed}
                   />
                 </Suspense>
               </div>
@@ -1903,6 +1915,7 @@ export function PullRequestDetailPanel({
                     generatePending={handoff === "walkthrough"}
                     handleRef={walkthroughHandle}
                     refreshToken={refreshToken + (turnRefresh ?? 0)}
+                    filesViewed={filesViewed}
                   />
                 </Suspense>
               </div>
