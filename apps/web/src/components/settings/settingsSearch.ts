@@ -808,6 +808,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["pull request merge squash rebase last selected"],
   },
   {
+    id: "pull-request-auto-walkthrough",
+    title: "Generate walkthroughs automatically when a pull request is linked or pushed",
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: ["diff walkthrough guide review agent push linked pull request automatic"],
+  },
+  {
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",
