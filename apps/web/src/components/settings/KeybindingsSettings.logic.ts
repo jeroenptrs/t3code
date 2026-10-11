@@ -271,7 +271,7 @@ const KEYBINDING_GROUPS = [
   { id: "threads", title: msg("Threads"), prefixes: ["thread", "chat", "pullRequest"] },
   { id: "composer", title: msg("Composer"), prefixes: ["composer", "modelPicker"] },
   { id: "terminal", title: msg("Terminal"), prefixes: ["terminal"] },
-  { id: "preview", title: msg("Preview & diff"), prefixes: ["preview", "diff"] },
+  { id: "preview", title: msg("Preview & diff"), prefixes: ["preview", "diff", "walkthrough"] },
   {
     id: "appearance",
     title: msg("Appearance"),
@@ -548,6 +548,9 @@ const LATE_COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "view.reopenClosed": msg("Reopen Closed Tab"),
   "preview.focusUrl": msg("Preview: Focus URL"),
   "preview.find": msg("Preview: Find on Page"),
+  "walkthrough.previousSection": msg("Walkthrough: Previous Section"),
+  "walkthrough.nextSection": msg("Walkthrough: Next Section"),
+  "walkthrough.markReviewed": msg("Walkthrough: Mark Reviewed and Continue"),
 };
 
 export function commandLabel(command: KeybindingCommand, resolve: MessageResolver = m): string {

@@ -3,6 +3,7 @@ import { STATIC_KEYBINDING_COMMANDS, type ResolvedKeybindingsConfig } from "@t3t
 import {
   compileResolvedKeybindingsConfig,
   mergeWithDefaultKeybindings,
+  DEFAULT_RESOLVED_KEYBINDINGS,
   parseKeybindingShortcut,
 } from "@t3tools/shared/keybindings";
 
@@ -54,6 +55,23 @@ describe("KeybindingsSettings.logic", () => {
       ),
     );
     expect(groups.map((group) => group.id)).toEqual(["navigation"]);
+  });
+
+  it("groups and labels the walkthrough shortcuts with preview and diff", () => {
+    const groups = groupKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS));
+    const previewAndDiff = groups.find((group) => group.id === "preview");
+    expect(previewAndDiff?.rows.map((row) => row.command)).toEqual(
+      expect.arrayContaining([
+        "diff.toggle",
+        "walkthrough.previousSection",
+        "walkthrough.nextSection",
+        "walkthrough.markReviewed",
+      ]),
+    );
+    expect(commandLabel("walkthrough.nextSection")).toBe("Walkthrough: Next Section");
+    expect(commandLabel("walkthrough.markReviewed")).toBe(
+      "Walkthrough: Mark Reviewed and Continue",
+    );
   });
 
   it("keeps sibling row identities when a saved binding moves to the end", () => {

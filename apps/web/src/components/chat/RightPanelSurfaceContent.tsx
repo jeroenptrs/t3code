@@ -11,7 +11,7 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type Ref } from "react";
 import { LinkedThreadPane } from "./LinkedThreadPane";
 import SideThreadPane from "./SideThreadPane";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
@@ -24,6 +24,7 @@ import {
 } from "../PersistentThreadTerminals";
 import { IssueDetailPanel } from "../issue/IssueDetailPanel";
 import { pullRequestPanelContext } from "../pullRequest/pullRequestDetail.logic";
+import type { DiffWalkthroughViewHandle } from "../diffs/DiffWalkthroughView";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
@@ -75,6 +76,7 @@ export function RightPanelSurfaceContent(props: {
   readonly workspaceMutationId: string | null;
   /** What the diff is read under, as the Changes totals are; see `useWorkspaceRevision`. */
   readonly workspaceRevision: string | null;
+  readonly diffWalkthroughHandleRef: Ref<DiffWalkthroughViewHandle>;
   readonly getShortcutContext: () => ShortcutMatchContext;
   readonly onSendAnnotation: (
     annotation: PreviewAnnotationPayload,
@@ -122,6 +124,7 @@ export function RightPanelSurfaceContent(props: {
             composerDraftTarget={props.composerDraftTarget}
             workspaceMutationId={props.workspaceRevision}
             visible={visible}
+            walkthroughHandleRef={props.diffWalkthroughHandleRef}
           />
         </Suspense>
       );
