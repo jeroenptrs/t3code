@@ -7,6 +7,9 @@ interface FileRevealHandle {
   scrollTo(target: CodeViewScrollTarget): void;
 }
 
+/** Room left above a revealed range, so it does not read as the first line of the file. */
+const RANGE_LEAD_IN_PX = 48;
+
 /**
  * Scrolls a code view to a file. `attach` is the viewer's ref and `flush` its post-render
  * handler, so a reveal asked before the viewer mounts, or for a file it does not hold yet, is
@@ -21,7 +24,13 @@ export function createCodeViewFileReveal() {
     if (!viewer.getInstance() || viewer.getItem(pending.fileKey) === undefined) return;
     viewer.scrollTo({ type: "item", id: pending.fileKey, align: "start" });
     if (pending.range !== undefined) {
-      viewer.scrollTo({ type: "range", id: pending.fileKey, range: pending.range, align: "center" });
+      viewer.scrollTo({
+        type: "range",
+        id: pending.fileKey,
+        range: pending.range,
+        align: "start",
+        offset: RANGE_LEAD_IN_PX,
+      });
     }
     pending = null;
   };
