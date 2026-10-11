@@ -129,7 +129,7 @@ import {
 import { PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import { usePullRequestDiffSlices } from "./usePullRequestDiffSlices";
-import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
+import type { PullRequestFilesViewedView } from "./usePullRequestFilesViewed";
 import {
   nextPendingReviewCommentId,
   pullRequestReviewKey,
@@ -205,7 +205,7 @@ function FileViewedToggle({
                 viewedFiles.setFileViewed(fileKey, viewed, extendRange),
             },
           })}
-        />
+    />
   );
 }
 
@@ -249,6 +249,7 @@ function PullRequestCodeTab({
   revealRequest = null,
   revealUrl,
   onRevealSettled,
+  filesViewed,
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
@@ -269,6 +270,8 @@ function PullRequestCodeTab({
   revealUrl?: string | undefined;
   onRevealSettled?: ((revealUrl: string) => void) | undefined;
   revealRequest?: { readonly path: string; readonly nonce: number } | null;
+  /** The panel's viewed ticks, shared with the Walkthrough tab. */
+  filesViewed: PullRequestFilesViewedView;
 }) {
   const resolvedTheme = useRenderedAppearance();
   // Initialize the shared tokenizer and workers while the diff request is still pending.
@@ -360,11 +363,6 @@ function PullRequestCodeTab({
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
 
   const viewedFilesStore = detail.capabilities.viewedFiles;
-  const filesViewed = usePullRequestFilesViewed({
-    environmentId,
-    reference,
-    enabled: viewedFilesStore !== undefined,
-  });
   const {
     setViewed,
     refresh: refreshFilesViewed,
@@ -736,7 +734,7 @@ function PullRequestCodeTab({
 
   const renderHeaderPrefix = (item: CodeViewItem<ReviewAnnotationGroup>) => (
     <DiffFileFoldButton collapsed={item.collapsed === true} onToggle={() => toggleFile(item.id)} />
-    );
+  );
 
   const renderHeaderMetadata = (item: CodeViewItem<ReviewAnnotationGroup>) => {
     if (item.type !== "diff") return null;
@@ -745,8 +743,8 @@ function PullRequestCodeTab({
       <FileViewedToggle
         fileKey={item.id}
         path={resolveFileDiffPath(item.fileDiff)}
-            additions={additions}
-            deletions={deletions}
+        additions={additions}
+        deletions={deletions}
       />
     );
   };
@@ -1415,10 +1413,10 @@ function PullRequestCodeTab({
           onClickCapture={(event) => {
             const filePath = pressedDiffHeaderPath(event);
             if (filePath === null) return;
-                const item = items.find(
-                  (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
-                );
-                if (item !== undefined) toggleFile(item.id);
+            const item = items.find(
+              (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
+            );
+            if (item !== undefined) toggleFile(item.id);
           }}
         >
           {/* The viewer must own its scroll element to position virtual rows within it. */}
