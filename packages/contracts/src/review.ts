@@ -39,6 +39,13 @@ export const ReviewDiffPreviewSource = Schema.Struct({
   truncated: Schema.Boolean,
   /** Complete statistics, independent of patch limits. Absent on older servers. */
   files: Schema.optionalKey(Schema.Array(ReviewDiffFileStat)),
+  /**
+   * The resolved merge-base commit, or HEAD's when there is no base. Set on the branch-range
+   * source; absent on older servers and when HEAD is unborn.
+   */
+  baseSha: Schema.optionalKey(TrimmedNonEmptyString),
+  /** HEAD's commit. Set on the branch-range source; absent on older servers and on unborn HEAD. */
+  headSha: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ReviewDiffPreviewSource = typeof ReviewDiffPreviewSource.Type;
 
