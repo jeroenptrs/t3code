@@ -110,6 +110,15 @@ const tab = (refreshToken: number) => (
     onSelectedCommitChange={() => {}}
     onRefresh={() => {}}
     refreshToken={refreshToken}
+    filesViewed={{
+      enabled: false,
+      isViewed: () => false,
+      isStale: () => false,
+      setViewed: () => {},
+      truncated: false,
+      error: null,
+      refresh: () => {},
+    }}
   />
 );
 
