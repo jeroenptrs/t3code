@@ -102,7 +102,7 @@ import {
 import { PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import { usePullRequestDiffSlices } from "./usePullRequestDiffSlices";
-import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
+import type { PullRequestFilesViewedView } from "./usePullRequestFilesViewed";
 import {
   nextPendingReviewCommentId,
   pullRequestReviewKey,
@@ -199,6 +199,7 @@ function PullRequestCodeTab({
   refreshToken = 0,
   backgroundRefreshToken = 0,
   revealRequest = null,
+  filesViewed,
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
@@ -214,6 +215,8 @@ function PullRequestCodeTab({
   refreshToken?: number;
   backgroundRefreshToken?: number;
   revealRequest?: { readonly path: string; readonly nonce: number } | null;
+  /** The panel's viewed ticks, shared with the Walkthrough tab. */
+  filesViewed: PullRequestFilesViewedView;
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings((settings) => ({
@@ -299,11 +302,6 @@ function PullRequestCodeTab({
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
 
   const viewedFilesStore = detail.capabilities.viewedFiles;
-  const filesViewed = usePullRequestFilesViewed({
-    environmentId,
-    reference,
-    enabled: viewedFilesStore !== undefined,
-  });
   const {
     setViewed,
     refresh: refreshFilesViewed,
