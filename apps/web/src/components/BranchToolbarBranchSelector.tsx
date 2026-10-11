@@ -31,7 +31,7 @@ import {
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
-import { useOpenPrLink } from "../lib/openPullRequestLink";
+import { useOpenPrLink, useOpenPullRequestWalkthrough } from "../lib/openPullRequestLink";
 import { usePaginatedBranches } from "../state/queries";
 import { useProject, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
@@ -564,6 +564,7 @@ export function BranchToolbarBranchSelector({
   const prNumber = currentLinkedPr?.number ?? displayedPr?.number;
   const prUrl = currentLinkedPr?.url ?? displayedPr?.url;
   const openPrLink = useOpenPrLink(threadRef);
+  const openPrWalkthrough = useOpenPullRequestWalkthrough();
   const panelPrLabel =
     prNumber === undefined
       ? ""
@@ -749,6 +750,7 @@ export function BranchToolbarBranchSelector({
             label={panelPrLabel}
             openAriaLabel={prUrl ?? `Open ${sourceControlPresentation.terminology.singular}`}
             onOpen={(event) => openPrLink(event, prUrl)}
+            onOpenWalkthrough={() => openPrWalkthrough(threadRef, prUrl)}
             onActed={() => branchStatusQuery.refresh()}
           />
         ) : null}
