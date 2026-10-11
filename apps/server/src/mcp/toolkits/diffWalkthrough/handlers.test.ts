@@ -5,9 +5,12 @@ import {
   type OrchestrationV2ThreadShell,
   ProjectId,
   ProviderInstanceId,
+  type ReviewDiffPreviewInput,
+  type ReviewDiffPreviewSource,
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -22,11 +25,13 @@ import * as DiffWalkthroughs from "../../../persistence/DiffWalkthroughs.ts";
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../../../project/RepositoryIdentityResolver.ts";
+import * as ReviewService from "../../../review/ReviewService.ts";
+import { OUTPUT_TRUNCATED_MARKER } from "../../../vcs/GitVcsDriverCore.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 import * as DiffWalkthroughHandlers from "./handlers.ts";
-import { boundThreadDiff } from "./handlers.ts";
+import { boundReviewDiff, boundThreadDiff } from "./handlers.ts";
 import { DiffWalkthroughToolkit } from "./tools.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
@@ -75,7 +80,26 @@ interface HarnessOptions {
   readonly threads?: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly caller?: OrchestrationV2ThreadShell;
   readonly diff?: string;
+  /** The review diff sources the caller's checkout reports. */
+  readonly reviewSources?: ReadonlyArray<ReviewDiffPreviewSource>;
 }
+
+const reviewSource = (
+  overrides: Partial<ReviewDiffPreviewSource> = {},
+): ReviewDiffPreviewSource => ({
+  id: "branch-range",
+  kind: "branch-range",
+  title: "Changes vs main",
+  baseRef: "main",
+  headRef: "feature/walkthrough",
+  diff: "",
+  diffHash: "hash",
+  truncated: false,
+  files: [],
+  baseSha: "base0000000000000000",
+  headSha: "head0000000000000000",
+  ...overrides,
+});
 
 const makeHarness = Effect.fn("makeDiffWalkthroughToolkitHarness")(function* (
   options: HarnessOptions = {},
@@ -91,6 +115,8 @@ const makeHarness = Effect.fn("makeDiffWalkthroughToolkitHarness")(function* (
   );
   const getThreadShell = (threadId: ThreadId) => Effect.succeed(shells.get(threadId) ?? null);
   const diffRequests: Array<OrchestrationGetTurnDiffInput> = [];
+  const reviewRequests: Array<ReviewDiffPreviewInput> = [];
+  let reviewSources = options.reviewSources ?? [reviewSource()];
   const layerDependencies = Layer.mergeAll(
     DiffWalkthroughService.layer.pipe(
       Layer.provide(DiffWalkthroughs.layer),
@@ -101,6 +127,14 @@ const makeHarness = Effect.fn("makeDiffWalkthroughToolkitHarness")(function* (
         }),
       ),
     ),
+    Layer.mock(ReviewService.ReviewService)({
+      getDiffPreview: (input) => {
+        reviewRequests.push(input);
+        return DateTime.now.pipe(
+          Effect.map((generatedAt) => ({ cwd: input.cwd, generatedAt, sources: reviewSources })),
+        );
+      },
+    }),
     Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
       getTurnDiff: (input) => {
         diffRequests.push(input);
@@ -146,7 +180,10 @@ const makeHarness = Effect.fn("makeDiffWalkthroughToolkitHarness")(function* (
         Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
         Effect.provideContext(context),
       );
-    return { call, walkthroughs, diffRequests };
+    const setReviewSources = (sources: ReadonlyArray<ReviewDiffPreviewSource>) => {
+      reviewSources = sources;
+    };
+    return { call, walkthroughs, diffRequests, reviewRequests, setReviewSources };
   }).pipe(Effect.provideContext(context));
 });
 
@@ -284,8 +321,7 @@ describe("diff walkthrough toolkit handlers", () => {
       Effect.gen(function* () {
         const harness = yield* makeHarness({ diff: "diff --git a/x b/x\n" });
         const result = yield* harness.call("read_thread_diff", {
-          fromTurnCount: 0,
-          toTurnCount: 3,
+          target: { kind: "thread-diff", fromTurnCount: 0, toTurnCount: 3 },
         });
         assert.deepStrictEqual(harness.diffRequests, [
           { threadId: THREAD_ID, fromTurnCount: 0, toTurnCount: 3 },
@@ -294,11 +330,194 @@ describe("diff walkthrough toolkit handlers", () => {
         assert.isFalse(result.truncated);
 
         const error = yield* harness
-          .call("read_thread_diff", { fromTurnCount: 0, toTurnCount: 1 }, ["preview"])
+          .call(
+            "read_thread_diff",
+            { target: { kind: "thread-diff", fromTurnCount: 0, toTurnCount: 1 } },
+            ["preview"],
+          )
           .pipe(Effect.flip);
         assert.deepInclude(error, { _tag: "OrchestratorMcpFailure", code: "capability_denied" });
       }),
   );
+});
+
+describe("branch-range walkthroughs", () => {
+  const branchTarget = {
+    kind: "branch-range" as const,
+    projectId: PROJECT_ID,
+    branch: "feature/walkthrough",
+    baseSha: "base0000000000000000",
+    headSha: "head0000000000000000",
+  };
+
+  it.effect("writes the calling thread's branch range, read from its worktree", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        caller: {
+          ...McpToolAccessTestkit.liveThreadShell(THREAD_ID),
+          projectId: PROJECT_ID,
+          worktreePath: "/worktrees/feature",
+        },
+      });
+      const result = yield* harness.call("write_diff_walkthrough", {
+        target: { kind: "branch-range" },
+        groups,
+        notes: [],
+      });
+      assert.deepStrictEqual(result.target, branchTarget);
+      assert.include(result.confirmation, "branch feature/walkthrough");
+      assert.strictEqual(harness.reviewRequests[0]?.cwd, "/worktrees/feature");
+      const stored = yield* harness.walkthroughs.get({
+        kind: "branch-range",
+        projectId: PROJECT_ID,
+        branch: "feature/walkthrough",
+      });
+      assert.deepStrictEqual(stored?.target, branchTarget);
+    }),
+  );
+
+  it.effect("refuses a detached checkout with a message the agent can act on", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ reviewSources: [reviewSource({ headRef: "HEAD" })] });
+      const error = yield* harness
+        .call("write_diff_walkthrough", { target: { kind: "branch-range" }, groups, notes: [] })
+        .pipe(Effect.flip);
+      assert.deepInclude(error, {
+        _tag: "BranchRangeUnavailableError",
+        message: "The thread's checkout is not on a branch (detached HEAD).",
+      });
+    }),
+  );
+
+  it.effect("names the file and both groups when a file is placed twice", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const error = yield* harness
+        .call("write_diff_walkthrough", {
+          target: { kind: "branch-range" },
+          groups: [...groups, { ...groups[0]!, id: "again", title: "Again" }],
+          notes: [],
+        })
+        .pipe(Effect.flip);
+      assert.strictEqual(error._tag, "DiffWalkthroughRejectedError");
+      assert.include(error.message, 'file "src/a.ts" is in both group "core" and group "again"');
+    }),
+  );
+
+  it.effect("reads the branch diff with its range and uncommitted state", () =>
+    Effect.gen(function* () {
+      const kept = "diff --git a/src/a.ts b/src/a.ts\n@@ -1 +1 @@\n-a\n+b\n";
+      const harness = yield* makeHarness({
+        reviewSources: [
+          reviewSource({
+            diff: `${kept}diff --git a/src/b.ts b/src/b.ts\n@@ -1 +1 @@\n-a${OUTPUT_TRUNCATED_MARKER}`,
+            truncated: true,
+            files: [
+              { path: "src/a.ts", previousPath: null, additions: 1, deletions: 1 },
+              { path: "src/b.ts", previousPath: null, additions: 1, deletions: 1 },
+            ],
+          }),
+          reviewSource({ id: "working-tree", kind: "working-tree", diff: "diff --git x" }),
+        ],
+      });
+      const result = yield* harness.call("read_thread_diff", {
+        target: { kind: "branch-range" },
+      });
+      assert.deepStrictEqual(result, {
+        kind: "branch-range",
+        threadId: THREAD_ID,
+        branch: "feature/walkthrough",
+        baseRef: "main",
+        baseSha: branchTarget.baseSha,
+        headSha: branchTarget.headSha,
+        includesUncommittedChanges: true,
+        diff: kept,
+        truncated: true,
+        omittedFiles: ["src/b.ts"],
+      });
+      assert.strictEqual(harness.reviewRequests[0]?.ignoreWhitespace, true);
+    }),
+  );
+
+  it.effect("reads a stored walkthrough and tells when the branch has moved", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const before = yield* harness.call("read_diff_walkthrough", {
+        target: { kind: "branch-range" },
+      });
+      assert.deepStrictEqual(before, { walkthrough: null, stale: null });
+
+      yield* harness.call("write_diff_walkthrough", {
+        target: { kind: "branch-range" },
+        groups,
+        notes: [],
+      });
+      const current = yield* harness.call("read_diff_walkthrough", {
+        target: { kind: "branch-range" },
+      });
+      assert.deepStrictEqual(current.walkthrough?.target, branchTarget);
+      assert.isFalse(current.stale);
+
+      harness.setReviewSources([reviewSource({ headSha: "head1111111111111111" })]);
+      const moved = yield* harness.call("read_diff_walkthrough", {
+        target: { kind: "branch-range" },
+      });
+      assert.deepStrictEqual(moved.walkthrough?.target, branchTarget);
+      assert.isTrue(moved.stale);
+    }),
+  );
+
+  it.effect("reads pull request and thread diff walkthroughs another agent wrote", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.call("write_diff_walkthrough", {
+        target: { kind: "pull-request", repository: "T3Tools/T3Code", number: 7, headSha: "abc" },
+        groups,
+        notes: [],
+      });
+      const pullRequest = yield* harness.call("read_diff_walkthrough", {
+        target: { kind: "pull-request", url: "https://github.com/t3tools/t3code/pull/7" },
+      });
+      assert.strictEqual(pullRequest.walkthrough?.target.kind, "pull-request");
+      assert.isNull(pullRequest.stale);
+
+      yield* harness.call("write_diff_walkthrough", {
+        target: { kind: "thread-diff", fromTurnCount: 0, toTurnCount: 2 },
+        groups,
+        notes: [],
+      });
+      const threadDiff = yield* harness.call("read_diff_walkthrough", {
+        target: { kind: "thread-diff", fromTurnCount: 0, toTurnCount: 2 },
+      });
+      assert.strictEqual(threadDiff.walkthrough?.target.kind, "thread-diff");
+      assert.isFalse(threadDiff.stale);
+    }),
+  );
+});
+
+describe("boundReviewDiff", () => {
+  it("leaves a complete diff alone and names nothing", () => {
+    const diff = "diff --git a/a b/a\n+x\n";
+    assert.deepStrictEqual(
+      boundReviewDiff({
+        diff,
+        truncated: false,
+        files: [{ path: "a", previousPath: null, additions: 1, deletions: 0 }],
+      }),
+      { diff, truncated: false, omittedFiles: [] },
+    );
+  });
+
+  it("drops a file git cut partway, and an only file leaves nothing", () => {
+    assert.deepStrictEqual(
+      boundReviewDiff({
+        diff: `diff --git a/a b/a\n+x${OUTPUT_TRUNCATED_MARKER}`,
+        truncated: true,
+        files: [{ path: "a", previousPath: null, additions: 1, deletions: 0 }],
+      }),
+      { diff: "", truncated: true, omittedFiles: ["a"] },
+    );
+  });
 });
 
 describe("boundThreadDiff", () => {
