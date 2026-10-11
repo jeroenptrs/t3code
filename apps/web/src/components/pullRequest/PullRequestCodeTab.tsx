@@ -88,7 +88,7 @@ import {
 } from "./pullRequestDiff.logic";
 import { PullRequestMetaLine } from "./pullRequestPresentation";
 import { usePullRequestDiffSlices } from "./usePullRequestDiffSlices";
-import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
+import type { PullRequestFilesViewedView } from "./usePullRequestFilesViewed";
 import {
   nextPendingReviewCommentId,
   pullRequestReviewKey,
@@ -183,6 +183,7 @@ function PullRequestCodeTab({
   onAddToAgentSelection,
   onRefresh,
   refreshToken = 0,
+  filesViewed,
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
@@ -200,6 +201,8 @@ function PullRequestCodeTab({
   onRefresh: () => void;
   /** Bumped by the panel's refresh button: drop the accumulated pages and re-read the diff. */
   refreshToken?: number;
+  /** The panel's viewed ticks, shared with the Walkthrough tab. */
+  filesViewed: PullRequestFilesViewedView;
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
@@ -310,12 +313,6 @@ function PullRequestCodeTab({
   // commit at a time is what the scope is for. The tick is kept against the change request rather
   // than the scope it was made in, so clearing a file here clears it everywhere.
   const viewedFilesStore = detail.capabilities.viewedFiles;
-  const filesViewed = usePullRequestFilesViewed({
-    environmentId,
-    reference,
-    enabled: viewedFilesStore !== undefined,
-    paths: filePaths,
-  });
   const {
     setViewed,
     refresh: refreshFilesViewed,
@@ -323,6 +320,10 @@ function PullRequestCodeTab({
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
+  const viewedCount = useMemo(
+    () => filePaths.filter((path) => isFileViewed(path)).length,
+    [filePaths, isFileViewed],
+  );
   // The button goes around the host's cache, so everything the tab reads from it starts over:
   // the diff from its first page, and with it the ticks, which a push since the last read can
   // have marked as standing against an older version of the file.
@@ -966,7 +967,7 @@ function PullRequestCodeTab({
                   ticks these are without having to find the icon beside them. The count holds its
                   width and the wording gives way, so the narrow right panel keeps its controls. */}
               <span className="shrink-0">
-                {filesViewed.viewedCount} / {files.length}
+                {viewedCount} / {files.length}
               </span>
               <span className="truncate">
                 {viewedFilesStore === "environment" ? `viewed in ${APP_BASE_NAME}` : "viewed"}
