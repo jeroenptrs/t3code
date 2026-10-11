@@ -1,4 +1,5 @@
 import {
+  DiffWalkthrough,
   DiffWalkthroughGroup,
   DiffWalkthroughNote,
   DiffWalkthroughTarget,
@@ -27,6 +28,12 @@ const dependencies = [
 /** The service refused or failed to store the walkthrough; the message says what to fix. */
 export class DiffWalkthroughRejectedError extends Schema.TaggedError<DiffWalkthroughRejectedError>()(
   "DiffWalkthroughRejectedError",
+  { message: Schema.String },
+) {}
+
+/** The thread's checkout has no branch range to walk, or it could not be read. */
+export class BranchRangeUnavailableError extends Schema.TaggedError<BranchRangeUnavailableError>()(
+  "BranchRangeUnavailableError",
   { message: Schema.String },
 ) {}
 
@@ -68,8 +75,23 @@ const WalkthroughThreadDiffTargetInput = Schema.Struct({
   ...TurnCountFields,
 });
 
+/** The branch, merge base and HEAD are read from the thread's checkout, never supplied. */
+const WalkthroughBranchRangeTargetInput = Schema.Struct({
+  kind: Schema.Literal("branch-range"),
+  threadId: Schema.optional(
+    ThreadId.annotate({
+      description:
+        "Thread whose checkout's current branch this is, from its merge base to HEAD. Omit for this thread.",
+    }),
+  ),
+});
+
 export const WriteDiffWalkthroughInput = Schema.Struct({
-  target: Schema.Union([WalkthroughPullRequestTargetInput, WalkthroughThreadDiffTargetInput]),
+  target: Schema.Union([
+    WalkthroughPullRequestTargetInput,
+    WalkthroughThreadDiffTargetInput,
+    WalkthroughBranchRangeTargetInput,
+  ]),
   summary: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(2000)).annotate({
       description: "The change as a whole, in a short paragraph.",
@@ -120,36 +142,82 @@ export const WriteDiffWalkthroughResult = Schema.Struct({
 });
 export type WriteDiffWalkthroughResult = typeof WriteDiffWalkthroughResult.Type;
 
+/** The same targets write_diff_walkthrough takes for a thread's diff, so one can be passed to both. */
 export const ReadThreadDiffInput = Schema.Struct({
-  threadId: Schema.optional(
-    ThreadId.annotate({ description: "Thread to read. Omit for this thread." }),
-  ),
-  ...TurnCountFields,
+  target: Schema.Union([WalkthroughThreadDiffTargetInput, WalkthroughBranchRangeTargetInput]),
   ignoreWhitespace: Schema.optional(
     Schema.Boolean.annotate({ description: "Hide whitespace-only changes. Defaults to true." }),
   ),
 });
 export type ReadThreadDiffInput = typeof ReadThreadDiffInput.Type;
 
-export const ReadThreadDiffResult = Schema.Struct({
-  threadId: ThreadId,
-  fromTurnCount: Schema.Int,
-  toTurnCount: Schema.Int,
+const DiffBodyFields = {
   diff: Schema.String.annotate({ description: "Unified diff, whole files only." }),
   truncated: Schema.Boolean,
   omittedFiles: Schema.Array(Schema.String).annotate({
     description: "Files left out of diff because it reached the size limit.",
   }),
-});
+};
+
+export const ReadThreadDiffResult = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("thread-diff"),
+    threadId: ThreadId,
+    fromTurnCount: Schema.Int,
+    toTurnCount: Schema.Int,
+    ...DiffBodyFields,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("branch-range"),
+    threadId: ThreadId,
+    branch: Schema.String,
+    baseRef: Schema.NullOr(Schema.String).annotate({
+      description:
+        "Branch the range starts from, or null when there is none and it starts at HEAD.",
+    }),
+    baseSha: Schema.String,
+    headSha: Schema.String,
+    includesUncommittedChanges: Schema.Boolean.annotate({
+      description:
+        "The diff runs to the working tree, and the checkout has changes not yet committed. They are not part of the branch's revision; a walkthrough should describe committed work.",
+    }),
+    ...DiffBodyFields,
+  }),
+]);
 export type ReadThreadDiffResult = typeof ReadThreadDiffResult.Type;
+
+const ReadWalkthroughPullRequestTargetInput = WalkthroughPullRequestTargetInput.mapFields(
+  ({ headSha: _headSha, ...fields }) => fields,
+);
+
+export const ReadDiffWalkthroughInput = Schema.Struct({
+  target: Schema.Union([
+    ReadWalkthroughPullRequestTargetInput,
+    WalkthroughThreadDiffTargetInput,
+    WalkthroughBranchRangeTargetInput,
+  ]),
+});
+export type ReadDiffWalkthroughInput = typeof ReadDiffWalkthroughInput.Type;
+
+export const ReadDiffWalkthroughResult = Schema.Struct({
+  walkthrough: Schema.NullOr(DiffWalkthrough).annotate({
+    description: "The stored walkthrough, whichever revision it was written for, or null.",
+  }),
+  stale: Schema.NullOr(Schema.Boolean).annotate({
+    description:
+      "Whether the diff has moved since the walkthrough was written. null when not known: for a pull request, compare walkthrough.target.headSha with the live head.",
+  }),
+});
+export type ReadDiffWalkthroughResult = typeof ReadDiffWalkthroughResult.Type;
 
 const WriteDiffWalkthroughTool = Tool.make("write_diff_walkthrough", {
   description: [
-    "Store a walkthrough (code tour) of a pull request or of a thread's checkpoint diff. T3 Code shows it beside the diff, and it replaces any earlier walkthrough for the same pull request or turn range.",
+    "Store a walkthrough (code tour) of a pull request, a thread's checkpoint diff, or a thread's branch. T3 Code shows it as a guided view of the diff, and it replaces any earlier walkthrough for the same pull request, turn range, or branch.",
     "groups are in suggested reading order, and each states the intent behind its files. Put EVERY changed file in exactly one group; files you leave out show under Other.",
     "notes anchor to a line range of one file in its group, numbered on the new side (additions) unless they describe deleted code (deletions). A note's summary is ONE line on what the hunk does: behavior, not style. body is optional markdown on why or how relative to the surrounding codebase; add it only when it says something the summary and the diff do not.",
     "For a pull request, headSha must be the head commit you actually read (`gh pr view <number> --json headRefOid`): T3 Code marks the walkthrough stale when the pull request head moves.",
     "For a thread diff, use read_thread_diff to read the same turn range first.",
+    "For a branch (before a pull request exists), use read_thread_diff with kind branch-range first; T3 Code reads the branch, merge base and HEAD from the thread's checkout, and marks the walkthrough stale when either commit moves. Commit first: uncommitted changes are not part of it.",
   ].join(" "),
   parameters: WriteDiffWalkthroughInput,
   success: WriteDiffWalkthroughResult,
@@ -158,6 +226,7 @@ const WriteDiffWalkthroughTool = Tool.make("write_diff_walkthrough", {
     PullRequestUrlInvalidError,
     PullRequestTargetIncompleteError,
     PullRequestHostRequiredError,
+    BranchRangeUnavailableError,
     DiffWalkthroughRejectedError,
   ]),
   dependencies,
@@ -169,11 +238,18 @@ const WriteDiffWalkthroughTool = Tool.make("write_diff_walkthrough", {
   .annotate(Tool.OpenWorld, false);
 
 const ReadThreadDiffTool = Tool.make("read_thread_diff", {
-  description:
-    "Read a thread's checkpoint diff as a unified diff. Turn counts number the thread's completed turns: turn N's changes are fromTurnCount N-1 to toTurnCount N, and the whole thread's changes are 0 to the latest turn. Large diffs are cut at a file boundary and list the files left out. Pairs with write_diff_walkthrough for a thread-diff walkthrough.",
+  description: [
+    "Read a thread's diff as a unified diff. Target kind thread-diff reads a checkpoint pair: turn counts number the thread's completed turns, so turn N's changes are fromTurnCount N-1 to toTurnCount N, and the whole thread's changes are 0 to the latest turn.",
+    "Target kind branch-range reads the thread checkout's current branch from its merge base with the base branch, as T3 Code's Changes view shows it, including uncommitted changes.",
+    "Large diffs are cut at a file boundary and list the files left out. Pairs with write_diff_walkthrough for a walkthrough of the same diff.",
+  ].join(" "),
   parameters: ReadThreadDiffInput,
   success: ReadThreadDiffResult,
-  failure: Schema.Union([OrchestratorMcpFailure, ThreadDiffReadFailedError]),
+  failure: Schema.Union([
+    OrchestratorMcpFailure,
+    ThreadDiffReadFailedError,
+    BranchRangeUnavailableError,
+  ]),
   dependencies,
 })
   .annotate(Tool.Title, "Read thread diff")
@@ -182,4 +258,29 @@ const ReadThreadDiffTool = Tool.make("read_thread_diff", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const DiffWalkthroughToolkit = Toolkit.make(WriteDiffWalkthroughTool, ReadThreadDiffTool);
+const ReadDiffWalkthroughTool = Tool.make("read_diff_walkthrough", {
+  description:
+    "Read the walkthrough stored for a pull request, a thread's checkpoint diff, or a thread's branch, as written by write_diff_walkthrough, and whether the diff has moved since it was written. Returns a null walkthrough when none is stored.",
+  parameters: ReadDiffWalkthroughInput,
+  success: ReadDiffWalkthroughResult,
+  failure: Schema.Union([
+    OrchestratorMcpFailure,
+    PullRequestUrlInvalidError,
+    PullRequestTargetIncompleteError,
+    PullRequestHostRequiredError,
+    BranchRangeUnavailableError,
+    DiffWalkthroughRejectedError,
+  ]),
+  dependencies,
+})
+  .annotate(Tool.Title, "Read diff walkthrough")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+export const DiffWalkthroughToolkit = Toolkit.make(
+  WriteDiffWalkthroughTool,
+  ReadThreadDiffTool,
+  ReadDiffWalkthroughTool,
+);
