@@ -18,7 +18,7 @@ import { useOpenLink } from "../browser/useOpenLink";
 import { useClientSettings } from "../hooks/useSettings";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { m } from "../i18n/messages";
-import { useRightPanelStore } from "../rightPanelStore";
+import { type PullRequestDetailTab, useRightPanelStore } from "../rightPanelStore";
 import {
   selectThreadBranchBaseRef,
   selectThreadDiffPanelSelection,
@@ -84,6 +84,7 @@ export function useOpenChangeRequestLink(
   targetThreadRef?: ScopedThreadRef,
   targetEnvironmentId?: EnvironmentId,
   onCommitUnavailable?: () => void,
+  tab?: PullRequestDetailTab,
 ) => boolean {
   const navigate = useNavigate();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -95,7 +96,7 @@ export function useOpenChangeRequestLink(
     refresh: true,
   });
   const openLink = useOpenLink(threadRef);
-  return (event, targetUrl, targetThreadRef, targetEnvironmentId, onCommitUnavailable) => {
+  return (event, targetUrl, targetThreadRef, targetEnvironmentId, onCommitUnavailable, tab) => {
     if (!openInApp || shouldOpenPullRequestExternally(event)) return false;
     const resolvedThreadRef = targetThreadRef ?? threadRef;
     const resolvedPanelRef = panelRef ?? resolvedThreadRef;
@@ -128,6 +129,7 @@ export function useOpenChangeRequestLink(
           url: targetUrl,
           ...(revealUrl === undefined ? {} : { revealUrl }),
           number,
+          ...(tab === undefined ? {} : { tab }),
         });
         if (!resolvedThreadRef) {
           void navigate({
@@ -256,6 +258,24 @@ export function useOpenChangeRequestLink(
     event.stopPropagation();
     return true;
   };
+}
+
+const PLAIN_OPEN = {
+  metaKey: false,
+  ctrlKey: false,
+  preventDefault: () => undefined,
+  stopPropagation: () => undefined,
+};
+
+/**
+ * Opens a pull request's Walkthrough tab beside a thread, through the same resolution as its link,
+ * so it lands on the tab the link opens. Never a browser: says false when no project here can read
+ * the pull request, for the caller to fall back.
+ */
+export function useOpenPullRequestWalkthrough() {
+  const openChangeRequest = useOpenChangeRequestLink();
+  return (threadRef: ScopedThreadRef, url: string) =>
+    openChangeRequest(PLAIN_OPEN, url, threadRef, undefined, undefined, "walkthrough");
 }
 
 export function useOpenPrLink(threadRef?: ScopedThreadRef) {
