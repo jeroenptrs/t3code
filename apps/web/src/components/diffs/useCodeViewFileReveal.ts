@@ -6,6 +6,9 @@ interface FileRevealHandle {
   scrollTo(target: CodeViewScrollTarget): void;
 }
 
+/** Room left above a revealed range, so it does not read as the first line of the file. */
+const RANGE_LEAD_IN_PX = 48;
+
 export function useCodeViewFileReveal<TScope>(
   viewer: FileRevealHandle | null,
   scope: TScope,
@@ -33,7 +36,8 @@ export function useCodeViewFileReveal<TScope>(
         type: "range",
         id: request.fileKey,
         range: request.range,
-        align: "center",
+        align: "start",
+        offset: RANGE_LEAD_IN_PX,
       });
     }
     handledRequest.current = request;
