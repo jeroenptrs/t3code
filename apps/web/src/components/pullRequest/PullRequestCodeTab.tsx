@@ -59,7 +59,7 @@ import {
 } from "react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 
-import { m, type MessageResolver } from "~/i18n/messages";
+import { m } from "~/i18n/messages";
 
 import { observeIntersection } from "~/lib/observeIntersection";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -145,6 +145,7 @@ import { parseSlice, usePullRequestDiffSlices } from "./usePullRequestDiffSlices
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { hasCutLines } from "@t3tools/shared/diffCutLines";
 import { CUT_LINES_CSS, markCutLineNotes } from "./cutLineNotes";
+import type { PullRequestFilesViewedView } from "./usePullRequestFilesViewed";
 import {
   nextPendingReviewCommentId,
   pullRequestReviewKey,
@@ -300,6 +301,7 @@ function PullRequestCodeTab({
   revealRequest = null,
   revealUrl,
   onRevealSettled,
+  filesViewed,
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
@@ -320,6 +322,8 @@ function PullRequestCodeTab({
   revealUrl?: string | undefined;
   onRevealSettled?: ((revealUrl: string) => void) | undefined;
   revealRequest?: { readonly path: string; readonly nonce: number } | null;
+  /** The panel's viewed ticks, shared with the Walkthrough tab. */
+  filesViewed: PullRequestFilesViewedView;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -415,11 +419,6 @@ function PullRequestCodeTab({
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
 
   const viewedFilesStore = detail.capabilities.viewedFiles;
-  const filesViewed = usePullRequestFilesViewed({
-    environmentId,
-    reference,
-    enabled: viewedFilesStore !== undefined,
-  });
   const {
     setViewed,
     refresh: refreshFilesViewed,

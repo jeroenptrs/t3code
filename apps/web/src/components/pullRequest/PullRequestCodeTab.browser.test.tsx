@@ -178,6 +178,16 @@ function setup({ paged }: { paged: boolean }) {
   mocks.viewedListeners.clear();
 }
 
+const noFilesViewed = {
+  enabled: false,
+  isViewed: () => false,
+  isStale: () => false,
+  setViewed: () => {},
+  truncated: false,
+  error: null,
+  refresh: () => {},
+};
+
 const tab = (
   refreshToken: number,
   revealRequest: { readonly path: string; readonly nonce: number } | null = null,
@@ -196,6 +206,7 @@ const tab = (
     revealRequest={revealRequest}
     revealUrl={revealUrl}
     onRevealSettled={onRevealSettled}
+    filesViewed={noFilesViewed}
   />
 );
 
@@ -364,6 +375,7 @@ it("never requests the diff of a selected commit the pull request no longer has"
       selectedCommitOid="gone"
       onSelectedCommitChange={() => {}}
       onRefresh={() => {}}
+      filesViewed={noFilesViewed}
     />,
     { container },
   );
@@ -396,6 +408,7 @@ it("answers a commit's diff link only once that commit's diff is shown", async (
       onSelectedCommitChange={() => {}}
       onRefresh={() => {}}
       revealUrl={revealUrl}
+      filesViewed={noFilesViewed}
       onRevealSettled={settled}
     />
   );
@@ -430,6 +443,7 @@ it("hides a resolved conversation behind avatars on its line until they are clic
       scrollerRef={() => {}}
       environmentId={EnvironmentId.make("environment")}
       reference={detail}
+      filesViewed={noFilesViewed}
       detail={{
         ...detail,
         capabilities: {
@@ -549,6 +563,7 @@ it("keeps an unsent reply when the appearance switches between light and dark", 
       selectedCommitOid={null}
       onSelectedCommitChange={() => {}}
       onRefresh={() => {}}
+      filesViewed={noFilesViewed}
     />,
     { container },
   );
