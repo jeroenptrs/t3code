@@ -5018,6 +5018,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const localChanges = local.sources.find((source) => source.kind === "branch-range")!;
         assert.isNull(localChanges.baseRef);
         assert.deepStrictEqual(localChanges.files, []);
+        const headSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+        assert.strictEqual(localChanges.headSha, headSha);
+        assert.strictEqual(localChanges.baseSha, headSha);
 
         yield* git(remote, ["init", "--bare"]);
         yield* git(cwd, ["remote", "add", "origin", remote]);
@@ -5035,6 +5038,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             deletions: 0,
           },
         ]);
+        assert.strictEqual(changes.headSha, headSha);
+        assert.strictEqual(changes.baseSha, yield* git(cwd, ["rev-parse", "HEAD~1"]));
+        const uncommitted = preview.sources.find((source) => source.kind === "working-tree")!;
+        assert.isUndefined(uncommitted.headSha);
+        assert.isUndefined(uncommitted.baseSha);
       }),
     );
 
@@ -5376,6 +5384,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.deepStrictEqual(changes.files, [
           { path: "new.txt", previousPath: null, changeType: "new", additions: 2, deletions: 0 },
         ]);
+        assert.isUndefined(changes.headSha);
+        assert.isUndefined(changes.baseSha);
         const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
         assert.deepStrictEqual(status.branchChanges, {
           baseRef: null,
