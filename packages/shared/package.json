@@ -235,6 +235,10 @@
       "types": "./src/threadPullRequests.ts",
       "import": "./src/threadPullRequests.ts"
     },
+    "./pullRequestWalkthroughPrompt": {
+      "types": "./src/pullRequestWalkthroughPrompt.ts",
+      "import": "./src/pullRequestWalkthroughPrompt.ts"
+    },
     "./changeRequestUrl": {
       "types": "./src/changeRequestUrl.ts",
       "import": "./src/changeRequestUrl.ts"
