@@ -19,7 +19,7 @@ const DiffWalkthroughJson = Schema.fromJsonString(DiffWalkthrough);
 const UpsertDiffWalkthroughInput = Schema.Struct({
   /** `diffWalkthroughTargetKey` of the walkthrough's target, after host resolution. */
   key: Schema.String,
-  kind: Schema.Literals(["pull-request", "thread-diff"]),
+  kind: Schema.Literals(["pull-request", "thread-diff", "branch-range"]),
   threadId: Schema.NullOr(ThreadId),
   walkthrough: DiffWalkthroughJson,
   /** When it was stored, as an ISO instant. */
