@@ -25,7 +25,8 @@ const RIGHT_PANEL_KINDS = [
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
-export type PullRequestDetailTab = "summary" | "guide" | "timeline" | "code";
+/** The pull request panel's tabs, in the order it shows them. */
+export type PullRequestDetailTab = "summary" | "guide" | "timeline" | "code" | "walkthrough";
 
 export interface DeviceTabTarget {
   hostId: string;
@@ -76,6 +77,12 @@ export type RightPanelSurface =
       /** A clicked link waiting for the panel to show where it points; cleared once shown. */
       revealUrl?: string;
       detailTab?: PullRequestDetailTab;
+      /**
+       * A tab the panel should switch to, asked for by whatever opened it. A fresh `requestId`
+       * per ask, so asking again for a panel already open still moves it. Session-only: a
+       * reload restores the panel without it.
+       */
+      tabRequest?: { tab: PullRequestDetailTab; requestId: number };
     }
   | { id: "pull-requests"; kind: "pull-requests" }
   | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
@@ -153,6 +160,8 @@ interface RightPanelStoreState {
       /** A clicked link to reveal; reopening a surface passes only its `url`. */
       revealUrl?: string;
       detailTab?: PullRequestDetailTab;
+      /** Switch the panel to this tab, whether it was already open or not. */
+      tab?: PullRequestDetailTab;
     },
   ) => void;
   setPullRequestDetailTab: (
@@ -263,6 +272,9 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
 });
 
 export type PullRequestSurface = Extract<RightPanelSurface, { kind: "pull-request" }>;
+
+/** Counts tab requests for the session, so no two of them share an id. */
+let pullRequestTabRequests = 0;
 
 export function pullRequestSurfaceId(target: {
   environmentId?: string;
@@ -763,10 +775,18 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       openPullRequest: (ref, target) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
-            const surface = pullRequestSurface(target);
+            const opened = pullRequestSurface(target);
+            const surface: PullRequestSurface =
+              target.tab === undefined
+                ? opened
+                : {
+                    ...opened,
+                    detailTab: target.tab,
+                    tabRequest: { tab: target.tab, requestId: ++pullRequestTabRequests },
+                  };
             const next = upsertSurface(current, surface);
             const { url, revealUrl } = target;
-            if (!url && !revealUrl) return next;
+            if (!url && !revealUrl && target.tab === undefined) return next;
             return {
               ...next,
               surfaces: next.surfaces.map((entry) => {

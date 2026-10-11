@@ -1,10 +1,8 @@
 import {
   DIFF_WALKTHROUGH_OTHER_GROUP_ID,
   groupDiffWalkthroughFiles,
-  isDiffWalkthroughStale,
   type DiffWalkthrough,
   type DiffWalkthroughNote,
-  type DiffWalkthroughTarget,
 } from "@t3tools/contracts";
 
 export interface DiffWalkthroughRailNote {
@@ -137,19 +135,4 @@ export function activeDiffWalkthroughEntryKey(
     activeTop = top;
   }
   return active;
-}
-
-/**
- * What the rail says when the walkthrough was written for another revision. Null when it is
- * current, and when the live revision is unknown, since there is nothing to tell it by.
- */
-export function diffWalkthroughStaleNotice(
-  walkthrough: Pick<DiffWalkthrough, "target">,
-  liveTarget: DiffWalkthroughTarget | null,
-): string | null {
-  if (liveTarget === null || !isDiffWalkthroughStale(walkthrough, liveTarget)) return null;
-  const stored = walkthrough.target;
-  return stored.kind === "pull-request"
-    ? `Out of date: written for ${stored.headSha.slice(0, 7)}`
-    : "Out of date";
 }
