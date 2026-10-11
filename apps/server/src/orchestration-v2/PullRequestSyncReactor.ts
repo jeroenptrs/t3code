@@ -34,6 +34,7 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as PullRequestAutoWalkthrough from "./PullRequestAutoWalkthrough.ts";
 import { isTerminalRunStatus } from "./ThreadManagementService.ts";
 
 const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
@@ -194,6 +195,7 @@ export const make = Effect.gen(function* () {
   const pullRequests = yield* PullRequestService.PullRequestService;
   const git = yield* GitManager.GitManager;
   const crypto = yield* Crypto.Crypto;
+  const autoWalkthrough = yield* PullRequestAutoWalkthrough.PullRequestAutoWalkthrough;
 
   const lastSyncedAt = new Map<string, number>();
   const requested = new Set<string>();
@@ -431,6 +433,8 @@ export const make = Effect.gen(function* () {
           ),
         { discard: true },
       );
+      // The entries hold the snapshots from before this read, so a new link still reads as new.
+      yield* autoWalkthrough.observe({ key, reference: ref, summary, entries });
     });
 
     const skips = new Map<string, { count: number; readonly key: string }>();
