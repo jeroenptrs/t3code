@@ -30,6 +30,8 @@ function canonicalTarget(target: DiffWalkthroughTargetIdentity): DiffWalkthrough
         fromTurnCount: target.fromTurnCount,
         toTurnCount: target.toTurnCount,
       };
+    case "branch-range":
+      return { kind: target.kind, projectId: target.projectId, branch: target.branch };
   }
 }
 
