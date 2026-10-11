@@ -50,6 +50,7 @@ import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
+import { isEditableFocused } from "~/lib/editableFocus";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { usePullRequestDefaultMergeMethodResolver } from "./usePullRequestActions";
 import { OFF_HEAD_PULL_REQUEST_CHECKOUT_TOAST } from "./pullRequestCheckoutToast";
@@ -99,6 +100,7 @@ import { PullRequestTitleEditor } from "./PullRequestTitleEditor";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import type { DiffWalkthroughViewHandle } from "../diffs/DiffWalkthroughView";
+import { walkthroughStepForCommand } from "../diffs/diffWalkthroughView.logic";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel } from "./pullRequestLinkContextMenu";
@@ -481,18 +483,27 @@ export function PullRequestDetailPanel({
         description: error.message,
       }),
   });
-  const copyFromShortcut = useEffectEvent((event: KeyboardEvent) => {
+  const runPanelShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (!shortcutsEnabled || event.defaultPrevented || isCommandPaletteOpen()) return;
     const command = resolveShortcutCommand(event, keybindings, {
-      context: getShortcutContext(),
+      context: { ...getShortcutContext(), editableFocus: isEditableFocused(event.target) },
     });
-    if (command !== "pullRequest.copyNumber") return;
+    if (command === "pullRequest.copyNumber") {
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) copyReference(`#${reference.number}`, "PR number");
+      return;
+    }
+    const step = walkthroughStepForCommand(command);
+    const handle = walkthroughHandle.current;
+    if (step === null || tab !== "walkthrough" || handle === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // Held down, marking would sweep through every section the reader never saw.
+    if (!event.repeat || command !== "walkthrough.markReviewed") step(handle);
   });
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => copyFromShortcut(event);
+    const onKeyDown = (event: KeyboardEvent) => runPanelShortcut(event);
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);

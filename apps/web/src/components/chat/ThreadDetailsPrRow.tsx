@@ -11,6 +11,7 @@ import {
   EyeOffIcon,
   FileDiffIcon,
   GitBranchIcon,
+  RouteIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 import { AsyncResult } from "effect/reactivity";
@@ -90,6 +91,7 @@ export function ThreadDetailsPrRow({
   onOpen,
   onActed,
   onStopWatching,
+  onOpenWalkthrough,
 }: {
   environmentId: EnvironmentId;
   pr: ThreadPr;
@@ -102,6 +104,8 @@ export function ThreadDetailsPrRow({
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: () => void;
   onStopWatching?: (() => void) | undefined;
+  /** Opens this pull request's Walkthrough tab beside the thread. */
+  onOpenWalkthrough?: (() => void) | undefined;
 }) {
   const serverConfigs = useServerConfigs();
   const supportsPullRequests =
@@ -415,10 +419,33 @@ export function ThreadDetailsPrRow({
   );
 
   const showChecks = detail !== null && checksRollup !== null && !conflicting && !detail.isDraft;
+  // Only opens the view: generating one is the view's own empty-state action.
+  const walkthroughControl =
+    onOpenWalkthrough !== undefined && detail?.capabilities.diff === true ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <ThreadDetailsControl
+              type="button"
+              variant="ghost"
+              size="sm"
+              part="icon"
+              tone="muted"
+              aria-label="Open walkthrough"
+              onClick={onOpenWalkthrough}
+            />
+          }
+        >
+          <RouteIcon aria-hidden className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">Open walkthrough</TooltipPopup>
+      </Tooltip>
+    ) : null;
 
   return (
     <>
-      {detail !== null && (showChecks || trailingAction !== null || watching) ? (
+      {detail !== null &&
+      (showChecks || trailingAction !== null || watching || walkthroughControl !== null) ? (
         <div className="pb-2">
           {openRow(detail.title, "row")}
           <div className="-mt-1 flex h-6 min-w-0 items-center gap-0.5 ps-9 pe-1 text-xs text-muted-foreground">
@@ -433,6 +460,7 @@ export function ThreadDetailsPrRow({
             ) : null}
             {watchControl("icon")}
             <span className="flex-1" />
+            {walkthroughControl}
             {trailingAction ? (
               <Tooltip>
                 <TooltipTrigger
