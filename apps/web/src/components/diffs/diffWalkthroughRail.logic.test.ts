@@ -12,7 +12,6 @@ import {
   buildDiffWalkthroughRail,
   diffWalkthroughGroupProgress,
   diffWalkthroughNotesByPath,
-  diffWalkthroughStaleNotice,
   lastIndexAtOrAbove,
 } from "./diffWalkthroughRail.logic";
 
@@ -162,18 +161,5 @@ describe("activeDiffWalkthroughEntryKey", () => {
       activeDiffWalkthroughEntryKey(notesByPath, { path: "README.md", probe: 450, noteTop }),
     ).toBe("file:README.md");
     expect(activeDiffWalkthroughEntryKey(notesByPath, null)).toBeNull();
-  });
-});
-
-describe("diffWalkthroughStaleNotice", () => {
-  it("names the short commit a stale walkthrough was written for", () => {
-    expect(diffWalkthroughStaleNotice(walkthrough, target("fedcba"))).toBe(
-      "Out of date: written for abcdef1",
-    );
-  });
-
-  it("is null when current or when the live revision is unknown", () => {
-    expect(diffWalkthroughStaleNotice(walkthrough, target("abcdef1234567890"))).toBeNull();
-    expect(diffWalkthroughStaleNotice(walkthrough, null)).toBeNull();
   });
 });
