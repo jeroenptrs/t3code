@@ -1420,6 +1420,41 @@ describe("PullRequestSyncReactor automatic walkthroughs", () => {
     ),
   );
 
+  it.effect("skips a pull request whose head branch has a walkthrough at its head", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          autoWalkthrough: true,
+          snapshot: makeSnapshot([
+            makeThread("owner", { pullRequests: [makeLink(7, null, { source: "created" })] }),
+          ]),
+          storedWalkthrough: (target) =>
+            target.kind === "branch-range" && target.branch === "feature"
+              ? {
+                  ...makeWalkthrough(PROJECT_ID, 7, "head-a"),
+                  target: {
+                    kind: "branch-range",
+                    projectId: PROJECT_ID,
+                    branch: "feature",
+                    baseSha: "base-a",
+                    headSha: "head-a",
+                  },
+                }
+              : null,
+        });
+        yield* Effect.gen(function* () {
+          yield* startAndSweep(fixture);
+          const commands = yield* Ref.get(fixture.syncCommands);
+          yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands));
+          yield* waitOutQuietWindow;
+          assert.strictEqual((yield* Ref.get(fixture.detailCalls)).length, 1);
+          assert.strictEqual(yield* Queue.size(fixture.messages), 0);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("skips a closed pull request", () =>
     Effect.scoped(
       Effect.gen(function* () {
