@@ -196,6 +196,14 @@ const make = Effect.gen(function* () {
       });
       if (stored?.target.kind === "pull-request" && stored.target.headSha === target.detail.headSha)
         return;
+      // A walkthrough of the head branch at this head is what the PR panel shows in its place.
+      const branch = yield* walkthroughs.get({
+        kind: "branch-range",
+        projectId: target.projectId,
+        branch: target.detail.headBranch,
+      });
+      if (branch?.target.kind === "branch-range" && branch.target.headSha === target.detail.headSha)
+        return;
       yield* engine.dispatch(walkthroughRequest(target));
     },
     Effect.catchCause((cause) =>
