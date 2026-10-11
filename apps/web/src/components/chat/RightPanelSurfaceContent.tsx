@@ -141,6 +141,7 @@ export function RightPanelSurfaceContent(props: {
             });
           }}
           threadRef={threadRef}
+          requestedTab={surface.tabRequest ?? null}
           reference={{
             projectId: surface.projectId as ProjectId,
             ...(surface.host ? { host: surface.host } : {}),
