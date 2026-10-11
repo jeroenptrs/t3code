@@ -20,7 +20,6 @@ import {
   CopyIcon,
   HammerIcon,
   LinkIcon,
-  MapIcon,
   MessageCircleQuestionIcon,
   MoreHorizontalIcon,
   RotateCcwIcon,
@@ -75,7 +74,6 @@ export function PullRequestActionsMenu({
   attachesToComposer,
   askAboutPullRequest,
   explainPullRequest,
-  generateWalkthrough,
   canFixFindings,
   startFixFindings,
   handoffLabels,
@@ -128,8 +126,6 @@ export function PullRequestActionsMenu({
   attachesToComposer: boolean;
   askAboutPullRequest: () => void;
   explainPullRequest: () => void;
-  /** Absent when the client cannot operate threads: the task is sent as a turn. */
-  generateWalkthrough?: () => void;
   canFixFindings: boolean;
   startFixFindings: () => void;
   handoffLabels: { readonly fixFindings: string };
@@ -270,17 +266,6 @@ export function PullRequestActionsMenu({
             </span>
           </span>
         </MenuItem>
-        {generateWalkthrough ? (
-          <MenuItem disabled={handoff !== null} onClick={generateWalkthrough}>
-            <MapIcon className="mt-1 size-3.5 shrink-0 self-start" />
-            <span className="flex min-w-0 flex-col">
-              <span>{handoff === "walkthrough" ? "Opening..." : "Generate walkthrough"}</span>
-              <span className="text-xs text-muted-foreground">
-                Notes on each change, in the Code tab's walkthrough rail.
-              </span>
-            </span>
-          </MenuItem>
-        ) : null}
         <MenuItem disabled={handoff !== null || !canFixFindings} onClick={startFixFindings}>
           <HammerIcon className="size-3.5" />
           {handoff === "findings" ? "Preparing..." : handoffLabels.fixFindings}
