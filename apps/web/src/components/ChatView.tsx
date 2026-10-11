@@ -11092,6 +11092,7 @@ export default function ChatView(props: ChatViewProps) {
             });
         }}
         threadRef={activeThreadRef}
+        requestedTab={renderedRightPanelSurface.tabRequest ?? null}
         reference={{
           projectId: renderedRightPanelSurface.projectId as ProjectId,
           ...(renderedRightPanelSurface.host ? { host: renderedRightPanelSurface.host } : {}),

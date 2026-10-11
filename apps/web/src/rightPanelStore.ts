@@ -83,6 +83,12 @@ export type RightPanelSurface =
       repository: string;
       number: number;
       url?: string;
+      /**
+       * A tab the panel should switch to, asked for by whatever opened it. A fresh `requestId`
+       * per ask, so asking again for a panel already open still moves it. Session-only: a
+       * reload restores the panel without it.
+       */
+      tabRequest?: { tab: PullRequestPanelTab; requestId: number };
     }
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
   | { id: "pull-requests"; kind: "pull-requests" };
@@ -162,6 +168,8 @@ interface RightPanelStoreState {
       repository: string;
       number: number;
       url?: string;
+      /** Switch the panel to this tab, whether it was already open or not. */
+      tab?: PullRequestPanelTab;
     },
   ) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
@@ -263,6 +271,12 @@ const terminalSurface = (terminalId: string): RightPanelSurface => ({
 });
 
 export type PullRequestSurface = Extract<RightPanelSurface, { kind: "pull-request" }>;
+
+/** The pull request panel's tabs, in the order it shows them. */
+export type PullRequestPanelTab = "summary" | "timeline" | "code" | "walkthrough";
+
+/** Counts tab requests for the session, so no two of them share an id. */
+let pullRequestTabRequests = 0;
 
 export function pullRequestSurfaceId(target: {
   environmentId?: string;
@@ -694,9 +708,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       openPullRequest: (ref, target) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
-            const surface = pullRequestSurface(target);
+            const opened = pullRequestSurface(target);
+            const surface: PullRequestSurface =
+              target.tab === undefined
+                ? opened
+                : {
+                    ...opened,
+                    tabRequest: { tab: target.tab, requestId: ++pullRequestTabRequests },
+                  };
             const next = upsertSurface(current, surface);
-            return target.url
+            return target.url || target.tab !== undefined
               ? {
                   ...next,
                   surfaces: next.surfaces.map((entry) =>
