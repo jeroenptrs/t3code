@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
+import { useRightPanelStore } from "./rightPanelStore";
 
 export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }
@@ -146,4 +147,17 @@ export function selectThreadDiffPanelSelection(
 ): DiffPanelSelection {
   if (!ref) return DEFAULT_SELECTION;
   return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_SELECTION;
+}
+
+/**
+ * Opens the thread's Diff panel on its walkthrough. Uncommitted changes have none, so that scope
+ * gives way to the branch rather than leave the panel on its diff.
+ */
+export function openThreadDiffWalkthrough(ref: ScopedThreadRef): void {
+  const diffPanel = useDiffPanelStore.getState();
+  if (selectThreadDiffPanelSelection(diffPanel.byThreadKey, ref).kind === "unstaged") {
+    diffPanel.selectGitScope(ref, "branch");
+  }
+  diffPanel.setView("walkthrough");
+  useRightPanelStore.getState().open(ref, "diff");
 }
