@@ -102,6 +102,8 @@ export interface DiffWalkthroughViewProps {
   readonly emptyDescription?: string;
   /** Loads whole files so the reader can expand context around a hunk. */
   readonly loadDiffFiles?: FileDiffContentsLoader | undefined;
+  /** A host's own line wrapping, where it keeps one apart from the client setting. */
+  readonly wordWrap?: boolean | undefined;
   /** For links in note bodies. */
   readonly cwd: string | undefined;
   readonly environmentId: EnvironmentId | undefined;
@@ -177,6 +179,7 @@ function WalkthroughSections({
   onGenerate,
   generatePending = false,
   loadDiffFiles,
+  wordWrap,
   cwd,
   environmentId,
   handleRef,
@@ -362,7 +365,7 @@ function WalkthroughSections({
           onGoToSection={goTo}
           resolvedTheme={resolvedTheme}
           diffLayout={settings.diffLayout}
-          wordWrap={settings.wordWrap}
+          wordWrap={wordWrap ?? settings.wordWrap}
           loadDiffFiles={loadDiffFiles}
           cwd={cwd}
           environmentId={environmentId}
