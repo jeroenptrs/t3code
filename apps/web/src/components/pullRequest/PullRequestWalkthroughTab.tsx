@@ -29,7 +29,7 @@ import {
 } from "../diffs/diffWalkthroughView.logic";
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { usePullRequestDiffSlices } from "./usePullRequestDiffSlices";
-import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
+import type { PullRequestFilesViewedView } from "./usePullRequestFilesViewed";
 
 /**
  * The pull request's walkthrough beside its whole diff, a section at a time. Opening it reads
@@ -44,6 +44,7 @@ function PullRequestWalkthroughTab({
   handleRef,
   scrollerRef,
   refreshToken = 0,
+  filesViewed,
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
@@ -55,6 +56,8 @@ function PullRequestWalkthroughTab({
   handleRef?: Ref<DiffWalkthroughViewHandle>;
   /** Bumped by the panel's refresh button: drop the accumulated pages and re-read the diff. */
   refreshToken?: number;
+  /** The panel's viewed ticks, shared with the Code tab. */
+  filesViewed: PullRequestFilesViewedView;
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
@@ -151,13 +154,6 @@ function PullRequestWalkthroughTab({
     if (walkthroughReady && canLoadNextSlice) loadNextSlice();
   }, [canLoadNextSlice, loadNextSlice, walkthroughReady]);
 
-  const filePaths = useMemo(() => diffFiles.map((file) => resolveFileDiffPath(file)), [diffFiles]);
-  const filesViewed = usePullRequestFilesViewed({
-    environmentId,
-    reference,
-    enabled: detail.capabilities.viewedFiles !== undefined,
-    paths: filePaths,
-  });
   const { enabled: viewedEnabled, isViewed, isStale, setViewed } = filesViewed;
   const viewed = useMemo<DiffWalkthroughViewedFiles | null>(
     () => (viewedEnabled ? { isViewed, isStale, setViewed } : null),
