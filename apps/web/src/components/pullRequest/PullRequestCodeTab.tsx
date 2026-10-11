@@ -106,7 +106,7 @@ import {
 } from "./pullRequestDiff.logic";
 import { PullRequestMetaLine } from "./pullRequestPresentation";
 import { usePullRequestDiffSlices } from "./usePullRequestDiffSlices";
-import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
+import type { PullRequestFilesViewedView } from "./usePullRequestFilesViewed";
 import {
   nextPendingReviewCommentId,
   pullRequestReviewKey,
@@ -354,6 +354,7 @@ function PullRequestCodeTab({
   onRefresh,
   refreshToken = 0,
   revealRequest = null,
+  filesViewed,
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
@@ -368,6 +369,8 @@ function PullRequestCodeTab({
   onRefresh: () => void;
   refreshToken?: number;
   revealRequest?: { readonly path: string; readonly nonce: number } | null;
+  /** The panel's viewed ticks, shared with the Walkthrough tab. */
+  filesViewed: PullRequestFilesViewedView;
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
@@ -463,12 +466,6 @@ function PullRequestCodeTab({
   const canCommentOnLines = review.inlineComment && commit === null;
   const fileTreeEntries = diffFileTreeEntries(files);
   const viewedFilesStore = detail.capabilities.viewedFiles;
-  const filesViewed = usePullRequestFilesViewed({
-    environmentId,
-    reference,
-    enabled: viewedFilesStore !== undefined,
-    paths: filePaths,
-  });
   const {
     setViewed,
     refresh: refreshFilesViewed,
@@ -476,6 +473,7 @@ function PullRequestCodeTab({
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
+  const viewedCount = filePaths.filter((path) => isFileViewed(path)).length;
   const appliedRefreshToken = useRef(refreshToken);
   useEffect(() => {
     if (appliedRefreshToken.current === refreshToken) return;
@@ -886,7 +884,7 @@ function PullRequestCodeTab({
           {filesViewed.enabled && files.length > 0 ? (
             <span className="flex min-w-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
-                {filesViewed.viewedCount} / {files.length}
+                {viewedCount} / {files.length}
               </span>
               <span className="truncate">
                 {viewedFilesStore === "environment" ? `viewed in ${APP_BASE_NAME}` : "viewed"}

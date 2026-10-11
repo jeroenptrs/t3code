@@ -77,6 +77,7 @@ import {
 } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { usePullRequestDefaultMergeMethodResolver } from "./usePullRequestActions";
+import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { changeRequestRepositoryUrl, gitHubPullRequestBrowserUrl } from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
 import { cn } from "~/lib/utils";
@@ -749,6 +750,16 @@ export function PullRequestDetailPanel({
     activity,
     canWriteSourceControl,
   );
+  // One set of viewed ticks for the Code and Walkthrough tabs, so a file cleared in one is
+  // cleared in the other at once rather than after the host's next answer. Read only once a tab
+  // that shows them has been opened.
+  const filesViewed = usePullRequestFilesViewed({
+    environmentId,
+    reference,
+    enabled:
+      detail?.capabilities.viewedFiles !== undefined &&
+      (mountedTabs.has("code") || mountedTabs.has("walkthrough")),
+  });
   const handoffSummary = detail ?? sharedSummary;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { copyToClipboard: copyReference } = useCopyToClipboard<string>({
@@ -2907,6 +2918,7 @@ export function PullRequestDetailPanel({
                     onRefresh={refreshDetail}
                     refreshToken={codeRefreshToken}
                     revealRequest={codeRevealRequest}
+                    filesViewed={filesViewed}
                   />
                 </Suspense>
               </div>
@@ -2923,6 +2935,7 @@ export function PullRequestDetailPanel({
                     generatePending={handoff === "walkthrough"}
                     handleRef={walkthroughHandle}
                     refreshToken={codeRefreshToken}
+                    filesViewed={filesViewed}
                   />
                 </Suspense>
               </div>
