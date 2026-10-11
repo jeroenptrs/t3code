@@ -141,6 +141,15 @@ const tab = (
     onRefresh={() => {}}
     refreshToken={refreshToken}
     revealRequest={revealRequest}
+    filesViewed={{
+      enabled: false,
+      isViewed: () => false,
+      isStale: () => false,
+      setViewed: () => {},
+      truncated: false,
+      error: null,
+      refresh: () => {},
+    }}
   />
 );
 
