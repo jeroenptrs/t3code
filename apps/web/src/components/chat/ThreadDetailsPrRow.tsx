@@ -412,9 +412,12 @@ export function ThreadDetailsPrRow({
   );
 
   const showChecks = detail !== null && checksRollup !== null && !conflicting && !detail.isDraft;
-  // Only opens the view: generating one is the view's own empty-state action.
+  // Only opens the view: generating one is the view's own empty-state action. A merged or closed
+  // pull request is past reviewing, so the row keeps its single line there.
   const walkthroughControl =
-    onOpenWalkthrough !== undefined && detail?.capabilities.diff === true ? (
+    onOpenWalkthrough !== undefined &&
+    detail?.capabilities.diff === true &&
+    detail.state === "open" ? (
       <Tooltip>
         <TooltipTrigger
           render={
