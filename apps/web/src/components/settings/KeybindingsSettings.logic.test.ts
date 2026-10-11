@@ -91,6 +91,15 @@ describe("KeybindingsSettings.logic", () => {
     expect(composer?.rows.map((row) => row.command)).toEqual(
       expect.arrayContaining(["composer.host", "modelPicker.toggle"]),
     );
+    const previewAndDiff = groups.find((group) => group.id === "preview");
+    expect(previewAndDiff?.rows.map((row) => row.command)).toEqual(
+      expect.arrayContaining([
+        "diff.toggle",
+        "walkthrough.previousSection",
+        "walkthrough.nextSection",
+        "walkthrough.markReviewed",
+      ]),
+    );
     expect(
       groupKeybindingRows(
         filterKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS), "split"),
@@ -414,6 +423,10 @@ describe("KeybindingsSettings.logic", () => {
     expect(commandLabel("themeEditor.toggle")).toBe("Theme Editor: Toggle");
     expect(commandLabel("view.reopenClosed")).toBe("Reopen Closed Tab");
     expect(commandLabel("preview.focusUrl")).toBe("Preview: Focus URL");
+    expect(commandLabel("walkthrough.nextSection")).toBe("Walkthrough: Next Section");
+    expect(commandLabel("walkthrough.markReviewed")).toBe(
+      "Walkthrough: Mark Reviewed and Continue",
+    );
     expect(commandLabel("script.setup-db.run")).toBe("Run Script: Setup Db");
   });
 
