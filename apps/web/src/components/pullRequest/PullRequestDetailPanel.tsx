@@ -1984,9 +1984,6 @@ export function PullRequestDetailPanel({
                     fixFindingLabel={handoffLabels.fixFinding}
                     {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
                     {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
-                    {...(canGenerateWalkthrough && handoff === null
-                      ? { onGenerateWalkthrough: generateWalkthrough }
-                      : {})}
                     onRefresh={refreshDetail}
                     refreshToken={refreshToken}
                     backgroundRefreshToken={turnRefresh ?? 0}
