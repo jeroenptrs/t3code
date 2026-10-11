@@ -22,6 +22,14 @@ const PR_TARGET = {
   headSha: "abc123",
 } as const;
 
+const BRANCH_TARGET = {
+  kind: "branch-range",
+  projectId: "project-1",
+  branch: "jeroen/walkthrough",
+  baseSha: "base111",
+  headSha: "head222",
+} as const;
+
 const WALKTHROUGH = {
   target: PR_TARGET,
   summary: "Adds a walkthrough rail.",
@@ -128,6 +136,17 @@ describe("DiffWalkthrough", () => {
     ).toThrow(/startLine must be less than or equal to endLine/);
   });
 
+  it("decodes a branch-range walkthrough", () => {
+    const decoded = decodeWalkthrough({ ...WALKTHROUGH, target: BRANCH_TARGET });
+    expect(decoded.target).toEqual(BRANCH_TARGET);
+  });
+
+  it("rejects a branch range without both ends", () => {
+    const { baseSha: _baseSha, ...withoutBase } = BRANCH_TARGET;
+    expect(() => decodeTarget(withoutBase)).toThrow();
+    expect(() => decodeTarget({ ...BRANCH_TARGET, branch: "  " })).toThrow();
+  });
+
   it("rejects a thread diff range that runs backwards", () => {
     expect(() =>
       decodeTarget({ kind: "thread-diff", threadId: "thread-1", fromTurnCount: 3, toTurnCount: 2 }),
@@ -167,6 +186,17 @@ describe("diffWalkthroughTargetKey", () => {
       "thread-diff:thread-1:1-3",
     );
   });
+
+  it("keys a branch range by project and branch, without its SHAs", () => {
+    const key = diffWalkthroughTargetKey(decodeTarget(BRANCH_TARGET));
+    expect(key).toBe("branch-range:project-1:jeroen/walkthrough");
+    expect(
+      diffWalkthroughTargetKey(decodeTarget({ ...BRANCH_TARGET, baseSha: "b", headSha: "h" })),
+    ).toBe(key);
+    expect(diffWalkthroughTargetKey(decodeTarget({ ...BRANCH_TARGET, branch: "main" }))).not.toBe(
+      key,
+    );
+  });
 });
 
 describe("isDiffWalkthroughStale", () => {
@@ -176,6 +206,17 @@ describe("isDiffWalkthroughStale", () => {
     expect(isDiffWalkthroughStale(walkthrough, decodeTarget(PR_TARGET))).toBe(false);
     expect(
       isDiffWalkthroughStale(walkthrough, decodeTarget({ ...PR_TARGET, headSha: "def" })),
+    ).toBe(true);
+  });
+
+  it("is stale once either end of a branch range moves", () => {
+    const branchWalkthrough = { target: decodeTarget(BRANCH_TARGET) };
+    expect(isDiffWalkthroughStale(branchWalkthrough, decodeTarget(BRANCH_TARGET))).toBe(false);
+    expect(
+      isDiffWalkthroughStale(branchWalkthrough, decodeTarget({ ...BRANCH_TARGET, headSha: "h" })),
+    ).toBe(true);
+    expect(
+      isDiffWalkthroughStale(branchWalkthrough, decodeTarget({ ...BRANCH_TARGET, baseSha: "b" })),
     ).toBe(true);
   });
 
