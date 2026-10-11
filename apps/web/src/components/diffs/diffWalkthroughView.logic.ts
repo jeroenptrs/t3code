@@ -1,4 +1,5 @@
 import {
+  type KeybindingCommand,
   DIFF_WALKTHROUGH_OTHER_GROUP_ID,
   groupDiffWalkthroughFiles,
   isDiffWalkthroughStale,
@@ -6,6 +7,8 @@ import {
   type DiffWalkthroughNote,
   type DiffWalkthroughTarget,
 } from "@t3tools/contracts";
+
+import type { DiffWalkthroughViewHandle } from "./DiffWalkthroughView";
 
 export interface DiffWalkthroughSectionNote {
   /** The note's index in the walkthrough, stable for as long as the walkthrough is. */
@@ -141,4 +144,19 @@ export function pickPullRequestWalkthrough(
   if (branchRange === null || liveHeadSha === null) return null;
   if (branchRange.target.kind !== "branch-range") return null;
   return branchRange.target.headSha === liveHeadSha ? branchRange : null;
+}
+
+const WALKTHROUGH_STEPS: Partial<
+  Record<KeybindingCommand, (handle: DiffWalkthroughViewHandle) => void>
+> = {
+  "walkthrough.previousSection": (handle) => handle.previous(),
+  "walkthrough.nextSection": (handle) => handle.next(),
+  "walkthrough.markReviewed": (handle) => handle.markReviewedAndContinue(),
+};
+
+/** What a keybinding does to the walkthrough on screen; null for commands that are not its own. */
+export function walkthroughStepForCommand(
+  command: KeybindingCommand | null,
+): ((handle: DiffWalkthroughViewHandle) => void) | null {
+  return command === null ? null : (WALKTHROUGH_STEPS[command] ?? null);
 }
