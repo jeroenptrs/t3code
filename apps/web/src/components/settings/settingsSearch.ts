@@ -1219,6 +1219,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("linear jira issues tracker team api key connect bind project")],
   },
   {
+    id: "pull-request-auto-walkthrough",
+    title: "Generate walkthroughs automatically when a pull request is linked or pushed",
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: ["diff walkthrough guide review agent push linked pull request automatic"],
+  },
+  {
     id: "source-control",
     title: msg("Source control"),
     to: "/settings/source-control",
