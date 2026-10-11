@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
+import { useRightPanelStore } from "./rightPanelStore";
 
 export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }
@@ -13,9 +14,15 @@ export type DiffPanelSelection =
 // "branch" is the Changes view: everything this checkout changed since its base.
 const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 
+/** What the panel shows of its selection: the diff itself, or the walkthrough of it. */
+export type DiffPanelView = "diff" | "walkthrough";
+
 interface DiffPanelStoreState {
   byThreadKey: Record<string, DiffPanelSelection>;
   branchBaseRefByThreadKey: Record<string, string | null>;
+  /** One choice for every thread, as the layout and file tree toggles are. */
+  view: DiffPanelView;
+  setView: (view: DiffPanelView) => void;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
@@ -33,6 +40,8 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
     (set) => ({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      view: "diff",
+      setView: (view) => set({ view }),
       selectGitScope: (ref, scope) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -126,6 +135,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
       partialize: (state) => ({
         byThreadKey: state.byThreadKey,
         branchBaseRefByThreadKey: state.branchBaseRefByThreadKey,
+        view: state.view,
       }),
     },
   ),
@@ -137,4 +147,17 @@ export function selectThreadDiffPanelSelection(
 ): DiffPanelSelection {
   if (!ref) return DEFAULT_SELECTION;
   return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_SELECTION;
+}
+
+/**
+ * Opens the thread's Diff panel on its walkthrough. Uncommitted changes have none, so that scope
+ * gives way to the branch rather than leave the panel on its diff.
+ */
+export function openThreadDiffWalkthrough(ref: ScopedThreadRef): void {
+  const diffPanel = useDiffPanelStore.getState();
+  if (selectThreadDiffPanelSelection(diffPanel.byThreadKey, ref).kind === "unstaged") {
+    diffPanel.selectGitScope(ref, "branch");
+  }
+  diffPanel.setView("walkthrough");
+  useRightPanelStore.getState().open(ref, "diff");
 }

@@ -351,6 +351,8 @@ import {
 } from "./chat/composerProviderState";
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "../lib/terminalCloseConfirm";
 import { isPreviewFocused } from "../lib/previewFocus";
+import type { DiffWalkthroughViewHandle } from "./diffs/DiffWalkthroughView";
+import { walkthroughStepForCommand } from "./diffs/diffWalkthroughView.logic";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import {
   preventRepeatedTerminalCloseShortcut,
@@ -8006,6 +8008,7 @@ export default function ChatView(props: ChatViewProps) {
     ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
     : EMPTY_PROVIDER_SKILLS;
   const threadFindControlsRef = useRef<ThreadFindControls | null>(null);
+  const diffWalkthroughHandleRef = useRef<DiffWalkthroughViewHandle>(null);
   const [isThreadFindActive, setIsThreadFindActive] = useState(false);
   const openThreadFind = useCallback(() => threadFindControlsRef.current?.open(), []);
   const closeThreadFind = useCallback(() => threadFindControlsRef.current?.close(), []);
@@ -8221,6 +8224,17 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      // A pull request panel's Walkthrough tab answers these keys itself, ahead of this handler.
+      const walkthroughStep = walkthroughStepForCommand(command);
+      if (walkthroughStep !== null) {
+        const handle = diffWalkthroughHandleRef.current;
+        if (!rightPanelOpen || activeRightPanelSurface?.kind !== "diff" || handle === null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat || command !== "walkthrough.markReviewed") walkthroughStep(handle);
+        return;
+      }
+
       if (command === "modelPicker.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -8331,6 +8345,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activeProject,
     activeRightPanelSurface,
+    rightPanelOpen,
     activeProjectScripts,
     canReadTerminal,
     canOperateTerminal,
@@ -10969,6 +10984,8 @@ export default function ChatView(props: ChatViewProps) {
       if (!isServerThread || !activeThreadRef) return;
       explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
       useDiffPanelStore.getState().selectTurn(activeThreadRef, runId, filePath);
+      // A file is revealed in the diff itself; the walkthrough would hide it.
+      if (filePath) useDiffPanelStore.getState().setView("diff");
       useRightPanelStore.getState().open(activeThreadRef, "diff");
       onDiffPanelOpen?.();
     },
@@ -11060,6 +11077,7 @@ export default function ChatView(props: ChatViewProps) {
           mode="embedded"
           composerDraftTarget={composerDraftTarget}
           workspaceMutationId={workspaceMutationId}
+          walkthroughHandleRef={diffWalkthroughHandleRef}
         />
       </Suspense>
     ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
@@ -11092,6 +11110,7 @@ export default function ChatView(props: ChatViewProps) {
             });
         }}
         threadRef={activeThreadRef}
+        requestedTab={renderedRightPanelSurface.tabRequest ?? null}
         reference={{
           projectId: renderedRightPanelSurface.projectId as ProjectId,
           ...(renderedRightPanelSurface.host ? { host: renderedRightPanelSurface.host } : {}),

@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, SourceControlProviderKind } from "@t3tools/contracts";
 import * as Stream from "effect/Stream";
 import {
   EventId,
@@ -13,6 +13,10 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationProjectShell,
+  type DiffWalkthrough,
+  type DiffWalkthroughTargetIdentity,
+  ReviewCommentContextRecord,
+  type PullRequestDetail,
   type PullRequestRef,
   type PullRequestStack,
   type PullRequestSummary,
@@ -30,14 +34,22 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
 
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
+import {
+  PULL_REQUEST_WALKTHROUGH_REQUEST,
+  pullRequestWalkthroughInstructions,
+} from "@t3tools/shared/pullRequestWalkthroughPrompt";
+import * as DiffWalkthroughService from "../diffWalkthrough/DiffWalkthroughService.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as PullRequestAutoWalkthrough from "./PullRequestAutoWalkthrough.ts";
 import * as PullRequestSyncReactor from "./PullRequestSyncReactor.ts";
 import type { PullRequestTestThread } from "./testkit/pullRequestFixtures.ts";
 
@@ -49,6 +61,7 @@ type SyncCommand = Extract<
   { readonly type: "thread.pull-request-link.sync" }
 >;
 type LinkCommand = Extract<OrchestrationCommand, { readonly type: "thread.pull-request.link" }>;
+type MessageCommand = Extract<OrchestrationCommand, { readonly type: "message.dispatch" }>;
 
 const testCrypto = Crypto.make({
   randomBytes: (size) => new Uint8Array(size).fill(1),
@@ -163,6 +176,75 @@ function makeSummary(
   };
 }
 
+function makeDetail(
+  input: PullRequestRef,
+  overrides: Partial<PullRequestDetail> = {},
+): PullRequestDetail {
+  return {
+    provider: SourceControlProviderKind.make("github"),
+    capabilities: {
+      diff: true,
+      comment: true,
+      actions: [],
+      mergeMethods: [],
+      search: false,
+      review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+      reviewers: { request: false, listCandidates: false },
+    },
+    viewerPermissions: {
+      actions: [],
+      comment: true,
+      resolve: true,
+      verdicts: [],
+      requestReviewers: false,
+    },
+    projectId: input.projectId,
+    projectTitle: "Project",
+    workspaceRoot: "/workspace/project",
+    repository: input.repository,
+    number: input.number,
+    title: "Pull request",
+    body: "",
+    url: `https://github.com/${input.repository}/pull/${input.number}`,
+    author: null,
+    state: "open",
+    isDraft: false,
+    mergeability: "mergeable",
+    additions: 1,
+    deletions: 0,
+    changedFiles: 1,
+    headBranch: "feature",
+    headSha: "head-a",
+    baseBranch: "main",
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-27T00:00:00.000Z",
+    mergedAt: null,
+    closedAt: null,
+    reviewers: [],
+    labels: [],
+    checks: [],
+    mergeCapabilities: { merge: true, squash: true, rebase: true },
+    ...overrides,
+  };
+}
+
+function makeWalkthrough(projectId: ProjectId, number: number, headSha: string): DiffWalkthrough {
+  return {
+    target: {
+      kind: "pull-request",
+      projectId,
+      host: "github.com",
+      repository: "owner/repository",
+      number,
+      headSha,
+    },
+    groups: [],
+    notes: [],
+    generatedAt: NOW,
+    author: {},
+  };
+}
+
 interface HarnessOptions {
   readonly invalidate?: PullRequestService.PullRequestService["Service"]["invalidate"];
   readonly snapshot: TestShellSnapshot;
@@ -172,6 +254,12 @@ interface HarnessOptions {
   readonly stack?: (
     input: PullRequestRef,
   ) => Effect.Effect<PullRequestStack | null, PullRequestOperationError>;
+  /** Turns `pullRequestAutoWalkthrough` on for the project. */
+  readonly autoWalkthrough?: boolean;
+  readonly detail?: (
+    input: PullRequestRef,
+  ) => Effect.Effect<PullRequestDetail, PullRequestOperationError>;
+  readonly storedWalkthrough?: (target: DiffWalkthroughTargetIdentity) => DiffWalkthrough | null;
 }
 
 const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: HarnessOptions) {
@@ -183,6 +271,8 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   const linkCommands = yield* Ref.make<ReadonlyArray<LinkCommand>>([]);
   const summaryCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const stackCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
+  const detailCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
+  const messages = yield* Queue.unbounded<MessageCommand>();
   const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
   const stateChanges = yield* Queue.unbounded<ThreadPullRequestKey>();
 
@@ -214,6 +304,9 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
         Effect.as({ sequence: 1, storedEvents: [] }),
       );
     }
+    if (command.type === "message.dispatch") {
+      return Queue.offer(messages, command).pipe(Effect.as({ sequence: 1, storedEvents: [] }));
+    }
     return Effect.die(new Error(`Unexpected command: ${command.type}`));
   };
 
@@ -221,6 +314,10 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     Layer.mock(PullRequestService.PullRequestService)({
       summary,
       stack,
+      detail: (input) =>
+        Ref.update(detailCalls, (calls) => [...calls, input]).pipe(
+          Effect.andThen(options.detail?.(input) ?? Effect.succeed(makeDetail(input))),
+        ),
       invalidate: options.invalidate ?? (() => Effect.void),
       subscribeStateChanges: Effect.succeed(Stream.fromQueue(stateChanges)),
     }),
@@ -265,6 +362,17 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     }),
     Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
     Layer.succeed(Crypto.Crypto, testCrypto),
+    Layer.mock(ServerSettings.ServerSettingsService)({
+      getSettings: Effect.succeed({
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: options.autoWalkthrough
+          ? { [PROJECT_ID]: { pullRequestAutoWalkthrough: true } }
+          : {},
+      }),
+    }),
+    Layer.mock(DiffWalkthroughService.DiffWalkthroughService)({
+      get: (target) => Effect.succeed(options.storedWalkthrough?.(target) ?? null),
+    }),
   );
 
   return {
@@ -276,9 +384,14 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     linkCommands,
     summaryCalls,
     stackCalls,
+    detailCalls,
+    messages,
     domainEvents,
     stateChanges,
-    layer: PullRequestSyncReactor.layer.pipe(Layer.provide(layerDependencies)),
+    layer: PullRequestSyncReactor.layer.pipe(
+      Layer.provideMerge(PullRequestAutoWalkthrough.layer),
+      Layer.provide(layerDependencies),
+    ),
   };
 });
 
@@ -1161,6 +1274,204 @@ describe("PullRequestSyncReactor", () => {
             ]),
             [[7, "merged"]],
           );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+});
+
+const decodeReviewCommentRecord = Schema.decodeUnknownEffect(ReviewCommentContextRecord);
+
+describe("PullRequestSyncReactor automatic walkthroughs", () => {
+  const waitOutQuietWindow = Effect.gen(function* () {
+    const autoWalkthrough = yield* PullRequestAutoWalkthrough.PullRequestAutoWalkthrough;
+    yield* TestClock.adjust("5 minutes");
+    yield* autoWalkthrough.drain;
+  });
+
+  it.effect("asks for nothing while the project's setting is off", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("owner", { pullRequests: [makeLink(7, null, { source: "created" })] }),
+          ]),
+        });
+        yield* Effect.gen(function* () {
+          yield* startAndSweep(fixture);
+          yield* waitOutQuietWindow;
+          assert.deepStrictEqual(yield* Ref.get(fixture.detailCalls), []);
+          assert.strictEqual(yield* Queue.size(fixture.messages), 0);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("sends the walkthrough request to the thread that owns a new link", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          autoWalkthrough: true,
+          snapshot: makeSnapshot([
+            // A stack link names a sibling; the thread that opened the pull request owns it.
+            makeThread("sibling", { pullRequests: [makeLink(7, null, { source: "stack" })] }),
+            makeThread("owner", {
+              pullRequests: [makeLink(7, null, { source: "created", linkedAt: NOW })],
+            }),
+          ]),
+        });
+        yield* Effect.gen(function* () {
+          yield* startAndSweep(fixture);
+          const commands = yield* Ref.get(fixture.syncCommands);
+          yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands));
+          assert.strictEqual(yield* Queue.size(fixture.messages), 0);
+
+          yield* TestClock.adjust("5 minutes");
+          const message = yield* Queue.take(fixture.messages);
+          assert.strictEqual(message.threadId, ThreadId.make("owner"));
+          assert.strictEqual(message.commandId, "server:pr-walkthrough:owner:7:head-a");
+          assert.deepStrictEqual(message.dispatchMode, { type: "queue_after_active" });
+          assert.strictEqual(message.createdBy, "user");
+          assert.isTrue(message.text.startsWith(PULL_REQUEST_WALKTHROUGH_REQUEST));
+          const chip = yield* decodeReviewCommentRecord(message.context?.records[0]);
+          assert.isTrue(message.text.includes(chip.contextId));
+          assert.isTrue(
+            chip.text.endsWith(
+              pullRequestWalkthroughInstructions({ provider: "github", number: 7 }).join("\n"),
+            ),
+          );
+          assert.strictEqual(chip.pullRequest?.number, 7);
+
+          yield* PullRequestAutoWalkthrough.PullRequestAutoWalkthrough.use(
+            (autoWalkthrough) => autoWalkthrough.drain,
+          );
+          assert.strictEqual(yield* Queue.size(fixture.messages), 0);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("asks once, for the latest head, when pushes land inside the quiet window", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const head = yield* Ref.make({ sha: "head-a", updatedAt: "2026-08-27T00:00:00.000Z" });
+        const fixture = yield* makeHarness({
+          autoWalkthrough: true,
+          snapshot: makeSnapshot([
+            makeThread("owner", { pullRequests: [makeLink(7, { state: "open" })] }),
+          ]),
+          summary: (input) =>
+            Ref.get(head).pipe(
+              Effect.map((current) => makeSummary(input, { updatedAt: current.updatedAt })),
+            ),
+          detail: (input) =>
+            Ref.get(head).pipe(
+              Effect.map((current) =>
+                makeDetail(input, { headSha: current.sha, updatedAt: current.updatedAt }),
+              ),
+            ),
+        });
+        yield* Effect.gen(function* () {
+          // The first read after a start only learns the head.
+          const reactor = yield* startAndSweep(fixture);
+          yield* Ref.set(head, { sha: "head-b", updatedAt: "2026-08-28T12:00:30.000Z" });
+          yield* sweepAgain(fixture, reactor);
+          yield* Ref.set(head, { sha: "head-c", updatedAt: "2026-08-28T12:01:30.000Z" });
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual(yield* Queue.size(fixture.messages), 0);
+
+          yield* waitOutQuietWindow;
+          const sent = yield* Queue.takeAll(fixture.messages);
+          assert.deepStrictEqual(
+            sent.map((message) => message.commandId),
+            ["server:pr-walkthrough:owner:7:head-c"],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("skips a pull request that already has a walkthrough at its head", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          autoWalkthrough: true,
+          snapshot: makeSnapshot([
+            makeThread("owner", { pullRequests: [makeLink(7, null, { source: "created" })] }),
+          ]),
+          storedWalkthrough: (target) =>
+            target.kind === "pull-request" && target.host === "github.com" && target.number === 7
+              ? makeWalkthrough(PROJECT_ID, 7, "head-a")
+              : null,
+        });
+        yield* Effect.gen(function* () {
+          yield* startAndSweep(fixture);
+          const commands = yield* Ref.get(fixture.syncCommands);
+          yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands));
+          yield* waitOutQuietWindow;
+          assert.strictEqual((yield* Ref.get(fixture.detailCalls)).length, 1);
+          assert.strictEqual(yield* Queue.size(fixture.messages), 0);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("skips a pull request whose head branch has a walkthrough at its head", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          autoWalkthrough: true,
+          snapshot: makeSnapshot([
+            makeThread("owner", { pullRequests: [makeLink(7, null, { source: "created" })] }),
+          ]),
+          storedWalkthrough: (target) =>
+            target.kind === "branch-range" && target.branch === "feature"
+              ? {
+                  ...makeWalkthrough(PROJECT_ID, 7, "head-a"),
+                  target: {
+                    kind: "branch-range",
+                    projectId: PROJECT_ID,
+                    branch: "feature",
+                    baseSha: "base-a",
+                    headSha: "head-a",
+                  },
+                }
+              : null,
+        });
+        yield* Effect.gen(function* () {
+          yield* startAndSweep(fixture);
+          const commands = yield* Ref.get(fixture.syncCommands);
+          yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands));
+          yield* waitOutQuietWindow;
+          assert.strictEqual((yield* Ref.get(fixture.detailCalls)).length, 1);
+          assert.strictEqual(yield* Queue.size(fixture.messages), 0);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("skips a closed pull request", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          autoWalkthrough: true,
+          snapshot: makeSnapshot([
+            makeThread("owner", { pullRequests: [makeLink(7, null, { source: "created" })] }),
+          ]),
+          summary: (input) =>
+            Effect.succeed(makeSummary(input, { state: "closed", closedAt: NOW })),
+        });
+        yield* Effect.gen(function* () {
+          yield* startAndSweep(fixture);
+          yield* waitOutQuietWindow;
+          assert.deepStrictEqual(yield* Ref.get(fixture.detailCalls), []);
+          assert.strictEqual(yield* Queue.size(fixture.messages), 0);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

@@ -6,10 +6,14 @@ interface FileRevealHandle {
   scrollTo(target: CodeViewScrollTarget): void;
 }
 
+/** Room left above a revealed range, so it does not read as the first line of the file. */
+const RANGE_LEAD_IN_PX = 48;
+
 // Wait for a mounted viewer and expanded rows, then apply each tree click once.
 // Keep scope stable until the diff or external file selection changes.
-// A range centers those lines; the file is scrolled to first, so a range the viewer cannot place
-// (lines outside every hunk) still lands on the file.
+// A range puts those lines just under the sticky file header, with a little of what leads into
+// them showing; the file is scrolled to first, so a range the viewer cannot place (lines outside
+// every hunk) still lands on the file.
 export function useCodeViewFileReveal<TScope>(
   viewer: FileRevealHandle | null,
   scope: TScope,
@@ -37,7 +41,8 @@ export function useCodeViewFileReveal<TScope>(
         type: "range",
         id: request.fileKey,
         range: request.range,
-        align: "center",
+        align: "start",
+        offset: RANGE_LEAD_IN_PX,
       });
     }
     handledRequest.current = request;

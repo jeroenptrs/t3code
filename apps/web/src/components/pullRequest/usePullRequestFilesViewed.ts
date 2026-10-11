@@ -27,6 +27,7 @@ import {
 const FLUSH_DELAY_MS = 400;
 
 const NO_OVERLAY: FileViewedOverlay = new Map();
+const NO_PATHS: ReadonlyArray<string> = [];
 
 export interface PullRequestFilesViewedView {
   /** Whether anything remembers this at all, which is what hides the whole control. */
@@ -59,10 +60,13 @@ export function usePullRequestFilesViewed(options: {
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
   readonly enabled: boolean;
-  /** The paths on screen, which is what the counter counts. */
-  readonly paths: ReadonlyArray<string>;
+  /**
+   * The paths on screen, which is what the counter counts. A panel that hands one view to
+   * several tabs leaves this out and lets each tab count its own files.
+   */
+  readonly paths?: ReadonlyArray<string>;
 }): PullRequestFilesViewedView {
-  const { environmentId, reference, enabled, paths } = options;
+  const { environmentId, reference, enabled, paths = NO_PATHS } = options;
   const query = useEnvironmentQuery(
     enabled ? pullRequestEnvironment.filesViewed({ environmentId, input: reference }) : null,
   );

@@ -81,6 +81,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
+  const mixedAutoWalkthrough = useScopedSettingsMixed(["pullRequestAutoWalkthrough"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
@@ -485,6 +486,32 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                   <SelectItem value="rebase">{PULL_REQUEST_MERGE_METHOD_LABELS.rebase}</SelectItem>
                 </SelectPopup>
               </Select>
+            }
+          />
+          <SettingsRow
+            serverScoped
+            settingKeys={["pullRequestAutoWalkthrough"]}
+            mixed={mixedAutoWalkthrough}
+            {...searchableSetting("pull-request-auto-walkthrough")}
+            description="Asks the thread that owns the pull request to write a walkthrough when it is linked and after new commits are pushed."
+            resetAction={
+              settings.pullRequestAutoWalkthrough ? (
+                <SettingResetButton
+                  label="automatic walkthroughs"
+                  tooltip="Reset automatic walkthroughs to off"
+                  onClick={() => updateSettings({ pullRequestAutoWalkthrough: false })}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                aria-label="Generate walkthroughs automatically"
+                mixed={mixedAutoWalkthrough}
+                checked={mixedAutoWalkthrough ? false : settings.pullRequestAutoWalkthrough}
+                onCheckedChange={(enabled) =>
+                  updateSettings({ pullRequestAutoWalkthrough: enabled })
+                }
+              />
             }
           />
         </>
