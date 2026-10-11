@@ -7,6 +7,7 @@ import * as WorkspacePreviewRevisions from "./assets/WorkspacePreviewRevisions.t
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
+import * as PullRequestAutoWalkthrough from "./orchestration-v2/PullRequestAutoWalkthrough.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
 // Effect wraps this raw Node HTTP server after its startup and write-error guards attach.
@@ -747,6 +748,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     }),
   ).pipe(
     Layer.provideMerge(PullRequestSyncReactor.layer),
+    Layer.provide(PullRequestAutoWalkthrough.layer),
+    Layer.provide(layerDiffWalkthroughService),
     Layer.provide(layerPullRequestService),
     Layer.provide(ProjectionStoreV2.layer),
   ),
