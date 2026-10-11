@@ -1724,6 +1724,7 @@ function PullRequestsRouteView() {
                   ? { host: renderedPullRequestSurface.host }
                   : {}),
               }}
+              requestedTab={renderedPullRequestSurface.tabRequest ?? null}
               listEntry={
                 listedPullRequestsBySurface.get(
                   pullRequestListEntryId(renderedPullRequestSurface),
