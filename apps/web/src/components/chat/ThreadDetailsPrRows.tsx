@@ -8,7 +8,11 @@ import {
 import { Minus, Plus } from "lucide";
 import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
 
-import { findProjectOnChangeRequestHost, parseChangeRequestUrl } from "~/lib/openPullRequestLink";
+import {
+  findProjectOnChangeRequestHost,
+  parseChangeRequestUrl,
+  useOpenPullRequestWalkthrough,
+} from "~/lib/openPullRequestLink";
 
 import { useProjects } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
@@ -26,12 +30,14 @@ function ThreadDetailsPrLinkRow({
   onOpen,
   onActed,
   onStopWatching,
+  onOpenWalkthrough,
 }: {
   environmentId: EnvironmentId;
   link: ThreadPullRequestLink;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: (() => void) | undefined;
   onStopWatching?: (() => void) | undefined;
+  onOpenWalkthrough: () => void;
 }) {
   const projects = useProjects();
   const parsed = parseChangeRequestUrl(link.url);
@@ -56,6 +62,7 @@ function ThreadDetailsPrLinkRow({
       openAriaLabel={link.url}
       onOpen={onOpen}
       onStopWatching={onStopWatching}
+      onOpenWalkthrough={onOpenWalkthrough}
       {...(onActed ? { onActed } : {})}
     />
   );
@@ -74,6 +81,7 @@ export function ThreadDetailsPrRows({
   onOpenLink: (event: ReactMouseEvent<HTMLElement>, url: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const openWalkthrough = useOpenPullRequestWalkthrough();
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
   // Only watched links get the eye; the row hides it once the server records the stop.
   const stopWatching = (link: ThreadPullRequestLink | null) =>
@@ -111,6 +119,7 @@ export function ThreadDetailsPrRows({
               onOpen={(event) => onOpenLink(event, link.url)}
               onActed={row.onActed}
               onStopWatching={stopWatching(link)}
+              onOpenWalkthrough={() => openWalkthrough(threadRef, link.url)}
             />
           ))
         : null}
