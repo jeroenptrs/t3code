@@ -1163,7 +1163,7 @@ export function buildExplainPullRequestHandoff(input: {
 }
 
 /**
- * The same tour, written into the Code tab's walkthrough rail rather than answered in chat. The
+ * The same tour, written into the pull request's Walkthrough tab rather than answered in chat. The
  * agent reads the head commit itself right before writing, because the pull request may have
  * moved between the press and the send, and a walkthrough pinned to an old head shows as stale.
  */
