@@ -1063,6 +1063,20 @@ describe("ServerSettings.removeAgentCreditsOnMerge", () => {
   });
 });
 
+describe("ServerSettings.pullRequestAutoWalkthrough", () => {
+  it("is off by default and accepts a project override", () => {
+    expect(decodeServerSettings({}).pullRequestAutoWalkthrough).toBe(false);
+    expect(
+      decodeServerSettingsPatch({ pullRequestAutoWalkthrough: true }).pullRequestAutoWalkthrough,
+    ).toBe(true);
+    expect(
+      decodeServerSettings({
+        projectSettingsOverrides: { project: { pullRequestAutoWalkthrough: true } },
+      }).projectSettingsOverrides["project" as ProjectId]?.pullRequestAutoWalkthrough,
+    ).toBe(true);
+  });
+});
+
 describe("requiredScopesForProjectMutation", () => {
   it("adds the settings scope only when a mutation carries scripts", () => {
     const projectId = "project-1" as ProjectId;
