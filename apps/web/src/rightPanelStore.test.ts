@@ -959,6 +959,30 @@ describe("rightPanelStore", () => {
     expect(state.surfaces[1]).not.toHaveProperty("url");
   });
 
+  it("asks an open or new pull request panel for a tab, once per open", () => {
+    const pr = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
+    const activeTabRequest = () => {
+      const surface = selectActiveRightPanelSurface(
+        useRightPanelStore.getState().byThreadKey,
+        refA,
+      );
+      return surface?.kind === "pull-request" ? surface.tabRequest : undefined;
+    };
+
+    useRightPanelStore.getState().openPullRequest(refA, { ...pr, tab: "walkthrough" });
+    const first = activeTabRequest();
+    expect(first?.tab).toBe("walkthrough");
+
+    // Asked again for a panel already showing: a new request, so the panel moves even if the
+    // reader has since left the tab.
+    useRightPanelStore.getState().openPullRequest(refA, { ...pr, tab: "walkthrough" });
+    expect(activeTabRequest()?.requestId).not.toBe(first?.requestId);
+
+    // Opening it without a tab leaves it on whatever tab it is on.
+    useRightPanelStore.getState().openPullRequest(refA, pr);
+    expect(activeTabRequest()?.tab).toBe("walkthrough");
+  });
+
   it("keeps matching repository and number on different hosts as separate tabs", () => {
     const first = { projectId: "project-a", repository: "acme/api", number: 7, host: "github.com" };
     const second = { ...first, host: "github.example.com" };
