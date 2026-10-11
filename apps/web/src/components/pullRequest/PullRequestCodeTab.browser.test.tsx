@@ -145,6 +145,8 @@ import { WorkerPoolManager } from "@pierre/diffs/worker";
 import { createWorkspaceFocusController, workspaceAreaProps } from "~/lib/workspaceFocus";
 import { render, stubGlobal } from "../../../test/render";
 import PullRequestCodeTab from "./PullRequestCodeTab";
+import type { ComponentProps } from "react";
+import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 
 const detail: PullRequestDetailView = {
   provider: SourceControlProviderKind.make("github"),
@@ -211,13 +213,36 @@ function setup({ paged }: { paged: boolean }) {
   mocks.viewedListeners.clear();
 }
 
+const noFilesViewed = {
+  enabled: false,
+  isViewed: () => false,
+  isStale: () => false,
+  setViewed: () => {},
+  viewedCount: 0,
+  truncated: false,
+  error: null,
+  refresh: () => {},
+};
+
+/** The panel owns the viewed-files hook in the fork; tests that read viewed counts route the mock in. */
+function CodeTabWithViewedFiles(
+  props: Omit<ComponentProps<typeof PullRequestCodeTab>, "filesViewed">,
+) {
+  const filesViewed = usePullRequestFilesViewed({
+    environmentId: props.environmentId,
+    reference: props.reference,
+    enabled: true,
+  });
+  return <PullRequestCodeTab {...props} filesViewed={filesViewed} />;
+}
+
 const tab = (
   refreshToken: number,
   revealRequest: { readonly path: string; readonly nonce: number } | null = null,
   revealUrl?: string,
   onRevealSettled?: (url: string) => void,
 ) => (
-  <PullRequestCodeTab
+  <CodeTabWithViewedFiles
     scrollerRef={() => {}}
     environmentId={EnvironmentId.make("environment")}
     reference={detail}
@@ -449,6 +474,7 @@ it("keeps an unfinished inline comment when a background refresh changes another
       onSelectedCommitChange={() => {}}
       onRefresh={() => {}}
       backgroundRefreshToken={backgroundRefreshToken}
+      filesViewed={noFilesViewed}
     />
   );
   const container = document.createElement("div");
@@ -561,6 +587,7 @@ it("never requests the diff of a selected commit the pull request no longer has"
       selectedCommitOid="gone"
       onSelectedCommitChange={() => {}}
       onRefresh={() => {}}
+      filesViewed={noFilesViewed}
     />,
     { container },
   );
@@ -594,7 +621,7 @@ it("answers a commit's diff link only once that commit's diff is shown", async (
   const url = `${detail.url}/commits/${oid}#diff-${bytesToHex(sha256(new TextEncoder().encode("early-0.ts")))}R2`;
   const settled = vi.fn();
   const scoped = (selectedCommitOid: string | null, revealUrl?: string) => (
-    <PullRequestCodeTab
+    <CodeTabWithViewedFiles
       scrollerRef={() => {}}
       environmentId={EnvironmentId.make("environment")}
       reference={detail}
@@ -640,6 +667,7 @@ it("hides a resolved conversation behind avatars on its line until they are clic
       scrollerRef={() => {}}
       environmentId={EnvironmentId.make("environment")}
       reference={detail}
+      filesViewed={noFilesViewed}
       detail={{
         ...detail,
         capabilities: {
@@ -759,6 +787,7 @@ it("keeps an unsent reply when the appearance switches between light and dark", 
       selectedCommitOid={null}
       onSelectedCommitChange={() => {}}
       onRefresh={() => {}}
+      filesViewed={noFilesViewed}
     />,
     { container },
   );
@@ -816,6 +845,7 @@ it("hands panel focus from the loading diff to the diff once the diff workers st
         selectedCommitOid={null}
         onSelectedCommitChange={() => {}}
         onRefresh={() => {}}
+        filesViewed={noFilesViewed}
       />
     </div>,
     { container },
