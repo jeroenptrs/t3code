@@ -5,6 +5,7 @@ import * as Random from "effect/Random";
 import * as Semaphore from "effect/Semaphore";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
+import * as PullRequestAutoWalkthrough from "./orchestration-v2/PullRequestAutoWalkthrough.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
 // @effect-diagnostics nodeBuiltinImport:off
@@ -573,6 +574,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     }),
   ).pipe(
     Layer.provideMerge(PullRequestSyncReactor.layer),
+    Layer.provide(PullRequestAutoWalkthrough.layer),
+    Layer.provide(layerDiffWalkthroughService),
     Layer.provide(layerPullRequestService),
     Layer.provide(ProjectionStoreV2.layer),
   ),
