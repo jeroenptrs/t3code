@@ -244,23 +244,31 @@ and their marks follow the same rules as on web and desktop.
 
 ### Walkthroughs
 
-A walkthrough is an agent's guide to a diff. It groups the changed files by purpose in a
-suggested reading order and adds a one-line summary to each change worth reading, with a longer
-explanation where one helps. It opens in a rail beside the diff, next to the file tree. Pick an
-entry to jump to that change.
+A walkthrough is an agent's guide to a diff. It splits the changed files into numbered sections,
+each with a title, the intent behind its files, and notes on the changes worth reading. Open it
+from the pull request's **Walkthrough** tab, the walkthrough button in a thread's pull request row,
+or **Open walkthrough** in the command palette. Opening one never starts an agent.
 
-To get one, choose **Generate walkthrough** from the pull request's menu, or from the empty
-walkthrough rail in the **Code** tab. Like **Explain this PR**, this puts a request in a thread's
-composer for you to read and send. Any agent can also write one with the `write_diff_walkthrough`
-tool.
+The tab shows one section at a time with its files in full. Files you have already marked viewed
+start collapsed, and marks are shared with the **Code** tab. **Mark reviewed and continue** marks
+the section's files viewed and moves to the next one; the arrows step between sections without
+marking anything. From the keyboard, **Alt+↑** and **Alt+↓** step and **Alt+Shift+↓** marks and
+continues (**Option** on macOS). Pick a note to jump to its lines. Files the agent did not place
+appear in a final **Other** section.
 
-A walkthrough describes the commit it was written for. After a new push, it shows as out of date
-until you choose **Regenerate**. Files the agent did not group appear under **Other**.
+If there is no walkthrough yet, choose **Generate** in the tab. It puts the request in the composer
+of the thread that owns the branch, or a new thread, for you to read and send. A walkthrough
+describes the commit it was written for; after a new push it shows as out of date until you choose
+**Regenerate**. To have one written for you, turn on **Generate walkthroughs automatically when a
+pull request is linked or pushed** in **Settings → Source Control** for the project. The thread
+that owns the pull request then gets the request a few minutes after it is linked or after the
+last push.
 
-In a thread's **Diff** panel, walkthroughs cover one turn's changes. Pick a turn, open the
-walkthrough rail, and choose **Generate walkthrough** to put the request in that thread's composer.
-Uncommitted changes and branch diffs keep changing, so they don't get one. Walkthroughs are
-available on web and desktop only.
+In a thread's **Diff** panel, switch the view to **Walkthrough** to walk one turn's changes or the
+whole branch before it has a pull request. A branch walkthrough covers committed changes against
+the automatic base branch, so commit first; uncommitted changes don't get one. When you open a
+pull request from that branch without pushing anything new, its **Walkthrough** tab shows the
+branch's walkthrough. Walkthroughs are available on web and desktop only.
 
 ## Troubleshooting
 
