@@ -12,8 +12,9 @@ import { TurnCountRange } from "./checkpointDiff.ts";
 
 /**
  * The diff a walkthrough describes. Only diffs with a stable revision are walkable: a pull
- * request at one head commit, or a thread's checkpoint pair. A working tree or branch range has
- * nothing to tell a stale walkthrough from a current one by, so neither is a target.
+ * request at one head commit, a thread's checkpoint pair, or a branch's committed range from its
+ * merge base to HEAD. A working tree has nothing to tell a stale walkthrough from a current one
+ * by, so it is not a target.
  *
  * The pull request fields are `PullRequestRef`'s identity without its transport-only fields.
  * `headSha` is the revision the walkthrough was written against, and is deliberately left out of
@@ -46,9 +47,32 @@ export const DiffWalkthroughThreadDiffTarget = TurnCountRange.mapFields(
 );
 export type DiffWalkthroughThreadDiffTarget = typeof DiffWalkthroughThreadDiffTarget.Type;
 
+/**
+ * A branch's committed range, `baseSha..headSha`, so a branch can be walked before it has a pull
+ * request. Keyed by branch rather than thread: several threads and worktrees can share a branch,
+ * and a pull request opened from it is matched by its head branch name and head SHA. Both SHAs
+ * are the revision; the walkthrough is stale once either moves. A detached HEAD has no branch and
+ * is not walkable.
+ */
+export const DiffWalkthroughBranchRangeIdentity = Schema.Struct({
+  kind: Schema.Literal("branch-range"),
+  projectId: ProjectId,
+  branch: TrimmedNonEmptyString,
+});
+export type DiffWalkthroughBranchRangeIdentity = typeof DiffWalkthroughBranchRangeIdentity.Type;
+
+export const DiffWalkthroughBranchRangeTarget = Schema.Struct({
+  ...DiffWalkthroughBranchRangeIdentity.fields,
+  /** The merge base the range starts from. */
+  baseSha: TrimmedNonEmptyString,
+  headSha: TrimmedNonEmptyString,
+});
+export type DiffWalkthroughBranchRangeTarget = typeof DiffWalkthroughBranchRangeTarget.Type;
+
 export const DiffWalkthroughTarget = Schema.Union([
   DiffWalkthroughPullRequestTarget,
   DiffWalkthroughThreadDiffTarget,
+  DiffWalkthroughBranchRangeTarget,
 ]);
 export type DiffWalkthroughTarget = typeof DiffWalkthroughTarget.Type;
 
@@ -59,6 +83,7 @@ export type DiffWalkthroughTarget = typeof DiffWalkthroughTarget.Type;
 export const DiffWalkthroughTargetIdentity = Schema.Union([
   DiffWalkthroughPullRequestIdentity,
   DiffWalkthroughThreadDiffTarget,
+  DiffWalkthroughBranchRangeIdentity,
 ]);
 export type DiffWalkthroughTargetIdentity = typeof DiffWalkthroughTargetIdentity.Type;
 
@@ -70,7 +95,7 @@ export type DiffWalkthroughTargetIdentity = typeof DiffWalkthroughTargetIdentity
  * (`threadPullRequestKeyOf`): `host/repository#number`, lowercased. The server should resolve an
  * absent host to the project's own before keying, so a reference with and without a host lands
  * on one walkthrough. Unresolved, the key falls back to the project, which never collides with a
- * host-level one.
+ * host-level one. A branch range is keyed by project and branch name, which is case-sensitive.
  */
 export function diffWalkthroughTargetKey(target: DiffWalkthroughTargetIdentity): string {
   switch (target.kind) {
@@ -84,23 +109,27 @@ export function diffWalkthroughTargetKey(target: DiffWalkthroughTargetIdentity):
     }
     case "thread-diff":
       return `thread-diff:${target.threadId}:${target.fromTurnCount}-${target.toTurnCount}`;
+    case "branch-range":
+      return `branch-range:${target.projectId}:${target.branch}`;
   }
 }
 
 /**
- * The stored walkthrough was written against another revision of the same target. Only a pull
- * request can move under a walkthrough; a checkpoint pair never does.
+ * The stored walkthrough was written against another revision of the same target. A pull
+ * request moves with its head, a branch range with either end; a checkpoint pair never moves.
  */
 export function isDiffWalkthroughStale(
   walkthrough: Pick<DiffWalkthrough, "target">,
   liveTarget: DiffWalkthroughTarget,
 ): boolean {
   const stored = walkthrough.target;
-  return (
-    stored.kind === "pull-request" &&
-    liveTarget.kind === "pull-request" &&
-    stored.headSha !== liveTarget.headSha
-  );
+  if (stored.kind === "pull-request" && liveTarget.kind === "pull-request") {
+    return stored.headSha !== liveTarget.headSha;
+  }
+  if (stored.kind === "branch-range" && liveTarget.kind === "branch-range") {
+    return stored.baseSha !== liveTarget.baseSha || stored.headSha !== liveTarget.headSha;
+  }
+  return false;
 }
 
 const MAX_GROUPS = 100;
