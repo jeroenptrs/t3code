@@ -6,6 +6,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
+import { useRightPanelStore } from "./rightPanelStore";
 
 export interface ToolCallDiffTarget {
   readonly threadId: ThreadId;
@@ -197,4 +198,18 @@ export function resolveToolCallDiffTarget(
   if (row?.item.type !== "file_change") return target;
   const revision = turnItemDetailRevision(row.item);
   return revision === target.revision ? target : { ...target, revision };
+}
+
+/**
+ * Opens the thread's Diff panel on its walkthrough. Uncommitted changes and tool calls have none,
+ * so those give way to the branch rather than leave the panel on its diff.
+ */
+export function openThreadDiffWalkthrough(ref: ScopedThreadRef): void {
+  const diffPanel = useDiffPanelStore.getState();
+  const selection = selectThreadDiffPanelSelection(diffPanel.byThreadKey, ref);
+  if (selection.kind === "unstaged" || selection.kind === "tool-call") {
+    diffPanel.selectGitScope(ref, "branch");
+  }
+  diffPanel.setView("walkthrough");
+  useRightPanelStore.getState().open(ref, "diff");
 }
