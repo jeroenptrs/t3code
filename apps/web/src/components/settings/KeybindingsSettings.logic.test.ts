@@ -2,6 +2,7 @@ import { assert, describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
   compileResolvedKeybindingsConfig,
+  DEFAULT_RESOLVED_KEYBINDINGS,
   parseKeybindingShortcut,
 } from "@t3tools/shared/keybindings";
 
@@ -9,6 +10,8 @@ import { resolveShortcutCommand } from "../../keybindings";
 
 import {
   buildKeybindingRows,
+  commandLabel,
+  groupKeybindingRows,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
@@ -17,6 +20,23 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it("groups and labels the walkthrough shortcuts with preview and diff", () => {
+    const groups = groupKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS));
+    const previewAndDiff = groups.find((group) => group.id === "preview");
+    expect(previewAndDiff?.rows.map((row) => row.command)).toEqual(
+      expect.arrayContaining([
+        "diff.toggle",
+        "walkthrough.previousSection",
+        "walkthrough.nextSection",
+        "walkthrough.markReviewed",
+      ]),
+    );
+    expect(commandLabel("walkthrough.nextSection")).toBe("Walkthrough: Next Section");
+    expect(commandLabel("walkthrough.markReviewed")).toBe(
+      "Walkthrough: Mark Reviewed and Continue",
+    );
+  });
+
   it("keeps sibling row identities when a saved binding moves to the end", () => {
     const bindings = compileResolvedKeybindingsConfig([
       { command: "chat.new", key: "mod+n" },
