@@ -698,6 +698,23 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "diff-walkthrough-read": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Read {count} diff walkthrough} other {Read {count} diff walkthroughs}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to read {count} diff walkthrough} other {Tried to read {count} diff walkthroughs}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "list-issues": {
       const count = selected.length;
       label = done
