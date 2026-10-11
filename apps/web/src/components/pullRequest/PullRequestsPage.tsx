@@ -1554,6 +1554,7 @@ export function PullRequestsPage() {
                 ...renderedPullRequestSurface,
                 projectId: renderedPullRequestSurface.projectId as ProjectId,
               })}
+              requestedTab={renderedPullRequestSurface.tabRequest ?? null}
               listEntry={
                 listedPullRequestsBySurface.get(
                   pullRequestListEntryId(renderedPullRequestSurface),
