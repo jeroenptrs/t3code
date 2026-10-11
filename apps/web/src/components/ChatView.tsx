@@ -196,6 +196,8 @@ import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations"
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { isPreviewFocused } from "../lib/previewFocus";
+import type { DiffWalkthroughViewHandle } from "./diffs/DiffWalkthroughView";
+import { walkthroughStepForCommand } from "./diffs/diffWalkthroughView.logic";
 import { focusTerminalOnThreadEnter, getTerminalFocusOwner } from "../lib/terminalFocus";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -2627,6 +2629,7 @@ export default function ChatView(props: ChatViewProps) {
   const threadFindEnabled =
     isServerThread && serverConfig?.threadFind === true && !paintOnlyDisplayedTimeline;
   const isThreadFindActive = useThreadFindOpen(activeThreadRef, threadFindEnabled);
+  const diffWalkthroughHandleRef = useRef<DiffWalkthroughViewHandle>(null);
 
   useChatShortcuts({
     enabled: activeThreadId !== null && !backgroundThread,
@@ -2674,6 +2677,17 @@ export default function ChatView(props: ChatViewProps) {
       },
     },
     fallback: (command) => {
+      // A pull request panel's Walkthrough tab answers these keys itself, ahead of this handler.
+      const walkthroughStep = walkthroughStepForCommand(command);
+      if (walkthroughStep !== null) {
+        return ({ event }) => {
+          const handle = diffWalkthroughHandleRef.current;
+          if (!rightPanelOpen || activeRightPanelSurface?.kind !== "diff" || handle === null) {
+            return false;
+          }
+          if (!event.repeat || command !== "walkthrough.markReviewed") walkthroughStep(handle);
+        };
+      }
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject || !canOperateTerminal) return undefined;
       const script = activeProjectScripts.find((entry) => entry.id === scriptId);
@@ -3033,6 +3047,7 @@ export default function ChatView(props: ChatViewProps) {
       keybindings={keybindings}
       configuredPreviewUrls={configuredPreviewUrls}
       workspaceMutationId={workspaceMutationId}
+      diffWalkthroughHandleRef={diffWalkthroughHandleRef}
       getShortcutContext={getShortcutContextStable}
       onSendAnnotation={sendPreviewAnnotationStable}
       onCloseSurface={closeRightPanelSurface}
