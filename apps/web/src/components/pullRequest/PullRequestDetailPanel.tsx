@@ -1,5 +1,6 @@
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
+import type { PullRequestPanelTab } from "~/rightPanelStore";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
@@ -38,7 +39,6 @@ import {
   MessageCircleQuestionIcon,
   MessageSquareIcon,
   LinkIcon,
-  MapIcon,
   MoreHorizontalIcon,
   PanelRightIcon,
   PlayIcon,
@@ -127,6 +127,7 @@ import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestG
 import { PullRequestCopyableCode } from "./PullRequestCopyableCode";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
+import type { DiffWalkthroughViewHandle } from "../diffs/DiffWalkthroughView";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
@@ -191,7 +192,7 @@ import { guideRunKey, useGuideRunStore } from "./guide/guideRunStore";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
-type DetailTab = "summary" | "guide" | "timeline" | "code";
+type DetailTab = PullRequestPanelTab;
 
 /** Said as the thing that did not happen, rather than as the operation that returned an error. */
 const ACTION_FAILURE_LABELS: Record<PullRequestAction, string> = {
@@ -245,12 +246,15 @@ const TABS: ReadonlyArray<{ value: DetailTab; label: string }> = [
   { value: "guide", label: "Guide" },
   { value: "timeline", label: "Timeline" },
   { value: "code", label: "Code" },
+  { value: "walkthrough", label: "Walkthrough" },
 ];
 
 // The diff viewer pulls in its worker pool, so load it only when the reader approaches Code.
 // Start the download on tab hover or focus, before the click, without loading it for every PR.
 const loadCodeTab = () => import("./PullRequestCodeTab");
 const PullRequestCodeTab = lazy(loadCodeTab);
+const loadWalkthroughTab = () => import("./PullRequestWalkthroughTab");
+const PullRequestWalkthroughTab = lazy(loadWalkthroughTab);
 
 /**
  * What the last hand-off wrote into each draft, kept outside React because the panel that wrote it
@@ -422,6 +426,7 @@ export function PullRequestDetailPanel({
   onBack,
   onSelectPullRequest,
   onGuideShown,
+  requestedTab = null,
 }: {
   environmentId: EnvironmentId;
   shortcutsEnabled: boolean;
@@ -471,6 +476,11 @@ export function PullRequestDetailPanel({
   onBack?: (() => void) | undefined;
   /** Told when a written guide comes on screen. The page maximizes its panel for the guide. */
   onGuideShown?: (() => void) | undefined;
+  /**
+   * A tab someone outside the panel asked for, such as the Walkthrough from a thread's pull
+   * request row. Each new `requestId` switches to it once; the reader is free to move on after.
+   */
+  requestedTab?: { readonly tab: PullRequestPanelTab; readonly requestId: number } | null;
 }) {
   const environmentConfigs = useServerConfigs();
   const projects = useProjects();
@@ -504,7 +514,15 @@ export function PullRequestDetailPanel({
   const [threadPickerOpen, setThreadPickerOpen] = useState(false);
   // Counted up by the guide's last stop to open the composer on the review.
   const [openReviewRequest, setOpenReviewRequest] = useState(0);
-  const [tab, setTab] = useState<DetailTab>("summary");
+  const [tab, setTab] = useState<DetailTab>(requestedTab?.tab ?? "summary");
+  // Applied while rendering rather than from an effect, so the panel never paints the old tab.
+  const [appliedTabRequestId, setAppliedTabRequestId] = useState(requestedTab?.requestId ?? null);
+  if (requestedTab !== null && requestedTab.requestId !== appliedTabRequestId) {
+    setAppliedTabRequestId(requestedTab.requestId);
+    setTab(requestedTab.tab);
+  }
+  // The walkthrough's step actions, for keybindings the panel holds.
+  const walkthroughHandle = useRef<DiffWalkthroughViewHandle>(null);
   const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
   const [codeCommitScope, setCodeCommitScope] = useState<{
     readonly pullRequestKey: string;
@@ -576,6 +594,9 @@ export function PullRequestDetailPanel({
       },
       code: (node: HTMLDivElement | null) => {
         scrollerByTab.current.code = node;
+      },
+      walkthrough: (node: HTMLDivElement | null) => {
+        scrollerByTab.current.walkthrough = node;
       },
     }),
     [],
@@ -1583,8 +1604,10 @@ export function PullRequestDetailPanel({
   );
   const visibleTabs = TABS.filter(
     (item) =>
-      (item.value !== "code" || detail === null || detail.capabilities.diff) &&
-      (item.value !== "guide" || reviewGuidesEnabled),
+      (item.value !== "guide" || reviewGuidesEnabled) &&
+      ((item.value !== "code" && item.value !== "walkthrough") ||
+        detail === null ||
+        detail.capabilities.diff),
   );
   // The Code tab can be opened while the detail is still on its way, and the detail may then say
   // this host has no patch to show. The tab goes, so whoever was standing on it is moved back to
@@ -2240,19 +2263,6 @@ export function PullRequestDetailPanel({
                       </span>
                     </span>
                   </MenuItem>
-                  {canGenerateWalkthrough ? (
-                    <MenuItem disabled={handoff !== null} onClick={generateWalkthrough}>
-                      <MapIcon className="mt-1 size-3.5 shrink-0 self-start" />
-                      <span className="flex min-w-0 flex-col">
-                        <span>
-                          {handoff === "walkthrough" ? "Opening..." : "Generate walkthrough"}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          Notes on each change, in the Code tab's walkthrough rail.
-                        </span>
-                      </span>
-                    </MenuItem>
-                  ) : null}
                   <MenuItem
                     disabled={handoff !== null || !canFixFindings}
                     onClick={startFixFindings}
@@ -2764,6 +2774,7 @@ export function PullRequestDetailPanel({
             onValueChange={setTab}
             onTabIntent={(item) => {
               if (item === "code") void loadCodeTab();
+              if (item === "walkthrough") void loadWalkthroughTab();
             }}
           >
             {tab === "summary" ? (
@@ -3042,6 +3053,22 @@ export function PullRequestDetailPanel({
                     onRefresh={refreshDetail}
                     refreshToken={codeRefreshToken}
                     revealRequest={codeRevealRequest}
+                  />
+                </Suspense>
+              </div>
+            ) : null}
+            {mountedTabs.has("walkthrough") ? (
+              <div className={cn("absolute inset-0", tab !== "walkthrough" && "invisible")}>
+                <Suspense fallback={<DiffPanelLoadingState label="Loading walkthrough..." />}>
+                  <PullRequestWalkthroughTab
+                    scrollerRef={scrollerRefs.walkthrough}
+                    environmentId={environmentId}
+                    reference={reference}
+                    detail={detail}
+                    onGenerate={canGenerateWalkthrough ? generateWalkthrough : undefined}
+                    generatePending={handoff === "walkthrough"}
+                    handleRef={walkthroughHandle}
+                    refreshToken={codeRefreshToken}
                   />
                 </Suspense>
               </div>
