@@ -428,6 +428,9 @@ export function summarizeT3ToolCalls(
     case "diff-walkthrough-write":
       label = phrase("Wrote", "write", quantity(selected.length, "diff walkthrough"));
       break;
+    case "diff-walkthrough-read":
+      label = phrase("Read", "read", quantity(selected.length, "diff walkthrough"));
+      break;
     case "thread-diff-read":
       label = phrase("Read", "read", quantity(selected.length, "thread diff"));
       break;
