@@ -108,6 +108,7 @@ import { PullRequestTitleEditor } from "./PullRequestTitleEditor";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import { SourceControlAppAccessNotice } from "../SourceControlAppAccessNotice";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
+import type { DiffWalkthroughViewHandle } from "../diffs/DiffWalkthroughView";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel } from "./pullRequestLinkContextMenu";
@@ -211,11 +212,14 @@ const TABS: ReadonlyArray<{ value: PullRequestDetailTab; label: string }> = [
   { value: "guide", label: "Guide" },
   { value: "timeline", label: "Timeline" },
   { value: "code", label: "Code" },
+  { value: "walkthrough", label: "Walkthrough" },
 ];
 
 // Defer the diff viewer's worker pool until Code is approached.
 const loadCodeTab = () => import("./PullRequestCodeTab");
 const PullRequestCodeTab = lazy(loadCodeTab);
+const loadWalkthroughTab = () => import("./PullRequestWalkthroughTab");
+const PullRequestWalkthroughTab = lazy(loadWalkthroughTab);
 
 function reportCheckoutCommandError(error: Error) {
   toastManager.add({
@@ -300,6 +304,7 @@ export function PullRequestDetailPanel({
   onRevealSettled,
   initialTab = "summary",
   onTabChange,
+  requestedTab = null,
 }: {
   environmentId: EnvironmentId;
   shortcutsEnabled: boolean;
@@ -330,6 +335,11 @@ export function PullRequestDetailPanel({
   onRevealSettled?: ((revealUrl: string) => void) | undefined;
   initialTab?: PullRequestDetailTab;
   onTabChange?: ((tab: PullRequestDetailTab) => void) | undefined;
+  /**
+   * A tab someone outside the panel asked for, such as the Walkthrough from a thread's pull
+   * request row. Each new `requestId` switches to it once; the reader is free to move on after.
+   */
+  requestedTab?: { readonly tab: PullRequestDetailTab; readonly requestId: number } | null;
 }) {
   const environmentConfigs = useServerConfigs();
   const projects = useProjects();
@@ -395,20 +405,37 @@ export function PullRequestDetailPanel({
     (settings) => settings.reviewGuidesEnabled,
   );
   const guideKey = guideRunKey(environmentId, reference);
-  const pageTab = useGuideRunStore((state) =>
-    tabOnPage && state.pageDetailTab?.key === guideKey ? state.pageDetailTab.tab : null,
-  );
-  const requestedTab = tabOnPage ? (pageTab ?? initialTab) : selectedTab;
+  const pageDetailTab = useGuideRunStore((state) => state.pageDetailTab);
+  const pageTab = tabOnPage && pageDetailTab?.key === guideKey ? pageDetailTab.tab : null;
+  // Applied while rendering rather than from an effect, so the panel never paints the old tab.
+  // On the page, a request holds until the page's tab store next changes.
+  const [appliedTabRequestId, setAppliedTabRequestId] = useState(requestedTab?.requestId ?? null);
+  const [pageTabRequest, setPageTabRequest] = useState<{
+    readonly tab: PullRequestDetailTab;
+    readonly since: typeof pageDetailTab;
+  } | null>(null);
+  if (requestedTab !== null && requestedTab.requestId !== appliedTabRequestId) {
+    setAppliedTabRequestId(requestedTab.requestId);
+    if (tabOnPage) setPageTabRequest({ tab: requestedTab.tab, since: pageDetailTab });
+    else setTab(requestedTab.tab);
+  }
+  const requestedPageTab =
+    pageTabRequest !== null && pageTabRequest.since === pageDetailTab ? pageTabRequest.tab : null;
+  const wantedTab = tabOnPage ? (requestedPageTab ?? pageTab ?? initialTab) : selectedTab;
   const isTabAvailable = (value: PullRequestDetailTab) =>
-    (value !== "code" || detail === null || detail.capabilities.diff) &&
+    ((value !== "code" && value !== "walkthrough") ||
+      detail === null ||
+      detail.capabilities.diff) &&
     (value !== "guide" || reviewGuidesEnabled);
   // An unavailable tab falls back without overwriting the saved selection.
-  const tab = isTabAvailable(requestedTab) ? requestedTab : "summary";
+  const tab = isTabAvailable(wantedTab) ? wantedTab : "summary";
   const selectTab = (next: PullRequestDetailTab) => {
     if (tabOnPage) useGuideRunStore.getState().showPageDetailTab(guideKey, next);
     else setTab(next);
     onTabChange?.(next);
   };
+  // The walkthrough's step actions, for keybindings the panel holds.
+  const walkthroughHandle = useRef<DiffWalkthroughViewHandle>(null);
   const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
   const [codeCommitScope, setCodeCommitScope] = useState<{
     readonly pullRequestKey: string;
@@ -489,6 +516,9 @@ export function PullRequestDetailPanel({
     },
     code: (node: HTMLElement | null) => {
       scrollerByTab.current.code = node;
+    },
+    walkthrough: (node: HTMLDivElement | null) => {
+      scrollerByTab.current.walkthrough = node;
     },
   }));
   const foldRef = useRef<HTMLDivElement | null>(null);
@@ -1520,7 +1550,6 @@ export function PullRequestDetailPanel({
                 attachesToComposer={attachTarget !== null}
                 askAboutPullRequest={askAboutPullRequest}
                 explainPullRequest={explainPullRequest}
-                {...(canGenerateWalkthrough ? { generateWalkthrough } : {})}
                 canFixFindings={canFixFindings}
                 startFixFindings={startFixFindings}
                 handoffLabels={handoffLabels}
@@ -1739,6 +1768,7 @@ export function PullRequestDetailPanel({
             onValueChange={selectTab}
             onTabIntent={(item) => {
               if (item === "code") void loadCodeTab();
+              if (item === "walkthrough") void loadWalkthroughTab();
             }}
           >
             {tab === "summary" ? (
@@ -2002,6 +2032,22 @@ export function PullRequestDetailPanel({
                     revealRequest={codeRevealRequest}
                     revealUrl={tab === "code" ? revealUrl : undefined}
                     onRevealSettled={settleReveal}
+                  />
+                </Suspense>
+              </div>
+            ) : null}
+            {mountedTabs.has("walkthrough") ? (
+              <div className={cn("absolute inset-0", tab !== "walkthrough" && "invisible")}>
+                <Suspense fallback={<DiffPanelLoadingState label="Loading walkthrough..." />}>
+                  <PullRequestWalkthroughTab
+                    scrollerRef={scrollerRefs.walkthrough}
+                    environmentId={environmentId}
+                    reference={reference}
+                    detail={detail}
+                    onGenerate={canGenerateWalkthrough ? generateWalkthrough : undefined}
+                    generatePending={handoff === "walkthrough"}
+                    handleRef={walkthroughHandle}
+                    refreshToken={refreshToken + (turnRefresh ?? 0)}
                   />
                 </Suspense>
               </div>
