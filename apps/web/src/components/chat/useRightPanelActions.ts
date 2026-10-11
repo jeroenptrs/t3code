@@ -291,6 +291,8 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const onOpenTurnDiff = (runId: RunId, filePath?: string) => {
     if (!isServerThread || !activeThreadRef) return;
     useDiffPanelStore.getState().selectTurn(activeThreadRef, runId, filePath);
+    // A file is revealed in the diff itself; the walkthrough would hide it.
+    if (filePath) useDiffPanelStore.getState().setView("diff");
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
   };
