@@ -11065,6 +11065,8 @@ export default function ChatView(props: ChatViewProps) {
         "diff";
       explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
       useDiffPanelStore.getState().selectTurn(activeThreadRef, runId, filePath);
+      // A file is revealed in the diff itself; the walkthrough would hide it.
+      if (filePath) useDiffPanelStore.getState().setView("diff");
       useRightPanelStore.getState().open(activeThreadRef, "diff");
       onDiffPanelOpen?.();
     },
