@@ -71,6 +71,7 @@ import {
   MessageSquareIcon,
   PaletteIcon,
   RotateCcwIcon,
+  RouteIcon,
   SettingsIcon,
   MonitorIcon,
   PinIcon,
@@ -105,6 +106,9 @@ import {
   queueWorkspaceFocusFromPalette,
   restoreWorkspaceFocusFromPalette,
 } from "../lib/workspaceFocus";
+import { useOpenPullRequestWalkthrough } from "../lib/openPullRequestLink";
+import { openThreadDiffWalkthrough } from "../diffPanelStore";
+import { resolveOpenWalkthroughTarget } from "./diffs/openWalkthrough.logic";
 import {
   composerPromptLink,
   copyPromptLink,
@@ -490,6 +494,7 @@ function OpenCommandPaletteDialog(props: {
         ? scopeThreadRef(activeThread.environmentId, activeThread.id)
         : null;
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
+  const openPullRequestWalkthrough = useOpenPullRequestWalkthrough();
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
@@ -1486,6 +1491,22 @@ function OpenCommandPaletteDialog(props: {
 
   if (activeThread !== null) {
     const thread = activeThread;
+    const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:open-walkthrough",
+      searchTerms: ["walkthrough", "guide", "review", "diff", "pull request", "pr", "sections"],
+      title: "Open walkthrough",
+      icon: <RouteIcon className={ITEM_ICON_CLASS} />,
+      // Opens the view only; generating a walkthrough is the view's own action.
+      run: async () => {
+        const target = resolveOpenWalkthroughTarget(thread);
+        if (target.kind === "pull-request" && openPullRequestWalkthrough(threadRef, target.url)) {
+          return;
+        }
+        openThreadDiffWalkthrough(threadRef);
+      },
+    });
     actionItems.push({
       kind: "action",
       value: "action:restart-agent-session",

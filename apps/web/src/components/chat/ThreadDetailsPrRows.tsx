@@ -27,7 +27,7 @@ import { useProjects, useQuietThreadShell } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { useOpenPrLink } from "../../lib/openPullRequestLink";
+import { useOpenPrLink, useOpenPullRequestWalkthrough } from "../../lib/openPullRequestLink";
 import {
   linkedPullRequestSnapshotStatus,
   prStatusIndicator,
@@ -43,6 +43,7 @@ function ThreadDetailsPrLinkRow({
   onActed,
   onStopWatching,
   composerTarget,
+  onOpenWalkthrough,
 }: {
   environmentId: EnvironmentId;
   link: ThreadPullRequestLink;
@@ -50,6 +51,7 @@ function ThreadDetailsPrLinkRow({
   onActed?: (() => void) | undefined;
   onStopWatching?: (() => void) | undefined;
   composerTarget?: ComposerThreadTarget | undefined;
+  onOpenWalkthrough: () => void;
 }) {
   const projects = useProjects();
   const parsed = sourceControlClients.parseChangeRequestUrl(link.url)?.link;
@@ -75,6 +77,7 @@ function ThreadDetailsPrLinkRow({
       onOpen={onOpen}
       onStopWatching={onStopWatching}
       composerTarget={composerTarget}
+      onOpenWalkthrough={onOpenWalkthrough}
       {...(onActed ? { onActed } : {})}
     />
   );
@@ -93,6 +96,7 @@ function ThreadDetailsPrRows({
   onOpenLink: (event: ReactMouseEvent<HTMLElement>, url: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const openWalkthrough = useOpenPullRequestWalkthrough();
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
   const stopWatching = (link: ThreadPullRequestLink | null) =>
     link?.watch === undefined
@@ -131,6 +135,7 @@ function ThreadDetailsPrRows({
               onActed={row.onActed}
               onStopWatching={stopWatching(link)}
               composerTarget={row.composerTarget}
+              onOpenWalkthrough={() => openWalkthrough(threadRef, link.url)}
             />
           ))}
         </div>
@@ -179,6 +184,7 @@ export function ThreadDetailsThreadPrRows({
     branchSourceControlProvider,
   );
   const openPrLink = useOpenPrLink(threadRef);
+  const openWalkthrough = useOpenPullRequestWalkthrough();
   const { currentLink, pr, number, url } = displayed;
   const projects = useProjects();
   const parsed =
@@ -209,6 +215,7 @@ export function ThreadDetailsThreadPrRows({
       label={`#${number}${pr?.title.trim() ? `: ${pr.title}` : ""}`}
       openAriaLabel={url}
       onOpen={(event) => openPrLink(event, url)}
+      onOpenWalkthrough={() => openWalkthrough(threadRef, url)}
       composerTarget={composerTarget}
       {...(onActed ? { onActed } : {})}
     />
