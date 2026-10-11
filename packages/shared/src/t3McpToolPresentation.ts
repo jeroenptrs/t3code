@@ -85,6 +85,7 @@ export type T3McpToolSummaryAction =
   | "ci-logs"
   | "ci-rerun"
   | "diff-walkthrough-write"
+  | "diff-walkthrough-read"
   | "thread-diff-read"
   | "browser"
   | "device"
@@ -210,6 +211,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   write_diff_walkthrough: tool(
     ["Write", "Writing", "Wrote", "a diff walkthrough"],
     "diff-walkthrough-write",
+  ),
+  read_diff_walkthrough: tool(
+    ["Read", "Reading", "Read", "a diff walkthrough"],
+    "diff-walkthrough-read",
   ),
   read_thread_diff: tool(["Read", "Reading", "Read", "a thread diff"], "thread-diff-read"),
   orchestrator_capabilities: tool(
