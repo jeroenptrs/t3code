@@ -25,6 +25,7 @@ import {
   EyeOffIcon,
   FileDiffIcon,
   GitBranchIcon,
+  RouteIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
@@ -92,6 +93,7 @@ export function ThreadDetailsPrRow({
   onOpen,
   onActed,
   onStopWatching,
+  onOpenWalkthrough,
 }: {
   environmentId: EnvironmentId;
   pr: ThreadPr;
@@ -107,6 +109,8 @@ export function ThreadDetailsPrRow({
   onActed?: () => void;
   /** Set while the server watches this pull request for the thread; stops the watch. */
   onStopWatching?: (() => void) | undefined;
+  /** Opens this pull request's Walkthrough tab beside the thread. */
+  onOpenWalkthrough?: (() => void) | undefined;
 }) {
   const serverConfigs = useServerConfigs();
   const supportsPullRequests =
@@ -408,10 +412,33 @@ export function ThreadDetailsPrRow({
   );
 
   const showChecks = detail !== null && checksRollup !== null && !conflicting && !detail.isDraft;
+  // Only opens the view: generating one is the view's own empty-state action.
+  const walkthroughControl =
+    onOpenWalkthrough !== undefined && detail?.capabilities.diff === true ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <ThreadDetailsControl
+              type="button"
+              variant="ghost"
+              size="sm"
+              part="icon"
+              tone="muted"
+              aria-label="Open walkthrough"
+              onClick={onOpenWalkthrough}
+            />
+          }
+        >
+          <RouteIcon aria-hidden className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">Open walkthrough</TooltipPopup>
+      </Tooltip>
+    ) : null;
 
   return (
     <>
-      {detail !== null && (showChecks || trailingAction !== null || watching) ? (
+      {detail !== null &&
+      (showChecks || trailingAction !== null || watching || walkthroughControl !== null) ? (
         // Two lines so the title keeps the full row width: the number, checks, watch, and the
         // next action sit underneath, aligned with the title text. The second line hugs its title
         // and the block keeps space below, so stacked pull requests read as separate pairs.
@@ -429,6 +456,7 @@ export function ThreadDetailsPrRow({
             ) : null}
             {watchControl("icon")}
             <span className="flex-1" />
+            {walkthroughControl}
             {trailingAction ? (
               <Tooltip>
                 <TooltipTrigger
