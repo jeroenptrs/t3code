@@ -10,7 +10,7 @@ import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { useOpenLink } from "../browser/useOpenLink";
 import { useClientSettings } from "../hooks/useSettings";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
-import { useRightPanelStore } from "../rightPanelStore";
+import { type PullRequestPanelTab, useRightPanelStore } from "../rightPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -118,13 +118,14 @@ export function useOpenChangeRequestLink(
   targetUrl: string,
   targetThreadRef?: ScopedThreadRef,
   targetEnvironmentId?: EnvironmentId,
+  tab?: PullRequestPanelTab,
 ) => boolean {
   const navigate = useNavigate();
   const allProjects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const openInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
   return useCallback(
-    (event, targetUrl, targetThreadRef, targetEnvironmentId) => {
+    (event, targetUrl, targetThreadRef, targetEnvironmentId, tab) => {
       if (!openInApp || shouldOpenPullRequestExternally(event)) return false;
       // Read at click time: every provider status push replaces the config map, and
       // subscribing would hand every rendered link a new handler.
@@ -185,6 +186,7 @@ export function useOpenChangeRequestLink(
           repository,
           url: targetUrl,
           number: parsed.number,
+          ...(tab === undefined ? {} : { tab }),
         });
         if (!resolvedThreadRef) {
           void navigate({
@@ -219,6 +221,27 @@ export function useOpenChangeRequestLink(
       return true;
     },
     [allProjects, navigate, openInApp, panelRef, primaryEnvironmentId, threadRef],
+  );
+}
+
+const PLAIN_OPEN = {
+  metaKey: false,
+  ctrlKey: false,
+  preventDefault: () => undefined,
+  stopPropagation: () => undefined,
+};
+
+/**
+ * Opens a pull request's Walkthrough tab beside a thread, through the same resolution as its link,
+ * so it lands on the tab the link opens. Never a browser: says false when no project here can read
+ * the pull request, for the caller to fall back.
+ */
+export function useOpenPullRequestWalkthrough() {
+  const openChangeRequest = useOpenChangeRequestLink();
+  return useCallback(
+    (threadRef: ScopedThreadRef, url: string) =>
+      openChangeRequest(PLAIN_OPEN, url, threadRef, undefined, "walkthrough"),
+    [openChangeRequest],
   );
 }
 
