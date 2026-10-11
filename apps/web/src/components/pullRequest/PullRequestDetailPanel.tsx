@@ -1852,9 +1852,6 @@ export function PullRequestDetailPanel({
                     pendingFinding={handoff}
                     fixFindingLabel={handoffLabels.fixFinding}
                     {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
-                    {...(canGenerateWalkthrough && handoff === null
-                      ? { onGenerateWalkthrough: generateWalkthrough }
-                      : {})}
                     onRefresh={refreshDetail}
                     refreshToken={refreshToken}
                     backgroundRefreshToken={turnRefresh ?? 0}
