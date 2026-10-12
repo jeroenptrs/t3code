@@ -1,4 +1,7 @@
-import { createEnvironmentRpcSubscriptionAtomFamily } from "@t3tools/client-runtime/state/runtime";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcSubscriptionAtomFamily,
+} from "@t3tools/client-runtime/state/runtime";
 import {
   WS_METHODS,
   type DiffWalkthroughTargetIdentity,
@@ -35,10 +38,19 @@ function canonicalTarget(target: DiffWalkthroughTargetIdentity): DiffWalkthrough
   }
 }
 
-/** The stored walkthrough for a diff, then every replacement an agent writes. */
+/** The stored walkthrough for a diff and its background run, then every change to either. */
 export function diffWalkthroughAtom(
   environmentId: EnvironmentId,
   target: DiffWalkthroughTargetIdentity,
 ) {
   return diffWalkthroughFamily({ environmentId, input: { target: canonicalTarget(target) } });
 }
+
+/**
+ * Starts the server writing a walkthrough in the background. Runs a model on the environment;
+ * never fired without the reader asking. The run's progress arrives on the subscription.
+ */
+export const generateDiffWalkthrough = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:diff-walkthrough:generate",
+  tag: WS_METHODS.diffWalkthroughGenerate,
+});

@@ -86,6 +86,9 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
+import * as WorkspaceReadAccess from "./workspace/WorkspaceReadAccess.ts";
+import * as DiffWalkthroughRunService from "./diffWalkthrough/DiffWalkthroughRunService.ts";
+import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -1050,6 +1053,9 @@ it.effect.each([
                 )
               : Effect.succeed(bound),
         }),
+        Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+        Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+        Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           scratchRoot: Effect.succeedNone,
           namedProjectsRoot: process.cwd(),
@@ -1431,6 +1437,9 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         resolve: () => Effect.succeed([]),
         resolveAvailable: () => Effect.succeed([]),
       }),
+      Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+      Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+      Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         scratchRoot: Effect.succeedNone,
         namedProjectsRoot: process.cwd(),
