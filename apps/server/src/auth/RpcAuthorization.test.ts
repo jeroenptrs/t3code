@@ -66,6 +66,13 @@ describe("RPC authorization scopes", () => {
     expect(clientRpcRequiredScopes(WS_METHODS.diffWalkthroughPut, undefined)).toEqual([
       AuthOrchestrationOperateScope,
     ]);
+    // Generating runs a model on the environment's providers, which only an operator may start.
+    expect(requiredScopeForRpcMethod(WS_METHODS.diffWalkthroughGenerate)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(clientRpcRequiredScopes(WS_METHODS.diffWalkthroughGenerate, undefined)).toEqual([
+      AuthOrchestrationOperateScope,
+    ]);
   });
 
   it("separates passive terminal observation from operations that can change a shell", () => {
