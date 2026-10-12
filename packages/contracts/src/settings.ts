@@ -1314,8 +1314,8 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /**
-   * Sends the owning thread a walkthrough request when a pull request is
-   * linked to it or its head moves.
+   * Writes a walkthrough in the background when a pull request is linked to
+   * a thread or its head moves.
    */
   pullRequestAutoWalkthrough: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),

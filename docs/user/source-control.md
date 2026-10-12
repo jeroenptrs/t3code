@@ -262,9 +262,10 @@ If there is no walkthrough yet, choose **Generate** in the tab. It puts the requ
 of the thread that owns the branch, or a new thread, for you to read and send. A walkthrough
 describes the commit it was written for; after a new push it shows as out of date until you choose
 **Regenerate**. To have one written for you, turn on **Generate walkthroughs automatically when a
-pull request is linked or pushed** in **Settings → Source Control** for the project. The thread
-that owns the pull request then gets the request a few minutes after it is linked or after the
-last push.
+pull request is linked or pushed** in **Settings → Source Control** for the project. The server
+then writes it in the background with the guide and walkthrough model a few minutes after the pull
+request is linked or after the last push. Nothing is written when that model's provider cannot
+read a checkout read-only.
 
 In a thread's **Diff** panel, switch the view to **Walkthrough** to walk one turn's changes or the
 whole branch before it has a pull request. A branch walkthrough covers committed changes against
