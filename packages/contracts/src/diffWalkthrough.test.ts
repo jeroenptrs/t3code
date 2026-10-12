@@ -12,6 +12,7 @@ import {
 
 const decodeWalkthrough = Schema.decodeUnknownSync(DiffWalkthrough);
 const decodeTarget = Schema.decodeUnknownSync(DiffWalkthroughTarget);
+const encodeWalkthrough = Schema.encodeSync(DiffWalkthrough);
 
 const PR_TARGET = {
   kind: "pull-request",
@@ -38,31 +39,36 @@ const WALKTHROUGH = {
       id: "contract",
       title: "Contract",
       summary: "The shape agents write.",
-      files: ["packages/contracts/src/diffWalkthrough.ts"],
+      attention: { kind: "contract", note: "Stored walkthroughs are rewritten in place." },
+      files: [{ path: "packages/contracts/src/diffWalkthrough.ts" }],
+      questions: ["Why keep notes single level?"],
     },
     {
       id: "ui",
       title: "Rail",
       summary: "Where reviewers read it.",
-      files: ["apps/web/src/Rail.tsx", "apps/web/src/Rail.css"],
+      files: [
+        { path: "apps/web/src/Rail.tsx" },
+        { path: "apps/web/src/Rail.css", note: "Styles for the same rail." },
+      ],
     },
   ],
   notes: [
     {
       groupId: "contract",
       path: "packages/contracts/src/diffWalkthrough.ts",
-      side: "additions",
-      startLine: 10,
-      endLine: 20,
+      side: "new",
+      start: 10,
+      end: 20,
       summary: "Targets carry their revision.",
       body: "Only `headSha` moves.",
     },
     {
       groupId: "ui",
       path: "apps/web/src/Rail.tsx",
-      side: "deletions",
-      startLine: 5,
-      endLine: 5,
+      side: "old",
+      start: 5,
+      end: 5,
       summary: "Old inline cards go.",
     },
   ],
@@ -111,7 +117,10 @@ describe("DiffWalkthrough", () => {
         ...WALKTHROUGH,
         groups: [
           WALKTHROUGH.groups[0],
-          { ...WALKTHROUGH.groups[1], files: ["packages/contracts/src/diffWalkthrough.ts"] },
+          {
+            ...WALKTHROUGH.groups[1],
+            files: [{ path: "packages/contracts/src/diffWalkthrough.ts" }],
+          },
         ],
         notes: [],
       }),
@@ -131,9 +140,50 @@ describe("DiffWalkthrough", () => {
     expect(() =>
       decodeWalkthrough({
         ...WALKTHROUGH,
-        notes: [{ ...WALKTHROUGH.notes[0], startLine: 21, endLine: 20 }],
+        notes: [{ ...WALKTHROUGH.notes[0], start: 21, end: 20 }],
       }),
-    ).toThrow(/startLine must be less than or equal to endLine/);
+    ).toThrow(/start must be less than or equal to end/);
+  });
+
+  it("defaults a group's attention and questions when an agent leaves them out", () => {
+    const decoded = decodeWalkthrough(WALKTHROUGH);
+    expect(decoded.groups[1]?.attention).toBeNull();
+    expect(decoded.groups[1]?.questions).toEqual([]);
+    const encoded = encodeWalkthrough(decoded);
+    expect(encoded.groups[1]).toMatchObject({ attention: null, questions: [] });
+  });
+
+  it("rejects more than two questions on a group", () => {
+    expect(() =>
+      decodeWalkthrough({
+        ...WALKTHROUGH,
+        groups: [{ ...WALKTHROUGH.groups[0], questions: ["One?", "Two?", "Three?"] }],
+        notes: [],
+      }),
+    ).toThrow();
+  });
+
+  it("rejects an attention kind outside the shared vocabulary", () => {
+    expect(() =>
+      decodeWalkthrough({
+        ...WALKTHROUGH,
+        groups: [{ ...WALKTHROUGH.groups[0], attention: { kind: "style", note: "Nit." } }],
+        notes: [],
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a multi-line file note", () => {
+    expect(() =>
+      decodeWalkthrough({
+        ...WALKTHROUGH,
+        groups: [
+          WALKTHROUGH.groups[0],
+          { ...WALKTHROUGH.groups[1], files: [{ path: "apps/web/src/Rail.tsx", note: "a\nb" }] },
+        ],
+        notes: [],
+      }),
+    ).toThrow(/single line/);
   });
 
   it("decodes a branch-range walkthrough", () => {
@@ -241,17 +291,18 @@ describe("groupDiffWalkthroughFiles", () => {
       "packages/contracts/src/diffWalkthrough.ts",
       "docs/user/review.md",
     ]);
-    expect(groups.map((group) => [group.id, group.files])).toEqual([
+    expect(groups.map((group) => [group.id, group.files.map((file) => file.path)])).toEqual([
       ["contract", ["packages/contracts/src/diffWalkthrough.ts"]],
       ["ui", ["apps/web/src/Rail.tsx"]],
       [DIFF_WALKTHROUGH_OTHER_GROUP_ID, ["README.md", "docs/user/review.md"]],
     ]);
+    expect(groups.at(-1)).toMatchObject({ attention: null, questions: [] });
   });
 
   it("omits groups left empty and an empty Other", () => {
     const groups = groupDiffWalkthroughFiles(walkthrough, ["apps/web/src/Rail.css"]);
     expect(groups.map((group) => [group.id, group.files])).toEqual([
-      ["ui", ["apps/web/src/Rail.css"]],
+      ["ui", [{ path: "apps/web/src/Rail.css", note: "Styles for the same rail." }]],
     ]);
   });
 });
