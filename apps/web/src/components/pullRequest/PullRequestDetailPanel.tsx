@@ -6,6 +6,7 @@ import {
 } from "@t3tools/shared/pullRequestAnchor";
 import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -1174,6 +1175,13 @@ export function PullRequestDetailPanel({
     );
   };
 
+  // The pull request's own project decides, as it does for the guide: guides and walkthroughs
+  // share one set of preferences.
+  const walkthroughInstructions = useEnvironmentSettings(
+    environmentId,
+    (settings) =>
+      resolveProjectSettings(settings, reference.projectId).settings.reviewGuideInstructions,
+  );
   const generateWalkthrough = () => {
     if (!detail) return;
     void startAsk(
@@ -1187,6 +1195,7 @@ export function PullRequestDetailPanel({
         baseBranch: detail.baseBranch,
         state: detail.state,
         isDraft: detail.isDraft,
+        instructions: walkthroughInstructions,
       }),
     );
   };
