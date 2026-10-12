@@ -10,7 +10,6 @@ import {
   type ThreadId,
   isDiffWalkthroughStale,
 } from "@t3tools/contracts";
-import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -20,6 +19,7 @@ import * as CheckpointDiffQuery from "../../../checkpointing/CheckpointDiffQuery
 import type { CheckpointServiceError } from "../../../checkpointing/Errors.ts";
 import * as DiffWalkthroughService from "../../../diffWalkthrough/DiffWalkthroughService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import { diffSectionPath, diffSectionPaths } from "../../../review/diffChange.ts";
 import * as ReviewService from "../../../review/ReviewService.ts";
 import { OUTPUT_TRUNCATED_MARKER } from "../../../vcs/GitVcsDriverCore.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -36,24 +36,6 @@ import {
 export const THREAD_DIFF_CHARACTER_LIMIT = 200_000;
 
 const FILE_HEADER = "diff --git ";
-
-/** The file a unified diff section changes, preferring the new name. */
-function diffSectionPath(section: string): string {
-  const lines = section.split("\n");
-  const header = (prefix: string) => {
-    const line = lines.find((candidate) => candidate.startsWith(prefix));
-    if (line === undefined) return undefined;
-    // A name that holds a space ends at a tab, which git appends only then.
-    const token = line.slice(prefix.length).split("\t")[0]!;
-    return token === "/dev/null" ? undefined : unquoteGitPatchPath(token).replace(/^[ab]\//, "");
-  };
-  const fromHeaders = header("+++ ") ?? header("--- ");
-  if (fromHeaders !== undefined) return fromHeaders;
-  // Binary and rename-only sections have no ---/+++ lines.
-  const first = lines[0]!.slice(FILE_HEADER.length);
-  const newSide = first.lastIndexOf(" b/");
-  return newSide === -1 ? first : first.slice(newSide + 3);
-}
 
 /**
  * A unified diff cut to `limit` characters at a file boundary, with the files it left out. A
@@ -80,12 +62,6 @@ export function boundThreadDiff(
       .map(diffSectionPath),
   };
 }
-
-const diffSectionPaths = (diff: string) =>
-  diff
-    .split(/^(?=diff --git )/m)
-    .filter((section) => section.startsWith(FILE_HEADER))
-    .map(diffSectionPath);
 
 /**
  * The review diff's patch, which git cut at a byte limit possibly partway through a file, as
