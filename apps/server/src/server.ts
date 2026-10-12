@@ -44,6 +44,7 @@ import * as PullRequestReviewGuides from "./persistence/PullRequestReviewGuides.
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import * as DiffWalkthroughs from "./persistence/DiffWalkthroughs.ts";
 import * as DiffWalkthroughChangeReader from "./diffWalkthrough/DiffWalkthroughChangeReader.ts";
+import * as DiffWalkthroughRunService from "./diffWalkthrough/DiffWalkthroughRunService.ts";
 import * as DiffWalkthroughService from "./diffWalkthrough/DiffWalkthroughService.ts";
 import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -752,8 +753,11 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
   ),
-  // Both transports write walkthroughs through it; it reads changes through the shared pull
-  // request service and stores through the shared walkthrough service, both provided below.
+  // Background walkthrough runs, which store through the writer below.
+  Layer.provide(DiffWalkthroughRunService.layer),
+  // Both transports and the background run write walkthroughs through it; it reads changes
+  // through the shared pull request service and stores through the shared walkthrough service,
+  // both provided below.
   Layer.provide(layerDiffWalkthroughWriter),
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP. Provided

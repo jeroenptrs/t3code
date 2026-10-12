@@ -46,6 +46,11 @@ export class DiffWalkthroughService extends Context.Service<
     readonly put: (
       walkthrough: DiffWalkthrough,
     ) => Effect.Effect<DiffWalkthrough, DiffWalkthroughError>;
+    /**
+     * The key a target is stored under, with a pull request's absent host resolved to the
+     * project's own, so anything tracked per walkthrough lines up with storage.
+     */
+    readonly keyOf: (target: DiffWalkthroughTargetIdentity) => Effect.Effect<string>;
     /** The stored walkthrough, then every replacement of it. */
     readonly subscribe: (
       target: DiffWalkthroughTargetIdentity,
@@ -111,10 +116,11 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const keyOf: DiffWalkthroughService["Service"]["keyOf"] = (target) =>
+    resolveTarget(target).pipe(Effect.map(diffWalkthroughTargetKey));
+
   const get: DiffWalkthroughService["Service"]["get"] = (target) =>
-    resolveTarget(target).pipe(
-      Effect.flatMap((resolved) => readByKey(diffWalkthroughTargetKey(resolved))),
-    );
+    keyOf(target).pipe(Effect.flatMap(readByKey));
 
   const put: DiffWalkthroughService["Service"]["put"] = Effect.fn("DiffWalkthroughService.put")(
     function* (input) {
@@ -152,7 +158,7 @@ const make = Effect.gen(function* () {
   const subscribe: DiffWalkthroughService["Service"]["subscribe"] = (target) =>
     Stream.unwrap(
       Effect.gen(function* () {
-        const key = diffWalkthroughTargetKey(yield* resolveTarget(target));
+        const key = yield* keyOf(target);
         // Subscribe before reading, so a replacement stored in between is buffered, not lost.
         const subscription = yield* PubSub.subscribe(changes);
         return Stream.concat(
@@ -165,7 +171,7 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  return DiffWalkthroughService.of({ get, put, subscribe });
+  return DiffWalkthroughService.of({ get, put, keyOf, subscribe });
 });
 
 export const layer = Layer.effect(DiffWalkthroughService, make);
