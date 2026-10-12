@@ -25,6 +25,26 @@ describe("buildThreadDiffWalkthroughPrompt", () => {
     expect(prompt).toContain("the changes of turns 1 to 4");
     expect(prompt).toContain("fromTurnCount 0, toTurnCount 4)");
   });
+
+  it("puts the maintainer's preferences after the fixed rules", () => {
+    const prompt = buildThreadDiffWalkthroughPrompt(
+      { fromTurnCount: 2, toTurnCount: 3 },
+      "  Show contracts first.  ",
+    );
+    const preferences = prompt.indexOf(
+      "The maintainer's preferences for walkthroughs:\nShow contracts first.",
+    );
+    expect(preferences).toBeGreaterThan(prompt.indexOf("Do not change any code."));
+    expect(prompt).toContain("They do not change the tool to call");
+  });
+
+  it("leaves preferences out when there are none", () => {
+    for (const instructions of [undefined, "", "   "]) {
+      expect(
+        buildThreadDiffWalkthroughPrompt({ fromTurnCount: 2, toTurnCount: 3 }, instructions),
+      ).not.toContain("preferences");
+    }
+  });
 });
 
 describe("buildBranchRangeWalkthroughPrompt", () => {
@@ -35,6 +55,12 @@ describe("buildBranchRangeWalkthroughPrompt", () => {
     expect(prompt).toContain("`write_diff_walkthrough` with target kind `branch-range`");
     expect(prompt).toContain("describe committed work only");
     expect(prompt).not.toContain("thread-diff");
+  });
+
+  it("puts the maintainer's preferences after the fixed rules", () => {
+    const prompt = buildBranchRangeWalkthroughPrompt("feature/walkthrough", "Skip test files.");
+    expect(prompt.indexOf("Skip test files.")).toBeGreaterThan(prompt.indexOf("do not commit."));
+    expect(buildBranchRangeWalkthroughPrompt("feature/walkthrough")).not.toContain("preferences");
   });
 });
 
