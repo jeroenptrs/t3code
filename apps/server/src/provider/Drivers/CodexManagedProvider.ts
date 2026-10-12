@@ -293,6 +293,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       ),
     generateDiffWalkthrough: (value) =>
       protect("generateDiffWalkthrough", nativeGeneration.generateDiffWalkthrough(value)),
+    investigationRefusal: nativeGeneration.investigationRefusal,
   };
   return {
     instanceId,

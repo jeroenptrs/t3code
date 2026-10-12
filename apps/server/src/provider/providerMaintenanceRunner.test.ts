@@ -1028,18 +1028,20 @@ describe("providerMaintenanceRunner", () => {
         enabled: true,
         snapshot: { getSnapshot: Effect.succeed(baseProvider) } as ProviderInstance["snapshot"],
         orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
-        textGeneration: TextGeneration.TextGeneration.of({
+        textGeneration: {
           generateCommitMessage: () => Effect.die("unused"),
           generatePrContent: () => Effect.die("unused"),
           generateBranchName: () => Effect.die("unused"),
           generateReviewGuide: () => Effect.die("unused"),
           generateTranscriptionPostProcessing: () => Effect.die("unused"),
+          generateDiffWalkthrough: () => Effect.die("unused"),
+          investigationRefusal: null,
           generateThreadTitle: () =>
             Effect.sync(() => {
               log.push("text generation spawned provider");
               return { title: "Generated title" };
             }),
-        }),
+        },
       };
       const textGeneration = yield* TextGeneration.make.pipe(
         Effect.provide(
