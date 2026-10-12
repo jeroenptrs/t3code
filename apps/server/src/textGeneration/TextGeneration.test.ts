@@ -25,6 +25,8 @@ const makeStubTextGeneration = (
     generateBranchName: () => Effect.die("generateBranchName stub not configured for this test"),
     generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
     generateReviewGuide: () => Effect.die("generateReviewGuide stub not configured for this test"),
+    generateDiffWalkthrough: () =>
+      Effect.die("generateDiffWalkthrough stub not configured for this test"),
     ...overrides,
   });
 
@@ -141,6 +143,46 @@ describe("TextGeneration.make", () => {
 
       expect(result.branch).toBe("personal-branch");
       expect(personalCalls).toEqual(["Refactor the routing layer"]);
+    }),
+  );
+
+  it.effect("routes a walkthrough to the instance its model selection names", () =>
+    Effect.gen(function* () {
+      const claudeId = ProviderInstanceId.make("claude");
+      const cwds: string[] = [];
+      const claude = makeStubInstance(
+        claudeId,
+        makeStubTextGeneration({
+          generateDiffWalkthrough: (input) => {
+            cwds.push(input.cwd);
+            return Effect.succeed({ groups: [], notes: [] });
+          },
+        }),
+      );
+      const codex = makeStubInstance(ProviderInstanceId.make("codex"), makeStubTextGeneration({}));
+      const tg = yield* TextGeneration.make.pipe(
+        Effect.provideService(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          makeStubRegistry([claude, codex]),
+        ),
+        Effect.provide(
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => Effect.die("No link lookup expected"),
+          }),
+        ),
+      );
+
+      const result = yield* tg.generateDiffWalkthrough({
+        cwd: "/tmp/walkthrough-checkout",
+        subject: "branch feature/search",
+        baseCommit: "abc123",
+        hasCommitHistory: true,
+        stat: "",
+        modelSelection: createModelSelection(claudeId, "claude-sonnet-5-5"),
+      });
+
+      expect(result).toEqual({ groups: [], notes: [] });
+      expect(cwds).toEqual(["/tmp/walkthrough-checkout"]);
     }),
   );
 

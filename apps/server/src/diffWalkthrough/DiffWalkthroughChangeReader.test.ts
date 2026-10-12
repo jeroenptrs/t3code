@@ -73,7 +73,7 @@ const expectedHunks = new Map([
 
 interface Stubs {
   readonly workspace?: string;
-  readonly resolveTurnCheckpoints?: CheckpointDiffQuery.CheckpointDiffQuery["Service"]["resolveTurnCheckpoints"];
+  readonly resolveTurnRange?: CheckpointDiffQuery.CheckpointDiffQuery["Service"]["resolveTurnRange"];
   readonly headSha?: string;
   readonly diff?: (input: PullRequestDiffInput) => PullRequestDiffResult;
   readonly diffFails?: boolean;
@@ -94,8 +94,8 @@ const readerWith = (stubs: Stubs) =>
                 ),
             }),
             Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
-              resolveTurnCheckpoints:
-                stubs.resolveTurnCheckpoints ?? (() => Effect.die("not resolved in this test")),
+              resolveTurnRange:
+                stubs.resolveTurnRange ?? (() => Effect.die("not resolved in this test")),
             }),
             Layer.mock(PullRequestService.PullRequestService)({
               detail: () =>
@@ -160,7 +160,7 @@ it.layer(layerGit, { excludeTestServices: true })("local changes", (it) => {
         yield* git(repository.workspace, ["update-ref", from, repository.baseSha]);
         yield* git(repository.workspace, ["update-ref", to, repository.headSha]);
         const reader = yield* readerWith({
-          resolveTurnCheckpoints: () =>
+          resolveTurnRange: () =>
             Effect.succeed({
               cwd: repository.workspace,
               fromCheckpointRef: from,
@@ -182,7 +182,7 @@ it.layer(layerGit, { excludeTestServices: true })("local changes", (it) => {
   it.effect("holds an empty turn range to nothing and stores unchecked when a ref is missing", () =>
     Effect.gen(function* () {
       const reader = yield* readerWith({
-        resolveTurnCheckpoints: (input) =>
+        resolveTurnRange: (input) =>
           Effect.fail(
             new CheckpointRefUnavailableError({
               operation: "CheckpointDiffQuery.getTurnDiff",

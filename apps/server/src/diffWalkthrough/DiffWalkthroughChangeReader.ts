@@ -110,7 +110,7 @@ const make = Effect.gen(function* () {
         withheld: new Set(),
       } satisfies DiffWalkthroughChange;
     }
-    const range = yield* checkpoints.resolveTurnCheckpoints(target);
+    const range = yield* checkpoints.resolveTurnRange(target);
     return yield* readRange(range.cwd, range.fromCheckpointRef, range.toCheckpointRef);
   });
 
