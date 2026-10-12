@@ -8,6 +8,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CHECKPOINT_DIFF_TRUNCATED_MARKER,
   AuthOrchestrationOperateScope,
@@ -1084,13 +1085,19 @@ export default function DiffPanel({
     walkthroughEnvironmentId,
     AuthOrchestrationOperateScope,
   );
+  // Guides and walkthroughs share one set of preferences, read for this thread's project.
+  const serverSettings = serverConfig?.settings ?? null;
+  const walkthroughInstructions =
+    serverSettings === null
+      ? ""
+      : resolveProjectSettings(serverSettings, activeProjectId).settings.reviewGuideInstructions;
   const generateWalkthrough = () => {
     if (walkthroughTarget === null) return;
     const task =
       walkthroughTarget.kind === "thread-diff"
-        ? buildThreadDiffWalkthroughPrompt(walkthroughTarget)
+        ? buildThreadDiffWalkthroughPrompt(walkthroughTarget, walkthroughInstructions)
         : walkthroughTarget.kind === "branch-range"
-          ? buildBranchRangeWalkthroughPrompt(walkthroughTarget.branch)
+          ? buildBranchRangeWalkthroughPrompt(walkthroughTarget.branch, walkthroughInstructions)
           : null;
     if (task === null) return;
     const store = useComposerDraftStore.getState();
