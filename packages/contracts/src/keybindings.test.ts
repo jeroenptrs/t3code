@@ -66,7 +66,7 @@ it.effect("parses keybinding rules", () =>
     assert.strictEqual(parsedDiffToggle.command, "diff.toggle");
 
     const parsedWalkthroughNext = yield* decode(KeybindingRule, {
-      key: "alt+arrowdown",
+      key: "j",
       command: "walkthrough.nextSection",
       when: "!editableFocus && !terminalFocus",
     });
