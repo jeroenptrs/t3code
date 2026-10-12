@@ -1532,7 +1532,6 @@ export const layerWsRpc = (
       const issueTrackers = yield* IssueTrackerConnections.IssueTrackerConnections;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
-      const diffWalkthroughs = yield* DiffWalkthroughService.DiffWalkthroughService;
       const diffWalkthroughWriter = yield* DiffWalkthroughWriter.DiffWalkthroughWriter;
       const diffWalkthroughRuns = yield* DiffWalkthroughRunService.DiffWalkthroughRunService;
       const deviceService = yield* DeviceService.DeviceService;
