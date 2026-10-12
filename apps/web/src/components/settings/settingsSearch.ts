@@ -1339,20 +1339,19 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "review-guide-model",
-    title: msg("Review guide model"),
+    title: msg("Guide and walkthrough model"),
     to: "/settings/source-control",
-    // Hidden until review guides are on, so a search lands on the switch that shows it.
-    targetId: "review-guides",
-    searchTerms: [msg("pull request pr guided review guide brief maintainer")],
+    searchTerms: [msg("pull request pr guided review guide diff walkthrough brief maintainer")],
     environmentOnly: true,
     scope: "project-defaults",
   },
   {
     id: "review-guide-instructions",
-    title: msg("Review guide instructions"),
+    title: msg("Guide and walkthrough instructions"),
     to: "/settings/source-control",
-    targetId: "review-guides",
-    searchTerms: [msg("pull request pr guided review guide preferences taste prompt custom")],
+    searchTerms: [
+      msg("pull request pr guided review guide diff walkthrough preferences taste prompt custom"),
+    ],
     environmentOnly: true,
     scope: "project-defaults",
   },

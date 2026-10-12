@@ -342,159 +342,156 @@ export function SourceControlWritingSettingsSection() {
         }
       />
 
-      {settings.reviewGuidesEnabled || mixedReviewGuidesEnabled ? (
-        <>
-          <SettingsRow
-            serverScoped
-            settingKeys={["reviewGuideModelSelection"]}
-            {...setting("review-guide-model")}
-            description={gt(
-              "Must be a coding agent: it reads the pull request over many steps. Off uses the writer model, or Codex or Claude if that model is a text generator.",
-            )}
-            control={
-              !hasServerTargets ? (
-                <span className="text-sm text-muted-foreground">
-                  <T>Connect an environment to choose its review guide model.</T>
-                </span>
-              ) : (
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  {(usesReviewGuideModel || mixedReviewGuideModel) && canEnableReviewGuideModel ? (
-                    <ProviderModelPicker
-                      environmentId={environmentId}
-                      activeInstanceId={reviewGuideSelection.instanceId}
-                      model={reviewGuideSelection.model}
-                      lockedProvider={null}
-                      instanceEntries={instanceEntries}
-                      modelOptionsByInstance={reviewGuideModelOptionsByInstance}
-                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                      triggerAriaLabel={gt("Review guide model")}
-                      {...(mixedReviewGuideModel ? { triggerLabel: gt("Mixed") } : {})}
-                      getModelDisabledReason={writerModelDisabledReason}
-                      onInstanceModelChange={(instanceId, model) => {
-                        const reason = writerModelDisabledReason(instanceId, model);
-                        if (reason) {
-                          toastManager.add({
-                            type: "error",
-                            title: gt("Review guide model not saved"),
-                            description: reason,
-                          });
-                          return;
-                        }
-                        updateSettings({
-                          reviewGuideModelSelection: pickModelSelection(
-                            mixedReviewGuideModel ? null : reviewGuideSelection,
-                            instanceId,
-                            model,
-                          ),
-                        });
-                      }}
-                    />
-                  ) : null}
-                  {usesReviewGuideModel &&
-                  canEnableReviewGuideModel &&
-                  !mixedReviewGuideModel &&
-                  reviewGuideInstanceEntry ? (
-                    <TraitsPicker
-                      provider={reviewGuideInstanceEntry.driverKind}
-                      models={reviewGuideInstanceEntry.models}
-                      model={reviewGuideSelection.model}
-                      modelOptions={reviewGuideSelection.options ?? []}
-                      allowPromptInjectedEffort={false}
-                      includePlanAgent={selectsPlanAgent(reviewGuideSelection.options)}
-                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                      onModelOptionsChange={(options) =>
-                        updateSettings({
-                          reviewGuideModelSelection: createModelSelection(
-                            reviewGuideSelection.instanceId,
-                            reviewGuideSelection.model,
-                            options,
-                          ),
-                        })
-                      }
-                    />
-                  ) : null}
-                  <Switch
-                    mixed={mixedReviewGuideModel}
-                    checked={mixedReviewGuideModel ? false : usesReviewGuideModel}
-                    disabled={!usesReviewGuideModel && !canEnableReviewGuideModel}
-                    onCheckedChange={(checked) => {
-                      if (!checked) {
-                        updateSettings({ reviewGuideModelSelection: null });
-                        return;
-                      }
-                      const seed = textGeneratorForSelection(settings, activeSelection.instanceId)
-                        ? reviewGuideSelection
-                        : activeSelection;
-                      const reason = writerModelDisabledReason(seed.instanceId, seed.model);
-                      if (reason) {
-                        toastManager.add({
-                          type: "error",
-                          title: gt("Review guide model not saved"),
-                          description: reason,
-                        });
-                        return;
-                      }
-                      updateSettings({
-                        reviewGuideModelSelection: createModelSelection(
-                          seed.instanceId,
-                          seed.model,
-                          seed.options,
-                        ),
+      {/* Walkthroughs are always on, so the rows they share with guides show without the beta. */}
+      <SettingsRow
+        serverScoped
+        settingKeys={["reviewGuideModelSelection"]}
+        {...setting("review-guide-model")}
+        description={gt(
+          "Model that writes review guides and walkthroughs. Must be a coding agent: it reads the change over many steps. Off uses the writer model, or Codex or Claude if that model is a text generator.",
+        )}
+        control={
+          !hasServerTargets ? (
+            <span className="text-sm text-muted-foreground">
+              <T>Connect an environment to choose its guide and walkthrough model.</T>
+            </span>
+          ) : (
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {(usesReviewGuideModel || mixedReviewGuideModel) && canEnableReviewGuideModel ? (
+                <ProviderModelPicker
+                  environmentId={environmentId}
+                  activeInstanceId={reviewGuideSelection.instanceId}
+                  model={reviewGuideSelection.model}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={reviewGuideModelOptionsByInstance}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  triggerAriaLabel={gt("Guide and walkthrough model")}
+                  {...(mixedReviewGuideModel ? { triggerLabel: gt("Mixed") } : {})}
+                  getModelDisabledReason={writerModelDisabledReason}
+                  onInstanceModelChange={(instanceId, model) => {
+                    const reason = writerModelDisabledReason(instanceId, model);
+                    if (reason) {
+                      toastManager.add({
+                        type: "error",
+                        title: gt("Guide and walkthrough model not saved"),
+                        description: reason,
                       });
-                    }}
-                    aria-label={gt("Use a separate review guide model")}
-                  />
-                </div>
-              )
-            }
-          />
-
-          <SettingsRow
-            serverScoped
-            settingKeys={["reviewGuideInstructions"]}
-            {...setting("review-guide-instructions")}
-            description={gt(
-              "Your preferences for review guides: what to show first, dwell on, or skip. The guide's format and coverage stay the same.",
-            )}
-            resetAction={
-              mixedReviewGuideInstructions || settings.reviewGuideInstructions !== "" ? (
-                <SettingResetButton
-                  ariaLabel={gt("Reset review guide instructions to default")}
-                  onClick={() => updateSettings({ reviewGuideInstructions: "" })}
+                      return;
+                    }
+                    updateSettings({
+                      reviewGuideModelSelection: pickModelSelection(
+                        mixedReviewGuideModel ? null : reviewGuideSelection,
+                        instanceId,
+                        model,
+                      ),
+                    });
+                  }}
                 />
-              ) : null
-            }
-          >
-            <div className="mt-3 max-w-2xl pb-3.5">
-              <Textarea
-                key={`${scopeKey}:${mixedReviewGuideInstructions}:${settings.reviewGuideInstructions}`}
-                aria-label={gt("Review guide instructions")}
-                onChange={() => {
-                  reviewGuideInstructionsEdited.current = true;
+              ) : null}
+              {usesReviewGuideModel &&
+              canEnableReviewGuideModel &&
+              !mixedReviewGuideModel &&
+              reviewGuideInstanceEntry ? (
+                <TraitsPicker
+                  provider={reviewGuideInstanceEntry.driverKind}
+                  models={reviewGuideInstanceEntry.models}
+                  model={reviewGuideSelection.model}
+                  modelOptions={reviewGuideSelection.options ?? []}
+                  allowPromptInjectedEffort={false}
+                  includePlanAgent={selectsPlanAgent(reviewGuideSelection.options)}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onModelOptionsChange={(options) =>
+                    updateSettings({
+                      reviewGuideModelSelection: createModelSelection(
+                        reviewGuideSelection.instanceId,
+                        reviewGuideSelection.model,
+                        options,
+                      ),
+                    })
+                  }
+                />
+              ) : null}
+              <Switch
+                mixed={mixedReviewGuideModel}
+                checked={mixedReviewGuideModel ? false : usesReviewGuideModel}
+                disabled={!usesReviewGuideModel && !canEnableReviewGuideModel}
+                onCheckedChange={(checked) => {
+                  if (!checked) {
+                    updateSettings({ reviewGuideModelSelection: null });
+                    return;
+                  }
+                  const seed = textGeneratorForSelection(settings, activeSelection.instanceId)
+                    ? reviewGuideSelection
+                    : activeSelection;
+                  const reason = writerModelDisabledReason(seed.instanceId, seed.model);
+                  if (reason) {
+                    toastManager.add({
+                      type: "error",
+                      title: gt("Guide and walkthrough model not saved"),
+                      description: reason,
+                    });
+                    return;
+                  }
+                  updateSettings({
+                    reviewGuideModelSelection: createModelSelection(
+                      seed.instanceId,
+                      seed.model,
+                      seed.options,
+                    ),
+                  });
                 }}
-                rows={4}
-                defaultValue={mixedReviewGuideInstructions ? "" : settings.reviewGuideInstructions}
-                placeholder={
-                  mixedReviewGuideInstructions
-                    ? gt("Mixed. Enter instructions to apply to all selected targets.")
-                    : gt(
-                        "Show service interfaces before implementations. Skip test files unless they change behavior. Keep summaries to two sentences.",
-                      )
-                }
-                onBlur={(event) => {
-                  const value = event.target.value.trim();
-                  if (
-                    reviewGuideInstructionsEdited.current &&
-                    (mixedReviewGuideInstructions || value !== settings.reviewGuideInstructions)
-                  )
-                    updateSettings({ reviewGuideInstructions: value });
-                  reviewGuideInstructionsEdited.current = false;
-                }}
+                aria-label={gt("Use a separate guide and walkthrough model")}
               />
             </div>
-          </SettingsRow>
-        </>
-      ) : null}
+          )
+        }
+      />
+
+      <SettingsRow
+        serverScoped
+        settingKeys={["reviewGuideInstructions"]}
+        {...setting("review-guide-instructions")}
+        description={gt(
+          "Your preferences for guides and walkthroughs: what to show first, dwell on, or skip. Their format and coverage stay the same.",
+        )}
+        resetAction={
+          mixedReviewGuideInstructions || settings.reviewGuideInstructions !== "" ? (
+            <SettingResetButton
+              ariaLabel={gt("Reset guide and walkthrough instructions to default")}
+              onClick={() => updateSettings({ reviewGuideInstructions: "" })}
+            />
+          ) : null
+        }
+      >
+        <div className="mt-3 max-w-2xl pb-3.5">
+          <Textarea
+            key={`${scopeKey}:${mixedReviewGuideInstructions}:${settings.reviewGuideInstructions}`}
+            aria-label={gt("Guide and walkthrough instructions")}
+            onChange={() => {
+              reviewGuideInstructionsEdited.current = true;
+            }}
+            rows={4}
+            defaultValue={mixedReviewGuideInstructions ? "" : settings.reviewGuideInstructions}
+            placeholder={
+              mixedReviewGuideInstructions
+                ? gt("Mixed. Enter instructions to apply to all selected targets.")
+                : gt(
+                    "Show service interfaces before implementations. Skip test files unless they change behavior. Keep summaries to two sentences.",
+                  )
+            }
+            onBlur={(event) => {
+              const value = event.target.value.trim();
+              if (
+                reviewGuideInstructionsEdited.current &&
+                (mixedReviewGuideInstructions || value !== settings.reviewGuideInstructions)
+              )
+                updateSettings({ reviewGuideInstructions: value });
+              reviewGuideInstructionsEdited.current = false;
+            }}
+          />
+        </div>
+      </SettingsRow>
       <AdvancedSettings
         targetIds={[
           setting("follow-change-request-templates").id,
