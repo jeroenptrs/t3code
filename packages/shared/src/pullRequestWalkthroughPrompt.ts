@@ -32,6 +32,13 @@ export function pullRequestContextLines(subject: PullRequestPromptSubject): Read
   ];
 }
 
+/**
+ * How a walkthrough's groups carry more than files, worded once for every hand-off prompt: a pull
+ * request's here, and a thread diff's or branch's in the Diff panel.
+ */
+export const DIFF_WALKTHROUGH_GROUP_GUIDANCE =
+  "Give a file a one-line note only when its diff does not say what it adds. Set a group's attention (tradeoff, contract, product, risk or accessibility) only for a call the diff cannot settle, and give a group at most two questions about intent, never asking the reader to review something.";
+
 export const PULL_REQUEST_WALKTHROUGH_REQUEST = "Write a walkthrough of this pull request.";
 
 /**
@@ -52,6 +59,7 @@ export function pullRequestWalkthroughInstructions(input: {
       ? `Right before writing, read the head commit with \`gh pr view ${input.number} --json headRefOid\` and pass it as \`headSha\`: the pull request may have moved since this was asked.`
       : "Right before writing, read the pull request's head commit from the host and pass its full SHA as `headSha`: the pull request may have moved since this was asked.",
     "Then call `write_diff_walkthrough` with target kind `pull-request` and the URL above. Group every changed file by intent, in suggested reading order. Write one note per meaningful hunk with a one-line summary of what it does, and a markdown body only where the why or how relative to the codebase is not obvious. Skip commentary on style and formatting.",
+    DIFF_WALKTHROUGH_GROUP_GUIDANCE,
     "Do not change any code, and do not post anything to the pull request.",
   ];
 }
