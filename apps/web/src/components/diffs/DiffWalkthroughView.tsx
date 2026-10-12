@@ -5,6 +5,8 @@ import {
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
   CircleCheckIcon,
   HistoryIcon,
   RefreshCwIcon,
@@ -116,9 +118,19 @@ export interface DiffWalkthroughViewProps {
 const NO_FOLDS: ReadonlySet<string> = new Set();
 
 /**
+ * A note the reader opened or closed by hand, and whether its file was folded then. The choice
+ * holds only while the file stays that way, so folding a file folds its notes with it.
+ */
+interface NoteOverride {
+  readonly open: boolean;
+  readonly fileCollapsed: boolean;
+}
+
+/**
  * An agent's guide to a diff, one section at a time: a group of whole files with the intent
  * behind them, its notes as links into the files, and the files themselves. Unviewed files are
- * open and viewed ones folded; the reader marks a section reviewed and moves on.
+ * open and viewed ones folded, and a note's explanation follows its file; the reader marks a
+ * section reviewed and moves on.
  */
 export function DiffWalkthroughView(props: DiffWalkthroughViewProps) {
   const { source, files, onGenerate, generatePending = false } = props;
@@ -517,6 +529,30 @@ function SectionBody({
     [items],
   );
   const requestReveal = useCodeViewFileReveal(viewer, section.id, expandedFileKeys);
+  // Explanations open with their file. The section is keyed, so overrides start over with it.
+  const [noteOverrides, setNoteOverrides] = useState<ReadonlyMap<string, NoteOverride>>(
+    () => new Map(),
+  );
+  const explainedNotes = useMemo(
+    () => section.notes.filter((entry) => entry.note.body !== undefined),
+    [section.notes],
+  );
+  const isNoteOpen = (entry: DiffWalkthroughSectionNote) => {
+    const fileCollapsed = isCollapsed(entry.note.path);
+    const override = noteOverrides.get(entry.key);
+    return override !== undefined && override.fileCollapsed === fileCollapsed
+      ? override.open
+      : !fileCollapsed;
+  };
+  const setNotesOpen = (entries: ReadonlyArray<DiffWalkthroughSectionNote>, open: boolean) =>
+    setNoteOverrides((current) => {
+      const next = new Map(current);
+      for (const entry of entries) {
+        next.set(entry.key, { open, fileCollapsed: isCollapsed(entry.note.path) });
+      }
+      return next;
+    });
+  const anyNoteOpen = explainedNotes.some(isNoteOpen);
   const revealNote = useCallback(
     (note: DiffWalkthroughNote) => {
       const file = fileByPath.get(note.path);
@@ -599,7 +635,29 @@ function SectionBody({
         {summary === null ? null : (
           <p className="mb-4 text-xs leading-5 text-muted-foreground">{summary}</p>
         )}
-        <p className="font-mono text-2xs tabular-nums text-muted-foreground">{ordinal}</p>
+        <div className="flex h-5 items-center justify-between gap-2">
+          <p className="font-mono text-2xs tabular-nums text-muted-foreground">{ordinal}</p>
+          {explainedNotes.length === 0 ? null : (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label={anyNoteOpen ? "Collapse all notes" : "Expand all notes"}
+                    onClick={() => setNotesOpen(explainedNotes, !anyNoteOpen)}
+                  />
+                }
+              >
+                {anyNoteOpen ? <ChevronsDownUpIcon /> : <ChevronsUpDownIcon />}
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">
+                {anyNoteOpen ? "Collapse all notes" : "Expand all notes"}
+              </TooltipPopup>
+            </Tooltip>
+          )}
+        </div>
         <h2 className="mt-1 text-sm font-medium text-foreground">{section.title}</h2>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">{section.summary}</p>
         {section.notes.length === 0 ? null : (
@@ -608,6 +666,8 @@ function SectionBody({
               <SectionNote
                 key={entry.key}
                 entry={entry}
+                open={isNoteOpen(entry)}
+                onOpenChange={(open) => setNotesOpen([entry], open)}
                 onReveal={revealNote}
                 cwd={cwd}
                 environmentId={environmentId}
@@ -673,11 +733,15 @@ function SectionBody({
 
 function SectionNote({
   entry,
+  open,
+  onOpenChange,
   onReveal,
   cwd,
   environmentId,
 }: {
   readonly entry: DiffWalkthroughSectionNote;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
   readonly onReveal: (note: DiffWalkthroughNote) => void;
   readonly cwd: string | undefined;
   readonly environmentId: EnvironmentId | undefined;
@@ -698,10 +762,9 @@ function SectionNote({
   const rowClassName =
     "flex items-start gap-1 rounded-sm border-l-2 border-border/60 pr-1 pl-2 hover:border-primary hover:bg-accent/60";
   if (note.body === undefined) return <li className={rowClassName}>{row}</li>;
-  // Collapsed by default; the panel mounts the markdown only once it is opened.
   return (
     <li>
-      <Collapsible>
+      <Collapsible open={open} onOpenChange={onOpenChange}>
         <div className={rowClassName}>
           {row}
           <CollapsibleTrigger
