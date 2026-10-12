@@ -45,6 +45,12 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it("finds the shared guide and walkthrough rows by walkthrough", () => {
+    const ids = searchSettings("walkthrough").map((item) => item.id);
+    expect(ids).toContain("review-guide-model");
+    expect(ids).toContain("review-guide-instructions");
+  });
+
   it.each(["OTel", "OTLP", "telemetry export", "Grafana"])(
     "finds environment telemetry settings for %s",
     (query) => {

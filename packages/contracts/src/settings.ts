@@ -1293,16 +1293,16 @@ export const ServerSettings = Schema.Struct({
    */
   reviewGuidesEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
-   * The model that reads a pull request to write its review guide. It investigates a checkout
-   * over many turns, so it can want a stronger model than one-shot writing. `null` uses the
-   * source control writer model.
+   * The model that writes review guides and diff walkthroughs. It investigates a checkout over
+   * many turns, so it can want a stronger model than one-shot writing. `null` uses the source
+   * control writer model.
    */
   reviewGuideModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   /**
-   * The maintainer's taste for review guides: what to dwell on, skip, or order first. Shapes the
-   * guide's emphasis only; the output format and coverage rules stay fixed.
+   * The maintainer's taste for review guides and diff walkthroughs: what to dwell on, skip, or
+   * order first. Shapes their emphasis only; the output format and coverage rules stay fixed.
    */
   reviewGuideInstructions: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /**
