@@ -394,6 +394,8 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     });
   const generateReviewGuide: ProviderTextGeneration["generateReviewGuide"] = () =>
     Effect.fail(investigationUnsupported("generateReviewGuide", "Muse Code"));
+  const generateDiffWalkthrough: ProviderTextGeneration["generateDiffWalkthrough"] = () =>
+    Effect.fail(investigationUnsupported("generateDiffWalkthrough", "Muse Code"));
   return {
     generateCommitMessage,
     generatePrContent,
@@ -401,5 +403,6 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     generateThreadTitle,
     generateReviewGuide,
     generateTranscriptionPostProcessing,
+    generateDiffWalkthrough,
   } satisfies ProviderTextGeneration;
 });
