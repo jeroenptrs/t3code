@@ -23,6 +23,7 @@ import {
 import { museModelCapabilities, resolveMuseReasoningEffort } from "./modelCatalog.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import {
+  cannotInvestigate,
   generatedThreadTitle,
   investigationUnsupported,
   TranscriptionPostProcessingOutput,
@@ -371,5 +372,6 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     generateReviewGuide,
     generateTranscriptionPostProcessing,
     generateDiffWalkthrough,
+    investigationRefusal: cannotInvestigate("Muse Code"),
   } satisfies ProviderTextGeneration;
 });
