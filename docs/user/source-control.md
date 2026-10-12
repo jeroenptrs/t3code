@@ -253,7 +253,8 @@ The tab shows one section at a time with its files in full. Files you have alrea
 start collapsed, and marks are shared with the **Code** tab. **Mark reviewed and continue** marks
 the section's files viewed and moves to the next one; the arrows step between sections without
 marking anything. From the keyboard, **Alt+↑** and **Alt+↓** step and **Alt+Shift+↓** marks and
-continues (**Option** on macOS). Pick a note to jump to its lines. Files the agent did not place
+continues (**Option** on macOS). Pick a note to jump to its lines. A note's explanation folds with
+its file, and the button beside the section number expands or collapses them all. Files the agent did not place
 appear in a final **Other** section.
 
 If there is no walkthrough yet, choose **Generate** in the tab. It puts the request in the composer
