@@ -3,6 +3,7 @@ import {
   ProjectId,
   type DiffWalkthrough,
   type DiffWalkthroughNote,
+  type DiffWalkthroughRun,
   type DiffWalkthroughTarget,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -10,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildDiffWalkthroughSections,
   clampDiffWalkthroughSectionIndex,
+  diffWalkthroughGenerateState,
   diffWalkthroughStaleNotice,
   firstUnreviewedSectionIndex,
   formatDiffWalkthroughNoteRange,
@@ -218,5 +220,62 @@ describe("pickPullRequestWalkthrough", () => {
     expect(pickPullRequestWalkthrough(null, branchWalkthrough, "head456")).toBeNull();
     expect(pickPullRequestWalkthrough(null, branchWalkthrough, null)).toBeNull();
     expect(pickPullRequestWalkthrough(null, null, "head123")).toBeNull();
+  });
+});
+
+describe("diffWalkthroughGenerateState", () => {
+  const live = pullRequestTarget("head123");
+  const running = (headSha: string): DiffWalkthroughRun => ({
+    _tag: "Running",
+    target: pullRequestTarget(headSha),
+    startedAt: "2026-10-12T10:00:00.000Z",
+  });
+  const failed = (headSha: string): DiffWalkthroughRun => ({
+    _tag: "Failed",
+    target: pullRequestTarget(headSha),
+    failedAt: "2026-10-12T10:05:00.000Z",
+    detail: "The model stopped early.",
+  });
+  const state = (overrides: Partial<Parameters<typeof diffWalkthroughGenerateState>[0]>) =>
+    diffWalkthroughGenerateState({
+      run: null,
+      unavailable: null,
+      liveTarget: live,
+      starting: false,
+      requestError: null,
+      ...overrides,
+    });
+
+  it("is running while a request is in flight or a run is under way, for any revision", () => {
+    expect(state({ starting: true }).kind).toBe("running");
+    expect(state({ run: running("head123") }).kind).toBe("running");
+    expect(state({ run: running("older") }).kind).toBe("running");
+    expect(state({ run: running("head123"), requestError: "Refused." }).kind).toBe("running");
+  });
+
+  it("shows a failure only for the revision on screen", () => {
+    expect(state({ run: failed("head123") })).toMatchObject({
+      kind: "failed",
+      detail: "The model stopped early.",
+    });
+    expect(state({ run: failed("older") }).kind).toBe("idle");
+    expect(state({ run: failed("head123"), liveTarget: null }).kind).toBe("idle");
+  });
+
+  it("puts a refused request ahead of an earlier failed run", () => {
+    expect(state({ run: failed("head123"), requestError: "The head moved." })).toMatchObject({
+      kind: "failed",
+      detail: "The head moved.",
+    });
+  });
+
+  it("says why a background run cannot start, preferring the server's reason", () => {
+    expect(state({}).backgroundDisabledReason).toBeNull();
+    expect(
+      state({ unavailable: "The model cannot read a checkout." }).backgroundDisabledReason,
+    ).toBe("The model cannot read a checkout.");
+    expect(state({ liveTarget: null }).backgroundDisabledReason).toBe(
+      "The change's current revision is not known yet.",
+    );
   });
 });
