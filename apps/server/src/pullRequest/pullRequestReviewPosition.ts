@@ -1,6 +1,6 @@
 import type { PullRequestReviewPosition } from "@t3tools/contracts";
 
-import { HUNK_HEADER, headerPath } from "./pullRequestReviewGuideNormalize.ts";
+import { HUNK_HEADER, headerPath } from "../review/diffChange.ts";
 
 /** `new` numbers a line in the PR's head, `old` in its base. */
 export type ReviewLineSide = "new" | "old";
