@@ -318,8 +318,30 @@ export const DiffWalkthroughGetInput = Schema.Struct({
 });
 export type DiffWalkthroughGetInput = typeof DiffWalkthroughGetInput.Type;
 
+/**
+ * A walkthrough the server is writing in the background, or the last one that failed. Held in
+ * server memory rather than stored, so a restart drops it. `target` carries the revision the run
+ * reads; a newer revision's run replaces it, and a finished run leaves only the walkthrough.
+ */
+export const DiffWalkthroughRunning = Schema.TaggedStruct("Running", {
+  target: DiffWalkthroughTarget,
+  startedAt: IsoDateTime,
+});
+export type DiffWalkthroughRunning = typeof DiffWalkthroughRunning.Type;
+
+export const DiffWalkthroughRun = Schema.Union([
+  DiffWalkthroughRunning,
+  Schema.TaggedStruct("Failed", {
+    target: DiffWalkthroughTarget,
+    failedAt: IsoDateTime,
+    detail: TrimmedNonEmptyString,
+  }),
+]);
+export type DiffWalkthroughRun = typeof DiffWalkthroughRun.Type;
+
 export const DiffWalkthroughGetResult = Schema.Struct({
   walkthrough: Schema.NullOr(DiffWalkthrough),
+  run: Schema.NullOr(DiffWalkthroughRun),
 });
 export type DiffWalkthroughGetResult = typeof DiffWalkthroughGetResult.Type;
 
@@ -332,6 +354,19 @@ export const DiffWalkthroughPutResult = Schema.Struct({
   walkthrough: DiffWalkthrough,
 });
 export type DiffWalkthroughPutResult = typeof DiffWalkthroughPutResult.Type;
+
+export const DiffWalkthroughGenerateInput = Schema.Struct({
+  /** The revision to walk, which a pull request's head must still be at. */
+  target: DiffWalkthroughTarget,
+});
+export type DiffWalkthroughGenerateInput = typeof DiffWalkthroughGenerateInput.Type;
+
+/** The run under way: one this call started, or one it joined (`started: false`). */
+export const DiffWalkthroughGenerateResult = Schema.Struct({
+  run: DiffWalkthroughRunning,
+  started: Schema.Boolean,
+});
+export type DiffWalkthroughGenerateResult = typeof DiffWalkthroughGenerateResult.Type;
 
 export class DiffWalkthroughError extends Schema.TaggedError<DiffWalkthroughError>()(
   "DiffWalkthroughError",
