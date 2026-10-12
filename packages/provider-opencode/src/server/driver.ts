@@ -231,6 +231,11 @@ function selectOpenCodeRuntimeTextGeneration(
         v1: v1.generateTranscriptionPostProcessing(input),
         v2: v2.generateTranscriptionPostProcessing(input),
       }),
+    generateDiffWalkthrough: (input) =>
+      byOpenCodeRuntime(probe.get, {
+        v1: v1.generateDiffWalkthrough(input),
+        v2: v2.generateDiffWalkthrough(input),
+      }),
   };
 }
 
