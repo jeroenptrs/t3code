@@ -50,7 +50,8 @@ import { PATCH_RENDER_PREFIX_ARGS } from "../vcs/GitVcsDriverCore.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import { pullRequestSyncKey } from "./pullRequestSyncKey.ts";
 import { reviewGuideInputFromPullRequest } from "./pullRequestReviewGuideInput.ts";
-import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestReviewGuideNormalize.ts";
+import { parseDiffChange } from "../review/diffChange.ts";
+import { normalizeReviewGuide } from "./pullRequestReviewGuideNormalize.ts";
 
 export class PullRequestReviewGuideService extends Context.Service<
   PullRequestReviewGuideService,
@@ -302,7 +303,7 @@ const make = Effect.gen(function* () {
       [diff(["--name-only", "-z"]), diff(["--unified=0", "--no-color", "--no-ext-diff"])],
       { concurrency: "unbounded" },
     );
-    return parseReviewGuideChange(nameOnly, patch);
+    return parseDiffChange(nameOnly, patch);
   });
 
   const write = Effect.fn("PullRequestReviewGuideService.write")(function* (
