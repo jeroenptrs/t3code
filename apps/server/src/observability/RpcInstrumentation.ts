@@ -123,6 +123,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.pullRequestsSetFilesViewed]: "pull-requests",
   [WS_METHODS.diffWalkthroughSubscribe]: "diff-walkthrough",
   [WS_METHODS.diffWalkthroughPut]: "diff-walkthrough",
+  [WS_METHODS.diffWalkthroughGenerate]: "diff-walkthrough",
   [WS_METHODS.pullRequestsInvalidate]: "pull-requests",
   [WS_METHODS.pullRequestsReportState]: "pull-requests",
   [WS_METHODS.pullRequestsSubscribeRefreshes]: "pull-requests",
