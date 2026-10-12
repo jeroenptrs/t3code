@@ -1213,6 +1213,22 @@ describe("asking about a change rather than working on it", () => {
     expect(chip).toContain("`headSha`");
   });
 
+  it("carries the maintainer's walkthrough preferences in the chip, after the fixed rules", () => {
+    const chip = buildGenerateWalkthroughHandoff({
+      ...base,
+      provider: "github",
+      instructions: "Show contracts first.",
+    }).reviewComments[0]!.text;
+    expect(chip.indexOf("The maintainer's preferences for walkthroughs:")).toBeGreaterThan(
+      chip.indexOf("do not post anything to the pull request"),
+    );
+    expect(chip).toContain("Show contracts first.");
+    expect(
+      buildGenerateWalkthroughHandoff({ ...base, provider: "github", instructions: "" })
+        .reviewComments[0]!.text,
+    ).not.toContain("preferences");
+  });
+
   it("puts the reader's request in the composer and the selected lines in chips", () => {
     const comment = {
       id: "pull-request-selection:page.tsx:12:18",
