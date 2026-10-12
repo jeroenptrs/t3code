@@ -2,7 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 import type { PullRequestReviewGuideStop } from "@t3tools/contracts";
 import type { ReviewGuideGenerationResult } from "@t3tools/provider-core/server/textGeneration";
 
-import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestReviewGuideNormalize.ts";
+import { parseDiffChange as parseReviewGuideChange } from "../review/diffChange.ts";
+import { normalizeReviewGuide } from "./pullRequestReviewGuideNormalize.ts";
 
 // `git diff --unified=0` of: src/a.ts with lines 10-14 and 40-59 added and an old line 30
 // removed; src/gone.ts deleted (old lines 1-20); docs/readme.md with line 3 added.
