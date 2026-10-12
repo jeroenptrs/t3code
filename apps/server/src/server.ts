@@ -383,6 +383,12 @@ const layerDiffWalkthroughWriter = DiffWalkthroughWriter.layer.pipe(
   Layer.provide(DiffWalkthroughChangeReader.layer),
 );
 
+// One instance for readers and automatic walkthroughs, so a run either starts is the run every
+// subscriber sees.
+const layerDiffWalkthroughRuns = DiffWalkthroughRunService.layer.pipe(
+  Layer.provide(layerDiffWalkthroughWriter),
+);
+
 const layerGitManager = GitManager.layer.pipe(
   Layer.provide(Layer.merge(ProjectionStoreV2.layer, ProjectStore.layer)),
   Layer.provideMerge(RuntimeLayer.layerProjectSetupScriptRunner),
@@ -613,6 +619,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ).pipe(
     Layer.provideMerge(PullRequestSyncReactor.layer),
     Layer.provide(PullRequestAutoWalkthrough.layer),
+    Layer.provide(layerDiffWalkthroughRuns),
     Layer.provide(layerDiffWalkthroughService),
     Layer.provide(layerPullRequestService),
     Layer.provide(ProjectionStoreV2.layer),
@@ -755,9 +762,11 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
   ),
-  // Background walkthrough runs, which store through the writer below.
-  Layer.provide(DiffWalkthroughRunService.layer),
-  // Both transports and the background run write walkthroughs through it; it reads and stores via the services below.
+  // Background walkthrough runs, shared with automatic walkthroughs.
+  Layer.provide(layerDiffWalkthroughRuns),
+  // Both transports and the background run write walkthroughs through it; it reads changes
+  // through the shared pull request service and stores through the shared walkthrough service,
+  // both provided below.
   Layer.provide(layerDiffWalkthroughWriter),
   // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
   Layer.provide(layerPullRequestService),
