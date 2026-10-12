@@ -45,13 +45,9 @@ const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
 
 // See `supportsTextGeneration` in status.ts.
 const unsupportedTextGeneration: ProviderTextGeneration = (() => {
+  const detail = "fx does not provide application text generation.";
   const unsupported = (operation: string) =>
-    Effect.fail(
-      new TextGenerationError({
-        operation,
-        detail: "fx does not provide application text generation.",
-      }),
-    );
+    Effect.fail(new TextGenerationError({ operation, detail }));
   return {
     generateCommitMessage: () => unsupported("generateCommitMessage"),
     generatePrContent: () => unsupported("generatePrContent"),
@@ -60,6 +56,7 @@ const unsupportedTextGeneration: ProviderTextGeneration = (() => {
     generateReviewGuide: () => unsupported("generateReviewGuide"),
     generateTranscriptionPostProcessing: () => unsupported("generateTranscriptionPostProcessing"),
     generateDiffWalkthrough: () => unsupported("generateDiffWalkthrough"),
+    investigationRefusal: detail,
   };
 })();
 
