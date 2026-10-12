@@ -69,6 +69,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // A link lets every agent here reach the other environment: Settings' bar.
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
   [WS_METHODS.diffWalkthroughPut]: AuthOrchestrationOperateScope,
+  // Like writing a guide, a background walkthrough runs a model on this environment's providers.
+  [WS_METHODS.diffWalkthroughGenerate]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
