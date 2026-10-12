@@ -94,6 +94,7 @@ import {
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { getDiffHeaderClickAction } from "./diffs/diffHeaderClick";
 import { diffWalkthroughStaleNotice } from "./diffs/diffWalkthroughView.logic";
+import { useDiffWalkthroughBackgroundRun } from "./diffs/useDiffWalkthroughBackgroundRun";
 import {
   branchRangeWalkthroughTarget,
   buildBranchRangeWalkthroughPrompt,
@@ -278,7 +279,7 @@ export default function DiffPanel({
   const wordWrap = wordWrapOverride ?? settings.wordWrap;
   const diffIgnoreWhitespace =
     useDiffPanelSessionStore((state) => state.ignoreWhitespace) ?? settings.diffIgnoreWhitespace;
-  const [storedFileTreeOpen, setFileTreeOpen] = useLocalStorage(
+  const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
     DIFF_FILE_TREE_STORAGE_KEY,
     false,
     Schema.Boolean,
@@ -988,11 +989,16 @@ export default function DiffPanel({
   const walkthroughAtom = useMemo(
     () =>
       showWalkthrough && walkthroughTarget !== null && walkthroughEnvironmentId !== null
-      ? diffWalkthroughAtom(walkthroughEnvironmentId, walkthroughTarget)
+        ? diffWalkthroughAtom(walkthroughEnvironmentId, walkthroughTarget)
         : null,
     [showWalkthrough, walkthroughEnvironmentId, walkthroughTarget],
   );
   const walkthroughQuery = useEnvironmentQuery(walkthroughAtom);
+  const walkthroughBackground = useDiffWalkthroughBackgroundRun({
+    environmentId: walkthroughEnvironmentId,
+    liveTarget: walkthroughTarget,
+    result: walkthroughQuery.data,
+  });
   const walkthroughSource = useMemo<DiffWalkthroughViewSource>(() => {
     if (walkthroughTarget === null || walkthroughQuery.data === null) {
       return walkthroughQuery.error === null
@@ -1033,7 +1039,7 @@ export default function DiffPanel({
       return {
         kind: "loading",
         label: `Loading changes (${total - remainingFileCount} of ${total} files)...`,
-  };
+      };
     }
     return {
       kind: "ready",
@@ -1839,6 +1845,7 @@ export default function DiffPanel({
                   viewed={null}
                   resetKey={collapseScopeKey ?? reviewSectionId}
                   onGenerate={canGenerateWalkthrough ? generateWalkthrough : undefined}
+                  background={walkthroughBackground}
                   {...(walkthroughTarget?.kind === "branch-range"
                     ? {
                         emptyDescription:
