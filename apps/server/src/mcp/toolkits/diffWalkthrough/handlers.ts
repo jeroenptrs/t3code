@@ -18,6 +18,7 @@ import * as Schema from "effect/Schema";
 import * as CheckpointDiffQuery from "../../../checkpointing/CheckpointDiffQuery.ts";
 import type { CheckpointServiceError } from "../../../checkpointing/Errors.ts";
 import * as DiffWalkthroughService from "../../../diffWalkthrough/DiffWalkthroughService.ts";
+import * as DiffWalkthroughWriter from "../../../diffWalkthrough/DiffWalkthroughWriter.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import { diffSectionPath, diffSectionPaths } from "../../../review/diffChange.ts";
 import * as ReviewService from "../../../review/ReviewService.ts";
@@ -124,8 +125,42 @@ function describeTarget(target: DiffWalkthroughTarget): string {
   }
 }
 
+/** A note's lines as an agent can find them again: `path:start-end`, marked when on the old side. */
+const anchorLabel = (anchor: { path: string; side: string; start: number; end: number }) =>
+  `${anchor.path}:${anchor.start}-${anchor.end}${anchor.side === "old" ? " (old)" : ""}`;
+
+const narrowedLabel = (note: DiffWalkthroughWriter.DiffWalkthroughHold["narrowed"][number]) =>
+  `${anchorLabel({ ...note, ...note.from })} to ${note.to.start}-${note.to.end}`;
+
+const notesCount = (count: number) => (count === 1 ? "1 note was" : `${count} notes were`);
+
+/** What holding the notes to the change did, in sentences that tell the agent what to correct. */
+function describeHold(held: DiffWalkthroughWriter.DiffWalkthroughHold): string {
+  if (!held.clamped) {
+    return `Notes were stored as written, without checking them against the change: ${held.reason ?? "it could not be read."}`;
+  }
+  const sentences: Array<string> = [];
+  if (held.dropped.length > 0) {
+    sentences.push(
+      `${notesCount(held.dropped.length)} outside the lines this change touched and dropped: ${held.dropped.map(anchorLabel).join(", ")}.`,
+    );
+  }
+  if (held.narrowed.length > 0) {
+    sentences.push(
+      `${notesCount(held.narrowed.length)} narrowed to the lines the change touched: ${held.narrowed.map(narrowedLabel).join(", ")}.`,
+    );
+  }
+  if (sentences.length > 0) {
+    sentences.push(
+      "Anchor notes on added or removed lines, and write the walkthrough again if a dropped note mattered.",
+    );
+  }
+  return sentences.join(" ");
+}
+
 const make = Effect.gen(function* () {
   const walkthroughs = yield* DiffWalkthroughService.DiffWalkthroughService;
+  const writer = yield* DiffWalkthroughWriter.DiffWalkthroughWriter;
   const diffs = yield* CheckpointDiffQuery.CheckpointDiffQuery;
   const projects = yield* ProjectService.ProjectService;
   const reviews = yield* ReviewService.ReviewService;
@@ -249,8 +284,8 @@ const make = Effect.gen(function* () {
                   provider: caller.providerInstanceId,
                   model: caller.modelSelection.model,
                 };
-          const stored = yield* walkthroughs
-            .put({
+          const { walkthrough: stored, held } = yield* writer
+            .write({
               target,
               ...(input.summary === undefined ? {} : { summary: input.summary }),
               groups: input.groups.map((group) => ({
@@ -264,11 +299,15 @@ const make = Effect.gen(function* () {
             })
             .pipe(Effect.mapError(rejected));
           const described = describeTarget(stored.target);
+          const hold = describeHold(held);
           return {
             target: stored.target,
             groupCount: stored.groups.length,
             noteCount: stored.notes.length,
-            confirmation: `Stored the walkthrough of ${described}.`,
+            heldToChange: held.clamped,
+            droppedNotes: held.dropped.map(anchorLabel),
+            narrowedNotes: held.narrowed.map(narrowedLabel),
+            confirmation: `Stored the walkthrough of ${described} with ${stored.notes.length} ${stored.notes.length === 1 ? "note" : "notes"}.${hold === "" ? "" : ` ${hold}`}`,
           };
         }),
     ),
