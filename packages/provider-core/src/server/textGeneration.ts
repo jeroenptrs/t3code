@@ -181,4 +181,11 @@ export interface ProviderTextGeneration {
   readonly generateDiffWalkthrough: (
     input: DiffWalkthroughGenerationInput,
   ) => Effect.Effect<DiffWalkthroughGenerationResult, TextGenerationError>;
+
+  /**
+   * Why this provider cannot investigate a checkout read-only, or null when it can. When set,
+   * `generateReviewGuide` and `generateDiffWalkthrough` fail with it, so a caller can refuse
+   * before preparing a checkout for them.
+   */
+  readonly investigationRefusal: string | null;
 }
