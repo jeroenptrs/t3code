@@ -24,6 +24,7 @@ import { museModelCapabilities, resolveMuseReasoningEffort } from "./modelCatalo
 import { isMuseUsageLimitFailure } from "./usageLimits.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import {
+  cannotInvestigate,
   generatedThreadTitle,
   investigationUnsupported,
   TranscriptionPostProcessingOutput,
@@ -404,5 +405,6 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     generateReviewGuide,
     generateTranscriptionPostProcessing,
     generateDiffWalkthrough,
+    investigationRefusal: cannotInvestigate("Muse Code"),
   } satisfies ProviderTextGeneration;
 });

@@ -121,6 +121,8 @@ export interface TranscriptionPostProcessingResult {
 export interface DiffWalkthroughGenerationInput {
   /** A disposable checkout of the diff's head. The model investigates it read-only. */
   cwd: string;
+  /** The project folder the checkout was made from; the user's own relative paths resolve here. */
+  projectCwd: string;
   /** What the diff is, in a phrase: `pull request #12, "Add search"`, `branch feature/search`. */
   subject: string;
   /** The author's own description, when the diff has one. Empty for none. */
@@ -175,4 +177,11 @@ export interface ProviderTextGeneration {
   readonly generateDiffWalkthrough: (
     input: DiffWalkthroughGenerationInput,
   ) => Effect.Effect<DiffWalkthroughGenerationResult, TextGenerationError>;
+
+  /**
+   * Why this provider cannot investigate a checkout read-only, or null when it can. When set,
+   * `generateReviewGuide` and `generateDiffWalkthrough` fail with it, so a caller can refuse
+   * before preparing a checkout for them.
+   */
+  readonly investigationRefusal: string | null;
 }

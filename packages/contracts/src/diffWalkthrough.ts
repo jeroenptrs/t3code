@@ -342,6 +342,8 @@ export type DiffWalkthroughRun = typeof DiffWalkthroughRun.Type;
 export const DiffWalkthroughGetResult = Schema.Struct({
   walkthrough: Schema.NullOr(DiffWalkthrough),
   run: Schema.NullOr(DiffWalkthroughRun),
+  /** Why the server cannot write this walkthrough in the background now, or null when it can. */
+  unavailable: Schema.NullOr(TrimmedNonEmptyString),
 });
 export type DiffWalkthroughGetResult = typeof DiffWalkthroughGetResult.Type;
 
