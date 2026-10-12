@@ -5,10 +5,11 @@ import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
-import type { ProviderTextGeneration } from "./textGeneration.ts";
+import type { DiffWalkthroughGenerationResult, ProviderTextGeneration } from "./textGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildDiffWalkthroughPrompt,
   buildPrContentPrompt,
   buildReviewGuidePrompt,
   buildThreadTitlePrompt,
@@ -37,7 +38,7 @@ const INVESTIGATION_TIMEOUT_MS = 15 * 60_000;
 export const investigationUnsupported = (operation: Operation, provider: string) =>
   new TextGenerationError({
     operation,
-    detail: `${provider} cannot investigate a checkout read-only. Choose another review guide model, or source control writer model when none is set.`,
+    detail: `${provider} cannot investigate a checkout read-only. Choose another review guide model, which also writes walkthroughs, or source control writer model when none is set.`,
   });
 
 export type Runner = <S extends Schema.Top>(
@@ -68,6 +69,25 @@ export const decodeJsonReply = <S extends Schema.Top>(
     ),
   );
 };
+
+type GeneratedWalkthrough = ReturnType<typeof buildDiffWalkthroughPrompt>["outputSchema"]["Type"];
+
+/** The model answers "" for a field it leaves out, since strict output schemas have no optional keys. */
+function withoutEmptyFields(generated: GeneratedWalkthrough): DiffWalkthroughGenerationResult {
+  const summary = generated.summary.trim();
+  return {
+    ...(summary.length === 0 ? {} : { summary }),
+    groups: generated.groups.map((group) => ({
+      ...group,
+      files: group.files.map(({ path, note }) =>
+        note.trim().length === 0 ? { path } : { path, note: note.trim() },
+      ),
+    })),
+    notes: generated.notes.map(({ body, ...note }) =>
+      body.trim().length === 0 ? note : { ...note, body: body.trim() },
+    ),
+  };
+}
 
 export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
   const generateCommitMessage: ProviderTextGeneration["generateCommitMessage"] = Effect.fn(
@@ -166,11 +186,25 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     });
   });
 
+  const generateDiffWalkthrough: ProviderTextGeneration["generateDiffWalkthrough"] = Effect.fn(
+    `${name}.generateDiffWalkthrough`,
+  )(function* (input) {
+    const generated = yield* run({
+      operation: "generateDiffWalkthrough",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      investigate: { timeoutMs: INVESTIGATION_TIMEOUT_MS },
+      ...buildDiffWalkthroughPrompt(input),
+    });
+    return withoutEmptyFields(generated);
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    generateDiffWalkthrough,
   } satisfies ProviderTextGeneration;
 }
