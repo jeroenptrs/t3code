@@ -112,6 +112,8 @@ import {
 } from "./checkpointDiff.ts";
 import {
   DiffWalkthroughError,
+  DiffWalkthroughGenerateInput,
+  DiffWalkthroughGenerateResult,
   DiffWalkthroughGetInput,
   DiffWalkthroughGetResult,
   DiffWalkthroughPutInput,
@@ -567,6 +569,7 @@ export const WS_METHODS = {
 
   diffWalkthroughSubscribe: "diffWalkthrough.subscribe",
   diffWalkthroughPut: "diffWalkthrough.put",
+  diffWalkthroughGenerate: "diffWalkthrough.generate",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1176,6 +1179,13 @@ const WsDiffWalkthroughSubscribeRpc = Rpc.make(WS_METHODS.diffWalkthroughSubscri
 const WsDiffWalkthroughPutRpc = Rpc.make(WS_METHODS.diffWalkthroughPut, {
   payload: DiffWalkthroughPutInput,
   success: DiffWalkthroughPutResult,
+  error: Schema.Union([DiffWalkthroughError, EnvironmentAuthorizationError]),
+});
+
+/** Starts a background run that writes the walkthrough on this environment's guide model. */
+const WsDiffWalkthroughGenerateRpc = Rpc.make(WS_METHODS.diffWalkthroughGenerate, {
+  payload: DiffWalkthroughGenerateInput,
+  success: DiffWalkthroughGenerateResult,
   error: Schema.Union([DiffWalkthroughError, EnvironmentAuthorizationError]),
 });
 
@@ -2005,6 +2015,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsSetLabelsRpc,
   WsDiffWalkthroughSubscribeRpc,
   WsDiffWalkthroughPutRpc,
+  WsDiffWalkthroughGenerateRpc,
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
