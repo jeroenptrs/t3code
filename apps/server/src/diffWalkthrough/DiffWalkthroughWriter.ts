@@ -73,25 +73,30 @@ export function holdNotesToChange(
   return { notes: kept, dropped, narrowed };
 }
 
+/** A walkthrough with its notes held to its change, and what holding them did. */
+export interface HeldDiffWalkthrough {
+  readonly walkthrough: DiffWalkthrough;
+  readonly held: DiffWalkthroughHold;
+}
+
 /**
  * Every write of a walkthrough goes through here: agents' writes, clients', and the background
- * run's, which must store through `write` too. `DiffWalkthroughService.put` is the raw store.
+ * run's, which holds through `hold` and stores the result itself. `DiffWalkthroughService.put` is
+ * the raw store.
  */
 export class DiffWalkthroughWriter extends Context.Service<
   DiffWalkthroughWriter,
   {
     /**
-     * Holds the walkthrough's notes to the lines its target's change touched, then stores it.
-     * A change that cannot be read does not block the write: the notes are stored as written and
+     * Holds the walkthrough's notes to the lines its target's change touched, without storing it.
+     * A change that cannot be read does not fail the hold: the notes stand as written and
      * `held.reason` says why.
      */
-    readonly write: (walkthrough: DiffWalkthrough) => Effect.Effect<
-      {
-        readonly walkthrough: DiffWalkthrough;
-        readonly held: DiffWalkthroughHold;
-      },
-      DiffWalkthroughError
-    >;
+    readonly hold: (walkthrough: DiffWalkthrough) => Effect.Effect<HeldDiffWalkthrough>;
+    /** `hold`, then store the held walkthrough. */
+    readonly write: (
+      walkthrough: DiffWalkthrough,
+    ) => Effect.Effect<HeldDiffWalkthrough, DiffWalkthroughError>;
   }
 >()("t3/diffWalkthrough/DiffWalkthroughWriter") {}
 
@@ -99,12 +104,12 @@ const make = Effect.gen(function* () {
   const changes = yield* DiffWalkthroughChangeReader.DiffWalkthroughChangeReader;
   const walkthroughs = yield* DiffWalkthroughService.DiffWalkthroughService;
 
-  const write: DiffWalkthroughWriter["Service"]["write"] = Effect.fn("DiffWalkthroughWriter.write")(
+  const hold: DiffWalkthroughWriter["Service"]["hold"] = Effect.fn("DiffWalkthroughWriter.hold")(
     function* (walkthrough) {
       const read = yield* changes.read(walkthrough.target);
       if (!read.held) {
         return {
-          walkthrough: yield* walkthroughs.put(walkthrough),
+          walkthrough,
           held: { clamped: false, reason: read.reason, dropped: [], narrowed: [] },
         };
       }
@@ -113,14 +118,18 @@ const make = Effect.gen(function* () {
         read.change,
         read.withheld,
       );
-      return {
-        walkthrough: yield* walkthroughs.put({ ...walkthrough, notes }),
-        held: { clamped: true, dropped, narrowed },
-      };
+      return { walkthrough: { ...walkthrough, notes }, held: { clamped: true, dropped, narrowed } };
     },
   );
 
-  return DiffWalkthroughWriter.of({ write });
+  const write: DiffWalkthroughWriter["Service"]["write"] = Effect.fn("DiffWalkthroughWriter.write")(
+    function* (walkthrough) {
+      const held = yield* hold(walkthrough);
+      return { walkthrough: yield* walkthroughs.put(held.walkthrough), held: held.held };
+    },
+  );
+
+  return DiffWalkthroughWriter.of({ hold, write });
 });
 
 export const layer = Layer.effect(DiffWalkthroughWriter, make);
