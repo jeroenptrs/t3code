@@ -20,7 +20,7 @@ import {
   sanitizeThreadTitle,
 } from "./textGenerationUtils.ts";
 
-export type Operation = keyof ProviderTextGeneration;
+export type Operation = Exclude<keyof ProviderTextGeneration, "investigationRefusal">;
 
 export interface Request<S extends Schema.Top> {
   readonly operation: Operation;
@@ -35,22 +35,26 @@ export interface Request<S extends Schema.Top> {
 
 const INVESTIGATION_TIMEOUT_MS = 15 * 60_000;
 
+/** Why a provider with no read-only tool mode cannot write a guide or walkthrough. */
+export const cannotInvestigate = (provider: string) =>
+  `${provider} cannot investigate a checkout read-only. Choose another guide and walkthrough model, or source control writer model when none is set.`;
+
 export const investigationUnsupported = (operation: Operation, provider: string) =>
-  new TextGenerationError({
-    operation,
-    detail: `${provider} cannot investigate a checkout read-only. Choose another review guide model, which also writes walkthroughs, or source control writer model when none is set.`,
-  });
+  new TextGenerationError({ operation, detail: cannotInvestigate(provider) });
 
-export type Runner = <S extends Schema.Top>(
+export type Runner = (<S extends Schema.Top>(
   request: Request<S>,
-) => Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]>;
+) => Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]>) & {
+  readonly investigationRefusal?: string;
+};
 
-export const withoutInvestigation =
-  (provider: string, run: Runner): Runner =>
-  (request) =>
+export const withoutInvestigation = (provider: string, run: Runner): Runner => {
+  const refusing: Runner = (request) =>
     request.investigate
       ? Effect.fail(investigationUnsupported(request.operation, provider))
       : run(request);
+  return Object.assign(refusing, { investigationRefusal: cannotInvestigate(provider) });
+};
 
 export const decodeJsonReply = <S extends Schema.Top>(
   request: Pick<Request<S>, "operation" | "outputSchema">,
@@ -206,5 +210,6 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     generateThreadTitle,
     generateReviewGuide,
     generateDiffWalkthrough,
+    investigationRefusal: run.investigationRefusal ?? null,
   } satisfies ProviderTextGeneration;
 }
