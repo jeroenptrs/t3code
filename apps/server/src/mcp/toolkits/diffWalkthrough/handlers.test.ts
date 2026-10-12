@@ -192,7 +192,7 @@ const groups = [
     id: "core",
     title: "Core change",
     summary: "Stores walkthroughs.",
-    files: ["src/a.ts"],
+    files: [{ path: "src/a.ts" }],
   },
 ];
 
@@ -212,9 +212,9 @@ describe("diff walkthrough toolkit handlers", () => {
           {
             groupId: "core",
             path: "src/a.ts",
-            side: "additions",
-            startLine: 1,
-            endLine: 4,
+            side: "new",
+            start: 1,
+            end: 4,
             summary: "Writes the row.",
           },
         ],
@@ -238,6 +238,17 @@ describe("diff walkthrough toolkit handlers", () => {
         model: "gpt-5",
       });
       assert.strictEqual(stored?.summary, "Adds walkthroughs.");
+      // A group written without attention or questions is stored with neither.
+      assert.deepStrictEqual(stored?.groups, [
+        {
+          id: "core",
+          title: "Core change",
+          summary: "Stores walkthroughs.",
+          attention: null,
+          files: [{ path: "src/a.ts" }],
+          questions: [],
+        },
+      ]);
       assert.isTrue(Number.isFinite(Date.parse(stored?.generatedAt ?? "")));
     }),
   );
@@ -253,9 +264,9 @@ describe("diff walkthrough toolkit handlers", () => {
             {
               groupId: "core",
               path: "src/b.ts",
-              side: "additions",
-              startLine: 1,
-              endLine: 1,
+              side: "new",
+              start: 1,
+              end: 1,
               summary: "Elsewhere.",
             },
           ],
