@@ -70,6 +70,8 @@ export function SourceControlWritingSettingsSection() {
   const mixedReviewGuidesEnabled = useScopedSettingsMixed(["reviewGuidesEnabled"]);
   const navigate = useNavigate();
   const { environment, connectedEnvironments, targets, target } = useSettingsScope();
+  // The representative supplies the provider list; a model choice is checked
+  // against every target before it fans out.
   const environmentId = environment?.environmentId ?? null;
   const hasServerTargets = connectedEnvironments.length > 0;
   const providersByEnvironment = useEnvironmentProviders();
@@ -117,6 +119,7 @@ export function SourceControlWritingSettingsSection() {
       target?.projectId ?? null,
     ),
   );
+  // The environment default can name an instance this project turned off.
   const projectEnabledInstanceIds = new Set(
     instanceEntries
       .filter((entry) => entry.enabled && entry.isAvailable)
@@ -167,6 +170,7 @@ export function SourceControlWritingSettingsSection() {
     },
     textGenerationProviders,
   );
+  // Its own list: a custom model chosen for guides is not among the writer model's options.
   const reviewGuideModelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     textGenerationProviders,
@@ -435,6 +439,7 @@ export function SourceControlWritingSettingsSection() {
         }
       />
 
+      {/* A beta the server owns: off hides the Guide tab in every client and refuses agents. */}
       <SettingsRow
         serverScoped
         settingKeys={["reviewGuidesEnabled"]}
@@ -451,17 +456,16 @@ export function SourceControlWritingSettingsSection() {
         }
       />
 
-      {settings.reviewGuidesEnabled || mixedReviewGuidesEnabled ? (
-        <>
+      {/* Walkthroughs are always on, so the rows they share with guides show without the beta. */}
           <SettingsRow
             serverScoped
             settingKeys={["reviewGuideModelSelection"]}
             {...searchableSetting("review-guide-model")}
-            description="Model that reads a pull request to write its review guide. It reads the change itself over many steps, so a stronger model helps. Off uses the source control writer model."
+        description="Model that writes review guides and walkthroughs. It reads the change itself over many steps, so a stronger model helps. Off uses the source control writer model."
             control={
               !hasServerTargets ? (
                 <span className="text-sm text-muted-foreground">
-                  Connect an environment to choose its review guide model.
+              Connect an environment to choose its guide and walkthrough model.
                 </span>
               ) : (
                 <div className="flex flex-wrap items-center justify-end gap-2">
@@ -474,7 +478,7 @@ export function SourceControlWritingSettingsSection() {
                       instanceEntries={instanceEntries}
                       modelOptionsByInstance={reviewGuideModelOptionsByInstance}
                       triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                      triggerAriaLabel="Review guide model"
+                  triggerAriaLabel="Guide and walkthrough model"
                       {...(mixedReviewGuideModel ? { triggerLabel: "Mixed" } : {})}
                       getModelDisabledReason={writerModelDisabledReason}
                       onInstanceModelChange={(instanceId, model) => {
@@ -482,7 +486,7 @@ export function SourceControlWritingSettingsSection() {
                         if (reason) {
                           toastManager.add({
                             type: "error",
-                            title: "Review guide model not saved",
+                        title: "Guide and walkthrough model not saved",
                             description: reason,
                           });
                           return;
@@ -527,6 +531,7 @@ export function SourceControlWritingSettingsSection() {
                         updateSettings({ reviewGuideModelSelection: null });
                         return;
                       }
+                  // Every selected target gets this model, so it must run on all of them.
                       const reason = writerModelDisabledReason(
                         activeSelection.instanceId,
                         activeSelection.model,
@@ -534,7 +539,7 @@ export function SourceControlWritingSettingsSection() {
                       if (reason) {
                         toastManager.add({
                           type: "error",
-                          title: "Review guide model not saved",
+                      title: "Guide and walkthrough model not saved",
                           description: reason,
                         });
                         return;
@@ -547,7 +552,7 @@ export function SourceControlWritingSettingsSection() {
                         ),
                       });
                     }}
-                    aria-label="Use a separate review guide model"
+                aria-label="Use a separate guide and walkthrough model"
                   />
                 </div>
               )
@@ -558,11 +563,11 @@ export function SourceControlWritingSettingsSection() {
             serverScoped
             settingKeys={["reviewGuideInstructions"]}
             {...searchableSetting("review-guide-instructions")}
-            description="Your preferences for review guides: what to show first, dwell on, or skip. The guide's format and coverage stay the same."
+        description="Your preferences for guides and walkthroughs: what to show first, dwell on, or skip. Their format and coverage stay the same."
             resetAction={
               mixedReviewGuideInstructions || settings.reviewGuideInstructions !== "" ? (
                 <SettingResetButton
-                  label="review guide instructions"
+              label="guide and walkthrough instructions"
                   onClick={() => updateSettings({ reviewGuideInstructions: "" })}
                 />
               ) : null
@@ -571,7 +576,7 @@ export function SourceControlWritingSettingsSection() {
             <div className="mt-3 max-w-2xl pb-3.5">
               <Textarea
                 key={`${scopeKey}:${mixedReviewGuideInstructions}:${settings.reviewGuideInstructions}`}
-                aria-label="Review guide instructions"
+            aria-label="Guide and walkthrough instructions"
                 onChange={() => {
                   reviewGuideInstructionsEdited.current = true;
                 }}
@@ -594,8 +599,6 @@ export function SourceControlWritingSettingsSection() {
               />
             </div>
           </SettingsRow>
-        </>
-      ) : null}
     </SettingsSection>
   );
 }
