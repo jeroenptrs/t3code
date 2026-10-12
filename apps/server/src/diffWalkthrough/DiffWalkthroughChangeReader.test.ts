@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -73,7 +74,7 @@ const expectedHunks = new Map([
 
 interface Stubs {
   readonly workspace?: string;
-  readonly resolveTurnCheckpoints?: CheckpointDiffQuery.CheckpointDiffQuery["Service"]["resolveTurnCheckpoints"];
+  readonly resolveTurnRange?: CheckpointDiffQuery.CheckpointDiffQuery["Service"]["resolveTurnRange"];
   readonly headSha?: string;
   readonly diff?: (input: PullRequestDiffInput) => PullRequestDiffResult;
   readonly diffFails?: boolean;
@@ -94,8 +95,8 @@ const readerWith = (stubs: Stubs) =>
                 ),
             }),
             Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
-              resolveTurnCheckpoints:
-                stubs.resolveTurnCheckpoints ?? (() => Effect.die("not resolved in this test")),
+              resolveTurnRange:
+                stubs.resolveTurnRange ?? (() => Effect.die("not resolved in this test")),
             }),
             Layer.mock(PullRequestService.PullRequestService)({
               detail: () =>
@@ -116,7 +117,7 @@ const readerWith = (stubs: Stubs) =>
 const layerGit = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-walkthrough-change-git-" })),
   Layer.provideMerge(VcsProcess.layer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 it.layer(layerGit, { excludeTestServices: true })("local changes", (it) => {
@@ -160,7 +161,7 @@ it.layer(layerGit, { excludeTestServices: true })("local changes", (it) => {
         yield* git(repository.workspace, ["update-ref", from, repository.baseSha]);
         yield* git(repository.workspace, ["update-ref", to, repository.headSha]);
         const reader = yield* readerWith({
-          resolveTurnCheckpoints: () =>
+          resolveTurnRange: () =>
             Effect.succeed({
               cwd: repository.workspace,
               fromCheckpointRef: from,
@@ -182,7 +183,7 @@ it.layer(layerGit, { excludeTestServices: true })("local changes", (it) => {
   it.effect("holds an empty turn range to nothing and stores unchecked when a ref is missing", () =>
     Effect.gen(function* () {
       const reader = yield* readerWith({
-        resolveTurnCheckpoints: (input) =>
+        resolveTurnRange: (input) =>
           Effect.fail(
             new CheckpointRefUnavailableError({
               operation: "CheckpointDiffQuery.getTurnDiff",
