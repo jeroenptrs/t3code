@@ -564,12 +564,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             settingKeys={["pullRequestAutoWalkthrough"]}
             mixed={mixedAutoWalkthrough}
             {...searchableSetting("pull-request-auto-walkthrough")}
-            description="Asks the thread that owns the pull request to write a walkthrough when it is linked and after new commits are pushed."
+            description="Write a walkthrough in the background when a linked pull request is opened or pushed."
             resetAction={
               settings.pullRequestAutoWalkthrough ? (
                 <SettingResetButton
-                  label="automatic walkthroughs"
-                  tooltip="Reset automatic walkthroughs to off"
+                  ariaLabel={gt("Reset automatic walkthroughs to off")}
                   onClick={() => updateSettings({ pullRequestAutoWalkthrough: false })}
                 />
               ) : null
