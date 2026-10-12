@@ -233,6 +233,7 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
+import * as DiffWalkthroughRunService from "./diffWalkthrough/DiffWalkthroughRunService.ts";
 import * as DiffWalkthroughService from "./diffWalkthrough/DiffWalkthroughService.ts";
 import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
@@ -1259,6 +1260,7 @@ export const layerWsRpc = (
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const diffWalkthroughs = yield* DiffWalkthroughService.DiffWalkthroughService;
       const diffWalkthroughWriter = yield* DiffWalkthroughWriter.DiffWalkthroughWriter;
+      const diffWalkthroughRuns = yield* DiffWalkthroughRunService.DiffWalkthroughRunService;
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
@@ -2596,13 +2598,12 @@ export const layerWsRpc = (
         [WS_METHODS.pullRequestsSetLabels]: (input) =>
           withPullRequestViewer(input, pullRequests.setLabels(input)),
         [WS_METHODS.diffWalkthroughSubscribe]: (input) =>
-          diffWalkthroughs
-            .subscribe(input.target)
-            .pipe(Stream.map((walkthrough) => ({ walkthrough }))),
+          diffWalkthroughRuns.subscribe(input.target),
         [WS_METHODS.diffWalkthroughPut]: (input) =>
           diffWalkthroughWriter
             .write(input.walkthrough)
             .pipe(Effect.map(({ walkthrough }) => ({ walkthrough }))),
+        [WS_METHODS.diffWalkthroughGenerate]: (input) => diffWalkthroughRuns.generate(input.target),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           Effect.andThen(
             input.cwd === undefined ? Effect.void : ensureReadable(input.cwd),
@@ -3252,6 +3253,7 @@ export const layer = Layer.unwrap(
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const diffWalkthroughs = yield* DiffWalkthroughService.DiffWalkthroughService;
     const diffWalkthroughWriter = yield* DiffWalkthroughWriter.DiffWalkthroughWriter;
+    const diffWalkthroughRuns = yield* DiffWalkthroughRunService.DiffWalkthroughRunService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3346,6 +3348,13 @@ export const layer = Layer.unwrap(
               // Shared with MCP, so an agent's write reaches every subscribed client.
               Layer.provide(
                 Layer.succeed(DiffWalkthroughService.DiffWalkthroughService, diffWalkthroughs),
+              ),
+              // Shared, so a run started by one client is the one every subscriber sees.
+              Layer.provide(
+                Layer.succeed(
+                  DiffWalkthroughRunService.DiffWalkthroughRunService,
+                  diffWalkthroughRuns,
+                ),
               ),
               Layer.provide(
                 Layer.succeed(DiffWalkthroughWriter.DiffWalkthroughWriter, diffWalkthroughWriter),
