@@ -41,15 +41,15 @@ const branchTarget = (headSha: string, baseSha = "base000"): DiffWalkthroughTarg
 const note = (
   groupId: string,
   path: string,
-  startLine: number,
+  start: number,
   summary: string,
   extra: Partial<DiffWalkthroughNote> = {},
 ): DiffWalkthroughNote => ({
   groupId,
   path,
-  side: "additions",
-  startLine,
-  endLine: startLine + 2,
+  side: "new",
+  start,
+  end: start + 2,
   summary,
   ...extra,
 });
@@ -62,15 +62,34 @@ const walkthroughFor = (target: DiffWalkthroughTarget): DiffWalkthrough => ({
       id: "core",
       title: "Expiry rule",
       summary: "Where a session's end is decided.",
-      files: ["src/session.ts", "src/gone.ts"],
+      attention: { kind: "risk", note: "Clients that cached the old expiry keep it." },
+      files: [
+        { path: "src/session.ts", note: "Owns the expiry rule now." },
+        { path: "src/gone.ts", note: "Gone from the diff." },
+      ],
+      questions: ["Why decide expiry on the server?"],
     },
-    { id: "ui", title: "Banner", summary: "What the user sees.", files: ["web/Banner.tsx"] },
-    { id: "empty", title: "Removed", summary: "No longer changed.", files: ["src/old.ts"] },
+    {
+      id: "ui",
+      title: "Banner",
+      summary: "What the user sees.",
+      attention: null,
+      files: [{ path: "web/Banner.tsx" }],
+      questions: [],
+    },
+    {
+      id: "empty",
+      title: "Removed",
+      summary: "No longer changed.",
+      attention: null,
+      files: [{ path: "src/old.ts" }],
+      questions: [],
+    },
   ],
   notes: [
     note("core", "src/session.ts", 40, "Expiry moves here"),
     note("ui", "web/Banner.tsx", 3, "Banner reads the new field", { body: "Longer **why**." }),
-    note("core", "src/session.ts", 10, "Old check removed", { side: "deletions" }),
+    note("core", "src/session.ts", 10, "Old check removed", { side: "old" }),
     note("core", "src/gone.ts", 1, "On a file the diff no longer touches"),
   ],
   generatedAt: "2026-10-01T00:00:00.000Z",
@@ -100,6 +119,16 @@ describe("buildDiffWalkthroughSections", () => {
     expect(sections[1]?.notes.map((entry) => entry.key)).toEqual(["note:1"]);
     expect(sections[2]?.notes).toEqual([]);
   });
+
+  it("carries a group's attention, questions and the notes of files still in it", () => {
+    expect(sections[0]?.attention?.kind).toBe("risk");
+    expect(sections[0]?.questions).toEqual(["Why decide expiry on the server?"]);
+    expect([...(sections[0]?.fileNotes ?? [])]).toEqual([
+      ["src/session.ts", "Owns the expiry rule now."],
+    ]);
+    expect(sections[2]).toMatchObject({ attention: null, questions: [] });
+    expect(sections[2]?.fileNotes.size).toBe(0);
+  });
 });
 
 describe("formatting", () => {
@@ -113,9 +142,7 @@ describe("formatting", () => {
       "src/a.ts:L12-L14",
     );
     expect(
-      formatDiffWalkthroughNoteRange(
-        note("core", "src/a.ts", 5, "x", { endLine: 5, side: "deletions" }),
-      ),
+      formatDiffWalkthroughNoteRange(note("core", "src/a.ts", 5, "x", { end: 5, side: "old" })),
     ).toBe("src/a.ts:L5 (old)");
   });
 });
