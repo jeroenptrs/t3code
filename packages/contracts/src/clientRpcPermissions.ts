@@ -53,6 +53,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // A guest link hands thread access to someone outside, like a pairing link.
   [WS_METHODS.guestShareCreate]: AuthAccessWriteScope,
   [WS_METHODS.diffWalkthroughPut]: AuthOrchestrationOperateScope,
+  // Like writing a guide, a background walkthrough runs a model on this environment's providers.
+  [WS_METHODS.diffWalkthroughGenerate]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
