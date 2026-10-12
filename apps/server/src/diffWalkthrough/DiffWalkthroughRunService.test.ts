@@ -8,10 +8,13 @@ import {
   type DiffWalkthroughTarget,
   type DiffWalkthroughTargetIdentity,
   type DiffWalkthroughThreadDiffTarget,
+  type ModelSelection,
   type OrchestrationProjectShell,
   ProjectId,
   ProviderInstanceId,
   type PullRequestDetail,
+  PullRequestOperationError,
+  type ServerSettings as ServerSettingsValue,
   ThreadId,
 } from "@t3tools/contracts";
 import type {
@@ -26,6 +29,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -44,8 +48,10 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as DiffWalkthroughChangeReader from "./DiffWalkthroughChangeReader.ts";
 import * as DiffWalkthroughRunService from "./DiffWalkthroughRunService.ts";
 import * as DiffWalkthroughService from "./DiffWalkthroughService.ts";
+import * as DiffWalkthroughWriter from "./DiffWalkthroughWriter.ts";
 
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
@@ -152,11 +158,32 @@ const answer = (summary: string): DiffWalkthroughGenerationResult => ({
   ],
 });
 
+/** A selection the stub provider refuses to investigate with; any other model can. */
+const CANNOT: ModelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "no-tools" };
+const CANNOT_REFUSAL = "That model cannot investigate a checkout read-only.";
+
+/** Test settings that announce their changes, so `unavailable` can follow them. */
+const layerSettings = (overrides: Parameters<typeof ServerSettings.layerTest>[0]) =>
+  Layer.effect(
+    ServerSettings.ServerSettingsService,
+    Effect.gen(function* () {
+      const base = yield* ServerSettings.ServerSettingsService;
+      const changes = yield* PubSub.unbounded<ServerSettingsValue>();
+      return ServerSettings.ServerSettingsService.of({
+        ...base,
+        updateSettings: (patch) =>
+          base.updateSettings(patch).pipe(Effect.tap((next) => PubSub.publish(changes, next))),
+        subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+      });
+    }),
+  ).pipe(Layer.provide(ServerSettings.layerTest(overrides)));
+
 const makeLayer = (input: {
   readonly repositories: Repositories;
   readonly generate: TextGeneration.TextGeneration["Service"]["generateDiffWalkthrough"];
   /** The head the host reports now, for a test that pushes between runs. */
   readonly currentHead?: Ref.Ref<string>;
+  readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
 }) => {
   const { repositories } = input;
   const project: OrchestrationProjectShell = {
@@ -196,6 +223,9 @@ const makeLayer = (input: {
       headSha,
     }) as PullRequestDetail;
   return DiffWalkthroughRunService.layer.pipe(
+    Layer.provide(
+      DiffWalkthroughWriter.layer.pipe(Layer.provide(DiffWalkthroughChangeReader.layer)),
+    ),
     Layer.provideMerge(DiffWalkthroughService.layer.pipe(Layer.provide(DiffWalkthroughs.layer))),
     Layer.provide(
       Layer.mergeAll(
@@ -215,6 +245,11 @@ const makeLayer = (input: {
               : Ref.get(input.currentHead)
             ).pipe(Effect.map(detail)),
           invalidate: () => Effect.void,
+          // Notes on a pull request stand as written; branch ranges hold them to local git.
+          diff: () =>
+            Effect.fail(
+              new PullRequestOperationError({ operation: "diff", detail: "No host in tests." }),
+            ),
         }),
         // Turn 1's checkpoint is the base commit and turn 2's is the change.
         Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({
@@ -227,24 +262,35 @@ const makeLayer = (input: {
         }),
         Layer.succeed(ProviderRegistry.ProviderRegistry, {
           getProviders: Effect.succeed([]),
+          streamChanges: Stream.empty,
         } as unknown as ProviderRegistry.ProviderRegistry["Service"]),
-        Layer.mock(TextGeneration.TextGeneration)({ generateDiffWalkthrough: input.generate }),
-        ServerSettings.layerTest({ reviewGuideInstructions: "Lead with the contract." }),
+        Layer.mock(TextGeneration.TextGeneration)({
+          generateDiffWalkthrough: input.generate,
+          investigationRefusal: (selection) =>
+            Effect.succeed(selection.model === CANNOT.model ? CANNOT_REFUSAL : null),
+        }),
         ServerConfig.layerTest(repositories.root, { prefix: "t3-walkthrough-run-config-" }),
         SqlitePersistence.layerMemory,
       ),
     ),
+    Layer.provideMerge(
+      layerSettings({ reviewGuideInstructions: "Lead with the contract.", ...input.settings }),
+    ),
   );
 };
 
-const buildService = (layer: ReturnType<typeof makeLayer>) =>
+const buildServices = (layer: ReturnType<typeof makeLayer>) =>
   // Built in the test's scope: runs are forked into the service's scope and must outlive the
   // call that obtains the service.
   Layer.build(layer).pipe(
-    Effect.map((context) =>
-      Context.get(context, DiffWalkthroughRunService.DiffWalkthroughRunService),
-    ),
+    Effect.map((context) => ({
+      service: Context.get(context, DiffWalkthroughRunService.DiffWalkthroughRunService),
+      settings: Context.get(context, ServerSettings.ServerSettingsService),
+    })),
   );
+
+const buildService = (layer: ReturnType<typeof makeLayer>) =>
+  buildServices(layer).pipe(Effect.map(({ service }) => service));
 
 /** Follows a target's subscription; `until` waits for a state and returns what came before. */
 const watch = (
@@ -324,7 +370,11 @@ it.layer(layerBase, { excludeTestServices: true })("DiffWalkthroughRunService", 
           );
           const target = branchTarget(repositories);
           const watched = yield* watch(service, target);
-          assert.deepStrictEqual(watched.first, { walkthrough: null, run: null });
+          assert.deepStrictEqual(watched.first, {
+            walkthrough: null,
+            run: null,
+            unavailable: null,
+          });
 
           const started = yield* service.generate(target);
           assert.isTrue(started.started);
@@ -363,7 +413,7 @@ it.layer(layerBase, { excludeTestServices: true })("DiffWalkthroughRunService", 
       ),
   );
 
-  it.effect("keeps a refusal as the failed run until the next press, and cleans up", () =>
+  it.effect("keeps a model's failure as the failed run until the next press, and cleans up", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const repositories = yield* makeRepositories;
@@ -578,6 +628,77 @@ it.layer(layerBase, { excludeTestServices: true })("DiffWalkthroughRunService", 
           service.generate({ ...threadTarget, fromTurnCount: 2, toTurnCount: 2 }),
         );
         assert.include(empty.message, "no change to walk through");
+      }),
+    ),
+  );
+  it.effect("refuses up front on a model that cannot investigate, and says why until it can", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const { service, settings } = yield* buildServices(
+          makeLayer({
+            repositories,
+            generate: () => Effect.die("a refused run must not reach the model"),
+            settings: { textGenerationModelSelection: CANNOT },
+          }),
+        );
+        const target = branchTarget(repositories);
+        const watched = yield* watch(service, target);
+        assert.strictEqual(watched.first.unavailable, CANNOT_REFUSAL);
+
+        // The press fails with the reason; no run is claimed and nothing is checked out.
+        const refused = yield* Effect.flip(service.generate(target));
+        assert.strictEqual(refused.message, CANNOT_REFUSAL);
+        const after = yield* service.subscribe(target).pipe(Stream.runHead);
+        assert.isTrue(Option.isSome(after) && after.value.run === null);
+        const worktrees = yield* git(repositories.workspace, ["worktree", "list", "--porcelain"]);
+        assert.notInclude(worktrees, "diff-walkthrough-");
+
+        // Choosing a model that can investigate clears it, and choosing one that cannot sets it.
+        yield* settings.updateSettings({
+          textGenerationModelSelection: { ...CANNOT, model: "gpt-5" },
+        });
+        yield* watched.until((next) => next.unavailable === null);
+        yield* settings.updateSettings({ textGenerationModelSelection: CANNOT });
+        yield* watched.until((next) => next.unavailable === CANNOT_REFUSAL);
+      }),
+    ),
+  );
+
+  it.effect("holds a background walkthrough's notes to the lines the change touched", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const written = answer("Held.");
+        const service = yield* buildService(
+          makeLayer({
+            repositories,
+            generate: () =>
+              Effect.succeed({
+                ...written,
+                groups: written.groups.map((group) => ({
+                  ...group,
+                  files: [...group.files, { path: "base.txt" }],
+                })),
+                notes: [
+                  // feature.txt has one line; a note reaching past it is narrowed to it.
+                  { ...written.notes[0]!, start: 1, end: 3 },
+                  // base.txt did not change on the branch; a note on it is dropped.
+                  { ...written.notes[0]!, path: "base.txt", summary: "Unchanged." },
+                ],
+              }),
+          }),
+        );
+        const target = branchTarget(repositories);
+        const watched = yield* watch(service, target);
+        yield* service.generate(target);
+        const { state } = yield* watched.until(
+          (next) => next.walkthrough !== null && next.run === null,
+        );
+        assert.deepStrictEqual(
+          state.walkthrough?.notes.map(({ path, start, end }) => ({ path, start, end })),
+          [{ path: "feature.txt", start: 1, end: 1 }],
+        );
       }),
     ),
   );

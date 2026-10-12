@@ -1,7 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ProviderInstanceId } from "@t3tools/contracts";
+import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { TextGenerationError } from "@t3tools/contracts";
 
@@ -28,9 +28,16 @@ export type {
 /**
  * TextGeneration - Service tag for commit and change request text generation.
  */
-export class TextGeneration extends Context.Service<TextGeneration, ProviderTextGeneration>()(
-  "t3/textGeneration/TextGeneration",
-) {}
+export class TextGeneration extends Context.Service<
+  TextGeneration,
+  Omit<ProviderTextGeneration, "investigationRefusal"> & {
+    /**
+     * Why the selection cannot write a guide or walkthrough, or null when it can: its provider
+     * cannot investigate a checkout read-only, or the instance is missing or disabled.
+     */
+    readonly investigationRefusal: (modelSelection: ModelSelection) => Effect.Effect<string | null>;
+  }
+>()("t3/textGeneration/TextGeneration") {}
 
 type TextGenerationOp =
   | "generateCommitMessage"
@@ -82,6 +89,18 @@ export const make = Effect.gen(function* () {
     generateDiffWalkthrough: (input) =>
       resolveInstance(registry, "generateDiffWalkthrough", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateDiffWalkthrough(input)),
+      ),
+    investigationRefusal: (modelSelection) =>
+      registry.getInstance(modelSelection.instanceId).pipe(
+        Effect.map((instance) => {
+          if (instance === undefined) {
+            return `No provider instance is registered for '${modelSelection.instanceId}'. Choose another guide and walkthrough model.`;
+          }
+          if (!instance.enabled) {
+            return `${instance.displayName ?? modelSelection.instanceId} is disabled. Enable it, or choose another guide and walkthrough model.`;
+          }
+          return instance.textGeneration.investigationRefusal;
+        }),
       ),
     generateThreadTitle: (input) =>
       resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(

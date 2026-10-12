@@ -71,13 +71,9 @@ const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
 });
 
 const makeUnsupportedTextGeneration = (): ProviderTextGeneration => {
+  const detail = "ACP Registry instances do not provide application text generation.";
   const unsupported = (operation: string) =>
-    Effect.fail(
-      new TextGenerationError({
-        operation,
-        detail: "ACP Registry instances do not provide application text generation.",
-      }),
-    );
+    Effect.fail(new TextGenerationError({ operation, detail }));
   return {
     generateCommitMessage: () => unsupported("generateCommitMessage"),
     generatePrContent: () => unsupported("generatePrContent"),
@@ -85,6 +81,7 @@ const makeUnsupportedTextGeneration = (): ProviderTextGeneration => {
     generateThreadTitle: () => unsupported("generateThreadTitle"),
     generateReviewGuide: () => unsupported("generateReviewGuide"),
     generateDiffWalkthrough: () => unsupported("generateDiffWalkthrough"),
+    investigationRefusal: detail,
   };
 };
 

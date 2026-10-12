@@ -28,7 +28,7 @@ import {
   sanitizeThreadTitle,
 } from "./textGenerationUtils.ts";
 
-export type Operation = keyof ProviderTextGeneration;
+export type Operation = Exclude<keyof ProviderTextGeneration, "investigationRefusal">;
 
 /** One prompt for a provider to run. */
 export interface Request<S extends Schema.Top> {
@@ -51,28 +51,35 @@ export interface Request<S extends Schema.Top> {
 /** How long an investigating run may take; a large change needs far longer than a title. */
 const INVESTIGATION_TIMEOUT_MS = 15 * 60_000;
 
+/** Why a provider with no read-only tool mode cannot write a guide or walkthrough. */
+export const cannotInvestigate = (provider: string) =>
+  `${provider} cannot investigate a checkout read-only. Choose another guide and walkthrough model, or source control writer model when none is set.`;
+
 /** The refusal a runner gives when it has no read-only tool mode to investigate with. */
 export const investigationUnsupported = (operation: Operation, provider: string) =>
-  new TextGenerationError({
-    operation,
-    detail: `${provider} cannot investigate a checkout read-only. Choose another review guide model, which also writes walkthroughs, or source control writer model when none is set.`,
-  });
+  new TextGenerationError({ operation, detail: cannotInvestigate(provider) });
 
-/** Runs one request and decodes the reply as its `outputSchema`. */
-export type Runner = <S extends Schema.Top>(
+/**
+ * Runs one request and decodes the reply as its `outputSchema`. `investigationRefusal` is set on
+ * a runner that refuses every investigation, so callers can know before running one.
+ */
+export type Runner = (<S extends Schema.Top>(
   request: Request<S>,
-) => Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]>;
+) => Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]>) & {
+  readonly investigationRefusal?: string;
+};
 
 /**
  * For a runner with no read-only tool mode: it answers prompts that carry everything, and
  * refuses an investigation rather than answering one blind.
  */
-export const withoutInvestigation =
-  (provider: string, run: Runner): Runner =>
-  (request) =>
+export const withoutInvestigation = (provider: string, run: Runner): Runner => {
+  const refusing: Runner = (request) =>
     request.investigate
       ? Effect.fail(investigationUnsupported(request.operation, provider))
       : run(request);
+  return Object.assign(refusing, { investigationRefusal: cannotInvestigate(provider) });
+};
 
 /** Decodes the JSON object in a text reply, which models often wrap in prose. */
 export const decodeJsonReply = <S extends Schema.Top>(
@@ -229,5 +236,6 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     generateThreadTitle,
     generateReviewGuide,
     generateDiffWalkthrough,
+    investigationRefusal: run.investigationRefusal ?? null,
   } satisfies ProviderTextGeneration;
 }

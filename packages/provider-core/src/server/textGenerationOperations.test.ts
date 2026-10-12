@@ -88,7 +88,9 @@ describe("fromRunner", () => {
       const error = yield* Effect.flip(generation.generateDiffWalkthrough(walkthroughInput));
       assert.strictEqual(error.operation, "generateDiffWalkthrough");
       assert.include(error.detail, "Cursor cannot investigate a checkout read-only");
-      assert.include(error.detail, "also writes walkthroughs");
+      assert.include(error.detail, "guide and walkthrough model");
+      // Known up front, so a caller refuses before preparing a checkout.
+      assert.strictEqual(generation.investigationRefusal, error.detail);
     }),
   );
 });

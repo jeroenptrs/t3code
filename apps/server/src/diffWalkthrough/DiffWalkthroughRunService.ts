@@ -1,9 +1,9 @@
 /**
- * Walkthroughs the server writes itself, in the background, on the environment's review guide
- * model. The model reads the diff read-only from a disposable checkout of its head, so a run
- * takes minutes on a large change and belongs to the server rather than to the request that
- * started it: `generate` returns once the run is under way, and readers follow its state through
- * `subscribe` beside the stored walkthrough.
+ * Walkthroughs the server writes itself, in the background, on the environment's guide and
+ * walkthrough model. The model reads the diff read-only from a disposable checkout of its head,
+ * so a run takes minutes on a large change and belongs to the server rather than to the request
+ * that started it: `generate` returns once the run is under way, and readers follow its state
+ * through `subscribe` beside the stored walkthrough.
  *
  * Mirrors `PullRequestReviewGuideService.generate`'s claim and ownership, per walkthrough key
  * rather than per pull request.
@@ -56,6 +56,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as DiffWalkthroughService from "./DiffWalkthroughService.ts";
+import * as DiffWalkthroughWriter from "./DiffWalkthroughWriter.ts";
 
 export class DiffWalkthroughRunService extends Context.Service<
   DiffWalkthroughRunService,
@@ -65,11 +66,17 @@ export class DiffWalkthroughRunService extends Context.Service<
      * a run already going for that revision, and replaces one going for another. A stored
      * walkthrough stays readable until the new one replaces it. `started` says whether this call
      * began the run or joined one. Auto-generation calls this directly.
+     *
+     * Fails without starting a run when the target is unusable or the guide and walkthrough model
+     * cannot investigate a checkout, with the reason the subscription reports as `unavailable`.
      */
     readonly generate: (
       target: DiffWalkthroughTarget,
     ) => Effect.Effect<DiffWalkthroughGenerateResult, DiffWalkthroughError>;
-    /** The stored walkthrough and the target's run, then both again whenever either changes. */
+    /**
+     * The stored walkthrough, the target's run, and why a run cannot start now, then all three
+     * again whenever one changes. `unavailable` follows the server's settings and providers.
+     */
     readonly subscribe: (
       target: DiffWalkthroughTargetIdentity,
     ) => Stream.Stream<DiffWalkthroughGetResult, DiffWalkthroughError>;
@@ -152,6 +159,7 @@ const failureDetail = (cause: Cause.Cause<unknown>): string =>
 
 const make = Effect.gen(function* () {
   const walkthroughs = yield* DiffWalkthroughService.DiffWalkthroughService;
+  const writer = yield* DiffWalkthroughWriter.DiffWalkthroughWriter;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const projects = yield* ProjectService.ProjectService;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -437,24 +445,36 @@ const make = Effect.gen(function* () {
   const projectIdOf = (prepared: Prepared) =>
     prepared.kind === "thread-diff" ? prepared.projectId : prepared.target.projectId;
 
-  /** The review guide model and instructions, which walkthroughs share with guides. */
+  /**
+   * The guide and walkthrough model and instructions, with why that model cannot write a
+   * walkthrough when it cannot.
+   */
   const readModel = Effect.fn("DiffWalkthroughRunService.readModel")(function* (
-    projectId: ProjectId,
+    projectId: ProjectId | null,
   ) {
     const [settings, providers] = yield* Effect.all(
-      [serverSettings.getSettings, providerRegistry.getProviders],
+      [
+        serverSettings.getSettings.pipe(
+          Effect.mapError(fail("Could not read the server's settings.")),
+        ),
+        providerRegistry.getProviders,
+      ],
       { concurrency: "unbounded" },
     );
     const projectSettings = resolveProjectSettings(settings, projectId).settings;
+    const modelSelection = ServerSettings.resolveReviewGuideModelSelection(
+      projectSettings,
+      providers,
+      projectId,
+    );
     return {
-      modelSelection: ServerSettings.resolveReviewGuideModelSelection(
-        projectSettings,
-        providers,
-        projectId,
-      ),
+      modelSelection,
       instructions: projectSettings.reviewGuideInstructions,
+      refusal: yield* textGeneration.investigationRefusal(modelSelection),
     };
   });
+
+  type Model = Effect.Success<ReturnType<typeof readModel>>;
 
   /** The written walkthrough, held to the contract with the envelope the server fills in. */
   const complete = (
@@ -482,10 +502,10 @@ const make = Effect.gen(function* () {
 
   const write = Effect.fn("DiffWalkthroughRunService.write")(function* (
     prepared: Prepared,
+    { modelSelection, instructions }: Model,
     runId: string,
     owns: Effect.Effect<boolean>,
   ) {
-    const { modelSelection, instructions } = yield* readModel(projectIdOf(prepared));
     // The checkout lives only as long as the model is reading it.
     const generated = yield* checkout(prepared, runId).pipe(
       Effect.flatMap(({ path, baseCommit }) =>
@@ -512,7 +532,18 @@ const make = Effect.gen(function* () {
       ),
       Effect.scoped,
     );
-    const walkthrough = yield* complete(prepared.target, generated, modelSelection);
+    const completed = yield* complete(prepared.target, generated, modelSelection);
+    // Held before the lock: it reads the change from git or the host, and other claims must not
+    // wait on that.
+    const { walkthrough, held } = yield* writer.hold(completed);
+    if (!held.clamped || held.dropped.length > 0 || held.narrowed.length > 0) {
+      yield* Effect.logInfo("Held a background walkthrough's notes to its change", {
+        clamped: held.clamped,
+        reason: held.reason,
+        dropped: held.dropped.length,
+        narrowed: held.narrowed.length,
+      });
+    }
     // A newer run for this key, say after a push, owns its walkthrough now; this one's result is
     // for an older revision and is dropped rather than written over it.
     yield* ownership.withPermits(1)(
@@ -527,6 +558,11 @@ const make = Effect.gen(function* () {
     "DiffWalkthroughRunService.generate",
   )(function* (target) {
     const prepared = yield* prepare(target);
+    // Refused before anything is claimed or checked out: no run could succeed on this model.
+    const model = yield* readModel(projectIdOf(prepared));
+    if (model.refusal !== null) {
+      return yield* new DiffWalkthroughError({ message: model.refusal });
+    }
     const runKey = yield* walkthroughs.keyOf(target);
     const running: DiffWalkthroughRunning = {
       _tag: "Running",
@@ -581,7 +617,7 @@ const make = Effect.gen(function* () {
         return updated;
       });
     const runId = `${runCounter++}`;
-    yield* write(prepared, runId, owns).pipe(
+    yield* write(prepared, model, runId, owns).pipe(
       Effect.andThen(finish(null)),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
@@ -601,19 +637,51 @@ const make = Effect.gen(function* () {
     return { run: running, started: true };
   });
 
+  /** The project whose settings a target's runs use; a missing thread falls back to none. */
+  const projectIdOfIdentity = (target: DiffWalkthroughTargetIdentity) =>
+    target.kind === "thread-diff"
+      ? orchestrator.getThreadShell(target.threadId).pipe(
+          Effect.map((thread) => (thread === null ? null : thread.projectId)),
+          Effect.orElseSucceed(() => null),
+        )
+      : Effect.succeed(target.projectId);
+
+  /** Why a run cannot start, read again whenever settings or providers change. */
+  const unavailableChanges = (target: DiffWalkthroughTargetIdentity) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        // Subscribed before the first read, so a change made in between is not missed.
+        const settingsChanges = yield* serverSettings.subscribeChanges;
+        const projectId = yield* projectIdOfIdentity(target);
+        return Stream.concat(
+          Stream.succeed(undefined),
+          Stream.merge(settingsChanges, providerRegistry.streamChanges),
+        ).pipe(
+          Stream.mapEffect(() => readModel(projectId)),
+          Stream.map(({ refusal }) => refusal),
+          Stream.changes,
+        );
+      }),
+    );
+
   const subscribe: DiffWalkthroughRunService["Service"]["subscribe"] = (target) =>
     Stream.unwrap(
       walkthroughs.keyOf(target).pipe(
         Effect.map((key) =>
-          walkthroughs.subscribe(target).pipe(
-            Stream.zipLatestWith(
-              SubscriptionRef.changes(runs).pipe(
-                Stream.map((current) => current.get(key) ?? null),
-                // Another key's run changing is not news to this reader.
-                Stream.changesWith((left, right) => left === right),
-              ),
-              (walkthrough, run): DiffWalkthroughGetResult => ({ walkthrough, run }),
+          Stream.zipLatestAll(
+            walkthroughs.subscribe(target),
+            SubscriptionRef.changes(runs).pipe(
+              Stream.map((current) => current.get(key) ?? null),
+              // Another key's run changing is not news to this reader.
+              Stream.changesWith((left, right) => left === right),
             ),
+            unavailableChanges(target),
+          ).pipe(
+            Stream.map(([walkthrough, run, unavailable]): DiffWalkthroughGetResult => ({
+              walkthrough,
+              run,
+              unavailable,
+            })),
           ),
         ),
       ),

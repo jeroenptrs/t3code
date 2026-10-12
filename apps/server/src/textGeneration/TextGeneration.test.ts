@@ -16,23 +16,24 @@ import * as Layer from "effect/Layer";
 import { buildThreadTitlePrompt } from "@t3tools/provider-core/server/textGenerationPrompts";
 
 const makeStubTextGeneration = (
-  overrides: Partial<TextGeneration.TextGeneration["Service"]>,
-): TextGeneration.TextGeneration["Service"] =>
-  TextGeneration.TextGeneration.of({
-    generateCommitMessage: () =>
-      Effect.die("generateCommitMessage stub not configured for this test"),
-    generatePrContent: () => Effect.die("generatePrContent stub not configured for this test"),
-    generateBranchName: () => Effect.die("generateBranchName stub not configured for this test"),
-    generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
-    generateReviewGuide: () => Effect.die("generateReviewGuide stub not configured for this test"),
-    generateDiffWalkthrough: () =>
-      Effect.die("generateDiffWalkthrough stub not configured for this test"),
-    ...overrides,
-  });
+  overrides: Partial<ProviderInstance["textGeneration"]>,
+): ProviderInstance["textGeneration"] => ({
+  generateCommitMessage: () =>
+    Effect.die("generateCommitMessage stub not configured for this test"),
+  generatePrContent: () => Effect.die("generatePrContent stub not configured for this test"),
+  generateBranchName: () => Effect.die("generateBranchName stub not configured for this test"),
+  generateThreadTitle: () => Effect.die("generateThreadTitle stub not configured for this test"),
+  generateReviewGuide: () => Effect.die("generateReviewGuide stub not configured for this test"),
+  generateDiffWalkthrough: () =>
+    Effect.die("generateDiffWalkthrough stub not configured for this test"),
+  investigationRefusal: null,
+  ...overrides,
+});
 
 const makeStubInstance = (
   instanceId: ProviderInstanceId,
-  textGeneration: TextGeneration.TextGeneration["Service"],
+  textGeneration: ProviderInstance["textGeneration"],
+  enabled = true,
 ): ProviderInstance =>
   ({
     instanceId,
@@ -42,7 +43,7 @@ const makeStubInstance = (
       continuationKey: `${instanceId}:test`,
     },
     displayName: undefined,
-    enabled: true,
+    enabled,
     snapshot: {} as ProviderInstance["snapshot"],
     orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
     textGeneration,
@@ -183,6 +184,42 @@ describe("TextGeneration.make", () => {
 
       expect(result).toEqual({ groups: [], notes: [] });
       expect(cwds).toEqual(["/tmp/walkthrough-checkout"]);
+    }),
+  );
+
+  it.effect("says why a selection cannot investigate before anything runs", () =>
+    Effect.gen(function* () {
+      const claude = makeStubInstance(
+        ProviderInstanceId.make("claude"),
+        makeStubTextGeneration({}),
+      );
+      const cursor = makeStubInstance(
+        ProviderInstanceId.make("cursor"),
+        makeStubTextGeneration({ investigationRefusal: "Cursor cannot investigate." }),
+      );
+      const off = makeStubInstance(
+        ProviderInstanceId.make("off"),
+        makeStubTextGeneration({}),
+        false,
+      );
+      const tg = yield* TextGeneration.make.pipe(
+        Effect.provideService(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          makeStubRegistry([claude, cursor, off]),
+        ),
+        Effect.provide(
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => Effect.die("No link lookup expected"),
+          }),
+        ),
+      );
+      const refusal = (instanceId: string) =>
+        tg.investigationRefusal(createModelSelection(ProviderInstanceId.make(instanceId), "m"));
+
+      expect(yield* refusal("claude")).toBeNull();
+      expect(yield* refusal("cursor")).toBe("Cursor cannot investigate.");
+      expect(yield* refusal("off")).toContain("off is disabled");
+      expect(yield* refusal("gone")).toContain("No provider instance is registered for 'gone'");
     }),
   );
 
