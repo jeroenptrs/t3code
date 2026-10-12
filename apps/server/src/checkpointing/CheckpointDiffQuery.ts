@@ -7,6 +7,7 @@
  * @module CheckpointDiffQuery
  */
 import {
+  type CheckpointRef,
   OrchestrationGetTurnDiffResult,
   type OrchestrationGetFullThreadDiffInput,
   type OrchestrationGetFullThreadDiffResult,
@@ -62,6 +63,23 @@ export class CheckpointDiffQuery extends Context.Service<
   CheckpointDiffQuery,
   {
     /**
+     * The repository and the two checkpoint refs a turn range compares, for a caller that runs
+     * its own diff of them. Fails as `getTurnDiff` does when either checkpoint is not ready.
+     */
+    readonly resolveTurnCheckpoints: (input: {
+      readonly threadId: ThreadId;
+      readonly fromTurnCount: number;
+      readonly toTurnCount: number;
+    }) => Effect.Effect<
+      {
+        readonly cwd: string;
+        readonly fromCheckpointRef: CheckpointRef;
+        readonly toCheckpointRef: CheckpointRef;
+      },
+      CheckpointServiceError
+    >;
+
+    /**
      * Read the patch diff for a single turn checkpoint transition.
      *
      * Verifies checkpoint availability in both projection state and filesystem.
@@ -105,28 +123,10 @@ export const make = Effect.gen(function* () {
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const crypto = yield* Crypto.Crypto;
 
-  const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
-    function* (input) {
+  const resolveTurnCheckpoints: CheckpointDiffQuery["Service"]["resolveTurnCheckpoints"] =
+    Effect.fn("CheckpointDiffQuery.resolveTurnCheckpoints")(function* (input) {
+      // Its failures are a turn diff's, whoever runs the diff.
       const operation = "CheckpointDiffQuery.getTurnDiff";
-      const ignoreWhitespace = input.ignoreWhitespace ?? true;
-      yield* Effect.annotateCurrentSpan({
-        "checkpoint.thread_id": input.threadId,
-        "checkpoint.from_turn_count": input.fromTurnCount,
-        "checkpoint.to_turn_count": input.toTurnCount,
-        "checkpoint.ignore_whitespace": ignoreWhitespace,
-      });
-
-      if (input.fromTurnCount === input.toTurnCount) {
-        const emptyDiff = buildTurnDiffResult(input, "");
-        if (!isTurnDiffResult(emptyDiff)) {
-          return yield* new CheckpointDiffResultInvalidError({
-            operation,
-            threadId: input.threadId,
-          });
-        }
-        return emptyDiff;
-      }
-
       const projection = yield* threads.getCheckpointContext(input.threadId).pipe(
         Effect.mapError(
           () =>
@@ -207,10 +207,34 @@ export const make = Effect.gen(function* () {
         });
       }
 
+      return { cwd: toScope.cwd, fromCheckpointRef, toCheckpointRef: toCheckpoint.ref };
+    });
+
+  const getTurnDiff: CheckpointDiffQuery["Service"]["getTurnDiff"] = Effect.fn("getTurnDiff")(
+    function* (input) {
+      const operation = "CheckpointDiffQuery.getTurnDiff";
+      const ignoreWhitespace = input.ignoreWhitespace ?? true;
+      yield* Effect.annotateCurrentSpan({
+        "checkpoint.thread_id": input.threadId,
+        "checkpoint.from_turn_count": input.fromTurnCount,
+        "checkpoint.to_turn_count": input.toTurnCount,
+        "checkpoint.ignore_whitespace": ignoreWhitespace,
+      });
+
+      if (input.fromTurnCount === input.toTurnCount) {
+        const emptyDiff = buildTurnDiffResult(input, "");
+        if (!isTurnDiffResult(emptyDiff)) {
+          return yield* new CheckpointDiffResultInvalidError({
+            operation,
+            threadId: input.threadId,
+          });
+        }
+        return emptyDiff;
+      }
+
+      const checkpoints = yield* resolveTurnCheckpoints(input);
       const comparison = {
-        cwd: toScope.cwd,
-        fromCheckpointRef,
-        toCheckpointRef: toCheckpoint.ref,
+        ...checkpoints,
         fallbackFromToHead: false,
         ignoreWhitespace,
       };
@@ -302,6 +326,7 @@ export const make = Effect.gen(function* () {
   });
 
   return CheckpointDiffQuery.of({
+    resolveTurnCheckpoints,
     getTurnDiff,
     getFullThreadDiff,
   });
