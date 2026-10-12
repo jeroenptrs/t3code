@@ -529,9 +529,9 @@ export function PullRequestDetailPanel({
       context: { ...getShortcutContext(), editableFocus: isEditableFocused(event.target) },
     });
     if (command === "pullRequest.copyNumber") {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!event.repeat) copyReference(`#${reference.number}`, `${terminology.shortLabel} number`);
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) copyReference(`#${reference.number}`, `${terminology.shortLabel} number`);
       return;
     }
     const step = walkthroughStepForCommand(command);
@@ -1918,6 +1918,7 @@ export function PullRequestDetailPanel({
                     reference={reference}
                     detail={detail}
                     onGenerate={canGenerateWalkthrough ? generateWalkthrough : undefined}
+                    generateThread={attachTarget === null ? "new" : "this"}
                     generatePending={handoff === "walkthrough"}
                     handleRef={walkthroughHandle}
                     refreshToken={refreshToken + (turnRefresh ?? 0)}
