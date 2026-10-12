@@ -159,6 +159,11 @@ function selectOpenCodeRuntimeTextGeneration(
         v1: v1.generateReviewGuide(input),
         v2: v2.generateReviewGuide(input),
       }),
+    generateDiffWalkthrough: (input) =>
+      byOpenCodeRuntime(probe.get, {
+        v1: v1.generateDiffWalkthrough(input),
+        v2: v2.generateDiffWalkthrough(input),
+      }),
   };
 }
 
