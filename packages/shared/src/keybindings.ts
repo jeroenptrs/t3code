@@ -135,22 +135,10 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+w", command: "rightPanel.close", when: "!terminalFocus" },
   { key: "mod+shift+t", command: "view.reopenClosed" },
   { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
-  // Outside text fields only: there Alt+arrows move the caret, and Alt+Up edits the queue.
-  {
-    key: "alt+arrowup",
-    command: "walkthrough.previousSection",
-    when: "!editableFocus && !terminalFocus",
-  },
-  {
-    key: "alt+arrowdown",
-    command: "walkthrough.nextSection",
-    when: "!editableFocus && !terminalFocus",
-  },
-  {
-    key: "alt+shift+arrowdown",
-    command: "walkthrough.markReviewed",
-    when: "!editableFocus && !terminalFocus",
-  },
+  // Outside text fields and the terminal only, where J and K are typing.
+  { key: "j", command: "walkthrough.nextSection", when: "!editableFocus && !terminalFocus" },
+  { key: "k", command: "walkthrough.previousSection", when: "!editableFocus && !terminalFocus" },
+  { key: "shift+j", command: "walkthrough.markReviewed", when: "!editableFocus && !terminalFocus" },
   { key: "mod+shift+j", command: "preview.toggle" },
   { key: "mod+r", command: "preview.refresh", when: "previewFocus" },
   { key: "mod+l", command: "preview.focusUrl", when: "previewFocus" },

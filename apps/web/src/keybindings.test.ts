@@ -1693,16 +1693,16 @@ describe("Usage shortcuts", () => {
 });
 
 describe("walkthrough shortcuts", () => {
-  const arrow = (key: "ArrowUp" | "ArrowDown", shiftKey = false) =>
-    event({ key, altKey: true, shiftKey });
+  const letter = (key: "j" | "k", shiftKey = false) =>
+    event({ key: shiftKey ? key.toUpperCase() : key, shiftKey });
 
   it.each(["MacIntel", "Win32", "Linux"])(
     "steps sections outside text fields on %s",
     (platform) => {
       for (const [input, command] of [
-        [arrow("ArrowUp"), "walkthrough.previousSection"],
-        [arrow("ArrowDown"), "walkthrough.nextSection"],
-        [arrow("ArrowDown", true), "walkthrough.markReviewed"],
+        [letter("k"), "walkthrough.previousSection"],
+        [letter("j"), "walkthrough.nextSection"],
+        [letter("j", true), "walkthrough.markReviewed"],
       ] as const) {
         assert.strictEqual(
           resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
@@ -1715,15 +1715,11 @@ describe("walkthrough shortcuts", () => {
     },
   );
 
-  it("leaves Alt+arrows to text fields, the composer's queue, and the terminal", () => {
+  it("leaves J and K to text fields and the terminal", () => {
     const resolve = (input: ShortcutEventLike, context: Record<string, boolean>) =>
       resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, { platform: "Linux", context });
-    assert.isNull(resolve(arrow("ArrowDown"), { editableFocus: true }));
-    assert.isNull(resolve(arrow("ArrowDown", true), { editableFocus: true }));
-    assert.isNull(resolve(arrow("ArrowUp"), { terminalFocus: true }));
-    assert.strictEqual(
-      resolve(arrow("ArrowUp"), { editableFocus: true, composerFocus: true }),
-      "thread.editQueuedMessage",
-    );
+    assert.isNull(resolve(letter("j"), { editableFocus: true }));
+    assert.isNull(resolve(letter("j", true), { editableFocus: true }));
+    assert.isNull(resolve(letter("k"), { terminalFocus: true }));
   });
 });
