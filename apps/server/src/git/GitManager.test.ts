@@ -316,6 +316,7 @@ function createTextGeneration(
     generateTranscriptionPostProcessing: () =>
       Effect.succeed({ transcription: "processed transcript" }),
     generateDiffWalkthrough: () => Effect.succeed({ groups: [], notes: [] }),
+    investigationRefusal: () => Effect.succeed(null),
     ...overrides,
   };
 
@@ -368,6 +369,7 @@ function createTextGeneration(
     generateTranscriptionPostProcessing: (input) =>
       implementation.generateTranscriptionPostProcessing(input),
     generateDiffWalkthrough: (input) => implementation.generateDiffWalkthrough(input),
+    investigationRefusal: (selection) => implementation.investigationRefusal(selection),
   };
 }
 
