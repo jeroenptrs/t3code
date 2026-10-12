@@ -277,7 +277,11 @@ const make = Effect.gen(function* () {
             .put({
               target,
               ...(input.summary === undefined ? {} : { summary: input.summary }),
-              groups: input.groups,
+              groups: input.groups.map((group) => ({
+                ...group,
+                attention: group.attention ?? null,
+                questions: group.questions ?? [],
+              })),
               notes: input.notes,
               generatedAt: DateTime.formatIso(yield* DateTime.now),
               author,
