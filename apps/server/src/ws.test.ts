@@ -49,6 +49,9 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
+import * as WorkspaceReadAccess from "./workspace/WorkspaceReadAccess.ts";
+import * as DiffWalkthroughRunService from "./diffWalkthrough/DiffWalkthroughRunService.ts";
+import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
@@ -487,6 +490,9 @@ it.effect(
           resolveTargets: () => Effect.succeed([]),
         }),
         Layer.mock(DirectEndpoints.DirectEndpoints)({ resolve: () => Effect.succeed([]) }),
+        Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+        Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+        Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           scratchRoot: Effect.succeedNone,
           namedProjectsRoot: process.cwd(),
