@@ -7,6 +7,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -41,7 +42,7 @@ const project: OrchestrationProjectShell = {
       remoteName: "origin",
       remoteUrl: "git@github.com:T3Tools/T3Code.git",
     },
-    provider: "github",
+    provider: SourceControlProviderKind.make("github"),
     displayName: "T3Tools/T3Code",
     owner: "T3Tools",
     name: "T3Code",
@@ -109,16 +110,18 @@ const walkthroughFor = (
       id: "core",
       title: "Core change",
       summary: "The behavior the change is about.",
-      files: ["src/a.ts"],
+      attention: null,
+      files: [{ path: "src/a.ts" }],
+      questions: [],
     },
   ],
   notes: [
     {
       groupId: "core",
       path: "src/a.ts",
-      side: "additions",
-      startLine: 1,
-      endLine: 3,
+      side: "new",
+      start: 1,
+      end: 3,
       summary: "Adds the entry point",
     },
   ],
