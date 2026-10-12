@@ -28,13 +28,7 @@ import {
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide";
 import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type Ref,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type Ref } from "react";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { useOpenInPreferredEditor } from "../editorPreferences";
@@ -76,6 +70,7 @@ import {
 } from "./diffs/DiffWalkthroughView";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { diffWalkthroughStaleNotice } from "./diffs/diffWalkthroughView.logic";
+import { useDiffWalkthroughBackgroundRun } from "./diffs/useDiffWalkthroughBackgroundRun";
 import {
   branchRangeWalkthroughTarget,
   buildBranchRangeWalkthroughPrompt,
@@ -700,6 +695,11 @@ export default function DiffPanel({
     [showWalkthrough, walkthroughEnvironmentId, walkthroughTarget],
   );
   const walkthroughQuery = useEnvironmentQuery(walkthroughAtom);
+  const walkthroughBackground = useDiffWalkthroughBackgroundRun({
+    environmentId: walkthroughEnvironmentId,
+    liveTarget: walkthroughTarget,
+    result: walkthroughQuery.data,
+  });
   const walkthroughSource = useMemo<DiffWalkthroughViewSource>(() => {
     if (walkthroughTarget === null || walkthroughQuery.data === null) {
       return walkthroughQuery.error === null
@@ -1236,6 +1236,7 @@ export default function DiffPanel({
                   viewed={null}
                   resetKey={collapseScopeKey ?? reviewSectionId}
                   onGenerate={canGenerateWalkthrough ? generateWalkthrough : undefined}
+                  background={walkthroughBackground}
                   {...(walkthroughTarget?.kind === "branch-range"
                     ? {
                         emptyDescription:
