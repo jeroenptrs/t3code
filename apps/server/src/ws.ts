@@ -1261,7 +1261,6 @@ const layerWsRpc = (
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
-      const diffWalkthroughs = yield* DiffWalkthroughService.DiffWalkthroughService;
       const diffWalkthroughWriter = yield* DiffWalkthroughWriter.DiffWalkthroughWriter;
       const diffWalkthroughRuns = yield* DiffWalkthroughRunService.DiffWalkthroughRunService;
       const deviceService = yield* DeviceService.DeviceService;
