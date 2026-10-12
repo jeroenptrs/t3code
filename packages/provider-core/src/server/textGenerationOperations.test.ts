@@ -31,6 +31,7 @@ it.effect("fails a thread title reply that is only the schema key", () =>
 
 const walkthroughInput = {
   cwd: "/tmp/checkout",
+  projectCwd: "/repo",
   subject: "branch feature/search",
   baseCommit: "abc123",
   hasCommitHistory: true,
@@ -111,7 +112,9 @@ describe("fromRunner", () => {
       const error = yield* Effect.flip(generation.generateDiffWalkthrough(walkthroughInput));
       assert.strictEqual(error.operation, "generateDiffWalkthrough");
       assert.include(error.detail, "Cursor cannot investigate a checkout read-only");
-      assert.include(error.detail, "also writes walkthroughs");
+      assert.include(error.detail, "guide and walkthrough model");
+      // Known up front, so a caller refuses before preparing a checkout.
+      assert.strictEqual(generation.investigationRefusal, error.detail);
     }),
   );
 });
