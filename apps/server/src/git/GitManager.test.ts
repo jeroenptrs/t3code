@@ -348,6 +348,8 @@ function createTextGeneration(
         title: "Update workflow",
       }),
     generateReviewGuide: () => Effect.succeed({ stops: [] }),
+    generateDiffWalkthrough: () => Effect.succeed({ groups: [], notes: [] }),
+    investigationRefusal: () => Effect.succeed(null),
     ...overrides,
   };
 
@@ -397,6 +399,8 @@ function createTextGeneration(
         ),
       ),
     generateReviewGuide: (input) => implementation.generateReviewGuide(input),
+    generateDiffWalkthrough: (input) => implementation.generateDiffWalkthrough(input),
+    investigationRefusal: (selection) => implementation.investigationRefusal(selection),
   };
 }
 

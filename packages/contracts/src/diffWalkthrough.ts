@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 
@@ -135,6 +136,7 @@ export function isDiffWalkthroughStale(
 const MAX_GROUPS = 100;
 const MAX_NOTES = 2000;
 const MAX_FILES_PER_GROUP = 1000;
+const MAX_QUESTIONS_PER_GROUP = 2;
 
 /** As on pull request file marks: untrimmed, because a space can be part of a file's name. */
 const DiffWalkthroughFilePath = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(4096));
@@ -145,37 +147,75 @@ const DiffWalkthroughSummaryLine = TrimmedNonEmptyString.check(
   Schema.isPattern(/^[^\r\n]*$/, { message: "summary must be a single line" }),
 );
 
+/** Why a group deserves a slower read: a call the diff alone cannot settle. */
+export const DiffWalkthroughAttentionKind = Schema.Literals([
+  "tradeoff",
+  "contract",
+  "product",
+  "risk",
+  "accessibility",
+]);
+export type DiffWalkthroughAttentionKind = typeof DiffWalkthroughAttentionKind.Type;
+
+export const DiffWalkthroughAttention = Schema.Struct({
+  kind: DiffWalkthroughAttentionKind,
+  note: TrimmedNonEmptyString.check(Schema.isMaxLength(1000)),
+});
+export type DiffWalkthroughAttention = typeof DiffWalkthroughAttention.Type;
+
+export const DiffWalkthroughGroupFile = Schema.Struct({
+  path: DiffWalkthroughFilePath,
+  /** What this file contributes when its diff does not say, for example "same rename as X". */
+  note: Schema.optionalKey(DiffWalkthroughSummaryLine),
+});
+export type DiffWalkthroughGroupFile = typeof DiffWalkthroughGroupFile.Type;
+
+/**
+ * Shaped like a guided review's stop, so one translates into the other by copying fields.
+ * `attention` and `questions` default when an agent leaves them out, and are always encoded.
+ */
 export const DiffWalkthroughGroup = Schema.Struct({
   id: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
   title: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
   /** The intent behind these files, in a sentence or two. */
   summary: TrimmedNonEmptyString.check(Schema.isMaxLength(1000)),
-  files: Schema.Array(DiffWalkthroughFilePath).check(Schema.isMaxLength(MAX_FILES_PER_GROUP)),
+  attention: Schema.NullOr(DiffWalkthroughAttention).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
+  files: Schema.Array(DiffWalkthroughGroupFile).check(Schema.isMaxLength(MAX_FILES_PER_GROUP)),
+  /** Questions about intent a reader might ask here, never requests to review something. */
+  questions: Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(500)))
+    .check(Schema.isMaxLength(MAX_QUESTIONS_PER_GROUP))
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 export type DiffWalkthroughGroup = typeof DiffWalkthroughGroup.Type;
 
 /**
- * Which side of the diff a note's lines are numbered on, in `@pierre/diffs` terms so the rail
- * can reveal the range without translating: `additions` counts lines of the new file,
- * `deletions` lines of the old one. A note on unchanged context lines uses `additions`.
+ * Lines of one file, in a guided review's spelling: `new` numbers lines of the new file, `old`
+ * lines of the old one. A note sits on lines the change touched on its side; the server drops
+ * one that covers none and narrows one that reaches past them.
  */
-export const DiffWalkthroughSide = Schema.Literals(["additions", "deletions"]);
+export const DiffWalkthroughSide = Schema.Literals(["new", "old"]);
 export type DiffWalkthroughSide = typeof DiffWalkthroughSide.Type;
+
+export const DiffWalkthroughAnchor = Schema.Struct({
+  path: DiffWalkthroughFilePath,
+  side: DiffWalkthroughSide,
+  start: PositiveInt,
+  end: PositiveInt,
+});
+export type DiffWalkthroughAnchor = typeof DiffWalkthroughAnchor.Type;
 
 export const DiffWalkthroughNote = Schema.Struct({
   groupId: TrimmedNonEmptyString,
-  path: DiffWalkthroughFilePath,
-  side: DiffWalkthroughSide,
-  startLine: PositiveInt,
-  endLine: PositiveInt,
+  ...DiffWalkthroughAnchor.fields,
   summary: DiffWalkthroughSummaryLine,
   /** Markdown, for what does not fit the one line. */
   body: Schema.optional(Schema.String.check(Schema.isMaxLength(8000))),
 }).check(
-  Schema.makeFilter(
-    (note) => note.startLine <= note.endLine || "startLine must be less than or equal to endLine",
-    { identifier: "DiffWalkthroughNoteLineRange" },
-  ),
+  Schema.makeFilter((note) => note.start <= note.end || "start must be less than or equal to end", {
+    identifier: "DiffWalkthroughNoteLineRange",
+  }),
 );
 export type DiffWalkthroughNote = typeof DiffWalkthroughNote.Type;
 
@@ -194,8 +234,9 @@ function walkthroughProblem(input: {
   const groupOfFile = new Map<string, string>();
   for (const group of input.groups) {
     if (filesByGroup.has(group.id)) return `group id "${group.id}" is used more than once`;
-    filesByGroup.set(group.id, new Set(group.files));
-    for (const path of group.files) {
+    const paths = group.files.map((file) => file.path);
+    filesByGroup.set(group.id, new Set(paths));
+    for (const path of paths) {
       const owner = groupOfFile.get(path);
       if (owner !== undefined && owner !== group.id) {
         return `file "${path}" is in both group "${owner}" and group "${group.id}"`;
@@ -249,11 +290,11 @@ export function groupDiffWalkthroughFiles(
   const placed = new Set<string>();
   const groups: DiffWalkthroughGroup[] = [];
   for (const group of walkthrough.groups) {
-    const files: string[] = [];
-    for (const path of group.files) {
-      if (!changed.has(path) || placed.has(path)) continue;
-      placed.add(path);
-      files.push(path);
+    const files: DiffWalkthroughGroupFile[] = [];
+    for (const file of group.files) {
+      if (!changed.has(file.path) || placed.has(file.path)) continue;
+      placed.add(file.path);
+      files.push(file);
     }
     if (files.length > 0) groups.push({ ...group, files });
   }
@@ -263,7 +304,9 @@ export function groupDiffWalkthroughFiles(
       id: DIFF_WALKTHROUGH_OTHER_GROUP_ID,
       title: "Other",
       summary: "Changed files the walkthrough does not cover.",
-      files: unplaced,
+      attention: null,
+      files: unplaced.map((path) => ({ path })),
+      questions: [],
     });
   }
   return groups;
@@ -275,8 +318,32 @@ export const DiffWalkthroughGetInput = Schema.Struct({
 });
 export type DiffWalkthroughGetInput = typeof DiffWalkthroughGetInput.Type;
 
+/**
+ * A walkthrough the server is writing in the background, or the last one that failed. Held in
+ * server memory rather than stored, so a restart drops it. `target` carries the revision the run
+ * reads; a newer revision's run replaces it, and a finished run leaves only the walkthrough.
+ */
+export const DiffWalkthroughRunning = Schema.TaggedStruct("Running", {
+  target: DiffWalkthroughTarget,
+  startedAt: IsoDateTime,
+});
+export type DiffWalkthroughRunning = typeof DiffWalkthroughRunning.Type;
+
+export const DiffWalkthroughRun = Schema.Union([
+  DiffWalkthroughRunning,
+  Schema.TaggedStruct("Failed", {
+    target: DiffWalkthroughTarget,
+    failedAt: IsoDateTime,
+    detail: TrimmedNonEmptyString,
+  }),
+]);
+export type DiffWalkthroughRun = typeof DiffWalkthroughRun.Type;
+
 export const DiffWalkthroughGetResult = Schema.Struct({
   walkthrough: Schema.NullOr(DiffWalkthrough),
+  run: Schema.NullOr(DiffWalkthroughRun),
+  /** Why the server cannot write this walkthrough in the background now, or null when it can. */
+  unavailable: Schema.NullOr(TrimmedNonEmptyString),
 });
 export type DiffWalkthroughGetResult = typeof DiffWalkthroughGetResult.Type;
 
@@ -289,6 +356,19 @@ export const DiffWalkthroughPutResult = Schema.Struct({
   walkthrough: DiffWalkthrough,
 });
 export type DiffWalkthroughPutResult = typeof DiffWalkthroughPutResult.Type;
+
+export const DiffWalkthroughGenerateInput = Schema.Struct({
+  /** The revision to walk, which a pull request's head must still be at. */
+  target: DiffWalkthroughTarget,
+});
+export type DiffWalkthroughGenerateInput = typeof DiffWalkthroughGenerateInput.Type;
+
+/** The run under way: one this call started, or one it joined (`started: false`). */
+export const DiffWalkthroughGenerateResult = Schema.Struct({
+  run: DiffWalkthroughRunning,
+  started: Schema.Boolean,
+});
+export type DiffWalkthroughGenerateResult = typeof DiffWalkthroughGenerateResult.Type;
 
 export class DiffWalkthroughError extends Schema.TaggedError<DiffWalkthroughError>()(
   "DiffWalkthroughError",

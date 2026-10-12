@@ -3,6 +3,7 @@ import {
   ProjectId,
   type DiffWalkthrough,
   type DiffWalkthroughNote,
+  type DiffWalkthroughRun,
   type DiffWalkthroughTarget,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -10,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildDiffWalkthroughSections,
   clampDiffWalkthroughSectionIndex,
+  diffWalkthroughGenerateState,
   diffWalkthroughStaleNotice,
   firstUnreviewedSectionIndex,
   formatDiffWalkthroughNoteRange,
@@ -41,15 +43,15 @@ const branchTarget = (headSha: string, baseSha = "base000"): DiffWalkthroughTarg
 const note = (
   groupId: string,
   path: string,
-  startLine: number,
+  start: number,
   summary: string,
   extra: Partial<DiffWalkthroughNote> = {},
 ): DiffWalkthroughNote => ({
   groupId,
   path,
-  side: "additions",
-  startLine,
-  endLine: startLine + 2,
+  side: "new",
+  start,
+  end: start + 2,
   summary,
   ...extra,
 });
@@ -62,15 +64,34 @@ const walkthroughFor = (target: DiffWalkthroughTarget): DiffWalkthrough => ({
       id: "core",
       title: "Expiry rule",
       summary: "Where a session's end is decided.",
-      files: ["src/session.ts", "src/gone.ts"],
+      attention: { kind: "risk", note: "Clients that cached the old expiry keep it." },
+      files: [
+        { path: "src/session.ts", note: "Owns the expiry rule now." },
+        { path: "src/gone.ts", note: "Gone from the diff." },
+      ],
+      questions: ["Why decide expiry on the server?"],
     },
-    { id: "ui", title: "Banner", summary: "What the user sees.", files: ["web/Banner.tsx"] },
-    { id: "empty", title: "Removed", summary: "No longer changed.", files: ["src/old.ts"] },
+    {
+      id: "ui",
+      title: "Banner",
+      summary: "What the user sees.",
+      attention: null,
+      files: [{ path: "web/Banner.tsx" }],
+      questions: [],
+    },
+    {
+      id: "empty",
+      title: "Removed",
+      summary: "No longer changed.",
+      attention: null,
+      files: [{ path: "src/old.ts" }],
+      questions: [],
+    },
   ],
   notes: [
     note("core", "src/session.ts", 40, "Expiry moves here"),
     note("ui", "web/Banner.tsx", 3, "Banner reads the new field", { body: "Longer **why**." }),
-    note("core", "src/session.ts", 10, "Old check removed", { side: "deletions" }),
+    note("core", "src/session.ts", 10, "Old check removed", { side: "old" }),
     note("core", "src/gone.ts", 1, "On a file the diff no longer touches"),
   ],
   generatedAt: "2026-10-01T00:00:00.000Z",
@@ -100,6 +121,16 @@ describe("buildDiffWalkthroughSections", () => {
     expect(sections[1]?.notes.map((entry) => entry.key)).toEqual(["note:1"]);
     expect(sections[2]?.notes).toEqual([]);
   });
+
+  it("carries a group's attention, questions and the notes of files still in it", () => {
+    expect(sections[0]?.attention?.kind).toBe("risk");
+    expect(sections[0]?.questions).toEqual(["Why decide expiry on the server?"]);
+    expect([...(sections[0]?.fileNotes ?? [])]).toEqual([
+      ["src/session.ts", "Owns the expiry rule now."],
+    ]);
+    expect(sections[2]).toMatchObject({ attention: null, questions: [] });
+    expect(sections[2]?.fileNotes.size).toBe(0);
+  });
 });
 
 describe("formatting", () => {
@@ -113,9 +144,7 @@ describe("formatting", () => {
       "src/a.ts:L12-L14",
     );
     expect(
-      formatDiffWalkthroughNoteRange(
-        note("core", "src/a.ts", 5, "x", { endLine: 5, side: "deletions" }),
-      ),
+      formatDiffWalkthroughNoteRange(note("core", "src/a.ts", 5, "x", { end: 5, side: "old" })),
     ).toBe("src/a.ts:L5 (old)");
   });
 });
@@ -191,5 +220,62 @@ describe("pickPullRequestWalkthrough", () => {
     expect(pickPullRequestWalkthrough(null, branchWalkthrough, "head456")).toBeNull();
     expect(pickPullRequestWalkthrough(null, branchWalkthrough, null)).toBeNull();
     expect(pickPullRequestWalkthrough(null, null, "head123")).toBeNull();
+  });
+});
+
+describe("diffWalkthroughGenerateState", () => {
+  const live = pullRequestTarget("head123");
+  const running = (headSha: string): DiffWalkthroughRun => ({
+    _tag: "Running",
+    target: pullRequestTarget(headSha),
+    startedAt: "2026-10-12T10:00:00.000Z",
+  });
+  const failed = (headSha: string): DiffWalkthroughRun => ({
+    _tag: "Failed",
+    target: pullRequestTarget(headSha),
+    failedAt: "2026-10-12T10:05:00.000Z",
+    detail: "The model stopped early.",
+  });
+  const state = (overrides: Partial<Parameters<typeof diffWalkthroughGenerateState>[0]>) =>
+    diffWalkthroughGenerateState({
+      run: null,
+      unavailable: null,
+      liveTarget: live,
+      starting: false,
+      requestError: null,
+      ...overrides,
+    });
+
+  it("is running while a request is in flight or a run is under way, for any revision", () => {
+    expect(state({ starting: true }).kind).toBe("running");
+    expect(state({ run: running("head123") }).kind).toBe("running");
+    expect(state({ run: running("older") }).kind).toBe("running");
+    expect(state({ run: running("head123"), requestError: "Refused." }).kind).toBe("running");
+  });
+
+  it("shows a failure only for the revision on screen", () => {
+    expect(state({ run: failed("head123") })).toMatchObject({
+      kind: "failed",
+      detail: "The model stopped early.",
+    });
+    expect(state({ run: failed("older") }).kind).toBe("idle");
+    expect(state({ run: failed("head123"), liveTarget: null }).kind).toBe("idle");
+  });
+
+  it("puts a refused request ahead of an earlier failed run", () => {
+    expect(state({ run: failed("head123"), requestError: "The head moved." })).toMatchObject({
+      kind: "failed",
+      detail: "The head moved.",
+    });
+  });
+
+  it("says why a background run cannot start, preferring the server's reason", () => {
+    expect(state({}).backgroundDisabledReason).toBeNull();
+    expect(
+      state({ unavailable: "The model cannot read a checkout." }).backgroundDisabledReason,
+    ).toBe("The model cannot read a checkout.");
+    expect(state({ liveTarget: null }).backgroundDisabledReason).toBe(
+      "The change's current revision is not known yet.",
+    );
   });
 });

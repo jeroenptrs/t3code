@@ -1,4 +1,5 @@
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useAtomValue } from "@effect/atom-react";
 import type { PullRequestPanelTab } from "~/rightPanelStore";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
@@ -1495,6 +1496,13 @@ export function PullRequestDetailPanel({
     );
   };
 
+  // The pull request's own project decides, as it does for the guide: guides and walkthroughs
+  // share one set of preferences.
+  const walkthroughInstructions = useEnvironmentSettings(
+    environmentId,
+    (settings) =>
+      resolveProjectSettings(settings, reference.projectId).settings.reviewGuideInstructions,
+  );
   const generateWalkthrough = () => {
     if (!detail) return;
     void startAsk(
@@ -1508,6 +1516,7 @@ export function PullRequestDetailPanel({
         baseBranch: detail.baseBranch,
         state: detail.state,
         isDraft: detail.isDraft,
+        instructions: walkthroughInstructions,
       }),
     );
   };
@@ -3089,6 +3098,7 @@ export function PullRequestDetailPanel({
                     reference={reference}
                     detail={detail}
                     onGenerate={canGenerateWalkthrough ? generateWalkthrough : undefined}
+                    generateThread={attachTarget === null ? "new" : "this"}
                     generatePending={handoff === "walkthrough"}
                     handleRef={walkthroughHandle}
                     refreshToken={codeRefreshToken}

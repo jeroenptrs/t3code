@@ -1,88 +1,10 @@
 import type { PullRequestReviewGuideExcerpt, PullRequestReviewGuideStop } from "@t3tools/contracts";
 import type { ReviewGuideGenerationResult } from "@t3tools/provider-core/server/textGeneration";
 
+import { clampToChange, type DiffChange } from "../review/diffChange.ts";
+
 /** Longest excerpt kept. The reader wants the lines that carry the idea, not the whole hunk. */
 const MAX_EXCERPT_LINES = 25;
-
-interface LineRange {
-  readonly start: number;
-  readonly end: number;
-}
-
-/** The lines a change touched in one file, on each side of the diff. */
-interface FileHunks {
-  readonly new: Array<LineRange>;
-  readonly old: Array<LineRange>;
-}
-
-/** What a guide is held to: the changed paths, and the lines each touched. */
-export interface ReviewGuideChange {
-  /** Every changed path, in diff order, named as `git diff --name-only` names it. */
-  readonly files: ReadonlyArray<string>;
-  readonly hunks: ReadonlyMap<string, FileHunks>;
-}
-
-const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
-
-const hunkRange = (start: string, count: string | undefined): LineRange | null => {
-  const lines = count === undefined ? 1 : Number(count);
-  return lines === 0 ? null : { start: Number(start), end: Number(start) + lines - 1 };
-};
-
-/**
- * Reads `git diff --name-only -z` and `git diff --unified=0` of the same range. Hunks are keyed
- * by the new path, or the old one for a deleted file, so both sides of a renamed file sit under
- * the name the model sees in `--stat`.
- */
-export function parseReviewGuideChange(nameOnly: string, patch: string): ReviewGuideChange {
-  const hunks = new Map<string, FileHunks>();
-  let oldPath: string | null = null;
-  let current: FileHunks | null = null;
-  // Inside a file's hunks a `--- ` or `+++ ` line is a removed or added source line, not a header.
-  let inHunks = false;
-  for (const line of patch.split("\n")) {
-    if (line.startsWith("diff --git ")) {
-      oldPath = null;
-      current = null;
-      inHunks = false;
-    } else if (!inHunks && line.startsWith("--- ")) {
-      oldPath = line.startsWith("--- a/") ? line.slice(6) : null;
-    } else if (!inHunks && line.startsWith("+++ ")) {
-      const path = line.startsWith("+++ b/") ? line.slice(6) : oldPath;
-      if (path === null) continue;
-      current = hunks.get(path) ?? { new: [], old: [] };
-      hunks.set(path, current);
-    } else if (current !== null) {
-      const header = HUNK_HEADER.exec(line);
-      if (header === null) continue;
-      inHunks = true;
-      const removed = hunkRange(header[1]!, header[2]);
-      const added = hunkRange(header[3]!, header[4]);
-      if (removed !== null) current.old.push(removed);
-      if (added !== null) current.new.push(added);
-    }
-  }
-  return { files: nameOnly.split("\0").filter((path) => path !== ""), hunks };
-}
-
-/**
- * Narrows an excerpt to the changed lines it covers: from the first changed line it overlaps to
- * the last. Null when it covers none, which means the model pointed somewhere the change is not.
- */
-function clampExcerpt(
-  excerpt: PullRequestReviewGuideExcerpt,
-  change: ReviewGuideChange,
-): PullRequestReviewGuideExcerpt | null {
-  const start = Math.min(excerpt.start, excerpt.end);
-  const end = Math.max(excerpt.start, excerpt.end);
-  const overlapping = (change.hunks.get(excerpt.path)?.[excerpt.side] ?? []).filter(
-    (hunk) => hunk.start <= end && start <= hunk.end,
-  );
-  const first = overlapping[0];
-  const last = overlapping.at(-1);
-  if (first === undefined || last === undefined) return null;
-  return { ...excerpt, start: Math.max(start, first.start), end: Math.min(end, last.end) };
-}
 
 /** Joins a stop's excerpts that overlap or touch in one file, then caps each one's length. */
 function mergeExcerpts(
@@ -124,7 +46,7 @@ const nonEmpty = (value: string) => value.trim() !== "";
  */
 export function normalizeReviewGuide(
   guide: ReviewGuideGenerationResult,
-  change: ReviewGuideChange,
+  change: DiffChange,
 ): ReviewGuideGenerationResult {
   const changed = new Set(change.files);
   const inChange = (path: string) => changed.has(path);
@@ -134,7 +56,7 @@ export function normalizeReviewGuide(
     .map((stop) => {
       const excerpts = mergeExcerpts(
         stop.excerpts.flatMap((excerpt) => {
-          const clamped = inChange(excerpt.path) ? clampExcerpt(excerpt, change) : null;
+          const clamped = inChange(excerpt.path) ? clampToChange(excerpt, change) : null;
           return clamped === null ? [] : [clamped];
         }),
       );

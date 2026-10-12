@@ -5,10 +5,14 @@ import {
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ChevronDownIcon,
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
+  CircleAlertIcon,
   CircleCheckIcon,
   HistoryIcon,
+  HourglassIcon,
+  MessageCircleQuestionIcon,
   RefreshCwIcon,
 } from "lucide-react";
 import { memo, useCallback, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
@@ -22,9 +26,12 @@ import { cn } from "~/lib/utils";
 import ChatMarkdown from "../ChatMarkdown";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
+import { Group, GroupSeparator } from "../ui/group";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   DiffFileFoldButton,
@@ -35,12 +42,15 @@ import {
 import {
   buildDiffWalkthroughSections,
   clampDiffWalkthroughSectionIndex,
+  DIFF_WALKTHROUGH_ATTENTION_LABELS,
+  diffWalkthroughSideToDiffSide,
   firstUnreviewedSectionIndex,
   formatDiffWalkthroughNoteRange,
   formatDiffWalkthroughOrdinal,
   isDiffWalkthroughSectionReviewed,
   sectionIndexAfterReview,
   unviewedSectionFiles,
+  type DiffWalkthroughGenerateState,
   type DiffWalkthroughSection,
   type DiffWalkthroughSectionNote,
 } from "./diffWalkthroughView.logic";
@@ -90,6 +100,13 @@ export interface DiffWalkthroughViewHandle {
   readonly markReviewedAndContinue: () => void;
 }
 
+/** The server writing a walkthrough on its own, as `useDiffWalkthroughBackgroundRun` reads it. */
+export interface DiffWalkthroughBackground {
+  readonly state: DiffWalkthroughGenerateState;
+  /** Starts a run. Absent where this client may not. */
+  readonly onStart: (() => void) | undefined;
+}
+
 export interface DiffWalkthroughViewProps {
   readonly source: DiffWalkthroughViewSource;
   readonly files: DiffWalkthroughViewFiles;
@@ -97,10 +114,14 @@ export interface DiffWalkthroughViewProps {
   readonly viewed: DiffWalkthroughViewedFiles | null;
   /** The diff's identity. The reader's section and folds start over when it changes. */
   readonly resetKey: string;
-  /** Starts an agent on a walkthrough. Absent where this client cannot. */
+  /** Hands the walkthrough to an agent in a thread. Absent where this client cannot. */
   readonly onGenerate?: (() => void) | undefined;
+  /** Whether that thread is the one beside the view or a new one. */
+  readonly generateThread?: "this" | "new" | undefined;
   /** A generate press is still opening its thread. */
-  readonly generatePending?: boolean;
+  readonly generatePending?: boolean | undefined;
+  /** The background run. Absent where the host offers none. */
+  readonly background?: DiffWalkthroughBackground | undefined;
   /** What an empty walkthrough would say about this diff. */
   readonly emptyDescription?: string;
   /** Loads whole files so the reader can expand context around a hunk. */
@@ -133,7 +154,8 @@ interface NoteOverride {
  * section reviewed and moves on.
  */
 export function DiffWalkthroughView(props: DiffWalkthroughViewProps) {
-  const { source, files, onGenerate, generatePending = false } = props;
+  const { source, files, background } = props;
+  const runState = background?.state.kind ?? "idle";
   if (source.kind === "loading") {
     return <p className="px-4 py-5 text-sm text-muted-foreground">Loading walkthrough...</p>;
   }
@@ -141,6 +163,19 @@ export function DiffWalkthroughView(props: DiffWalkthroughViewProps) {
     return <p className="px-4 py-5 text-sm text-muted-foreground">{source.message}</p>;
   }
   if (source.kind === "empty") {
+    if (runState === "running") {
+      return (
+        <Empty>
+          <EmptyHeader>
+            <EmptyTitle>Reading the change...</EmptyTitle>
+            <EmptyDescription>
+              A walkthrough is being written in the background. It shows here when it is ready.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      );
+    }
+    const hasAction = props.onGenerate !== undefined || background?.onStart !== undefined;
     return (
       <Empty>
         <EmptyHeader>
@@ -150,11 +185,18 @@ export function DiffWalkthroughView(props: DiffWalkthroughViewProps) {
               "An agent can group these changes by intent, in the order to read them, and say what each one is for."}
           </EmptyDescription>
         </EmptyHeader>
-        {onGenerate === undefined ? null : (
+        {!hasAction && runState !== "failed" ? null : (
           <EmptyContent>
-            <Button type="button" size="sm" disabled={generatePending} onClick={onGenerate}>
-              {generatePending ? "Opening..." : "Generate walkthrough"}
-            </Button>
+            <WalkthroughRunNotice background={background} />
+            {hasAction ? (
+              <GenerateWalkthroughAction
+                verb="Generate"
+                onGenerate={props.onGenerate}
+                generateThread={props.generateThread}
+                generatePending={props.generatePending}
+                background={background}
+              />
+            ) : null}
           </EmptyContent>
         )}
       </Empty>
@@ -190,7 +232,9 @@ function WalkthroughSections({
   viewed,
   resetKey,
   onGenerate,
-  generatePending = false,
+  generateThread,
+  generatePending,
+  background,
   loadDiffFiles,
   wordWrap,
   cwd,
@@ -204,6 +248,8 @@ function WalkthroughSections({
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
+  const hasGenerateAction = onGenerate !== undefined || background?.onStart !== undefined;
+  const generateProps = { onGenerate, generateThread, generatePending, background };
   const fileByPath = useMemo(
     () => new Map(diffFiles.map((file) => [file.path, file] as const)),
     [diffFiles],
@@ -322,26 +368,8 @@ function WalkthroughSections({
           <ChevronRightIcon />
         </Button>
         {/* A stale walkthrough offers this in its notice instead. */}
-        {onGenerate === undefined || staleNotice !== null ? null : (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label="Regenerate walkthrough"
-                  disabled={generatePending}
-                  onClick={onGenerate}
-                />
-              }
-            >
-              <RefreshCwIcon />
-            </TooltipTrigger>
-            <TooltipPopup side="bottom">
-              {generatePending ? "Opening..." : "Regenerate walkthrough"}
-            </TooltipPopup>
-          </Tooltip>
+        {!hasGenerateAction || staleNotice !== null ? null : (
+          <GenerateWalkthroughAction {...generateProps} verb="Regenerate" iconOnly />
         )}
         {viewed === null ? null : (
           <Button
@@ -364,20 +392,17 @@ function WalkthroughSections({
             <AlertDescription>
               Its notes may point at lines that have changed since.
             </AlertDescription>
-            {onGenerate === undefined ? null : (
+            {!hasGenerateAction ? null : (
               <AlertAction>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="outline"
-                  disabled={generatePending}
-                  onClick={onGenerate}
-                >
-                  {generatePending ? "Opening..." : "Regenerate"}
-                </Button>
+                <GenerateWalkthroughAction {...generateProps} verb="Regenerate" />
               </AlertAction>
             )}
           </Alert>
+        </div>
+      )}
+      {background === undefined || background.state.kind === "idle" ? null : (
+        <div className="shrink-0 border-b border-border/60 p-2">
+          <WalkthroughRunNotice background={background} replacing />
         </div>
       )}
       <div className="@container flex min-h-0 flex-1 flex-col">
@@ -408,6 +433,165 @@ function WalkthroughSections({
         />
       </div>
     </div>
+  );
+}
+
+const GENERATE_THREAD_DESCRIPTIONS = {
+  this: "Leaves the request in this thread's composer to read over and send.",
+  new: "Opens a thread with the request in its composer to read over and send.",
+} as const;
+
+/**
+ * Generate split in two: the button hands the walkthrough to a thread as it always has, and its
+ * menu also offers the server writing it in the background. Off while either is under way.
+ */
+function GenerateWalkthroughAction({
+  verb,
+  iconOnly = false,
+  onGenerate,
+  generateThread = "this",
+  generatePending = false,
+  background,
+}: Pick<
+  DiffWalkthroughViewProps,
+  "onGenerate" | "generateThread" | "generatePending" | "background"
+> & {
+  readonly verb: "Generate" | "Regenerate";
+  /** The header's compact form. */
+  readonly iconOnly?: boolean;
+}) {
+  const onStart = background?.onStart;
+  const backgroundDisabledReason = background?.state.backgroundDisabledReason ?? null;
+  const disabled = generatePending || background?.state.kind === "running";
+  const primary = onGenerate ?? (backgroundDisabledReason === null ? onStart : undefined);
+  const threadLabel = `${verb} in ${generateThread === "this" ? "this" : "a new"} thread`;
+  const primaryLabel = generatePending
+    ? "Opening..."
+    : verb === "Generate"
+      ? "Generate walkthrough"
+      : "Regenerate";
+  const size = iconOnly ? "icon-xs" : verb === "Generate" ? "sm" : "xs";
+  const variant = verb === "Generate" ? "default" : "outline";
+  return (
+    <Group aria-label={`${verb} walkthrough`}>
+      {iconOnly ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size={size}
+                variant={variant}
+                aria-label={onGenerate === undefined ? `${verb} in the background` : threadLabel}
+                disabled={disabled || primary === undefined}
+                onClick={primary}
+              />
+            }
+          >
+            <RefreshCwIcon />
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">
+            {generatePending
+              ? "Opening..."
+              : onGenerate === undefined
+                ? `${verb} in the background`
+                : threadLabel}
+          </TooltipPopup>
+        </Tooltip>
+      ) : (
+        <Button
+          type="button"
+          size={size}
+          variant={variant}
+          disabled={disabled || primary === undefined}
+          onClick={primary}
+        >
+          {primaryLabel}
+        </Button>
+      )}
+      <GroupSeparator />
+      <Menu>
+        <MenuTrigger
+          disabled={disabled}
+          render={
+            <Button
+              type="button"
+              size={verb === "Generate" ? "icon-sm" : "icon-xs"}
+              variant={variant}
+              aria-label="Ways to write the walkthrough"
+            />
+          }
+        >
+          <ChevronDownIcon />
+        </MenuTrigger>
+        <MenuPopup align="end" side="bottom">
+          {onGenerate === undefined ? null : (
+            <MenuItem onClick={onGenerate}>
+              <span className="flex min-w-0 flex-col">
+                <span>{threadLabel}</span>
+                <span className="text-xs text-muted-foreground">
+                  {GENERATE_THREAD_DESCRIPTIONS[generateThread]}
+                </span>
+              </span>
+            </MenuItem>
+          )}
+          {onStart === undefined ? null : (
+            <MenuItem disabled={backgroundDisabledReason !== null} onClick={onStart}>
+              <span className="flex min-w-0 flex-col">
+                <span>{verb} in the background</span>
+                <span className="text-xs text-muted-foreground">
+                  {backgroundDisabledReason ??
+                    "Written read-only on this environment. It shows here when it is ready."}
+                </span>
+              </span>
+            </MenuItem>
+          )}
+        </MenuPopup>
+      </Menu>
+    </Group>
+  );
+}
+
+/**
+ * The background run's state where the view has room for it: under the header over a stored
+ * walkthrough (`replacing`), or above the generate action when there is none. Nothing when idle.
+ */
+function WalkthroughRunNotice({
+  background,
+  replacing = false,
+}: {
+  readonly background: DiffWalkthroughBackground | undefined;
+  readonly replacing?: boolean;
+}) {
+  if (background === undefined) return null;
+  const { state, onStart } = background;
+  if (state.kind === "running") {
+    return (
+      <Alert variant="info">
+        <HourglassIcon />
+        <AlertTitle>Reading the change...</AlertTitle>
+        <AlertDescription>
+          {replacing
+            ? "A new walkthrough replaces this one when it is ready."
+            : "A walkthrough is being written in the background."}
+        </AlertDescription>
+      </Alert>
+    );
+  }
+  if (state.kind !== "failed") return null;
+  return (
+    <Alert variant="error" controlAlignment="first-line">
+      <CircleAlertIcon />
+      <AlertTitle>The background walkthrough failed</AlertTitle>
+      <AlertDescription>{state.detail}</AlertDescription>
+      {onStart === undefined || state.backgroundDisabledReason !== null ? null : (
+        <AlertAction>
+          <Button type="button" size="xs" variant="outline" onClick={onStart}>
+            Retry
+          </Button>
+        </AlertAction>
+      )}
+    </Alert>
   );
 }
 
@@ -558,12 +742,8 @@ function SectionBody({
       const file = fileByPath.get(note.path);
       if (file === undefined) return;
       if (isCollapsed(note.path)) onToggleFold(note.path);
-      requestReveal(file.key, {
-        start: note.startLine,
-        end: note.endLine,
-        side: note.side,
-        endSide: note.side,
-      });
+      const side = diffWalkthroughSideToDiffSide(note.side);
+      requestReveal(file.key, { start: note.start, end: note.end, side, endSide: side });
     },
     [fileByPath, isCollapsed, onToggleFold, requestReveal],
   );
@@ -597,7 +777,8 @@ function SectionBody({
       const file = fileByKey.get(item.id);
       if (file === undefined) return null;
       const viewedFiles = viewedRef.current;
-      return (
+      const fileNote = section.fileNotes.get(file.path);
+      const metadata = (
         <DiffFileHeaderMetadata
           additions={file.additions}
           deletions={file.deletions}
@@ -612,8 +793,23 @@ function SectionBody({
               })}
         />
       );
+      return fileNote === undefined ? (
+        metadata
+      ) : (
+        <span className="flex min-w-0 items-center gap-3">
+          <Tooltip>
+            <TooltipTrigger
+              render={<span className="max-w-64 truncate text-2xs text-muted-foreground" />}
+            >
+              {fileNote}
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">{fileNote}</TooltipPopup>
+          </Tooltip>
+          {metadata}
+        </span>
+      );
     },
-    [fileByKey],
+    [fileByKey, section.fileNotes],
   );
   const options = useMemo(
     () => ({
@@ -660,6 +856,14 @@ function SectionBody({
         </div>
         <h2 className="mt-1 text-sm font-medium text-foreground">{section.title}</h2>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">{section.summary}</p>
+        {section.attention === null ? null : (
+          <div className="mt-3 flex flex-col items-start gap-1">
+            <Badge size="sm" variant="warning">
+              {DIFF_WALKTHROUGH_ATTENTION_LABELS[section.attention.kind]}
+            </Badge>
+            <p className="text-xs leading-5 text-foreground">{section.attention.note}</p>
+          </div>
+        )}
         {section.notes.length === 0 ? null : (
           <ul className="mt-3 space-y-0.5">
             {section.notes.map((entry) => (
@@ -674,6 +878,22 @@ function SectionBody({
               />
             ))}
           </ul>
+        )}
+        {section.questions.length === 0 ? null : (
+          <div className="mt-4">
+            <h3 className="text-xs font-medium text-muted-foreground">Questions to consider</h3>
+            <ul className="mt-1.5 space-y-1">
+              {section.questions.map((question) => (
+                <li key={question} className="flex items-start gap-1.5 text-xs text-foreground">
+                  <MessageCircleQuestionIcon
+                    aria-hidden
+                    className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+                  />
+                  {question}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         {done === null ? null : (
           <div className="mt-4">

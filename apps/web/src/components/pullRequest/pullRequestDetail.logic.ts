@@ -1178,6 +1178,8 @@ export function buildGenerateWalkthroughHandoff(input: {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  /** The maintainer's walkthrough preferences from settings. */
+  readonly instructions?: string | undefined;
 }): FixFindingsHandoff {
   return {
     prompt: PULL_REQUEST_WALKTHROUGH_REQUEST,

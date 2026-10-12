@@ -10,7 +10,6 @@ import {
   type ThreadId,
   isDiffWalkthroughStale,
 } from "@t3tools/contracts";
-import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -19,7 +18,9 @@ import * as Schema from "effect/Schema";
 import * as CheckpointDiffQuery from "../../../checkpointing/CheckpointDiffQuery.ts";
 import type { CheckpointServiceError } from "../../../checkpointing/Errors.ts";
 import * as DiffWalkthroughService from "../../../diffWalkthrough/DiffWalkthroughService.ts";
+import * as DiffWalkthroughWriter from "../../../diffWalkthrough/DiffWalkthroughWriter.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import { diffSectionPath, diffSectionPaths } from "../../../review/diffChange.ts";
 import * as ReviewService from "../../../review/ReviewService.ts";
 import { OUTPUT_TRUNCATED_MARKER } from "../../../vcs/GitVcsDriverCore.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -36,24 +37,6 @@ import {
 export const THREAD_DIFF_CHARACTER_LIMIT = 200_000;
 
 const FILE_HEADER = "diff --git ";
-
-/** The file a unified diff section changes, preferring the new name. */
-function diffSectionPath(section: string): string {
-  const lines = section.split("\n");
-  const header = (prefix: string) => {
-    const line = lines.find((candidate) => candidate.startsWith(prefix));
-    if (line === undefined) return undefined;
-    // A name that holds a space ends at a tab, which git appends only then.
-    const token = line.slice(prefix.length).split("\t")[0]!;
-    return token === "/dev/null" ? undefined : unquoteGitPatchPath(token).replace(/^[ab]\//, "");
-  };
-  const fromHeaders = header("+++ ") ?? header("--- ");
-  if (fromHeaders !== undefined) return fromHeaders;
-  // Binary and rename-only sections have no ---/+++ lines.
-  const first = lines[0]!.slice(FILE_HEADER.length);
-  const newSide = first.lastIndexOf(" b/");
-  return newSide === -1 ? first : first.slice(newSide + 3);
-}
 
 /**
  * A unified diff cut to `limit` characters at a file boundary, with the files it left out. A
@@ -80,12 +63,6 @@ export function boundThreadDiff(
       .map(diffSectionPath),
   };
 }
-
-const diffSectionPaths = (diff: string) =>
-  diff
-    .split(/^(?=diff --git )/m)
-    .filter((section) => section.startsWith(FILE_HEADER))
-    .map(diffSectionPath);
 
 /**
  * The review diff's patch, which git cut at a byte limit possibly partway through a file, as
@@ -148,8 +125,42 @@ function describeTarget(target: DiffWalkthroughTarget): string {
   }
 }
 
+/** A note's lines as an agent can find them again: `path:start-end`, marked when on the old side. */
+const anchorLabel = (anchor: { path: string; side: string; start: number; end: number }) =>
+  `${anchor.path}:${anchor.start}-${anchor.end}${anchor.side === "old" ? " (old)" : ""}`;
+
+const narrowedLabel = (note: DiffWalkthroughWriter.DiffWalkthroughHold["narrowed"][number]) =>
+  `${anchorLabel({ ...note, ...note.from })} to ${note.to.start}-${note.to.end}`;
+
+const notesCount = (count: number) => (count === 1 ? "1 note was" : `${count} notes were`);
+
+/** What holding the notes to the change did, in sentences that tell the agent what to correct. */
+function describeHold(held: DiffWalkthroughWriter.DiffWalkthroughHold): string {
+  if (!held.clamped) {
+    return `Notes were stored as written, without checking them against the change: ${held.reason ?? "it could not be read."}`;
+  }
+  const sentences: Array<string> = [];
+  if (held.dropped.length > 0) {
+    sentences.push(
+      `${notesCount(held.dropped.length)} outside the lines this change touched and dropped: ${held.dropped.map(anchorLabel).join(", ")}.`,
+    );
+  }
+  if (held.narrowed.length > 0) {
+    sentences.push(
+      `${notesCount(held.narrowed.length)} narrowed to the lines the change touched: ${held.narrowed.map(narrowedLabel).join(", ")}.`,
+    );
+  }
+  if (sentences.length > 0) {
+    sentences.push(
+      "Anchor notes on added or removed lines, and write the walkthrough again if a dropped note mattered.",
+    );
+  }
+  return sentences.join(" ");
+}
+
 const make = Effect.gen(function* () {
   const walkthroughs = yield* DiffWalkthroughService.DiffWalkthroughService;
+  const writer = yield* DiffWalkthroughWriter.DiffWalkthroughWriter;
   const diffs = yield* CheckpointDiffQuery.CheckpointDiffQuery;
   const projects = yield* ProjectService.ProjectService;
   const reviews = yield* ReviewService.ReviewService;
@@ -273,22 +284,30 @@ const make = Effect.gen(function* () {
                   provider: caller.providerInstanceId,
                   model: caller.modelSelection.model,
                 };
-          const stored = yield* walkthroughs
-            .put({
+          const { walkthrough: stored, held } = yield* writer
+            .write({
               target,
               ...(input.summary === undefined ? {} : { summary: input.summary }),
-              groups: input.groups,
+              groups: input.groups.map((group) => ({
+                ...group,
+                attention: group.attention ?? null,
+                questions: group.questions ?? [],
+              })),
               notes: input.notes,
               generatedAt: DateTime.formatIso(yield* DateTime.now),
               author,
             })
             .pipe(Effect.mapError(rejected));
           const described = describeTarget(stored.target);
+          const hold = describeHold(held);
           return {
             target: stored.target,
             groupCount: stored.groups.length,
             noteCount: stored.notes.length,
-            confirmation: `Stored the walkthrough of ${described}.`,
+            heldToChange: held.clamped,
+            droppedNotes: held.dropped.map(anchorLabel),
+            narrowedNotes: held.narrowed.map(narrowedLabel),
+            confirmation: `Stored the walkthrough of ${described} with ${stored.notes.length} ${stored.notes.length === 1 ? "note" : "notes"}.${hold === "" ? "" : ` ${hold}`}`,
           };
         }),
     ),

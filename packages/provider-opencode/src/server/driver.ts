@@ -175,6 +175,13 @@ function selectOpenCodeRuntimeTextGeneration(
         v1: v1.generateReviewGuide(input),
         v2: v2.generateReviewGuide(input),
       }),
+    generateDiffWalkthrough: (input) =>
+      byOpenCodeRuntime(probe.get, {
+        v1: v1.generateDiffWalkthrough(input),
+        v2: v2.generateDiffWalkthrough(input),
+      }),
+    // Known before the probe settles which server runs it, so either refusing refuses.
+    investigationRefusal: v1.investigationRefusal ?? v2.investigationRefusal,
   };
 }
 

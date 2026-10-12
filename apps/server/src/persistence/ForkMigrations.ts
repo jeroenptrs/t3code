@@ -23,18 +23,21 @@
  * `scheduled_task_webhook_deliveries.dispatched_at` (004).
  *
  * Fork-owned tables: `auth_users`, `auth_user_access_changes` (001);
- * `fork_diff_walkthroughs` (005).
+ * `fork_diff_walkthroughs` (005, documents rewritten by 006).
  */
 
 import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import type { RunMigrationsOptions } from "./Migrations.ts";
+
 import ForkMigration0001 from "./ForkMigrations/001_AuthUsers.ts";
 import ForkMigration0002 from "./ForkMigrations/002_AuthSessionUsers.ts";
 import ForkMigration0003 from "./ForkMigrations/003_ScheduledTaskUserAudit.ts";
 import ForkMigration0004 from "./ForkMigrations/004_WebhookDeliveryDispatchedAt.ts";
 import ForkMigration0005 from "./ForkMigrations/005_DiffWalkthroughs.ts";
+import ForkMigration0006 from "./ForkMigrations/006_DiffWalkthroughGuideShape.ts";
 
 export const forkMigrationsTable = "fork_sql_migrations";
 
@@ -44,18 +47,26 @@ export const forkMigrationEntries = [
   [3, "ScheduledTaskUserAudit", ForkMigration0003],
   [4, "WebhookDeliveryDispatchedAt", ForkMigration0004],
   [5, "DiffWalkthroughs", ForkMigration0005],
+  [6, "DiffWalkthroughGuideShape", ForkMigration0006],
 ] as const;
 
 export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);
 
 const run = Migrator.make({});
 
-/** Run pending fork migrations. Call after `runMigrations()` has completed. */
-export const runForkMigrations = Effect.fn("runForkMigrations")(function* () {
+/**
+ * Run pending fork migrations. Call after `runMigrations()` has completed. Tests stop at
+ * `toMigrationInclusive` to seed rows in an older shape.
+ */
+export const runForkMigrations = Effect.fn("runForkMigrations")(function* ({
+  toMigrationInclusive,
+}: RunMigrationsOptions = {}) {
   const executedMigrations = yield* run({
     loader: Migrator.fromRecord(
       Object.fromEntries(
-        forkMigrationEntries.map(([id, name, migration]) => [`${id}_${name}`, migration]),
+        forkMigrationEntries
+          .filter(([id]) => toMigrationInclusive === undefined || id <= toMigrationInclusive)
+          .map(([id, name, migration]) => [`${id}_${name}`, migration]),
       ),
     ),
     table: forkMigrationsTable,

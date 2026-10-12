@@ -3,6 +3,7 @@ import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
 import * as CheckpointDiffQuery from "../../../checkpointing/CheckpointDiffQuery.ts";
 import * as DiffWalkthroughService from "../../../diffWalkthrough/DiffWalkthroughService.ts";
+import * as DiffWalkthroughWriter from "../../../diffWalkthrough/DiffWalkthroughWriter.ts";
 import * as ReviewService from "../../../review/ReviewService.ts";
 import * as ServerConfig from "../../../config.ts";
 import { expect, it } from "@effect/vitest";
@@ -44,6 +45,7 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({}),
   Layer.mock(DiffWalkthroughService.DiffWalkthroughService)({}),
+  Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
   Layer.mock(ReviewService.ReviewService)({}),
   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({}),

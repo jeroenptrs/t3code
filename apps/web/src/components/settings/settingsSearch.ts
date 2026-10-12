@@ -812,7 +812,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Generate walkthroughs automatically when a pull request is linked or pushed",
     to: "/settings/source-control",
     scope: "project-defaults",
-    searchTerms: ["diff walkthrough guide review agent push linked pull request automatic"],
+    searchTerms: ["diff walkthrough guide review background push linked pull request automatic"],
   },
   {
     id: "source-control",
@@ -887,20 +887,19 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "review-guide-model",
-    title: "Review guide model",
+    title: "Guide and walkthrough model",
     to: "/settings/source-control",
-    // Hidden until review guides are on, so a search lands on the switch that shows it.
-    targetId: "review-guides",
-    searchTerms: ["pull request pr guided review guide brief maintainer"],
+    searchTerms: ["pull request pr guided review guide diff walkthrough brief maintainer"],
     environmentOnly: true,
     scope: "project-defaults",
   },
   {
     id: "review-guide-instructions",
-    title: "Review guide instructions",
+    title: "Guide and walkthrough instructions",
     to: "/settings/source-control",
-    targetId: "review-guides",
-    searchTerms: ["pull request pr guided review guide preferences taste prompt custom"],
+    searchTerms: [
+      "pull request pr guided review guide diff walkthrough preferences taste prompt custom",
+    ],
     environmentOnly: true,
     scope: "project-defaults",
   },

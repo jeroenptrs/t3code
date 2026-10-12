@@ -13,10 +13,11 @@ import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
-import type { ProviderTextGeneration } from "./textGeneration.ts";
+import type { DiffWalkthroughGenerationResult, ProviderTextGeneration } from "./textGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildDiffWalkthroughPrompt,
   buildPrContentPrompt,
   buildReviewGuidePrompt,
   buildThreadTitlePrompt,
@@ -27,7 +28,7 @@ import {
   sanitizeThreadTitle,
 } from "./textGenerationUtils.ts";
 
-export type Operation = keyof ProviderTextGeneration;
+export type Operation = Exclude<keyof ProviderTextGeneration, "investigationRefusal">;
 
 /** One prompt for a provider to run. */
 export interface Request<S extends Schema.Top> {
@@ -50,28 +51,35 @@ export interface Request<S extends Schema.Top> {
 /** How long an investigating run may take; a large change needs far longer than a title. */
 const INVESTIGATION_TIMEOUT_MS = 15 * 60_000;
 
+/** Why a provider with no read-only tool mode cannot write a guide or walkthrough. */
+export const cannotInvestigate = (provider: string) =>
+  `${provider} cannot investigate a checkout read-only. Choose another guide and walkthrough model, or source control writer model when none is set.`;
+
 /** The refusal a runner gives when it has no read-only tool mode to investigate with. */
 export const investigationUnsupported = (operation: Operation, provider: string) =>
-  new TextGenerationError({
-    operation,
-    detail: `${provider} cannot investigate a checkout read-only. Choose another review guide model, or source control writer model when none is set.`,
-  });
+  new TextGenerationError({ operation, detail: cannotInvestigate(provider) });
 
-/** Runs one request and decodes the reply as its `outputSchema`. */
-export type Runner = <S extends Schema.Top>(
+/**
+ * Runs one request and decodes the reply as its `outputSchema`. `investigationRefusal` is set on
+ * a runner that refuses every investigation, so callers can know before running one.
+ */
+export type Runner = (<S extends Schema.Top>(
   request: Request<S>,
-) => Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]>;
+) => Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]>) & {
+  readonly investigationRefusal?: string;
+};
 
 /**
  * For a runner with no read-only tool mode: it answers prompts that carry everything, and
  * refuses an investigation rather than answering one blind.
  */
-export const withoutInvestigation =
-  (provider: string, run: Runner): Runner =>
-  (request) =>
+export const withoutInvestigation = (provider: string, run: Runner): Runner => {
+  const refusing: Runner = (request) =>
     request.investigate
       ? Effect.fail(investigationUnsupported(request.operation, provider))
       : run(request);
+  return Object.assign(refusing, { investigationRefusal: cannotInvestigate(provider) });
+};
 
 /** Decodes the JSON object in a text reply, which models often wrap in prose. */
 export const decodeJsonReply = <S extends Schema.Top>(
@@ -92,6 +100,25 @@ export const decodeJsonReply = <S extends Schema.Top>(
     ),
   );
 };
+
+type GeneratedWalkthrough = ReturnType<typeof buildDiffWalkthroughPrompt>["outputSchema"]["Type"];
+
+/** The model answers "" for a field it leaves out, since strict output schemas have no optional keys. */
+function withoutEmptyFields(generated: GeneratedWalkthrough): DiffWalkthroughGenerationResult {
+  const summary = generated.summary.trim();
+  return {
+    ...(summary.length === 0 ? {} : { summary }),
+    groups: generated.groups.map((group) => ({
+      ...group,
+      files: group.files.map(({ path, note }) =>
+        note.trim().length === 0 ? { path } : { path, note: note.trim() },
+      ),
+    })),
+    notes: generated.notes.map(({ body, ...note }) =>
+      body.trim().length === 0 ? note : { ...note, body: body.trim() },
+    ),
+  };
+}
 
 /** The text generation service over `run`. `name` prefixes each operation's span. */
 export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
@@ -189,11 +216,26 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
     });
   });
 
+  const generateDiffWalkthrough: ProviderTextGeneration["generateDiffWalkthrough"] = Effect.fn(
+    `${name}.generateDiffWalkthrough`,
+  )(function* (input) {
+    const generated = yield* run({
+      operation: "generateDiffWalkthrough",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      investigate: { timeoutMs: INVESTIGATION_TIMEOUT_MS },
+      ...buildDiffWalkthroughPrompt(input),
+    });
+    return withoutEmptyFields(generated);
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    generateDiffWalkthrough,
+    investigationRefusal: run.investigationRefusal ?? null,
   } satisfies ProviderTextGeneration;
 }
