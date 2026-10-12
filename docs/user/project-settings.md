@@ -151,8 +151,9 @@ than** on the task.
 
 General contains the model and workspace for new threads. Integrations controls agent browser
 access. Source control contains automatic pull, the default pull request merge method, automatic
-walkthroughs and text generation. The same rows edit environment defaults or project overrides
-depending on the project crumb.
+walkthroughs, and text generation, including the model and instructions that write guides and
+walkthroughs. The same rows edit environment defaults or project overrides depending on the
+project crumb.
 
 The Project category, shown while a project is selected, holds the project's name, icon, actions,
 checkouts and removal. Actions belong to a project: editing them creates the project's own list
