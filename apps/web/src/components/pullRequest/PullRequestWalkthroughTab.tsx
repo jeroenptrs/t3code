@@ -1,6 +1,7 @@
 import type {
   DiffWalkthroughBranchRangeIdentity,
   DiffWalkthroughPullRequestIdentity,
+  DiffWalkthroughTarget,
   EnvironmentId,
   PullRequestDetailView,
   PullRequestRef,
@@ -27,19 +28,21 @@ import {
   diffWalkthroughStaleNotice,
   pickPullRequestWalkthrough,
 } from "../diffs/diffWalkthroughView.logic";
+import { useDiffWalkthroughBackgroundRun } from "../diffs/useDiffWalkthroughBackgroundRun";
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { usePullRequestDiffSlices } from "./usePullRequestDiffSlices";
 import type { PullRequestFilesViewedView } from "./usePullRequestFilesViewed";
 
 /**
  * The pull request's walkthrough beside its whole diff, a section at a time. Opening it reads
- * what is stored and never starts an agent; Generate does, from the empty or stale state.
+ * what is stored and never starts an agent; Generate does, in a thread or in the background.
  */
 function PullRequestWalkthroughTab({
   environmentId,
   reference,
   detail,
   onGenerate,
+  generateThread,
   generatePending,
   handleRef,
   scrollerRef,
@@ -52,6 +55,8 @@ function PullRequestWalkthroughTab({
   detail: PullRequestDetailView;
   /** Hands the walkthrough request to an agent. Absent where this client cannot start one. */
   onGenerate?: (() => void) | undefined;
+  /** Whether Generate leaves the request in the thread beside the panel or opens a new one. */
+  generateThread: "this" | "new";
   generatePending: boolean;
   handleRef?: Ref<DiffWalkthroughViewHandle>;
   /** Bumped by the panel's refresh button: drop the accumulated pages and re-read the diff. */
@@ -80,6 +85,16 @@ function PullRequestWalkthroughTab({
     ),
   );
   const stored = pullRequestQuery.data?.walkthrough ?? null;
+  // Background runs are the pull request's own, read at its head now.
+  const liveTarget = useMemo<DiffWalkthroughTarget | null>(
+    () => (liveHeadSha === null ? null : { ...pullRequestTarget, headSha: liveHeadSha }),
+    [liveHeadSha, pullRequestTarget],
+  );
+  const background = useDiffWalkthroughBackgroundRun({
+    environmentId,
+    liveTarget,
+    result: pullRequestQuery.data,
+  });
   // The head branch's own walkthrough is read only once the pull request is known to have none,
   // and only with a head to match it against.
   const branchTarget = useMemo<DiffWalkthroughBranchRangeIdentity | null>(
@@ -114,8 +129,8 @@ function PullRequestWalkthroughTab({
     if (walkthrough === null) return { kind: "empty" };
     // A branch walkthrough is only shown at the head it was written for, so it is current.
     const staleNotice =
-      walkthrough.target.kind === "pull-request" && liveHeadSha !== null
-        ? diffWalkthroughStaleNotice(walkthrough, { ...pullRequestTarget, headSha: liveHeadSha })
+      walkthrough.target.kind === "pull-request" && liveTarget !== null
+        ? diffWalkthroughStaleNotice(walkthrough, liveTarget)
         : null;
     return { kind: "ready", walkthrough, staleNotice };
   }, [
@@ -123,9 +138,9 @@ function PullRequestWalkthroughTab({
     branchQuery.error,
     branchTarget,
     liveHeadSha,
+    liveTarget,
     pullRequestQuery.data,
     pullRequestQuery.error,
-    pullRequestTarget,
     stored,
   ]);
 
@@ -222,7 +237,9 @@ function PullRequestWalkthroughTab({
       viewed={viewed}
       resetKey={scopeKey}
       onGenerate={onGenerate}
+      generateThread={generateThread}
       generatePending={generatePending}
+      background={background}
       emptyDescription="An agent can group this pull request's files by intent, in the order to read them, and say what each change is for."
       loadDiffFiles={loadDiffFiles}
       cwd={detail.workspaceRoot}

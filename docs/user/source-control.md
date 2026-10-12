@@ -259,9 +259,11 @@ its file, and the button beside the section number expands or collapses them all
 appear in a final **Other** section.
 
 If there is no walkthrough yet, choose **Generate** in the tab. It puts the request in the composer
-of the thread that owns the branch, or a new thread, for you to read and send. A walkthrough
-describes the commit it was written for; after a new push it shows as out of date until you choose
-**Regenerate**. To have one written for you, turn on **Generate walkthroughs automatically when a
+of the thread that owns the branch, or a new thread, for you to read and send. The menu beside it
+also offers **Generate in the background**: the server writes the walkthrough with the guide and
+walkthrough model and it appears in the view when ready; the menu says why when that model cannot
+do it. A walkthrough describes the commit it was written for; after a new push it shows as out of
+date until you choose **Regenerate**. To have one written for you, turn on **Generate walkthroughs automatically when a
 pull request is linked or pushed** in **Settings → Source Control** for the project. The server
 then writes it in the background with the guide and walkthrough model a few minutes after the pull
 request is linked or after the last push. Nothing is written when that model's provider cannot

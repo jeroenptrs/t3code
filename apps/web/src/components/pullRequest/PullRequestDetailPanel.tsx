@@ -3098,6 +3098,7 @@ export function PullRequestDetailPanel({
                     reference={reference}
                     detail={detail}
                     onGenerate={canGenerateWalkthrough ? generateWalkthrough : undefined}
+                    generateThread={attachTarget === null ? "new" : "this"}
                     generatePending={handoff === "walkthrough"}
                     handleRef={walkthroughHandle}
                     refreshToken={codeRefreshToken}
