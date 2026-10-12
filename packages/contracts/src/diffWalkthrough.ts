@@ -192,7 +192,8 @@ export type DiffWalkthroughGroup = typeof DiffWalkthroughGroup.Type;
 
 /**
  * Lines of one file, in a guided review's spelling: `new` numbers lines of the new file, `old`
- * lines of the old one. A note on unchanged context lines uses `new`.
+ * lines of the old one. A note sits on lines the change touched on its side; the server drops
+ * one that covers none and narrows one that reaches past them.
  */
 export const DiffWalkthroughSide = Schema.Literals(["new", "old"]);
 export type DiffWalkthroughSide = typeof DiffWalkthroughSide.Type;
