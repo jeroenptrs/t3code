@@ -245,9 +245,10 @@ and their marks follow the same rules as on web and desktop.
 ### Walkthroughs
 
 A walkthrough is an agent's guide to a diff. It splits the changed files into numbered sections,
-each with a title, the intent behind its files, and notes on the changes worth reading. Open it
-from the pull request's **Walkthrough** tab, the walkthrough button in a thread's pull request row,
-or **Open walkthrough** in the command palette. Opening one never starts an agent.
+each with a title, the intent behind its files, and notes on the changes worth reading. A section
+can also flag a call the diff can't settle on its own, such as a tradeoff or a risk, and list
+questions about intent. Open it from the pull request's **Walkthrough** tab, the walkthrough
+button in a thread's pull request row, or **Open walkthrough** in the command palette. Opening one never starts an agent.
 
 The tab shows one section at a time with its files in full. Files you have already marked viewed
 start collapsed, and marks are shared with the **Code** tab. **Mark reviewed and continue** marks

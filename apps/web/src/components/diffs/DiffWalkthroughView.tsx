@@ -9,6 +9,7 @@ import {
   ChevronsUpDownIcon,
   CircleCheckIcon,
   HistoryIcon,
+  MessageCircleQuestionIcon,
   RefreshCwIcon,
 } from "lucide-react";
 import { memo, useCallback, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
@@ -22,6 +23,7 @@ import { cn } from "~/lib/utils";
 import ChatMarkdown from "../ChatMarkdown";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
@@ -35,6 +37,8 @@ import {
 import {
   buildDiffWalkthroughSections,
   clampDiffWalkthroughSectionIndex,
+  DIFF_WALKTHROUGH_ATTENTION_LABELS,
+  diffWalkthroughSideToDiffSide,
   firstUnreviewedSectionIndex,
   formatDiffWalkthroughNoteRange,
   formatDiffWalkthroughOrdinal,
@@ -558,12 +562,8 @@ function SectionBody({
       const file = fileByPath.get(note.path);
       if (file === undefined) return;
       if (isCollapsed(note.path)) onToggleFold(note.path);
-      requestReveal(file.key, {
-        start: note.startLine,
-        end: note.endLine,
-        side: note.side,
-        endSide: note.side,
-      });
+      const side = diffWalkthroughSideToDiffSide(note.side);
+      requestReveal(file.key, { start: note.start, end: note.end, side, endSide: side });
     },
     [fileByPath, isCollapsed, onToggleFold, requestReveal],
   );
@@ -597,7 +597,8 @@ function SectionBody({
       const file = fileByKey.get(item.id);
       if (file === undefined) return null;
       const viewedFiles = viewedRef.current;
-      return (
+      const fileNote = section.fileNotes.get(file.path);
+      const metadata = (
         <DiffFileHeaderMetadata
           additions={file.additions}
           deletions={file.deletions}
@@ -612,8 +613,23 @@ function SectionBody({
               })}
         />
       );
+      return fileNote === undefined ? (
+        metadata
+      ) : (
+        <span className="flex min-w-0 items-center gap-3">
+          <Tooltip>
+            <TooltipTrigger
+              render={<span className="max-w-64 truncate text-2xs text-muted-foreground" />}
+            >
+              {fileNote}
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">{fileNote}</TooltipPopup>
+          </Tooltip>
+          {metadata}
+        </span>
+      );
     },
-    [fileByKey],
+    [fileByKey, section.fileNotes],
   );
   const options = useMemo(
     () => ({
@@ -660,6 +676,14 @@ function SectionBody({
         </div>
         <h2 className="mt-1 text-sm font-medium text-foreground">{section.title}</h2>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">{section.summary}</p>
+        {section.attention === null ? null : (
+          <div className="mt-3 flex flex-col items-start gap-1">
+            <Badge size="sm" variant="warning">
+              {DIFF_WALKTHROUGH_ATTENTION_LABELS[section.attention.kind]}
+            </Badge>
+            <p className="text-xs leading-5 text-foreground">{section.attention.note}</p>
+          </div>
+        )}
         {section.notes.length === 0 ? null : (
           <ul className="mt-3 space-y-0.5">
             {section.notes.map((entry) => (
@@ -674,6 +698,22 @@ function SectionBody({
               />
             ))}
           </ul>
+        )}
+        {section.questions.length === 0 ? null : (
+          <div className="mt-4">
+            <h3 className="text-xs font-medium text-muted-foreground">Questions to consider</h3>
+            <ul className="mt-1.5 space-y-1">
+              {section.questions.map((question) => (
+                <li key={question} className="flex items-start gap-1.5 text-xs text-foreground">
+                  <MessageCircleQuestionIcon
+                    aria-hidden
+                    className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+                  />
+                  {question}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         {done === null ? null : (
           <div className="mt-4">
