@@ -7,6 +7,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   AuthOrchestrationOperateScope,
   type DiffWalkthroughTarget,
@@ -859,13 +860,22 @@ export default function DiffPanel({
     walkthroughEnvironmentId,
     AuthOrchestrationOperateScope,
   );
+  // Guides and walkthroughs share one set of preferences, read for this thread's project.
+  const serverSettings = serverConfig?.settings ?? null;
+  const walkthroughInstructions = useMemo(
+    () =>
+      serverSettings === null
+        ? ""
+        : resolveProjectSettings(serverSettings, activeProjectId).settings.reviewGuideInstructions,
+    [activeProjectId, serverSettings],
+  );
   const generateWalkthrough = useCallback(() => {
     if (walkthroughTarget === null) return;
     const task =
       walkthroughTarget.kind === "thread-diff"
-        ? buildThreadDiffWalkthroughPrompt(walkthroughTarget)
+        ? buildThreadDiffWalkthroughPrompt(walkthroughTarget, walkthroughInstructions)
         : walkthroughTarget.kind === "branch-range"
-          ? buildBranchRangeWalkthroughPrompt(walkthroughTarget.branch)
+          ? buildBranchRangeWalkthroughPrompt(walkthroughTarget.branch, walkthroughInstructions)
           : null;
     if (task === null) return;
     const store = useComposerDraftStore.getState();
@@ -882,7 +892,7 @@ export default function DiffPanel({
       title: "Added to the composer",
       description: "The walkthrough task is in the composer — read it over, then send.",
     });
-  }, [composerDraftTarget, walkthroughTarget]);
+  }, [composerDraftTarget, walkthroughInstructions, walkthroughTarget]);
 
   const toggleDiffFileCollapse = useCallback(() => {
     setCodeViewRevision((current) => current + 1);
