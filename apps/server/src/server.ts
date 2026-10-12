@@ -46,7 +46,9 @@ import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts
 import * as PullRequestReviewGuides from "./persistence/PullRequestReviewGuides.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import * as DiffWalkthroughs from "./persistence/DiffWalkthroughs.ts";
+import * as DiffWalkthroughChangeReader from "./diffWalkthrough/DiffWalkthroughChangeReader.ts";
 import * as DiffWalkthroughService from "./diffWalkthrough/DiffWalkthroughService.ts";
+import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
@@ -381,6 +383,10 @@ const layerPullRequestService = PullRequestService.layer.pipe(
 
 const layerDiffWalkthroughService = DiffWalkthroughService.layer.pipe(
   Layer.provide(DiffWalkthroughs.layer),
+);
+
+const layerDiffWalkthroughWriter = DiffWalkthroughWriter.layer.pipe(
+  Layer.provide(DiffWalkthroughChangeReader.layer),
 );
 
 const layerGitManager = GitManager.layer.pipe(
@@ -770,6 +776,8 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   // Links agents ask for: shown in a thread from /mcp, answered over WebSocket.
   Layer.provide(PeerLinkRequests.layer),
+  // Both transports write walkthroughs through it; it reads and stores via the services below.
+  Layer.provide(layerDiffWalkthroughWriter),
   // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
   Layer.provide(layerPullRequestService),
   // One instance for both transports, so a walkthrough an agent writes over MCP reaches every
