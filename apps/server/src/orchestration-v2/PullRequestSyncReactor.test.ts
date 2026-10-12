@@ -14,8 +14,9 @@ import {
   type OrchestrationV2Run,
   type OrchestrationProjectShell,
   type DiffWalkthrough,
+  DiffWalkthroughError,
+  type DiffWalkthroughTarget,
   type DiffWalkthroughTargetIdentity,
-  ReviewCommentContextRecord,
   type PullRequestDetail,
   type PullRequestRef,
   type PullRequestStack,
@@ -34,14 +35,10 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
 
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
-import {
-  PULL_REQUEST_WALKTHROUGH_REQUEST,
-  pullRequestWalkthroughInstructions,
-} from "@t3tools/shared/pullRequestWalkthroughPrompt";
+import * as DiffWalkthroughRunService from "../diffWalkthrough/DiffWalkthroughRunService.ts";
 import * as DiffWalkthroughService from "../diffWalkthrough/DiffWalkthroughService.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -260,6 +257,8 @@ interface HarnessOptions {
     input: PullRequestRef,
   ) => Effect.Effect<PullRequestDetail, PullRequestOperationError>;
   readonly storedWalkthrough?: (target: DiffWalkthroughTargetIdentity) => DiffWalkthrough | null;
+  /** Why a background run would be refused, as when no model here can investigate. */
+  readonly runRefusal?: string;
 }
 
 const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: HarnessOptions) {
@@ -273,6 +272,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   const stackCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const detailCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const messages = yield* Queue.unbounded<MessageCommand>();
+  const runs = yield* Queue.unbounded<DiffWalkthroughTarget>();
   const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
   const stateChanges = yield* Queue.unbounded<ThreadPullRequestKey>();
 
@@ -373,6 +373,19 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     Layer.mock(DiffWalkthroughService.DiffWalkthroughService)({
       get: (target) => Effect.succeed(options.storedWalkthrough?.(target) ?? null),
     }),
+    Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({
+      generate: (target) =>
+        Queue.offer(runs, target).pipe(
+          Effect.andThen(
+            options.runRefusal === undefined
+              ? Effect.succeed({
+                  run: { _tag: "Running" as const, target, startedAt: NOW },
+                  started: true,
+                })
+              : Effect.fail(new DiffWalkthroughError({ message: options.runRefusal })),
+          ),
+        ),
+    }),
   );
 
   return {
@@ -386,6 +399,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     stackCalls,
     detailCalls,
     messages,
+    runs,
     domainEvents,
     stateChanges,
     layer: PullRequestSyncReactor.layer.pipe(
@@ -1280,7 +1294,14 @@ describe("PullRequestSyncReactor", () => {
   );
 });
 
-const decodeReviewCommentRecord = Schema.decodeUnknownEffect(ReviewCommentContextRecord);
+const pullRequestTarget = (headSha: string): DiffWalkthroughTarget => ({
+  kind: "pull-request",
+  projectId: PROJECT_ID,
+  host: "github.com",
+  repository: "owner/repository",
+  number: 7,
+  headSha,
+});
 
 describe("PullRequestSyncReactor automatic walkthroughs", () => {
   const waitOutQuietWindow = Effect.gen(function* () {
@@ -1302,13 +1323,13 @@ describe("PullRequestSyncReactor automatic walkthroughs", () => {
           yield* startAndSweep(fixture);
           yield* waitOutQuietWindow;
           assert.deepStrictEqual(yield* Ref.get(fixture.detailCalls), []);
-          assert.strictEqual(yield* Queue.size(fixture.messages), 0);
+          assert.strictEqual(yield* Queue.size(fixture.runs), 0);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
   );
 
-  it.effect("sends the walkthrough request to the thread that owns a new link", () =>
+  it.effect("writes a new link's walkthrough in the background, not in a thread", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
@@ -1326,27 +1347,10 @@ describe("PullRequestSyncReactor automatic walkthroughs", () => {
           yield* startAndSweep(fixture);
           const commands = yield* Ref.get(fixture.syncCommands);
           yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands));
-          assert.strictEqual(yield* Queue.size(fixture.messages), 0);
+          assert.strictEqual(yield* Queue.size(fixture.runs), 0);
 
-          yield* TestClock.adjust("5 minutes");
-          const message = yield* Queue.take(fixture.messages);
-          assert.strictEqual(message.threadId, ThreadId.make("owner"));
-          assert.strictEqual(message.commandId, "server:pr-walkthrough:owner:7:head-a");
-          assert.deepStrictEqual(message.dispatchMode, { type: "queue_after_active" });
-          assert.strictEqual(message.createdBy, "user");
-          assert.isTrue(message.text.startsWith(PULL_REQUEST_WALKTHROUGH_REQUEST));
-          const chip = yield* decodeReviewCommentRecord(message.context?.records[0]);
-          assert.isTrue(message.text.includes(chip.contextId));
-          assert.isTrue(
-            chip.text.endsWith(
-              pullRequestWalkthroughInstructions({ provider: "github", number: 7 }).join("\n"),
-            ),
-          );
-          assert.strictEqual(chip.pullRequest?.number, 7);
-
-          yield* PullRequestAutoWalkthrough.PullRequestAutoWalkthrough.use(
-            (autoWalkthrough) => autoWalkthrough.drain,
-          );
+          yield* waitOutQuietWindow;
+          assert.deepStrictEqual(yield* Queue.takeAll(fixture.runs), [pullRequestTarget("head-a")]);
           assert.strictEqual(yield* Queue.size(fixture.messages), 0);
         }).pipe(Effect.provide(fixture.layer));
       }),
@@ -1381,14 +1385,10 @@ describe("PullRequestSyncReactor automatic walkthroughs", () => {
           yield* sweepAgain(fixture, reactor);
           yield* Ref.set(head, { sha: "head-c", updatedAt: "2026-08-28T12:01:30.000Z" });
           yield* sweepAgain(fixture, reactor);
-          assert.strictEqual(yield* Queue.size(fixture.messages), 0);
+          assert.strictEqual(yield* Queue.size(fixture.runs), 0);
 
           yield* waitOutQuietWindow;
-          const sent = yield* Queue.takeAll(fixture.messages);
-          assert.deepStrictEqual(
-            sent.map((message) => message.commandId),
-            ["server:pr-walkthrough:owner:7:head-c"],
-          );
+          assert.deepStrictEqual(yield* Queue.takeAll(fixture.runs), [pullRequestTarget("head-c")]);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -1414,7 +1414,7 @@ describe("PullRequestSyncReactor automatic walkthroughs", () => {
           yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands));
           yield* waitOutQuietWindow;
           assert.strictEqual((yield* Ref.get(fixture.detailCalls)).length, 1);
-          assert.strictEqual(yield* Queue.size(fixture.messages), 0);
+          assert.strictEqual(yield* Queue.size(fixture.runs), 0);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -1449,7 +1449,7 @@ describe("PullRequestSyncReactor automatic walkthroughs", () => {
           yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands));
           yield* waitOutQuietWindow;
           assert.strictEqual((yield* Ref.get(fixture.detailCalls)).length, 1);
-          assert.strictEqual(yield* Queue.size(fixture.messages), 0);
+          assert.strictEqual(yield* Queue.size(fixture.runs), 0);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -1471,6 +1471,29 @@ describe("PullRequestSyncReactor automatic walkthroughs", () => {
           yield* startAndSweep(fixture);
           yield* waitOutQuietWindow;
           assert.deepStrictEqual(yield* Ref.get(fixture.detailCalls), []);
+          assert.strictEqual(yield* Queue.size(fixture.runs), 0);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("skips a refused run without asking the thread instead", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          autoWalkthrough: true,
+          runRefusal: "Cursor cannot investigate a checkout read-only.",
+          snapshot: makeSnapshot([
+            makeThread("owner", { pullRequests: [makeLink(7, null, { source: "created" })] }),
+          ]),
+        });
+        yield* Effect.gen(function* () {
+          yield* startAndSweep(fixture);
+          const commands = yield* Ref.get(fixture.syncCommands);
+          yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands));
+          yield* waitOutQuietWindow;
+          assert.deepStrictEqual(yield* Queue.takeAll(fixture.runs), [pullRequestTarget("head-a")]);
           assert.strictEqual(yield* Queue.size(fixture.messages), 0);
         }).pipe(Effect.provide(fixture.layer));
       }),
