@@ -3,10 +3,15 @@ import * as Effect from "effect/Effect";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { DiffWalkthrough } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 import { forkMigrationManifest, forkMigrationsTable, runForkMigrations } from "./ForkMigrations.ts";
 import { migrationEntries, migrationManifest, runMigrations } from "./Migrations.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
+
+const decodeWalkthrough = Schema.decodeUnknownEffect(DiffWalkthrough);
+const encodeWalkthrough = Schema.encodeEffect(DiffWalkthrough);
 
 const memoryDatabase = () => NodeSqliteClient.layer({ filename: ":memory:" });
 
@@ -84,6 +89,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [3, "ScheduledTaskUserAudit"],
       [4, "WebhookDeliveryDispatchedAt"],
       [5, "DiffWalkthroughs"],
+      [6, "DiffWalkthroughGuideShape"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
@@ -125,6 +131,96 @@ it.effect("leaves scheduled tasks created before the audit columns without a use
         webhook_token_rotated_at: null,
       },
     ]);
+  }).pipe(Effect.provide(memoryDatabase())),
+);
+
+it.effect("rewrites stored walkthroughs into the guided review vocabulary", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations();
+    yield* runForkMigrations({ toMigrationInclusive: 5 });
+    const stored = {
+      target: {
+        kind: "thread-diff",
+        threadId: "thread-1",
+        fromTurnCount: 0,
+        toTurnCount: 1,
+      },
+      groups: [
+        {
+          id: "storage",
+          title: "Storage",
+          summary: "Where walkthroughs live.",
+          files: ["src/a.ts", "src/b.ts"],
+        },
+      ],
+      notes: [
+        {
+          groupId: "storage",
+          path: "src/a.ts",
+          side: "additions",
+          startLine: 3,
+          endLine: 7,
+          summary: "Adds the table.",
+        },
+        {
+          groupId: "storage",
+          path: "src/b.ts",
+          side: "deletions",
+          startLine: 1,
+          endLine: 1,
+          summary: "Drops the cache.",
+          body: "It was never read.",
+        },
+      ],
+      generatedAt: "2026-10-01T00:00:00.000Z",
+      author: {},
+    };
+    yield* sql`
+      INSERT INTO fork_diff_walkthroughs (
+        target_key, target_kind, thread_id, walkthrough_json, updated_at
+      ) VALUES (
+        'thread-diff:thread-1:0-1', 'thread-diff', 'thread-1', ${JSON.stringify(stored)},
+        '2026-10-01T00:00:00.000Z'
+      )
+    `;
+    assert.deepStrictEqual(yield* runForkMigrations(), [[6, "DiffWalkthroughGuideShape"]]);
+    const rows = yield* sql<{ readonly walkthroughJson: string }>`
+      SELECT walkthrough_json AS "walkthroughJson" FROM fork_diff_walkthroughs
+    `;
+    const json: unknown = JSON.parse(rows[0]!.walkthroughJson);
+    const walkthrough = yield* decodeWalkthrough(json);
+    assert.deepStrictEqual(walkthrough.groups, [
+      {
+        id: "storage",
+        title: "Storage",
+        summary: "Where walkthroughs live.",
+        attention: null,
+        files: [{ path: "src/a.ts" }, { path: "src/b.ts" }],
+        questions: [],
+      },
+    ]);
+    assert.deepStrictEqual(walkthrough.notes, [
+      {
+        groupId: "storage",
+        path: "src/a.ts",
+        side: "new",
+        start: 3,
+        end: 7,
+        summary: "Adds the table.",
+      },
+      {
+        groupId: "storage",
+        path: "src/b.ts",
+        side: "old",
+        start: 1,
+        end: 1,
+        summary: "Drops the cache.",
+        body: "It was never read.",
+      },
+    ]);
+    // The stored document is explicit, not reliant on decoding defaults.
+    assert.deepStrictEqual(json, yield* encodeWalkthrough(walkthrough));
   }).pipe(Effect.provide(memoryDatabase())),
 );
 
