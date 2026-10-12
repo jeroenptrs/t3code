@@ -41,13 +41,9 @@ const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
 });
 
 const unsupportedTextGeneration: ProviderTextGeneration = (() => {
+  const detail = "Kiro does not provide application text generation.";
   const unsupported = (operation: string) =>
-    Effect.fail(
-      new TextGenerationError({
-        operation,
-        detail: "Kiro does not provide application text generation.",
-      }),
-    );
+    Effect.fail(new TextGenerationError({ operation, detail }));
   return {
     generateCommitMessage: () => unsupported("generateCommitMessage"),
     generatePrContent: () => unsupported("generatePrContent"),
@@ -55,6 +51,8 @@ const unsupportedTextGeneration: ProviderTextGeneration = (() => {
     generateThreadTitle: () => unsupported("generateThreadTitle"),
     generateReviewGuide: () => unsupported("generateReviewGuide"),
     generateTranscriptionPostProcessing: () => unsupported("generateTranscriptionPostProcessing"),
+    generateDiffWalkthrough: () => unsupported("generateDiffWalkthrough"),
+    investigationRefusal: detail,
   };
 })();
 
