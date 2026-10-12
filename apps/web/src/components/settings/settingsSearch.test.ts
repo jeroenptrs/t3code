@@ -52,6 +52,12 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it("finds the shared guide and walkthrough rows by walkthrough", () => {
+    const ids = searchSettings("walkthrough").map((item) => item.id);
+    expect(ids).toContain("review-guide-model");
+    expect(ids).toContain("review-guide-instructions");
+  });
+
   it("matches titles, sections, and remembered setting details", () => {
     expect(searchSettings("word", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("network", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
