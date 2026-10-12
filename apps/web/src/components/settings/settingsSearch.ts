@@ -812,7 +812,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Generate walkthroughs automatically when a pull request is linked or pushed",
     to: "/settings/source-control",
     scope: "project-defaults",
-    searchTerms: ["diff walkthrough guide review agent push linked pull request automatic"],
+    searchTerms: ["diff walkthrough guide review background push linked pull request automatic"],
   },
   {
     id: "source-control",
