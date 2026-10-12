@@ -7,6 +7,7 @@ import {
   type DiffWalkthroughAttention,
   type DiffWalkthroughAttentionKind,
   type DiffWalkthroughNote,
+  type DiffWalkthroughRun,
   type DiffWalkthroughSide,
   type DiffWalkthroughTarget,
 } from "@t3tools/contracts";
@@ -174,6 +175,48 @@ export function pickPullRequestWalkthrough(
   if (branchRange === null || liveHeadSha === null) return null;
   if (branchRange.target.kind !== "branch-range") return null;
   return branchRange.target.headSha === liveHeadSha ? branchRange : null;
+}
+
+/**
+ * Where the background run stands for the reader. `backgroundDisabledReason` says why "Generate
+ * in background" cannot start now, whatever the run is doing.
+ */
+export type DiffWalkthroughGenerateState = (
+  | { readonly kind: "idle" }
+  | { readonly kind: "running" }
+  | { readonly kind: "failed"; readonly detail: string }
+) & { readonly backgroundDisabledReason: string | null };
+
+/**
+ * The generate actions' state from the subscription's `run` and `unavailable` and the live
+ * revision. A run for an older revision still counts as running, since the server replaces it
+ * on its next claim; a failure for an older revision is dropped, as it says nothing about the
+ * revision on screen and a retry would read the new one anyway. `starting` is a request still in
+ * flight and `requestError` one the server refused, which says more than any earlier failure.
+ */
+export function diffWalkthroughGenerateState(input: {
+  readonly run: DiffWalkthroughRun | null;
+  readonly unavailable: string | null;
+  readonly liveTarget: DiffWalkthroughTarget | null;
+  readonly starting: boolean;
+  readonly requestError: string | null;
+}): DiffWalkthroughGenerateState {
+  const { run, unavailable, liveTarget } = input;
+  const backgroundDisabledReason =
+    unavailable ?? (liveTarget === null ? "The change's current revision is not known yet." : null);
+  if (input.starting || run?._tag === "Running")
+    return { kind: "running", backgroundDisabledReason };
+  if (input.requestError !== null) {
+    return { kind: "failed", detail: input.requestError, backgroundDisabledReason };
+  }
+  if (
+    run?._tag === "Failed" &&
+    liveTarget !== null &&
+    !isDiffWalkthroughStale({ target: run.target }, liveTarget)
+  ) {
+    return { kind: "failed", detail: run.detail, backgroundDisabledReason };
+  }
+  return { kind: "idle", backgroundDisabledReason };
 }
 
 const WALKTHROUGH_STEPS: Partial<
