@@ -154,7 +154,7 @@ export const WriteDiffWalkthroughInput = Schema.Struct({
       path: DiffWalkthroughNote.fields.path,
       side: DiffWalkthroughNote.fields.side.annotate({
         description:
-          "new: line numbers of the new file (also for unchanged context). old: line numbers of the old file, for removed code.",
+          "new: line numbers of the new file, for added or changed code. old: line numbers of the old file, for removed code.",
       }),
       start: DiffWalkthroughNote.fields.start,
       end: DiffWalkthroughNote.fields.end,
@@ -174,7 +174,17 @@ export type WriteDiffWalkthroughInput = typeof WriteDiffWalkthroughInput.Type;
 export const WriteDiffWalkthroughResult = Schema.Struct({
   target: DiffWalkthroughTarget,
   groupCount: Schema.Int,
-  noteCount: Schema.Int,
+  noteCount: Schema.Int.annotate({ description: "Notes stored, after any were dropped." }),
+  heldToChange: Schema.Boolean.annotate({
+    description:
+      "Whether notes were checked against the lines the change touched. false when the change could not be read; confirmation says why.",
+  }),
+  droppedNotes: Schema.Array(Schema.String).annotate({
+    description: "Notes that covered no changed line, as path:start-end, and were not stored.",
+  }),
+  narrowedNotes: Schema.Array(Schema.String).annotate({
+    description: "Notes cut down to the changed lines they cover, as path:start-end to start-end.",
+  }),
   confirmation: Schema.String,
 });
 export type WriteDiffWalkthroughResult = typeof WriteDiffWalkthroughResult.Type;
@@ -251,7 +261,7 @@ const WriteDiffWalkthroughTool = Tool.make("write_diff_walkthrough", {
   description: [
     "Store a walkthrough (code tour) of a pull request, a thread's checkpoint diff, or a thread's branch. T3 Code shows it as a guided view of the diff, and it replaces any earlier walkthrough for the same pull request, turn range, or branch.",
     "groups are in suggested reading order, and each states the intent behind its files. Put EVERY changed file in exactly one group; files you leave out show under Other. A file can carry a one-line note when the diff does not say what it adds. Set a group's attention only for a call the diff cannot settle (a tradeoff, contract, product, risk or accessibility call), and give it 0 to 2 questions about intent, never requests to review something.",
-    "notes anchor to a start-end line range of one file in its group, numbered on the new side unless they describe deleted code (old). A note's summary is ONE line on what the hunk does: behavior, not style. body is optional markdown on why or how relative to the surrounding codebase; add it only when it says something the summary and the diff do not.",
+    "notes anchor to a start-end line range of one file in its group, numbered on the new side unless they describe deleted code (old). The range must cover lines the change touched: a note on unchanged lines only is dropped, and one reaching past the changed lines is narrowed to them. A note's summary is ONE line on what the hunk does: behavior, not style. body is optional markdown on why or how relative to the surrounding codebase; add it only when it says something the summary and the diff do not.",
     "For a pull request, headSha must be the head commit you actually read (`gh pr view <number> --json headRefOid`): T3 Code marks the walkthrough stale when the pull request head moves.",
     "For a thread diff, use read_thread_diff to read the same turn range first.",
     "For a branch (before a pull request exists), use read_thread_diff with kind branch-range first; T3 Code reads the branch, merge base and HEAD from the thread's checkout, and marks the walkthrough stale when either commit moves. Commit first: uncommitted changes are not part of it.",

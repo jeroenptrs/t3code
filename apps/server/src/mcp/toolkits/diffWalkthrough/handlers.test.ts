@@ -1,4 +1,5 @@
 import {
+  type DiffWalkthroughTarget,
   EnvironmentId,
   type OrchestrationGetTurnDiffInput,
   type OrchestrationProjectShell,
@@ -18,13 +19,17 @@ import * as Stream from "effect/Stream";
 import type { Tool } from "effect/ai";
 
 import * as CheckpointDiffQuery from "../../../checkpointing/CheckpointDiffQuery.ts";
+import type { DiffWalkthroughChange } from "../../../diffWalkthrough/DiffWalkthroughChangeReader.ts";
+import * as DiffWalkthroughChangeReader from "../../../diffWalkthrough/DiffWalkthroughChangeReader.ts";
 import * as DiffWalkthroughService from "../../../diffWalkthrough/DiffWalkthroughService.ts";
+import * as DiffWalkthroughWriter from "../../../diffWalkthrough/DiffWalkthroughWriter.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as DiffWalkthroughs from "../../../persistence/DiffWalkthroughs.ts";
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../../../project/RepositoryIdentityResolver.ts";
+import { parseDiffChange } from "../../../review/diffChange.ts";
 import * as ReviewService from "../../../review/ReviewService.ts";
 import { OUTPUT_TRUNCATED_MARKER } from "../../../vcs/GitVcsDriverCore.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -82,6 +87,8 @@ interface HarnessOptions {
   readonly diff?: string;
   /** The review diff sources the caller's checkout reports. */
   readonly reviewSources?: ReadonlyArray<ReviewDiffPreviewSource>;
+  /** The change a write is held to; unread unless a test is about holding notes. */
+  readonly change?: DiffWalkthroughChange;
 }
 
 const reviewSource = (
@@ -117,14 +124,29 @@ const makeHarness = Effect.fn("makeDiffWalkthroughToolkitHarness")(function* (
   const diffRequests: Array<OrchestrationGetTurnDiffInput> = [];
   const reviewRequests: Array<ReviewDiffPreviewInput> = [];
   let reviewSources = options.reviewSources ?? [reviewSource()];
+  const changeRequests: Array<DiffWalkthroughTarget> = [];
   const layerDependencies = Layer.mergeAll(
-    DiffWalkthroughService.layer.pipe(
-      Layer.provide(DiffWalkthroughs.layer),
-      Layer.provide(SqlitePersistence.layerMemory),
+    DiffWalkthroughWriter.layer.pipe(
       Layer.provide(
-        Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
-          resolve: () => Effect.succeed(null),
+        Layer.mock(DiffWalkthroughChangeReader.DiffWalkthroughChangeReader)({
+          read: (target) => {
+            changeRequests.push(target);
+            return Effect.succeed(
+              options.change ?? { held: false, reason: "The change is not read in this test." },
+            );
+          },
         }),
+      ),
+      Layer.provideMerge(
+        DiffWalkthroughService.layer.pipe(
+          Layer.provide(DiffWalkthroughs.layer),
+          Layer.provide(SqlitePersistence.layerMemory),
+          Layer.provide(
+            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+              resolve: () => Effect.succeed(null),
+            }),
+          ),
+        ),
       ),
     ),
     Layer.mock(ReviewService.ReviewService)({
@@ -183,7 +205,7 @@ const makeHarness = Effect.fn("makeDiffWalkthroughToolkitHarness")(function* (
     const setReviewSources = (sources: ReadonlyArray<ReviewDiffPreviewSource>) => {
       reviewSources = sources;
     };
-    return { call, walkthroughs, diffRequests, reviewRequests, setReviewSources };
+    return { call, walkthroughs, diffRequests, reviewRequests, changeRequests, setReviewSources };
   }).pipe(Effect.provideContext(context));
 });
 
@@ -291,6 +313,80 @@ describe("diff walkthrough toolkit handlers", () => {
         fromTurnCount: 1,
         toTurnCount: 2,
       });
+    }),
+  );
+
+  it.effect("holds notes to the change and tells the agent which it dropped or narrowed", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        change: {
+          held: true,
+          change: parseDiffChange(
+            "src/a.ts\0",
+            "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -10,0 +11,3 @@\n+x\n+y\n+z\n",
+          ),
+          withheld: new Set(),
+        },
+      });
+      const note = (start: number, end: number) => ({
+        groupId: "core",
+        path: "src/a.ts",
+        side: "new" as const,
+        start,
+        end,
+        summary: "Writes the row.",
+      });
+      const result = yield* harness.call("write_diff_walkthrough", {
+        target: { kind: "thread-diff", fromTurnCount: 0, toTurnCount: 1 },
+        groups,
+        notes: [note(11, 12), note(1, 4), note(9, 20), { ...note(30, 31), side: "old" }],
+      });
+      assert.deepStrictEqual(harness.changeRequests, [
+        { kind: "thread-diff", threadId: THREAD_ID, fromTurnCount: 0, toTurnCount: 1 },
+      ]);
+      assert.strictEqual(result.noteCount, 2);
+      assert.isTrue(result.heldToChange);
+      assert.deepStrictEqual(result.droppedNotes, ["src/a.ts:1-4", "src/a.ts:30-31 (old)"]);
+      assert.deepStrictEqual(result.narrowedNotes, ["src/a.ts:9-20 to 11-13"]);
+      assert.strictEqual(
+        result.confirmation,
+        "Stored the walkthrough of turns 0 to 1 of thread thread-1 with 2 notes. 2 notes were outside the lines this change touched and dropped: src/a.ts:1-4, src/a.ts:30-31 (old). 1 note was narrowed to the lines the change touched: src/a.ts:9-20 to 11-13. Anchor notes on added or removed lines, and write the walkthrough again if a dropped note mattered.",
+      );
+      const stored = yield* harness.walkthroughs.get(result.target);
+      assert.deepStrictEqual(
+        stored?.notes.map((stored) => [stored.start, stored.end]),
+        [
+          [11, 12],
+          [11, 13],
+        ],
+      );
+    }),
+  );
+
+  it.effect("stores notes as written and says why when the change cannot be read", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const result = yield* harness.call("write_diff_walkthrough", {
+        target: { kind: "thread-diff", fromTurnCount: 0, toTurnCount: 1 },
+        groups,
+        notes: [
+          {
+            groupId: "core",
+            path: "src/a.ts",
+            side: "new",
+            start: 1,
+            end: 4,
+            summary: "Writes the row.",
+          },
+        ],
+      });
+      assert.strictEqual(result.noteCount, 1);
+      assert.isFalse(result.heldToChange);
+      assert.deepStrictEqual(result.droppedNotes, []);
+      assert.include(
+        result.confirmation,
+        "Notes were stored as written, without checking them against the change: The change is not read in this test.",
+      );
     }),
   );
 
