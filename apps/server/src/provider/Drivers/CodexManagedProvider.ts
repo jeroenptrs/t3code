@@ -289,6 +289,8 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
         "generateTranscriptionPostProcessing",
         nativeGeneration.generateTranscriptionPostProcessing(value),
       ),
+    generateDiffWalkthrough: (value) =>
+      protect("generateDiffWalkthrough", nativeGeneration.generateDiffWalkthrough(value)),
   };
   return {
     instanceId,
