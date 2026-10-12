@@ -26,6 +26,7 @@ import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.ts";
+import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import * as TextGeneration from "./TextGeneration.ts";
 import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
@@ -165,7 +166,7 @@ function withFakeCodexEnv<A, E, R>(
     models?: ReadonlyArray<string>;
     managedRuntime?: boolean;
   },
-  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+  effectFn: (textGeneration: ProviderTextGeneration) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -485,17 +486,19 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
         enabled: true,
         snapshot: { getSnapshot: Effect.succeed(snapshot) } as ProviderInstance["snapshot"],
         orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
-        textGeneration: TextGeneration.TextGeneration.of({
+        textGeneration: {
           generateCommitMessage: () => Effect.die("unused"),
           generatePrContent: () => Effect.die("unused"),
           generateBranchName: () => Effect.die("unused"),
           generateReviewGuide: () => Effect.die("unused"),
+          generateDiffWalkthrough: () => Effect.die("unused"),
+          investigationRefusal: null,
           generateThreadTitle: (input) =>
             Effect.sync(() => {
               calls.push(input.modelSelection);
               return { title: "Generated title" };
             }),
-        }),
+        },
       };
     });
     const service = yield* TextGeneration.make.pipe(
