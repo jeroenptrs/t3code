@@ -7,6 +7,7 @@ import {
   ChevronRightIcon,
   CircleCheckIcon,
   HistoryIcon,
+  RefreshCwIcon,
 } from "lucide-react";
 import { memo, useCallback, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 
@@ -308,6 +309,28 @@ function WalkthroughSections({
         >
           <ChevronRightIcon />
         </Button>
+        {/* A stale walkthrough offers this in its notice instead. */}
+        {onGenerate === undefined || staleNotice !== null ? null : (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label="Regenerate walkthrough"
+                  disabled={generatePending}
+                  onClick={onGenerate}
+                />
+              }
+            >
+              <RefreshCwIcon />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">
+              {generatePending ? "Opening..." : "Regenerate walkthrough"}
+            </TooltipPopup>
+          </Tooltip>
+        )}
         {viewed === null ? null : (
           <Button
             type="button"
