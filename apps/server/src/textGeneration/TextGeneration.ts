@@ -30,6 +30,8 @@ export type {
   BranchNameGenerationResult,
   CommitMessageGenerationInput,
   CommitMessageGenerationResult,
+  DiffWalkthroughGenerationInput,
+  DiffWalkthroughGenerationResult,
   PrContentGenerationInput,
   PrContentGenerationResult,
   ReviewGuideGenerationInput,
@@ -50,7 +52,8 @@ type TextGenerationOp =
   | "generateBranchName"
   | "generateThreadTitle"
   | "generateReviewGuide"
-  | "generateTranscriptionPostProcessing";
+  | "generateTranscriptionPostProcessing"
+  | "generateDiffWalkthrough";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -198,6 +201,13 @@ export const make = Effect.gen(function* () {
         (service, modelSelection) =>
           service.generateTranscriptionPostProcessing({ ...input, modelSelection }),
       );
+    }),
+    generateDiffWalkthrough: Effect.fn("TextGeneration.generateDiffWalkthrough")(function (input) {
+      return resolveInstance(
+        registry,
+        "generateDiffWalkthrough",
+        input.modelSelection.instanceId,
+      ).pipe(Effect.flatMap((textGeneration) => textGeneration.generateDiffWalkthrough(input)));
     }),
     generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function (input) {
       return generate(
