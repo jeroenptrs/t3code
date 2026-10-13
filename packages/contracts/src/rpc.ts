@@ -126,6 +126,18 @@ import {
   DiffWalkthroughPutResult,
 } from "./diffWalkthrough.ts";
 import {
+  JiraCapabilities,
+  JiraError,
+  JiraFilterInput,
+  JiraFilterView,
+  JiraFiltersInput,
+  JiraFiltersResult,
+  JiraIssueDetail,
+  JiraIssueKey,
+  JiraSearchInput,
+  JiraSearchResult,
+} from "./jira.ts";
+import {
   WorktreeSetupCancelInput,
   WorktreeSetupCancelResult,
   WorktreeSetupStreamEvent,
@@ -589,6 +601,13 @@ export const WS_METHODS = {
   diffWalkthroughSubscribe: "diffWalkthrough.subscribe",
   diffWalkthroughPut: "diffWalkthrough.put",
   diffWalkthroughGenerate: "diffWalkthrough.generate",
+
+  // Jira (fork-only), read as the server's designated reader identity
+  jiraCapabilities: "jira.capabilities",
+  jiraFilters: "jira.filters",
+  jiraFilter: "jira.filter",
+  jiraSearch: "jira.search",
+  jiraIssue: "jira.issue",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1219,6 +1238,38 @@ const WsDiffWalkthroughGenerateRpc = Rpc.make(WS_METHODS.diffWalkthroughGenerate
   payload: DiffWalkthroughGenerateInput,
   success: DiffWalkthroughGenerateResult,
   error: Schema.Union([DiffWalkthroughError, EnvironmentAuthorizationError]),
+});
+
+const JiraRpcError = Schema.Union([JiraError, EnvironmentAuthorizationError]);
+
+const WsJiraCapabilitiesRpc = Rpc.make(WS_METHODS.jiraCapabilities, {
+  payload: Schema.Struct({}),
+  success: JiraCapabilities,
+  error: JiraRpcError,
+});
+
+const WsJiraFiltersRpc = Rpc.make(WS_METHODS.jiraFilters, {
+  payload: JiraFiltersInput,
+  success: JiraFiltersResult,
+  error: JiraRpcError,
+});
+
+const WsJiraFilterRpc = Rpc.make(WS_METHODS.jiraFilter, {
+  payload: JiraFilterInput,
+  success: JiraFilterView,
+  error: JiraRpcError,
+});
+
+const WsJiraSearchRpc = Rpc.make(WS_METHODS.jiraSearch, {
+  payload: JiraSearchInput,
+  success: JiraSearchResult,
+  error: JiraRpcError,
+});
+
+const WsJiraIssueRpc = Rpc.make(WS_METHODS.jiraIssue, {
+  payload: JiraIssueKey,
+  success: JiraIssueDetail,
+  error: JiraRpcError,
 });
 
 const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLookupRepository, {
@@ -2071,6 +2122,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsDiffWalkthroughSubscribeRpc,
   WsDiffWalkthroughPutRpc,
   WsDiffWalkthroughGenerateRpc,
+  WsJiraCapabilitiesRpc,
+  WsJiraFiltersRpc,
+  WsJiraFilterRpc,
+  WsJiraSearchRpc,
+  WsJiraIssueRpc,
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
