@@ -126,8 +126,16 @@ export const ISSUES_PANEL_REF = scopeThreadRef(
  * The pull-request and issues lists' shared panels are session
  * state: reopening the app should show the list, not last session's tabs and detail fetches.
  */
+/** Fork-only. The `/jira` page's panel, keyed the same way: each tab names its issue's site. */
+export const JIRA_ISSUES_PANEL_REF = scopeThreadRef(
+  EnvironmentId.make("jira-issues-panel"),
+  ThreadId.make("jira-issues-panel"),
+);
+
 const isPullRequestsPanelKey = (threadKey: string) =>
-  threadKey.endsWith(":pull-requests-panel") || threadKey.endsWith(":issues-panel");
+  threadKey.endsWith(":pull-requests-panel") ||
+  threadKey.endsWith(":issues-panel") ||
+  threadKey.endsWith(":jira-issues-panel");
 
 export interface ThreadRightPanelState {
   isOpen: boolean;
