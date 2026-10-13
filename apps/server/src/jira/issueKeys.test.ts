@@ -9,6 +9,7 @@ describe("jiraIssueKeyFromBranch", () => {
     ["feature/abc-123-login", "ABC-123"],
     ["jeroen/abc-123", "ABC-123"],
     ["ABC-123_fix", "ABC-123"],
+    ["feature/my_proj-12-login", "MY_PROJ-12"],
     ["fix.AB2-7.typo", "AB2-7"],
     ["abc-123-and-abc-123", "ABC-123"],
   ])("finds the key in %s", (branch, key) => {
