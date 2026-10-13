@@ -15,8 +15,9 @@ describe("jiraIssueKeyFromBranch", () => {
     expect(jiraIssueKeyFromBranch(branch)).toBe(key);
   });
 
-  it("returns null when several distinct keys make the branch ambiguous", () => {
-    expect(jiraIssueKeyFromBranch("ABC-1-and-DEF-2")).toBeNull();
+  it("takes the leftmost key when the branch names several", () => {
+    expect(jiraIssueKeyFromBranch("ABC-1-and-DEF-2")).toBe("ABC-1");
+    expect(jiraIssueKeyFromBranch("abc-123-bump-react-to-19")).toBe("ABC-123");
   });
 
   it.each([
@@ -65,6 +66,14 @@ describe("parseJiraIssueKeys", () => {
     expect(parseJiraIssueKeys("ABC-123abc")).toEqual([]);
     expect(parseJiraIssueKeys("fooXABC-1")).toEqual([]);
     expect(parseJiraIssueKeys("1ABC-1")).toEqual([]);
+  });
+
+  it("accepts underscores in project keys after the first letter", () => {
+    expect(parseJiraIssueKeys("See MY_PROJ-12 and _AB-1 and A_B-3")).toEqual([
+      "MY_PROJ-12",
+      "A_B-3",
+    ]);
+    expect(parseJiraIssueKeys("foo_ABC-1")).toEqual([]);
   });
 
   it("rejects leading zeros and one-character project keys", () => {
