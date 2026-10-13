@@ -178,7 +178,7 @@ const LinkJiraIssueTool = Tool.make("link_jira_issue", {
   .annotate(Tool.OpenWorld, false);
 
 const UnlinkJiraIssueTool = Tool.make("unlink_jira_issue", {
-  description: `Remove a Jira issue link from this thread, for example one linked by mistake. A link T3 Code made from the branch name stays removed. ${RECORD_ONLY} Unlinking an issue that is not linked succeeds with wasLinked=false.`,
+  description: `Remove a Jira issue link from this thread, for example one linked by mistake. An unlinked issue stays unlinked even when the branch name carries its key. ${RECORD_ONLY} Unlinking an issue that is not linked succeeds with wasLinked=false.`,
   parameters: JiraIssueTargetInput,
   success: UnlinkJiraIssueResult,
   failure: JiraIssueToolError,
