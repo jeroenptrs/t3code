@@ -1,4 +1,5 @@
 import { expect, it } from "@effect/vitest";
+import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -11,6 +12,15 @@ import type { JiraConfig } from "./JiraConfig.ts";
 import * as JiraApi from "./JiraApi.ts";
 import * as JiraIdentities from "./JiraIdentities.ts";
 import * as JiraReadCache from "./JiraReadCache.ts";
+import {
+  SITE,
+  archiveThread,
+  createThread,
+  deleteThread,
+  layerOrchestration,
+  linkIssue,
+  unlinkIssue,
+} from "./JiraLinks.testkit.ts";
 import * as JiraService from "./JiraService.ts";
 
 interface Recorded {
@@ -348,5 +358,41 @@ it.effect("finds known pull requests that name the issue in their branch or titl
         headBranch: "feature/abc-12-login",
       });
     }),
+  );
+});
+
+it.effect("linked threads leave out dismissed links and deleted threads", () => {
+  const jira = makeJira(() => ({ status: 500, body: null }));
+  return Effect.gen(function* () {
+    const kept = ThreadId.make("thread:kept");
+    const archived = ThreadId.make("thread:archived");
+    const dismissed = ThreadId.make("thread:dismissed");
+    const deleted = ThreadId.make("thread:deleted");
+    for (const threadId of [kept, archived, dismissed, deleted]) yield* createThread(threadId);
+    yield* linkIssue(kept, "ABC-7", "manual");
+    yield* linkIssue(archived, "ABC-7", "agent");
+    yield* archiveThread(archived);
+    yield* linkIssue(dismissed, "ABC-7", "branch");
+    yield* unlinkIssue(dismissed, "ABC-7");
+    yield* linkIssue(deleted, "ABC-7", "agent");
+    yield* deleteThread(deleted);
+
+    const found = yield* (yield* JiraService.JiraService).linkedThreads({
+      site: SITE,
+      key: "ABC-7",
+    });
+    expect(
+      found
+        .map((thread) => [thread.id, thread.source, thread.archivedAt !== null])
+        .toSorted(([left], [right]) => String(left).localeCompare(String(right))),
+    ).toEqual([
+      [archived, "agent", true],
+      [kept, "manual", false],
+    ]);
+    expect(jira.requests).toEqual([]);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(serviceLayer(config, jira.client), layerOrchestration("jira-linked-threads")),
+    ),
   );
 });
