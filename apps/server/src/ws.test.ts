@@ -138,7 +138,7 @@ import {
   visibleScheduledTasks,
   WS_RPC_SERVER_OPTIONS,
   withLateEditorConfig,
-  withSessionThreadCreator,
+  withSessionUserAttribution,
 } from "./ws.ts";
 
 it("records the session's user as a thread's creator, never the client's claim", () => {
@@ -158,15 +158,30 @@ it("records the session's user as a thread's creator, never the client's claim",
     creationSource: "web",
     createdByUserId: AuthUserId.make("user-spoofed"),
   };
-  assert.propertyVal(withSessionThreadCreator(create, ada), "createdByUserId", ada);
-  assert.notProperty(withSessionThreadCreator(create, null), "createdByUserId");
+  assert.propertyVal(withSessionUserAttribution(create, ada), "createdByUserId", ada);
+  assert.notProperty(withSessionUserAttribution(create, null), "createdByUserId");
 
   const archive: OrchestrationV2Command = {
     type: "thread.archive",
     commandId: CommandId.make("archive"),
     threadId: ThreadId.make("thread:new"),
   };
-  assert.strictEqual(withSessionThreadCreator(archive, ada), archive);
+  assert.strictEqual(withSessionUserAttribution(archive, ada), archive);
+});
+
+it("records the session's user as who linked a Jira issue, never the client's claim", () => {
+  const ada = AuthUserId.make("user-ada");
+  const link: OrchestrationV2Command = {
+    type: "thread.jira-issue.link",
+    commandId: CommandId.make("link"),
+    threadId: ThreadId.make("thread:new"),
+    site: "acme.atlassian.net",
+    key: "ABC-1",
+    source: "manual",
+    linkedByUserId: AuthUserId.make("user-spoofed"),
+  };
+  assert.propertyVal(withSessionUserAttribution(link, ada), "linkedByUserId", ada);
+  assert.notProperty(withSessionUserAttribution(link, null), "linkedByUserId");
 });
 
 it("shows a webhook's URL and audit trail only to sessions that may operate", () => {
