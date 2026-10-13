@@ -35,7 +35,8 @@ export const JiraIdentity = Schema.Struct({
 });
 export type JiraIdentity = typeof JiraIdentity.Type;
 
-export const JIRA_ISSUE_KEY_PATTERN = /^[A-Z][A-Z0-9]+-[1-9]\d*$/;
+/** Jira Cloud project keys are an uppercase letter then uppercase letters, digits or `_`. */
+export const JIRA_ISSUE_KEY_PATTERN = /^[A-Z][A-Z0-9_]+-[1-9]\d*$/;
 
 export const JiraIssueKeyString = TrimmedNonEmptyString.check(
   Schema.isPattern(JIRA_ISSUE_KEY_PATTERN),
@@ -76,6 +77,13 @@ export const JiraSprint = Schema.Struct({
 export type JiraSprint = typeof JiraSprint.Type;
 
 /** The row shape: what a list, a facet or a link card needs, and nothing that is long. */
+export const JiraIssueInput = Schema.Struct({
+  ...JiraIssueKey.fields,
+  /** Skip the server's read cache, for an explicit refresh. */
+  refresh: Schema.optional(Schema.Boolean),
+});
+export type JiraIssueInput = typeof JiraIssueInput.Type;
+
 export const JiraIssueSummary = Schema.Struct({
   ...JiraIssueKey.fields,
   /** Browse URL on the site. */
@@ -222,6 +230,8 @@ export const JiraSearchInput = Schema.Struct({
   /** Default 100, capped at 100 by Jira. */
   maxResults: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(100))),
   nextPageToken: Schema.optional(TrimmedNonEmptyString),
+  /** Skip the server's read cache, for an explicit refresh. */
+  refresh: Schema.optional(Schema.Boolean),
 });
 export type JiraSearchInput = typeof JiraSearchInput.Type;
 
