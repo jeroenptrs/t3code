@@ -1,0 +1,38 @@
+import { useAtomValue } from "@effect/atom-react";
+import {
+  createJiraEnvironmentAtoms,
+  resolveJiraCapabilities,
+} from "@t3tools/client-runtime/state/jira";
+import { JiraError, type EnvironmentId, type JiraCapabilities } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { AsyncResult, Atom } from "effect/reactivity";
+
+import { connectionAtomRuntime } from "../connection/runtime";
+
+export const jiraEnvironment = createJiraEnvironmentAtoms(connectionAtomRuntime);
+
+const NO_ENVIRONMENT_ATOM = Atom.make(AsyncResult.initial<JiraCapabilities>()).pipe(
+  Atom.withLabel("web-jira:capabilities:none"),
+);
+
+/**
+ * What every Jira surface gates on. Null until the environment answers, so nothing flashes in and
+ * out; not configured when it cannot answer, which covers servers that predate Jira.
+ */
+export function useJiraCapabilities(environmentId: EnvironmentId | null): JiraCapabilities | null {
+  const result = useAtomValue(
+    environmentId === null
+      ? NO_ENVIRONMENT_ATOM
+      : jiraEnvironment.capabilities({ environmentId, input: {} }),
+  );
+  return resolveJiraCapabilities(result);
+}
+
+export type JiraFailureReason = JiraError["reason"];
+
+const isJiraError = Schema.is(JiraError);
+
+/** The Jira reason behind a query failure, or null when the failure was not Jira's. */
+export function jiraFailureReason(failure: unknown): JiraFailureReason | null {
+  return isJiraError(failure) ? failure.reason : null;
+}
