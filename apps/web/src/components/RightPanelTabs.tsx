@@ -59,7 +59,7 @@ import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings
 import { readLocalApi } from "~/localApi";
 import { Button } from "~/components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
-import { AndroidIcon, AppleIcon } from "~/components/Icons";
+import { AndroidIcon, AppleIcon, JiraIcon } from "~/components/Icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Kbd } from "~/components/ui/kbd";
 import {
@@ -575,6 +575,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
+    case "jira-issue":
+      return surface.key;
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
@@ -658,6 +660,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "jira-issue":
+      return <JiraIcon className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
