@@ -10,11 +10,28 @@ import {
   type JiraIssueKey,
   type ThreadJiraIssueLink,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { AsyncResult, type Atom } from "effect/reactivity";
+import { AsyncResult, type Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { request } from "../rpc/client.ts";
 import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+
+/**
+ * The inputs whose next request skips the server's read cache. Only an explicit refresh marks
+ * one, so stale-time revalidation and reconnects keep reading through the cache. A mark made
+ * while disconnected goes out with the next request.
+ */
+function createJiraCacheSkips() {
+  const marked = new Set<string>();
+  return {
+    mark: (input: unknown) => {
+      marked.add(JSON.stringify(input));
+    },
+    take: (input: unknown) => marked.delete(JSON.stringify(input)),
+  };
+}
 
 /**
  * Query atoms per environment. Capabilities change only when the server's configuration does, so
@@ -24,6 +41,30 @@ import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 export function createJiraEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
+  // Search and issue reads are cached briefly on the server; the refreshes below skip that cache.
+  // They need no client grant, so the permission guard cannot refuse them.
+  const searchSkips = createJiraCacheSkips();
+  const search = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:jira:search",
+    tag: WS_METHODS.jiraSearch,
+    staleTimeMs: 30_000,
+    execute: (input) =>
+      request(
+        WS_METHODS.jiraSearch,
+        searchSkips.take(input) ? { ...input, refresh: true } : input,
+      ).pipe(Effect.catchTags({ EnvironmentAuthorizationError: Effect.die })),
+  });
+  const issueSkips = createJiraCacheSkips();
+  const issue = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:jira:issue",
+    tag: WS_METHODS.jiraIssue,
+    staleTimeMs: 30_000,
+    execute: (input) =>
+      request(
+        WS_METHODS.jiraIssue,
+        issueSkips.take(input) ? { ...input, refresh: true } : input,
+      ).pipe(Effect.catchTags({ EnvironmentAuthorizationError: Effect.die })),
+  });
   return {
     capabilities: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:jira:capabilities",
@@ -42,16 +83,18 @@ export function createJiraEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
     }),
     /** One page of a filter or ad-hoc JQL; pages are keyed by their `nextPageToken`. */
-    search: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:jira:search",
-      tag: WS_METHODS.jiraSearch,
-      staleTimeMs: 30_000,
-    }),
-    issue: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:jira:issue",
-      tag: WS_METHODS.jiraIssue,
-      staleTimeMs: 30_000,
-    }),
+    search,
+    /** Re-reads a page past the server's cache, for an explicit refresh. */
+    refreshSearch: (registry: AtomRegistry.AtomRegistry, target: Parameters<typeof search>[0]) => {
+      searchSkips.mark(target.input);
+      registry.refresh(search(target));
+    },
+    issue,
+    /** Re-reads an issue past the server's cache, for an explicit refresh. */
+    refreshIssue: (registry: AtomRegistry.AtomRegistry, target: Parameters<typeof issue>[0]) => {
+      issueSkips.mark(target.input);
+      registry.refresh(issue(target));
+    },
   };
 }
 
