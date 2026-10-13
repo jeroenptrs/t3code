@@ -202,9 +202,53 @@ it.effect("searches a saved filter's JQL with the site's custom fields, and cach
       yield* service.search({ filterId: "10000" });
       expect(jira.requests.length).toBe(count);
 
+      // A refresh re-reads the filter and the page, then serves later reads from the cache.
+      yield* service.search({ filterId: "10000", refresh: true });
+      expect(jira.requests.slice(count).map((request) => new URL(request.url).pathname)).toEqual([
+        "/ex/jira/cloud-1/rest/api/3/filter/10000",
+        "/ex/jira/cloud-1/rest/api/3/search/jql",
+      ]);
+      yield* service.search({ filterId: "10000" });
+      expect(jira.requests.length).toBe(count + 2);
+
       const both = yield* service.search({ filterId: "10000", jql: "x" }).pipe(Effect.flip);
       expect(both.reason).toBe("invalid");
       expect((yield* service.search({}).pipe(Effect.flip)).reason).toBe("invalid");
+    }),
+  );
+});
+
+it.effect("reads an issue once until a refresh asks Jira again", () => {
+  const jira = makeJira((path) => {
+    switch (path) {
+      case "/rest/api/3/field":
+        return { status: 200, body: FIELDS };
+      case "/rest/api/3/issue/ABC-1":
+        return { status: 200, body: issue("ABC-1") };
+      case "/rest/api/3/issue/ABC-1/comment":
+        return { status: 200, body: { comments: [], total: 0 } };
+      case "/rest/api/3/issue/ABC-1/transitions":
+        return { status: 200, body: { transitions: [] } };
+      default:
+        return { status: 404, body: null };
+    }
+  });
+  const issueReads = () =>
+    jira.requests.filter((request) => new URL(request.url).pathname.endsWith("/issue/ABC-1"))
+      .length;
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      const service = yield* JiraService.JiraService;
+      const input = { site: SITE, key: "ABC-1" };
+      expect((yield* service.issue(input)).summary).toBe("Issue ABC-1");
+      yield* service.issue(input);
+      expect(issueReads()).toBe(1);
+      yield* service.issue({ ...input, refresh: true });
+      expect(issueReads()).toBe(2);
+      yield* service.issue(input);
+      expect(issueReads()).toBe(2);
     }),
   );
 });
