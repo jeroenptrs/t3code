@@ -120,9 +120,10 @@ folder and its conversations' worktrees, and nothing else on the host. Links tha
 those folders are refused. T3's state directory, where provider and T3 Connect credentials are
 stored, is never readable by a Reader. A project whose folder contains the state directory, such as
 one opened at the home directory, shows Readers its conversations but not the files in that folder.
-Some provider settings, such as an Antigravity API key or an OpenCode server password, are still
-sent to every signed-in user, Readers included, so do not store secrets there if Readers should not
-see them.
+Readers can see provider settings, but not saved API keys, passwords, tokens or sensitive
+environment variables; T3 never sends those to a browser. Provider environment variables that are
+not marked sensitive are visible to every signed-in user, so mark any that hold a secret as
+sensitive.
 
 From **Settings → Users** an administrator can also change a role, disable or re-enable a user, and
 revoke a user's sessions. T3 refuses to disable or demote the last active administrator. A sign-in
