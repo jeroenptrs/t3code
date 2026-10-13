@@ -32,6 +32,7 @@ const RIGHT_PANEL_KINDS = [
   "issue",
   "thread",
   "linked-thread",
+  "jira-issue",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -116,7 +117,9 @@ export type RightPanelSurface =
    */
   | ThreadSurface
   /** A linked environment's thread, read through `viaEnvironmentId`; it has no thread here. */
-  | LinkedThreadSurface;
+  | LinkedThreadSurface
+  /** Fork-only. A Jira issue read through the thread environment's reader identity. */
+  | { id: `jira-issue:${string}`; kind: "jira-issue"; site: string; key: string };
 
 export type ThreadSurface = { id: `thread:${string}`; kind: "thread"; threadId: ThreadId };
 
@@ -194,7 +197,7 @@ interface RightPanelStoreState {
     ref: ScopedThreadRef,
     kind: Exclude<
       RightPanelKind,
-      "file" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread"
+      "file" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread" | "jira-issue"
     >,
   ) => void;
   /** Opens a side chat or subagent of `ref`'s environment as a tab; `ref` itself has no tab. */
@@ -239,6 +242,7 @@ interface RightPanelStoreState {
   ) => void;
   /** Clears the surface's pending link only while it is still `revealUrl`. */
   settlePullRequestReveal: (ref: ScopedThreadRef, surfaceId: string, revealUrl: string) => void;
+  openJiraIssue: (ref: ScopedThreadRef, issue: { site: string; key: string }) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -270,7 +274,7 @@ interface RightPanelStoreState {
     ref: ScopedThreadRef,
     kind: Exclude<
       RightPanelKind,
-      "file" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread"
+      "file" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread" | "jira-issue"
     >,
   ) => void;
   setThreadPanelOpen: (
@@ -296,7 +300,7 @@ const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
 const singletonSurface = (
   kind: Exclude<
     RightPanelKind,
-    "file" | "preview" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread"
+    "file" | "preview" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread" | "jira-issue"
   >,
 ): RightPanelSurface => {
   switch (kind) {
@@ -424,6 +428,15 @@ const withoutReveal = (surface: RightPanelSurface): RightPanelSurface => {
   const { revealUrl: _pending, ...rest } = surface;
   return rest;
 };
+
+export type JiraIssueSurface = Extract<RightPanelSurface, { kind: "jira-issue" }>;
+
+/** One tab per issue; the site leads so the same key on two sites stays two tabs. */
+export function jiraIssueSurface(issue: { site: string; key: string }): JiraIssueSurface {
+  const site = issue.site.toLowerCase();
+  const key = issue.key.toUpperCase();
+  return { id: `jira-issue:${site}/${key}`, kind: "jira-issue", site, key };
+}
 
 const upsertSurface = (
   current: ThreadRightPanelState,
@@ -688,6 +701,11 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                           ...(typeof environmentId === "string" ? { environmentId } : {}),
                         }),
                       ];
+                    }
+                    if (surface.kind === "jira-issue") {
+                      return typeof surface.site === "string" && typeof surface.key === "string"
+                        ? [jiraIssueSurface(surface)]
+                        : [];
                     }
                     if (surface.kind !== "terminal") return [surface];
                     if (
@@ -1023,6 +1041,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             ),
           }));
         }),
+      openJiraIssue: (ref, issue) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, jiraIssueSurface(issue)),
+          ),
+        ),
       openFile: (ref, requestedPath, line) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {

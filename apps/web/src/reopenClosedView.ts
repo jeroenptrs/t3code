@@ -163,6 +163,9 @@ export async function reopenClosedView(
     case "linked-thread":
       panels.openLinkedThread(ref, surface);
       break;
+    case "jira-issue":
+      panels.openJiraIssue(ref, surface);
+      break;
     default:
       panels.open(ref, surface.kind);
   }

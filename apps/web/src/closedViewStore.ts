@@ -91,6 +91,8 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
         (surface.title === null || typeof surface.title === "string") &&
         decodeLinkedThreadSurface(surface)?.id === surface.id
       );
+    case "jira-issue":
+      return typeof surface.site === "string" && typeof surface.key === "string";
     case "pull-request":
       return (
         typeof surface.projectId === "string" &&
