@@ -83,6 +83,8 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
             typeof surface.target.name === "string" &&
             (surface.target.platform === "ios" || surface.target.platform === "android")))
       );
+    case "jira-issue":
+      return typeof surface.site === "string" && typeof surface.key === "string";
     case "pull-request":
       return (
         typeof surface.projectId === "string" &&
