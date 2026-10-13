@@ -6,6 +6,8 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
+import { useJiraCapabilities, useJiraEnvironmentId } from "../../state/jira";
+import { JiraIcon } from "../Icons";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -177,6 +179,8 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
   const pullRequestsSupported = usePullRequestsSupported();
+  // Fork-only. Gated like Pull Requests: hidden until the server says Jira is set up.
+  const jiraConfigured = useJiraCapabilities(useJiraEnvironmentId())?.configured === true;
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -188,6 +192,10 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
       to: "/pull-requests",
       search: readPullRequestListPreferences(),
     });
+  }, [closeMobileSidebar, navigate]);
+  const handleIssuesClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/issues" });
   }, [closeMobileSidebar, navigate]);
   const handleSettingsClick = useCallback(() => {
     closeMobileSidebar();
@@ -228,6 +236,9 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               label="Pull Requests"
               onClick={handlePullRequestsClick}
             />
+          ) : null}
+          {jiraConfigured ? (
+            <SidebarUtilityItem icon={<JiraIcon />} label="Issues" onClick={handleIssuesClick} />
           ) : null}
           <SidebarUtilityItem
             icon={<ChartNoAxesColumnIcon />}
