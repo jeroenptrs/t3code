@@ -23,6 +23,7 @@ import {
   reopenClosedView,
 } from "../reopenClosedView";
 import {
+  JIRA_ISSUES_PANEL_REF,
   PULL_REQUESTS_PANEL_REF,
   selectActiveRightPanel,
   selectSelectedRightPanelSurface,
@@ -59,6 +60,10 @@ const PREVIEW_FORWARDED_COMMANDS = [
 const isGlobalPullRequests = (ref: ScopedThreadRef) =>
   scopedThreadKey(ref) === scopedThreadKey(PULL_REQUESTS_PANEL_REF);
 
+/** Fork-only. Tabs closed on the `/issues` page reopen there. */
+const isGlobalJiraIssues = (ref: ScopedThreadRef) =>
+  scopedThreadKey(ref) === scopedThreadKey(JIRA_ISSUES_PANEL_REF);
+
 export function ReopenClosedViewShortcut() {
   const navigate = useNavigate();
   const params = useParams({ strict: false });
@@ -91,7 +96,7 @@ export function ReopenClosedViewShortcut() {
     const { drop, restore } = planNextReopen(useClosedViewStore.getState().entries, (entry) => {
       const ref = entry.threadRef;
       const panel = selectThreadRightPanelState(panelsByThread, ref);
-      if (isGlobalPullRequests(ref)) {
+      if (isGlobalPullRequests(ref) || isGlobalJiraIssues(ref)) {
         return {
           environmentKnown: true,
           catalogReady: true,
@@ -119,7 +124,8 @@ export function ReopenClosedViewShortcut() {
 
     const ref = restore.threadRef;
     const globalPullRequests = isGlobalPullRequests(ref);
-    const thread = globalPullRequests ? null : readThreadShell(ref);
+    const globalJiraIssues = isGlobalJiraIssues(ref);
+    const thread = globalPullRequests || globalJiraIssues ? null : readThreadShell(ref);
     const owner = thread ?? drafts.getDraftThreadByRef(ref);
     const project = owner ? readProject(scopeProjectRef(ref.environmentId, owner.projectId)) : null;
     if (!(await reopenClosedView(restore, { openPreview, workspaceAvailable: project !== null }))) {
@@ -136,6 +142,8 @@ export function ReopenClosedViewShortcut() {
         to: "/pull-requests",
         search: (previous) => pullRequestsSearchForRestore(previous, selected),
       });
+    } else if (globalJiraIssues) {
+      await navigate({ to: "/issues" });
     } else {
       const draftId = thread === null ? drafts.getDraftIdByRef(ref) : null;
       if (draftId !== null)
