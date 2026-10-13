@@ -111,9 +111,10 @@ project = ABC AND sprint in closedSprints()
 Link an issue from the thread's details or the command palette. Enter the key, such as
 `ABC-123`, or the issue's browse URL.
 
-T3 Code also links automatically. If a thread's branch name contains an issue key,
-for example `feature/abc-123-login`, the link appears within about a minute. If you
-unlink an automatic link, it stays unlinked.
+T3 Code also links automatically. If a thread's branch name contains the key of an
+issue that exists, for example `feature/abc-123-login`, the link appears shortly after
+the branch is set. When a branch contains several keys, the first one counts. Once you
+unlink an issue, the branch does not link it again.
 
 Agents in a thread can manage links with T3 Code's MCP tools `link_jira_issue`,
 `unlink_jira_issue`, and `list_thread_jira_issues`.
