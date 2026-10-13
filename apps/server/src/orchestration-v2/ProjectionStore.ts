@@ -2133,13 +2133,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 deleted_at = excluded.deleted_at,
                 payload_json = excluded.payload_json
             `;
-              // Only Jira events change the links, but a replay after compaction may keep only a
-              // later thread event, so any payload that carries links rewrites them.
+            // Only Jira events change the links; a fork starts with its source's links. Compaction
+            // can drop a superseded Jira event, so a rebuild repopulates the table from payloads.
               const jiraIssues = event.payload.jiraIssues ?? [];
               if (
                 event.type === "thread.jira-issues-synced" ||
                 event.type === "thread.deleted" ||
-                jiraIssues.length > 0
+              (event.type === "thread.created" && jiraIssues.length > 0)
               ) {
                 yield* replaceForkThreadJiraIssues(
                   event.payload.id,
