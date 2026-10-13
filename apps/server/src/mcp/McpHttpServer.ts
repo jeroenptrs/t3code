@@ -66,6 +66,8 @@ import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import * as DiffWalkthroughHandlers from "./toolkits/diffWalkthrough/handlers.ts";
+import * as JiraIssuesHandlers from "./toolkits/jiraIssues/handlers.ts";
+import { JiraIssuesToolkit } from "./toolkits/jiraIssues/tools.ts";
 import { DiffWalkthroughToolkit } from "./toolkits/diffWalkthrough/tools.ts";
 import * as DeviceHandlers from "./toolkits/device/handlers.ts";
 import {
@@ -1039,6 +1041,9 @@ const layerDiffWalkthroughToolkit = toolkitRegistration(
   DiffWalkthroughHandlers.layer,
 );
 
+// Fork-only: records thread ↔ Jira issue links; Jira itself is changed with jtk.
+const layerJiraIssuesToolkit = toolkitRegistration(JiraIssuesToolkit, JiraIssuesHandlers.layer);
+
 const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceStandardToolkit,
   DeviceHandlers.layerStandard,
@@ -1073,6 +1078,7 @@ export const layer = Layer.mergeAll(
   layerWorktreeToolkitRegistration,
   layerPullRequestsToolkit,
   layerDiffWalkthroughToolkit,
+  layerJiraIssuesToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
 ).pipe(Layer.provideMerge(layerMcpTransport));
