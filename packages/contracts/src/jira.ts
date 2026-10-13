@@ -123,7 +123,7 @@ export type JiraTransition = typeof JiraTransition.Type;
 
 /**
  * Who linked an issue to a thread. `branch` is the server noticing the key in the thread's
- * branch name. `branch-dismissed` is a tombstone for a branch link the user unlinked, so the
+ * branch name. `branch-dismissed` is a tombstone for any link that was unlinked, so the branch
  * detector does not re-add it; clients hide it.
  */
 export const ThreadJiraIssueLinkSource = Schema.Literals([
