@@ -29,6 +29,7 @@ import {
   type OrchestrationV2InternalCommand,
   type OrchestrationV2LimitRecoveryUpdate,
   type OrchestrationV2ServerCommand,
+  type ThreadJiraIssueLink,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
   type OrchestrationV2AppThread,
@@ -438,6 +439,63 @@ function isGoalCommand(message: {
 
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
+/**
+ * Fork-only. The thread's Jira links after a link, unlink or sync, or null when the command
+ * changes nothing. Unlinking a branch link leaves a `branch-dismissed` tombstone so the branch
+ * detector does not re-add it; a manual or agent link replaces the tombstone.
+ */
+function decideThreadJiraIssues(
+  links: ReadonlyArray<ThreadJiraIssueLink>,
+  command: Extract<
+    OrchestrationV2ServerCommand,
+    {
+      readonly type:
+        | "thread.jira-issue.link"
+        | "thread.jira-issue.unlink"
+        | "thread.jira-issue.sync";
+    }
+  >,
+  now: DateTime.Utc,
+): ReadonlyArray<ThreadJiraIssueLink> | null {
+  const site = command.site.trim().toLowerCase();
+  const key = command.key.trim().toUpperCase();
+  const existing = links.find((link) => link.site === site && link.key === key);
+  switch (command.type) {
+    case "thread.jira-issue.link": {
+      // A branch re-detection must not revive a link the user dismissed.
+      if (
+        existing &&
+        (existing.source !== "branch-dismissed" ||
+          command.source === "branch" ||
+          command.source === "branch-dismissed")
+      ) {
+        return null;
+      }
+      const link: ThreadJiraIssueLink = {
+        site,
+        key,
+        source: command.source,
+        linkedAt: DateTime.formatIso(now),
+        ...(command.linkedByUserId === undefined ? {} : { linkedByUserId: command.linkedByUserId }),
+        snapshot: existing?.snapshot ?? null,
+      };
+      return [...links.filter((entry) => entry !== existing), link];
+    }
+    case "thread.jira-issue.unlink":
+      if (!existing || existing.source === "branch-dismissed") return null;
+      return existing.source === "branch"
+        ? links.map((link) =>
+            link === existing ? { ...link, source: "branch-dismissed" as const } : link,
+          )
+        : links.filter((link) => link !== existing);
+    case "thread.jira-issue.sync":
+      if (!existing || existing.source === "branch-dismissed") return null;
+      return links.map((link) =>
+        link === existing ? { ...link, snapshot: command.snapshot } : link,
+      );
+  }
+}
+
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
     case "thread.create":
@@ -460,6 +518,9 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pull-request.link":
     case "thread.pull-request.unlink":
     case "thread.pull-request-link.sync":
+    case "thread.jira-issue.link":
+    case "thread.jira-issue.unlink":
+    case "thread.jira-issue.sync":
     case "thread.pull-request.watch":
     case "thread.pull-request-watch.sync":
     case "thread.pull-request.sync":
@@ -2610,6 +2671,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.pull-request.link"
           | "thread.pull-request.unlink"
           | "thread.pull-request-link.sync"
+          | "thread.jira-issue.link"
+          | "thread.jira-issue.unlink"
+          | "thread.jira-issue.sync"
           | "thread.pull-request.watch"
           | "thread.pull-request-watch.sync"
           | "thread.pull-request.sync"
@@ -3318,6 +3382,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: command.type === "thread.pull-request-link.sync" ? thread.updatedAt : now,
           };
         }
+        case "thread.jira-issue.link":
+        case "thread.jira-issue.unlink":
+        case "thread.jira-issue.sync": {
+          const jiraIssues = decideThreadJiraIssues(thread.jiraIssues ?? [], command, now);
+          if (jiraIssues === null) return thread;
+          return {
+            ...thread,
+            jiraIssues,
+            updatedAt: command.type === "thread.jira-issue.sync" ? thread.updatedAt : now,
+          };
+        }
         case "thread.pull-request.watch":
         case "thread.pull-request-watch.sync": {
           const key = normalizeThreadPullRequestKey(command);
@@ -3503,6 +3578,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.pull-request.watch":
         case "thread.pull-request.sync":
           return "thread.pull-request-synced" as const;
+        case "thread.jira-issue.link":
+        case "thread.jira-issue.unlink":
+        case "thread.jira-issue.sync":
+          return "thread.jira-issues-synced" as const;
         case "thread.runtime-mode.set":
           return "thread.runtime-mode-updated" as const;
         case "thread.interaction-mode.set":
@@ -11272,6 +11351,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":
       case "thread.pull-request-link.sync":
+      case "thread.jira-issue.link":
+      case "thread.jira-issue.unlink":
+      case "thread.jira-issue.sync":
       case "thread.pull-request.watch":
       case "thread.pull-request.sync":
       case "thread.title.regeneration.complete":
