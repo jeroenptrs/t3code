@@ -168,6 +168,15 @@ are not. Those RPCs need `filesystem:read` or `terminal:read`, which only
 pairing credentials grant; such a session is still confined, see the
 filesystem boundary below.
 
+Server settings reach every session, Readers included, so a secret the server
+only uses must never be in what clients receive. A settings schema field marked with
+`secretSetting` is moved to the secret store and redacted by
+[`redactServerSettingsForClient`](../../apps/server/src/serverSettings.ts); an
+update that echoes the marker back keeps the saved value. Secret fields are found
+from the schema in
+[`settingsSecrets.ts`](../../apps/server/src/settingsSecrets.ts), so a new
+credential needs that annotation, and a new driver needs an entry there.
+
 ## The environment is the filesystem boundary
 
 For a session that can operate, projects are organizational boundaries, not
