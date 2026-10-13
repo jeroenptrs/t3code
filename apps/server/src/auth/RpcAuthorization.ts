@@ -141,6 +141,12 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsLabelCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.diffWalkthroughSubscribe]: AuthOrchestrationReadScope,
+  // Jira reads go out as the server's reader identity, never the caller's, so a read grant is enough.
+  [WS_METHODS.jiraCapabilities]: AuthOrchestrationReadScope,
+  [WS_METHODS.jiraFilters]: AuthOrchestrationReadScope,
+  [WS_METHODS.jiraFilter]: AuthOrchestrationReadScope,
+  [WS_METHODS.jiraSearch]: AuthOrchestrationReadScope,
+  [WS_METHODS.jiraIssue]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
