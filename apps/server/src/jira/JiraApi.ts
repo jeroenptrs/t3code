@@ -1,0 +1,388 @@
+import { JiraError } from "@t3tools/contracts";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
+
+import type { JiraServerIdentity } from "./JiraConfig.ts";
+
+/**
+ * Thin Jira Cloud REST v3 client. Reads only. Scoped tokens cannot call the Agile API, the
+ * Development panel, Automation or Dashboards, so nothing here does.
+ */
+
+const REQUEST_TIMEOUT = "15 seconds";
+const MAX_ERROR_MESSAGE_LENGTH = 500;
+
+// Raw response shapes. Only the parts we read are declared; Jira's extra fields are ignored.
+
+const RawUser = Schema.Struct({
+  accountId: Schema.optional(Schema.String),
+  displayName: Schema.optional(Schema.String),
+  avatarUrls: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
+export type JiraRawUser = typeof RawUser.Type;
+
+/** Issue fields stay untyped: which ones exist, and their ids for custom fields, vary per site. */
+const RawIssue = Schema.Struct({
+  id: Schema.String,
+  key: Schema.String,
+  fields: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+});
+export type JiraRawIssue = typeof RawIssue.Type;
+
+const RawSearchPage = Schema.Struct({
+  issues: Schema.optional(Schema.Array(RawIssue)),
+  nextPageToken: Schema.optional(Schema.NullOr(Schema.String)),
+});
+export type JiraRawSearchPage = typeof RawSearchPage.Type;
+
+const RawBulkFetch = Schema.Struct({
+  issues: Schema.optional(Schema.Array(RawIssue)),
+});
+
+const RawTransition = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  to: Schema.optional(
+    Schema.Struct({
+      name: Schema.optional(Schema.String),
+      statusCategory: Schema.optional(Schema.Struct({ key: Schema.optional(Schema.String) })),
+    }),
+  ),
+});
+export type JiraRawTransition = typeof RawTransition.Type;
+
+const RawTransitions = Schema.Struct({
+  transitions: Schema.optional(Schema.Array(RawTransition)),
+});
+
+const RawComment = Schema.Struct({
+  id: Schema.String,
+  author: Schema.optional(Schema.NullOr(RawUser)),
+  body: Schema.optional(Schema.Unknown),
+  created: Schema.optional(Schema.String),
+  updated: Schema.optional(Schema.String),
+});
+export type JiraRawComment = typeof RawComment.Type;
+
+const RawComments = Schema.Struct({
+  comments: Schema.optional(Schema.Array(RawComment)),
+  total: Schema.optional(Schema.Number),
+});
+export type JiraRawComments = typeof RawComments.Type;
+
+const RawFilter = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  jql: Schema.optional(Schema.String),
+  owner: Schema.optional(Schema.NullOr(RawUser)),
+  favourite: Schema.optional(Schema.Boolean),
+});
+export type JiraRawFilter = typeof RawFilter.Type;
+
+const RawFilterPage = Schema.Struct({
+  values: Schema.optional(Schema.Array(RawFilter)),
+});
+
+const RawField = Schema.Struct({
+  id: Schema.String,
+  name: Schema.optional(Schema.String),
+  custom: Schema.optional(Schema.Boolean),
+  schema: Schema.optional(
+    Schema.Struct({ type: Schema.optional(Schema.String), custom: Schema.optional(Schema.String) }),
+  ),
+});
+export type JiraRawField = typeof RawField.Type;
+
+const RawErrorBody = Schema.Struct({
+  errorMessages: Schema.optional(Schema.Array(Schema.String)),
+  errors: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+});
+const decodeErrorBody = Schema.decodeUnknownOption(RawErrorBody);
+const decodeRawUser = Schema.decodeUnknownEffect(RawUser);
+const decodeRawSearchPage = Schema.decodeUnknownEffect(RawSearchPage);
+const decodeRawBulkFetch = Schema.decodeUnknownEffect(RawBulkFetch);
+const decodeRawIssue = Schema.decodeUnknownEffect(RawIssue);
+const decodeRawTransitions = Schema.decodeUnknownEffect(RawTransitions);
+const decodeRawComments = Schema.decodeUnknownEffect(RawComments);
+const decodeRawFilterPage = Schema.decodeUnknownEffect(RawFilterPage);
+const decodeRawFilter = Schema.decodeUnknownEffect(RawFilter);
+const decodeRawFilters = Schema.decodeUnknownEffect(Schema.Array(RawFilter));
+const decodeRawFields = Schema.decodeUnknownEffect(Schema.Array(RawField));
+
+export class JiraApi extends Context.Service<
+  JiraApi,
+  {
+    readonly myself: (identity: JiraServerIdentity) => Effect.Effect<JiraRawUser, JiraError>;
+    /** `POST /rest/api/3/search/jql`, the enhanced search; `/search` is deprecated. */
+    readonly searchJql: (
+      identity: JiraServerIdentity,
+      input: {
+        readonly jql: string;
+        readonly fields: ReadonlyArray<string>;
+        readonly maxResults: number;
+        readonly nextPageToken?: string | undefined;
+      },
+    ) => Effect.Effect<JiraRawSearchPage, JiraError>;
+    /**
+     * `POST /rest/api/3/issue/bulkfetch`, at most 100 keys. Issues that do not exist or that the
+     * identity cannot see are left out, where a `key in (...)` JQL would reject the whole query.
+     */
+    readonly bulkFetch: (
+      identity: JiraServerIdentity,
+      input: { readonly keys: ReadonlyArray<string>; readonly fields: ReadonlyArray<string> },
+    ) => Effect.Effect<ReadonlyArray<JiraRawIssue>, JiraError>;
+    readonly getIssue: (
+      identity: JiraServerIdentity,
+      key: string,
+      options: { readonly fields: ReadonlyArray<string>; readonly expand?: string | undefined },
+    ) => Effect.Effect<JiraRawIssue, JiraError>;
+    readonly getTransitions: (
+      identity: JiraServerIdentity,
+      key: string,
+    ) => Effect.Effect<ReadonlyArray<JiraRawTransition>, JiraError>;
+    readonly getComments: (
+      identity: JiraServerIdentity,
+      key: string,
+      options: { readonly maxResults: number; readonly orderBy: "-created" | "created" },
+    ) => Effect.Effect<JiraRawComments, JiraError>;
+    /** `GET /rest/api/3/filter/search`: filters visible to the identity, by name or owner. */
+    readonly searchFilters: (
+      identity: JiraServerIdentity,
+      input: {
+        readonly filterName?: string | undefined;
+        readonly accountId?: string | undefined;
+        readonly maxResults: number;
+      },
+    ) => Effect.Effect<ReadonlyArray<JiraRawFilter>, JiraError>;
+    /** `GET /rest/api/3/filter/favourite`. */
+    readonly favouriteFilters: (
+      identity: JiraServerIdentity,
+    ) => Effect.Effect<ReadonlyArray<JiraRawFilter>, JiraError>;
+    readonly getFilter: (
+      identity: JiraServerIdentity,
+      id: string,
+    ) => Effect.Effect<JiraRawFilter, JiraError>;
+    readonly getFields: (
+      identity: JiraServerIdentity,
+    ) => Effect.Effect<ReadonlyArray<JiraRawField>, JiraError>;
+  }
+>()("t3/jira/JiraApi") {}
+
+const FILTER_EXPAND = "jql,owner,favourite,viewUrl";
+
+/** Scoped tokens only work through the API gateway; basic auth talks to the site itself. */
+const baseUrl = (identity: JiraServerIdentity) =>
+  identity.authMethod === "scoped-token"
+    ? `https://api.atlassian.com/ex/jira/${encodeURIComponent(identity.cloudId ?? "")}`
+    : `https://${identity.site}`;
+
+const authorize = (identity: JiraServerIdentity) =>
+  identity.authMethod === "scoped-token"
+    ? HttpClientRequest.bearerToken(identity.token)
+    : HttpClientRequest.basicAuth(identity.email ?? "", identity.token);
+
+const truncate = (text: string) =>
+  text.length > MAX_ERROR_MESSAGE_LENGTH ? `${text.slice(0, MAX_ERROR_MESSAGE_LENGTH - 1)}…` : text;
+
+/** Jira reports rejected JQL and bad input as `errorMessages` and per-field `errors`. */
+const jiraErrorText = (body: unknown) =>
+  Option.match(decodeErrorBody(body), {
+    onNone: () => "",
+    onSome: (value) =>
+      [...(value.errorMessages ?? []), ...Object.values(value.errors ?? {})]
+        .map((message) => message.trim())
+        .filter((message) => message.length > 0)
+        .join(" "),
+  });
+
+const statusError = (
+  identity: JiraServerIdentity,
+  response: HttpClientResponse.HttpClientResponse,
+) =>
+  Effect.gen(function* () {
+    const body = yield* response.json.pipe(Effect.orElseSucceed(() => null));
+    const text = jiraErrorText(body);
+    switch (response.status) {
+      case 400:
+        return new JiraError({
+          reason: "invalid",
+          message: truncate(text || "Jira rejected the request."),
+        });
+      case 401:
+        return new JiraError({
+          reason: "unauthorized",
+          message: `Jira rejected the credentials of identity ${identity.name}.`,
+        });
+      case 403:
+        return new JiraError({
+          reason: "forbidden",
+          message: truncate(
+            text || `Identity ${identity.name} is not allowed to read this from Jira.`,
+          ),
+        });
+      case 404:
+        return new JiraError({
+          reason: "not-found",
+          message: truncate(text || `Not found, or not visible to identity ${identity.name}.`),
+        });
+      default:
+        return new JiraError({
+          reason: "unavailable",
+          message: `Jira at ${identity.site} answered HTTP ${response.status}.`,
+        });
+    }
+  });
+
+const make = Effect.gen(function* () {
+  const http = yield* HttpClient.HttpClient;
+
+  const request = <A>(
+    identity: JiraServerIdentity,
+    build: HttpClientRequest.HttpClientRequest,
+    decode: (body: unknown) => Effect.Effect<A, Schema.SchemaError>,
+  ): Effect.Effect<A, JiraError> =>
+    Effect.gen(function* () {
+      const response = yield* http.execute(
+        build.pipe(
+          HttpClientRequest.prependUrl(baseUrl(identity)),
+          HttpClientRequest.acceptJson,
+          authorize(identity),
+        ),
+      );
+      if (response.status < 200 || response.status >= 300) {
+        const error = yield* statusError(identity, response);
+        return yield* error;
+      }
+      const body = yield* response.json;
+      return yield* decode(body);
+    }).pipe(
+      Effect.timeout(REQUEST_TIMEOUT),
+      Effect.catchTags({
+        HttpClientError: () =>
+          Effect.fail(
+            new JiraError({
+              reason: "unavailable",
+              message: `Could not reach Jira at ${identity.site}.`,
+            }),
+          ),
+        SchemaError: () =>
+          Effect.fail(
+            new JiraError({
+              reason: "unavailable",
+              message: `Jira at ${identity.site} returned an unexpected response.`,
+            }),
+          ),
+        TimeoutError: () =>
+          Effect.fail(
+            new JiraError({
+              reason: "unavailable",
+              message: `Jira at ${identity.site} did not answer in time.`,
+            }),
+          ),
+      }),
+    );
+
+  return JiraApi.of({
+    myself: (identity) =>
+      request(identity, HttpClientRequest.get("/rest/api/3/myself"), decodeRawUser).pipe(
+        Effect.withSpan("JiraApi.myself"),
+      ),
+    searchJql: (identity, input) =>
+      request(
+        identity,
+        HttpClientRequest.post("/rest/api/3/search/jql").pipe(
+          HttpClientRequest.bodyJsonUnsafe({
+            jql: input.jql,
+            fields: input.fields,
+            maxResults: input.maxResults,
+            ...(input.nextPageToken === undefined ? {} : { nextPageToken: input.nextPageToken }),
+          }),
+        ),
+        decodeRawSearchPage,
+      ).pipe(Effect.withSpan("JiraApi.searchJql")),
+    bulkFetch: (identity, input) =>
+      request(
+        identity,
+        HttpClientRequest.post("/rest/api/3/issue/bulkfetch").pipe(
+          HttpClientRequest.bodyJsonUnsafe({ issueIdsOrKeys: input.keys, fields: input.fields }),
+        ),
+        decodeRawBulkFetch,
+      ).pipe(
+        Effect.map((result) => result.issues ?? []),
+        Effect.withSpan("JiraApi.bulkFetch"),
+      ),
+    getIssue: (identity, key, options) =>
+      request(
+        identity,
+        HttpClientRequest.get(`/rest/api/3/issue/${encodeURIComponent(key)}`).pipe(
+          HttpClientRequest.setUrlParams({
+            fields: options.fields.join(","),
+            ...(options.expand === undefined ? {} : { expand: options.expand }),
+          }),
+        ),
+        decodeRawIssue,
+      ).pipe(Effect.withSpan("JiraApi.getIssue")),
+    getTransitions: (identity, key) =>
+      request(
+        identity,
+        HttpClientRequest.get(`/rest/api/3/issue/${encodeURIComponent(key)}/transitions`),
+        decodeRawTransitions,
+      ).pipe(
+        Effect.map((result) => result.transitions ?? []),
+        Effect.withSpan("JiraApi.getTransitions"),
+      ),
+    getComments: (identity, key, options) =>
+      request(
+        identity,
+        HttpClientRequest.get(`/rest/api/3/issue/${encodeURIComponent(key)}/comment`).pipe(
+          HttpClientRequest.setUrlParams({
+            maxResults: String(options.maxResults),
+            orderBy: options.orderBy,
+          }),
+        ),
+        decodeRawComments,
+      ).pipe(Effect.withSpan("JiraApi.getComments")),
+    searchFilters: (identity, input) =>
+      request(
+        identity,
+        HttpClientRequest.get("/rest/api/3/filter/search").pipe(
+          HttpClientRequest.setUrlParams({
+            expand: FILTER_EXPAND,
+            maxResults: String(input.maxResults),
+            ...(input.filterName === undefined ? {} : { filterName: input.filterName }),
+            ...(input.accountId === undefined ? {} : { accountId: input.accountId }),
+          }),
+        ),
+        decodeRawFilterPage,
+      ).pipe(
+        Effect.map((page) => page.values ?? []),
+        Effect.withSpan("JiraApi.searchFilters"),
+      ),
+    favouriteFilters: (identity) =>
+      request(
+        identity,
+        HttpClientRequest.get("/rest/api/3/filter/favourite").pipe(
+          HttpClientRequest.setUrlParams({ expand: FILTER_EXPAND }),
+        ),
+        decodeRawFilters,
+      ).pipe(Effect.withSpan("JiraApi.favouriteFilters")),
+    getFilter: (identity, id) =>
+      request(
+        identity,
+        HttpClientRequest.get(`/rest/api/3/filter/${encodeURIComponent(id)}`).pipe(
+          HttpClientRequest.setUrlParams({ expand: FILTER_EXPAND }),
+        ),
+        decodeRawFilter,
+      ).pipe(Effect.withSpan("JiraApi.getFilter")),
+    getFields: (identity) =>
+      request(identity, HttpClientRequest.get("/rest/api/3/field"), decodeRawFields).pipe(
+        Effect.withSpan("JiraApi.getFields"),
+      ),
+  });
+});
+
+export const layer = Layer.effect(JiraApi, make);
