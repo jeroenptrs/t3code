@@ -69,6 +69,25 @@ const assertDiffWalkthroughSchema = Effect.gen(function* () {
   );
 });
 
+const assertThreadJiraIssuesSchema = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const columns = yield* sql<{ readonly name: string; readonly pk: number }>`
+    PRAGMA table_info(fork_projection_thread_jira_issues)
+  `;
+  assert.deepStrictEqual(
+    columns.map(({ name, pk }) => [name, pk]),
+    [
+      ["thread_id", 1],
+      ["site", 2],
+      ["issue_key", 3],
+      ["source", 0],
+      ["linked_at", 0],
+      ["linked_by_user_id", 0],
+      ["snapshot_json", 0],
+    ],
+  );
+});
+
 it.effect("server startup records upstream and fork migrations in separate ledgers", () =>
   Effect.gen(function* () {
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
@@ -76,6 +95,7 @@ it.effect("server startup records upstream and fork migrations in separate ledge
     yield* assertEntraSchema;
     yield* assertScheduledTaskAuditSchema;
     yield* assertDiffWalkthroughSchema;
+    yield* assertThreadJiraIssuesSchema;
     assert.deepStrictEqual(yield* runForkMigrations(), []);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
@@ -90,11 +110,13 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [4, "WebhookDeliveryDispatchedAt"],
       [5, "DiffWalkthroughs"],
       [6, "DiffWalkthroughGuideShape"],
+      [7, "ProjectionThreadJiraIssues"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
     yield* assertScheduledTaskAuditSchema;
     yield* assertDiffWalkthroughSchema;
+    yield* assertThreadJiraIssuesSchema;
   }).pipe(Effect.provide(memoryDatabase())),
 );
 
@@ -184,7 +206,9 @@ it.effect("rewrites stored walkthroughs into the guided review vocabulary", () =
         '2026-10-01T00:00:00.000Z'
       )
     `;
-    assert.deepStrictEqual(yield* runForkMigrations(), [[6, "DiffWalkthroughGuideShape"]]);
+    assert.deepStrictEqual(yield* runForkMigrations({ toMigrationInclusive: 6 }), [
+      [6, "DiffWalkthroughGuideShape"],
+    ]);
     const rows = yield* sql<{ readonly walkthroughJson: string }>`
       SELECT walkthrough_json AS "walkthroughJson" FROM fork_diff_walkthroughs
     `;
