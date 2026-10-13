@@ -1,7 +1,8 @@
 // Jira issue key: project key of 2+ chars, then a number without leading zero. Like GitLab's
 // Jira integration, the match may not touch a letter or digit on either side, so `ABC-12x` and
-// `fooABC-1` are ignored while `ABC-123-fix` and `feature/ABC-123` match.
-const TEXT_KEY = /(?<![A-Za-z0-9])[A-Z][A-Z0-9]+-[1-9]\d*(?![A-Za-z0-9])/g;
+// `fooABC-1` are ignored while `ABC-123-fix` and `feature/ABC-123` match. Project keys may hold
+// `_` after their first letter in prose; in branches `_` stays a separator, so `abc-1_fix` works.
+const TEXT_KEY = /(?<![A-Za-z0-9_])[A-Z][A-Z0-9_]+-[1-9]\d*(?![A-Za-z0-9])/g;
 const BRANCH_KEY = /(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9]+-[1-9]\d*(?![A-Za-z0-9])/g;
 
 // Lowercase branch names make ordinary tokens look like keys: `utf-8` and friends, versions
@@ -37,12 +38,14 @@ export function parseJiraIssueKeysFrom(texts: ReadonlyArray<string | null | unde
   return [...new Set(texts.flatMap((text) => (text ? parseJiraIssueKeys(text) : [])))];
 }
 
-/** The single key a branch name carries, or null when it carries none or several distinct ones. */
+/**
+ * The key a branch name carries, or null when it carries none. Keys conventionally come first, so
+ * the leftmost wins: `abc-123-bump-react-to-19` is ABC-123, not TO-19.
+ */
 export function jiraIssueKeyFromBranch(branch: string): string | null {
-  const keys = new Set(
+  return (
     (branch.match(BRANCH_KEY) ?? [])
       .map((key) => key.toUpperCase())
-      .filter((key) => !isBranchFalsePositive(key)),
+      .find((key) => !isBranchFalsePositive(key)) ?? null
   );
-  return keys.size === 1 ? ([...keys][0] ?? null) : null;
 }
