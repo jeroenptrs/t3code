@@ -1178,3 +1178,33 @@ export const unlinkThreadPullRequest = Effect.fn("EnvironmentCommands.unlinkThre
     });
   },
 );
+
+/** Fork-only. The server records the session's user as `linkedByUserId`, whatever is sent. */
+export type LinkThreadJiraIssueInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.jira-issue.link" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export type UnlinkThreadJiraIssueInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.jira-issue.unlink" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export const linkThreadJiraIssue = Effect.fn("EnvironmentCommands.linkThreadJiraIssue")(function* (
+  input: LinkThreadJiraIssueInput,
+) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.jira-issue.link",
+    commandId: yield* allocateCommandId(input),
+  });
+});
+export const unlinkThreadJiraIssue = Effect.fn("EnvironmentCommands.unlinkThreadJiraIssue")(
+  function* (input: UnlinkThreadJiraIssueInput) {
+    return yield* dispatch({
+      ...input,
+      type: "thread.jira-issue.unlink",
+      commandId: yield* allocateCommandId(input),
+    });
+  },
+);
