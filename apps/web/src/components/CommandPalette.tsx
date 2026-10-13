@@ -218,6 +218,9 @@ import { Checkbox } from "./ui/checkbox";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
+import { openJiraIssueDialog } from "./jira/LinkJiraIssueDialog";
+import { JiraIcon } from "./Icons";
+import { useJiraIssueLinking } from "../hooks/useJiraIssueLinking";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
 import { searchSettings, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
@@ -788,6 +791,7 @@ function OpenCommandPaletteDialog(props: {
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
+  const activeThreadJira = useJiraIssueLinking(activeThread?.environmentId ?? null);
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -1744,6 +1748,32 @@ function OpenCommandPaletteDialog(props: {
         },
       });
     }
+  }
+
+  if (activeThread !== null && activeThreadJira.configured) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    if (activeThreadJira.canLink) {
+      actionItems.push({
+        kind: "action",
+        value: "action:link-jira-issue",
+        searchTerms: ["link", "jira", "issue", "ticket", "attach"],
+        title: "Link Jira issue…",
+        icon: <JiraIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          openJiraIssueDialog(threadRef, "link");
+        },
+      });
+    }
+    actionItems.push({
+      kind: "action",
+      value: "action:open-jira-issue",
+      searchTerms: ["open", "jira", "issue", "ticket"],
+      title: "Open Jira issue…",
+      icon: <JiraIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openJiraIssueDialog(threadRef, "open");
+      },
+    });
   }
 
   if (activeThread !== null) {
