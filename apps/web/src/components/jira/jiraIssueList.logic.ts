@@ -175,13 +175,15 @@ export function countJiraFacetSelection(selection: JiraIssueFacetSelection): num
 /**
  * A branch name carrying the key, named the way the project names branches. Custom naming hands
  * a model free-form instructions, which a key and summary cannot follow, so it gets the plain
- * sanitized name. Sanitizing lowercases the key; the server matches keys case-insensitively.
+ * sanitized name. Sanitizing lowercases the key; the server matches keys case-insensitively and
+ * takes the leftmost, so the key leads the last path segment and a `/` in the summary does not
+ * start a new one.
  */
 export function proposeJiraIssueBranchName(
   issue: Pick<JiraIssueSummary, "key" | "summary">,
   naming: BranchNamingOptions,
 ): string {
-  const raw = `${issue.key}-${issue.summary}`;
+  const raw = `${issue.key}-${issue.summary.replaceAll("/", " ")}`;
   return formatGeneratedBranchName(raw, naming.mode === "custom" ? undefined : naming);
 }
 
