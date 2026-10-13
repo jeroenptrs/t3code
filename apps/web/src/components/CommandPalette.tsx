@@ -221,6 +221,7 @@ import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { openJiraIssueDialog } from "./jira/LinkJiraIssueDialog";
 import { JiraIcon } from "./Icons";
 import { useJiraIssueLinking } from "../hooks/useJiraIssueLinking";
+import { useJiraCapabilities, useJiraEnvironmentId } from "../state/jira";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
 import { searchSettings, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
@@ -792,6 +793,7 @@ function OpenCommandPaletteDialog(props: {
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
   const activeThreadJira = useJiraIssueLinking(activeThread?.environmentId ?? null);
+  const workspaceJiraConfigured = useJiraCapabilities(useJiraEnvironmentId())?.configured === true;
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -2064,6 +2066,19 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.pullRequest className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({ to: "/pull-requests", search: readPullRequestListPreferences() });
+      },
+    });
+  }
+
+  if (workspaceJiraConfigured) {
+    actionItems.push({
+      kind: "action",
+      value: "action:jira-issues",
+      searchTerms: ["issues", "jira", "tickets", "backlog", "sprint", "filter", "jql"],
+      title: "Open Jira issues",
+      icon: <JiraIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/issues" });
       },
     });
   }
