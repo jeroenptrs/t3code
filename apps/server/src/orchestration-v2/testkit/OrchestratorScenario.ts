@@ -150,6 +150,8 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.pull-request.link":
     case "thread.pull-request.unlink":
     case "thread.pull-request-link.sync":
+    case "thread.jira-issue.link":
+    case "thread.jira-issue.unlink":
     case "thread.pull-request.watch":
     case "thread.pull-request.sync":
     case "thread.title.regeneration.complete":
