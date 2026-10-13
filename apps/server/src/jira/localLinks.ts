@@ -124,7 +124,8 @@ interface PullRequestLinkRow {
 export const listJiraIssuePullRequests = Effect.fn("listJiraIssuePullRequests")(
   function* (input: JiraIssueKey) {
     const sql = yield* SqlClient.SqlClient;
-    // Issue keys are `[A-Z][A-Z0-9]+-[0-9]+`, so the key carries no LIKE wildcards.
+    // A `_` in a project key is a LIKE wildcard, which only widens this narrowing; the exact
+    // parse below decides.
     const pattern = `%${input.key}%`;
     const rows = yield* sql<PullRequestLinkRow>`
       SELECT t.thread_id AS "threadId",
