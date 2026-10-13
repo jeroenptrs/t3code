@@ -134,7 +134,7 @@ import {
   JiraFiltersInput,
   JiraFiltersResult,
   JiraIssueDetail,
-  JiraIssueKey,
+  JiraIssueInput,
   JiraSearchInput,
   JiraSearchResult,
 } from "./jira.ts";
@@ -1309,7 +1309,7 @@ const WsJiraSearchRpc = Rpc.make(WS_METHODS.jiraSearch, {
 });
 
 const WsJiraIssueRpc = Rpc.make(WS_METHODS.jiraIssue, {
-  payload: JiraIssueKey,
+  payload: JiraIssueInput,
   success: JiraIssueDetail,
   error: JiraRpcError,
 });
