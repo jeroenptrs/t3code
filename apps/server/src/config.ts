@@ -9,6 +9,7 @@ import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
+import type { JiraConfig } from "./jira/JiraConfig.ts";
 import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import packageJson from "../package.json" with { type: "json" };
@@ -106,6 +107,8 @@ export class ServerConfig extends Context.Service<
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
     readonly entraSignIn?: EntraSignInConfig | undefined;
+    /** Fork-only Jira identities; absent when Jira is not configured. */
+    readonly jira?: JiraConfig | undefined;
   }
 >()("t3/config/ServerConfig") {
   static readonly layerTest = (
