@@ -41,7 +41,8 @@ class Read {
 
 /**
  * In-memory cache for Jira reads, keyed by kind and a caller-built key that names the identity
- * and the request. A key must always map to the same value type within its kind.
+ * and the request. A key must always map to the same value type within its kind. `refresh` runs
+ * a fresh lookup, joining neither a stored nor an in-flight one, and stores its result.
  */
 export class JiraReadCache extends Context.Service<
   JiraReadCache,
@@ -50,6 +51,7 @@ export class JiraReadCache extends Context.Service<
       kind: JiraReadKind,
       key: string,
       lookup: Effect.Effect<A, JiraError>,
+      options?: { readonly refresh?: boolean | undefined },
     ) => Effect.Effect<A, JiraError>;
   }
 >()("t3/jira/JiraReadCache") {}
@@ -60,9 +62,18 @@ export const make = Effect.gen(function* () {
     timeToLive: (exit, read) => (Exit.isSuccess(exit) ? JIRA_READ_TTL[read.kind] : Duration.zero),
   });
   return JiraReadCache.of({
-    get: <A>(kind: JiraReadKind, key: string, lookup: Effect.Effect<A, JiraError>) =>
+    get: <A>(
+      kind: JiraReadKind,
+      key: string,
+      lookup: Effect.Effect<A, JiraError>,
+      options?: { readonly refresh?: boolean | undefined },
+    ) => {
+      const read = new Read(kind, key, lookup);
       // The key namespace is per kind and per request, so the stored value is the lookup's `A`.
-      Cache.get(cache, new Read(kind, key, lookup)) as Effect.Effect<A, JiraError>,
+      return (
+        options?.refresh ? Cache.refresh(cache, read) : Cache.get(cache, read)
+      ) as Effect.Effect<A, JiraError>;
+    },
   });
 });
 
