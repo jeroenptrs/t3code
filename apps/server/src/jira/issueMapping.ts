@@ -114,7 +114,8 @@ const toSprints = (value: unknown): Array<JiraSprint> =>
 
 const nameOf = (value: unknown) => (isRecord(value) ? stringOrNull(value.name) : null);
 
-const browseUrl = (site: string, key: string) => `https://${site}/browse/${key}`;
+/** The issue's page on its site. */
+export const browseUrl = (site: string, key: string) => `https://${site}/browse/${key}`;
 
 /** One raw issue as a row. `site` is the lowercase host the issue was read from. */
 export const toIssueSummary = (
