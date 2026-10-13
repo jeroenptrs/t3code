@@ -8,6 +8,7 @@ import {
   type JiraFiltersResult,
   type JiraFilterView,
   type JiraIssueDetail,
+  type JiraIssueInput,
   type JiraIssueKey,
   type JiraIssueSummary,
   type JiraLinkedPullRequest,
@@ -66,14 +67,14 @@ export class JiraService extends Context.Service<
       input: JiraFilterInput,
       options?: JiraRequestOptions,
     ) => Effect.Effect<JiraFilterView, JiraError>;
-    /** One page of a saved filter's issues, or of ad-hoc JQL. */
+    /** One page of a saved filter's issues, or of ad-hoc JQL. `refresh` re-reads the filter too. */
     readonly search: (
       input: JiraSearchInput,
       options?: JiraRequestOptions,
     ) => Effect.Effect<JiraSearchResult, JiraError>;
     /** The issue with comments and transitions, joined with the threads and pull requests T3 links to it. */
     readonly issue: (
-      input: JiraIssueKey,
+      input: JiraIssueInput,
       options?: JiraRequestOptions,
     ) => Effect.Effect<JiraIssueDetail, JiraError>;
     /** Rows for many keys on one site; issues the identity cannot see are absent. */
@@ -120,16 +121,18 @@ const make = Effect.gen(function* () {
   const myself = (identity: JiraServerIdentity) =>
     cache.get("myself", cacheKey(identity), api.myself(identity));
 
-  const filterById = (identity: JiraServerIdentity, id: string) =>
+  const filterById = (identity: JiraServerIdentity, id: string, refresh?: boolean) =>
     cache.get(
       "filter",
       cacheKey(identity, id),
       api.getFilter(identity, id).pipe(Effect.map((filter) => toFilterView(filter, identity.site))),
+      { refresh },
     );
 
   const searchPage = (
     identity: JiraServerIdentity,
     request: { readonly jql: string; readonly maxResults: number; readonly nextPageToken?: string },
+    refresh: boolean | undefined,
   ) =>
     cache.get(
       "search",
@@ -144,6 +147,7 @@ const make = Effect.gen(function* () {
           nextPageToken: page.nextPageToken ?? null,
         };
       }),
+      { refresh },
     );
 
   const capabilities: JiraService["Service"]["capabilities"] = Effect.fn(
@@ -225,16 +229,22 @@ const make = Effect.gen(function* () {
       }
       const reader = yield* identities.reader;
       const savedFilter =
-        input.filterId === undefined ? null : yield* filterById(reader, input.filterId);
+        input.filterId === undefined
+          ? null
+          : yield* filterById(reader, input.filterId, input.refresh);
       const jql = savedFilter?.jql ?? input.jql ?? "";
       if (jql.trim().length === 0) {
         return yield* new JiraError({ reason: "invalid", message: "The filter has no JQL." });
       }
-      const page = yield* searchPage(reader, {
-        jql,
-        maxResults: input.maxResults ?? DEFAULT_SEARCH_PAGE_SIZE,
-        ...(input.nextPageToken === undefined ? {} : { nextPageToken: input.nextPageToken }),
-      });
+      const page = yield* searchPage(
+        reader,
+        {
+          jql,
+          maxResults: input.maxResults ?? DEFAULT_SEARCH_PAGE_SIZE,
+          ...(input.nextPageToken === undefined ? {} : { nextPageToken: input.nextPageToken }),
+        },
+        input.refresh,
+      );
       return { ...page, filter: savedFilter };
     },
   );
@@ -284,6 +294,7 @@ const make = Effect.gen(function* () {
             transitions: transitions.map(toTransition),
           };
         }),
+        { refresh: input.refresh },
       );
       const key = { site: identity.site, key: input.key };
       const [threads, pullRequests] = yield* Effect.all(
