@@ -22,6 +22,7 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "side-chat",
+  "jira-issue",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -83,7 +84,9 @@ export type RightPanelSurface =
       tabRequest?: { tab: PullRequestDetailTab; requestId: number };
     }
   | { id: "pull-requests"; kind: "pull-requests" }
-  | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
+  | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId }
+  /** Fork-only. A Jira issue read through the thread environment's reader identity. */
+  | { id: `jira-issue:${string}`; kind: "jira-issue"; site: string; key: string };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 14;
@@ -130,7 +133,7 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat" | "jira-issue">,
   ) => void;
   openSideChat: (ref: ScopedThreadRef, threadId: ThreadId) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
@@ -165,6 +168,7 @@ interface RightPanelStoreState {
     surfaceId: string,
     detailTab: PullRequestDetailTab,
   ) => void;
+  openJiraIssue: (ref: ScopedThreadRef, issue: { site: string; key: string }) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -192,7 +196,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat" | "jira-issue">,
   ) => void;
   setThreadPanelOpen: (
     ref: ScopedThreadRef,
@@ -215,7 +219,7 @@ const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "side-chat">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "side-chat" | "jira-issue">,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -301,6 +305,15 @@ export function pullRequestSurface(target: {
     ...(typeof target.url === "string" ? { url: target.url } : {}),
     ...(target.detailTab === undefined ? {} : { detailTab: target.detailTab }),
   };
+}
+
+export type JiraIssueSurface = Extract<RightPanelSurface, { kind: "jira-issue" }>;
+
+/** One tab per issue; the site leads so the same key on two sites stays two tabs. */
+export function jiraIssueSurface(issue: { site: string; key: string }): JiraIssueSurface {
+  const site = issue.site.toLowerCase();
+  const key = issue.key.toUpperCase();
+  return { id: `jira-issue:${site}/${key}`, kind: "jira-issue", site, key };
 }
 
 const upsertSurface = (
@@ -534,6 +547,11 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                           ...(typeof environmentId === "string" ? { environmentId } : {}),
                         }),
                       ];
+                    }
+                    if (surface.kind === "jira-issue") {
+                      return typeof surface.site === "string" && typeof surface.key === "string"
+                        ? [jiraIssueSurface(surface)]
+                        : [];
                     }
                     if (surface.kind !== "terminal") return [surface];
                     if (
@@ -794,6 +812,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             ),
           }));
         }),
+      openJiraIssue: (ref, issue) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, jiraIssueSurface(issue)),
+          ),
+        ),
       openFile: (ref, requestedPath, line) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
