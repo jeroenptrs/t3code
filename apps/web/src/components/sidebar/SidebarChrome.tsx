@@ -15,6 +15,8 @@ import {
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
+import { useJiraCapabilities, useJiraEnvironmentId } from "../../state/jira";
+import { JiraIcon } from "../Icons";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -236,6 +238,8 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   });
   const pullRequestsSupported = usePullRequestsSupported();
   const issuesSupported = useIssuesSupported();
+  // Fork-only. Gated like Pull Requests: hidden until the server says Jira is set up.
+  const jiraConfigured = useJiraCapabilities(useJiraEnvironmentId())?.configured === true;
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -251,6 +255,10 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const handleIssuesClick = () => {
     closeMobileSidebar();
     void navigate({ to: "/issues", search: readIssueListPreferences() });
+  };
+  const handleJiraClick = () => {
+    closeMobileSidebar();
+    void navigate({ to: "/jira" });
   };
   const handleSettingsClick = () => {
     closeMobileSidebar();
@@ -300,6 +308,9 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               label={gt("Issues", { $context: "sidebar link to the list of issues" })}
               onClick={handleIssuesClick}
             />
+          ) : null}
+          {jiraConfigured ? (
+            <SidebarUtilityItem icon={<JiraIcon />} label="Jira" onClick={handleJiraClick} />
           ) : null}
           <SidebarUtilityItem
             icon={<ChartNoAxesColumnIcon />}

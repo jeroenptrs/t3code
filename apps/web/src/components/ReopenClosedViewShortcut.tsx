@@ -27,6 +27,7 @@ import {
 } from "../reopenClosedView";
 import {
   ISSUES_PANEL_REF,
+  JIRA_ISSUES_PANEL_REF,
   PULL_REQUESTS_PANEL_REF,
   selectActiveRightPanel,
   selectSelectedRightPanelSurface,
@@ -75,6 +76,10 @@ const isGlobalPullRequests = (ref: ScopedThreadRef) =>
 const isGlobalIssues = (ref: ScopedThreadRef) =>
   scopedThreadKey(ref) === scopedThreadKey(ISSUES_PANEL_REF);
 
+/** Fork-only. Tabs closed on the `/jira` page reopen there. */
+const isGlobalJiraIssues = (ref: ScopedThreadRef) =>
+  scopedThreadKey(ref) === scopedThreadKey(JIRA_ISSUES_PANEL_REF);
+
 export function ReopenClosedViewShortcut() {
   const gt = useGT();
   const navigate = useNavigate();
@@ -111,7 +116,7 @@ export function ReopenClosedViewShortcut() {
     const { drop, restore } = planNextReopen(useClosedViewStore.getState().entries, (entry) => {
       const ref = entry.threadRef;
       const panel = selectThreadRightPanelState(panelsByThread, ref);
-      if (isGlobalPullRequests(ref) || isGlobalIssues(ref)) {
+      if (isGlobalPullRequests(ref) || isGlobalIssues(ref) || isGlobalJiraIssues(ref)) {
         return {
           environmentKnown: true,
           catalogReady: true,
@@ -143,7 +148,9 @@ export function ReopenClosedViewShortcut() {
     const ref = restore.threadRef;
     const globalPullRequests = isGlobalPullRequests(ref);
     const globalIssues = isGlobalIssues(ref);
-    const thread = globalPullRequests || globalIssues ? null : readThreadShell(ref);
+    const globalJiraIssues = isGlobalJiraIssues(ref);
+    const thread =
+      globalPullRequests || globalIssues || globalJiraIssues ? null : readThreadShell(ref);
     const owner = thread ?? drafts.getDraftThreadByRef(ref);
     const project = owner ? readProject(scopeProjectRef(ref.environmentId, owner.projectId)) : null;
     if (!(await reopenClosedView(restore, { openPreview, workspaceAvailable: project !== null }))) {
@@ -165,6 +172,8 @@ export function ReopenClosedViewShortcut() {
       });
     } else if (globalIssues) {
       destination = linkOptions({ to: "/issues", search: readIssueListPreferences() });
+    } else if (globalJiraIssues) {
+      destination = linkOptions({ to: "/jira" });
     } else {
       const draftId = thread === null ? drafts.getDraftIdByRef(ref) : null;
       destination =
