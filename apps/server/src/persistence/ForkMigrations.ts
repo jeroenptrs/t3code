@@ -23,7 +23,8 @@
  * `scheduled_task_webhook_deliveries.dispatched_at` (004).
  *
  * Fork-owned tables: `auth_users`, `auth_user_access_changes` (001);
- * `fork_diff_walkthroughs` (005, documents rewritten by 006).
+ * `fork_diff_walkthroughs` (005, documents rewritten by 006);
+ * `fork_projection_thread_jira_issues` (007).
  */
 
 import * as Migrator from "effect/sql/Migrator";
@@ -38,6 +39,7 @@ import ForkMigration0003 from "./ForkMigrations/003_ScheduledTaskUserAudit.ts";
 import ForkMigration0004 from "./ForkMigrations/004_WebhookDeliveryDispatchedAt.ts";
 import ForkMigration0005 from "./ForkMigrations/005_DiffWalkthroughs.ts";
 import ForkMigration0006 from "./ForkMigrations/006_DiffWalkthroughGuideShape.ts";
+import ForkMigration0007 from "./ForkMigrations/007_ProjectionThreadJiraIssues.ts";
 
 export const forkMigrationsTable = "fork_sql_migrations";
 
@@ -48,6 +50,7 @@ export const forkMigrationEntries = [
   [4, "WebhookDeliveryDispatchedAt", ForkMigration0004],
   [5, "DiffWalkthroughs", ForkMigration0005],
   [6, "DiffWalkthroughGuideShape", ForkMigration0006],
+  [7, "ProjectionThreadJiraIssues", ForkMigration0007],
 ] as const;
 
 export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);
