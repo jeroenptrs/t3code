@@ -25,6 +25,7 @@ import {
 import { IssueDetailPanel } from "../issue/IssueDetailPanel";
 import { pullRequestPanelContext } from "../pullRequest/pullRequestDetail.logic";
 import type { DiffWalkthroughViewHandle } from "../diffs/DiffWalkthroughView";
+import { JiraIssueDetailPanel } from "../jira/JiraIssueDetailPanel";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
@@ -254,6 +255,15 @@ export function RightPanelSurfaceContent(props: {
           panelRef={threadRef}
           surface={surface}
           visible={visible && props.activeSurfaceId === surface.id}
+        />
+      );
+    case "jira-issue":
+      return (
+        <JiraIssueDetailPanel
+          key={surface.id}
+          environmentId={props.environmentId}
+          threadRef={threadRef}
+          issue={surface}
         />
       );
     case "device":
