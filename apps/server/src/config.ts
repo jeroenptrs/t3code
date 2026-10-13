@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 
 import type { OtlpEndpointSource } from "@t3tools/contracts";
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
+import type { JiraConfig } from "./jira/JiraConfig.ts";
 import {
   DEFAULT_SIGNAL_EXPORT,
   nodeProcessRuntimeAttributes,
@@ -127,6 +128,8 @@ export class ServerConfig extends Context.Service<
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
     readonly entraSignIn?: EntraSignInConfig | undefined;
+    /** Fork-only Jira identities; absent when Jira is not configured. */
+    readonly jira?: JiraConfig | undefined;
   }
 >()("t3/config/ServerConfig") {
   static readonly layerTest = (
