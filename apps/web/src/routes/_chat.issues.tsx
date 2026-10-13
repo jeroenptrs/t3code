@@ -400,18 +400,16 @@ function JiraIssuesList({
     baseInput === null ? null : jiraEnvironment.search({ environmentId, input: baseInput }),
   );
 
-  // Later pages, for the view and first page they continued. A new view or a refreshed first
-  // page starts over, since a page token only means something after the page that issued it.
+  // Later pages, kept for the view they continue. Only a new view or an explicit refresh starts
+  // over; a stale-time revalidation or reconnect of the first page keeps what the user loaded.
+  const [refreshCount, setRefreshCount] = useState(0);
+  const pagesKey = `${viewKey}#${refreshCount}`;
   const [more, setMore] = useState<{
-    readonly viewKey: string;
-    readonly after: JiraSearchResult;
+    readonly pagesKey: string;
     readonly pages: ReadonlyArray<JiraSearchResult>;
   } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  const morePages =
-    more !== null && more.viewKey === viewKey && more.after === firstPage.data
-      ? more.pages
-      : NO_PAGES;
+  const morePages = more !== null && more.pagesKey === pagesKey ? more.pages : NO_PAGES;
   const merged = useMemo(
     () => mergeJiraSearchPages(firstPage.data === null ? [] : [firstPage.data, ...morePages]),
     [firstPage.data, morePages],
@@ -464,13 +462,15 @@ function JiraIssuesList({
     if (jql.length > 0) changeView({ kind: "jql", jql: jql.slice(0, 4000) });
   };
   const refresh = () => {
+    if (baseInput === null) return;
+    setRefreshCount((count) => count + 1);
     setMore(null);
-    firstPage.refresh();
+    jiraEnvironment.refreshSearch(appAtomRegistry, { environmentId, input: baseInput });
   };
   const loadMore = async () => {
     const token = merged.nextPageToken;
-    const after = firstPage.data;
-    if (token === null || baseInput === null || after === null || loadingMore) return;
+    const loadingKey = pagesKey;
+    if (token === null || baseInput === null || loadingMore) return;
     setLoadingMore(true);
     const result = await executeAtomQuery(
       appAtomRegistry,
@@ -483,12 +483,9 @@ function JiraIssuesList({
       return;
     }
     setMore((current) => ({
-      viewKey,
-      after,
+      pagesKey: loadingKey,
       pages: [
-        ...(current !== null && current.viewKey === viewKey && current.after === after
-          ? current.pages
-          : []),
+        ...(current !== null && current.pagesKey === loadingKey ? current.pages : []),
         result.value,
       ],
     }));
