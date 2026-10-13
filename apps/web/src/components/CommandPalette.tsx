@@ -228,6 +228,9 @@ import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { openJiraIssueDialog } from "./jira/LinkJiraIssueDialog";
+import { JiraIcon } from "./Icons";
+import { useJiraIssueLinking } from "../hooks/useJiraIssueLinking";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -453,6 +456,7 @@ function OpenCommandPaletteDialog(props: {
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
   );
+  const activeThreadJira = useJiraIssueLinking(activeThread?.environmentId ?? null);
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -1339,6 +1343,32 @@ function OpenCommandPaletteDialog(props: {
       icon: <UserPlusIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         openGuestShareDialog(threadRef);
+      },
+    });
+  }
+
+  if (activeThread !== null && activeThreadJira.configured) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    if (activeThreadJira.canLink) {
+      actionItems.push({
+        kind: "action",
+        value: "action:link-jira-issue",
+        searchTerms: ["link", "jira", "issue", "ticket", "attach"],
+        title: "Link Jira issue…",
+        icon: <JiraIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          openJiraIssueDialog(threadRef, "link");
+        },
+      });
+    }
+    actionItems.push({
+      kind: "action",
+      value: "action:open-jira-issue",
+      searchTerms: ["open", "jira", "issue", "ticket"],
+      title: "Open Jira issue…",
+      icon: <JiraIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openJiraIssueDialog(threadRef, "open");
       },
     });
   }
