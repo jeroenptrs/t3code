@@ -51,6 +51,8 @@ import * as DiffWalkthroughRunService from "./diffWalkthrough/DiffWalkthroughRun
 import * as DiffWalkthroughService from "./diffWalkthrough/DiffWalkthroughService.ts";
 import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.ts";
 import * as JiraApi from "./jira/JiraApi.ts";
+import * as JiraBranchLinkService from "./jira/JiraBranchLinkService.ts";
+import * as JiraIssueSyncReactor from "./jira/JiraIssueSyncReactor.ts";
 import * as JiraIdentities from "./jira/JiraIdentities.ts";
 import * as JiraReadCache from "./jira/JiraReadCache.ts";
 import * as JiraService from "./jira/JiraService.ts";
@@ -391,11 +393,23 @@ const layerDiffWalkthroughService = DiffWalkthroughService.layer.pipe(
   Layer.provide(DiffWalkthroughs.layer),
 );
 
-// Fork-only Jira reads; a no-op until T3CODE_JIRA_IDENTITIES is set.
+// Fork-only Jira reads; a no-op until T3CODE_JIRA_IDENTITIES is set. The identities are exposed
+// too, for the MCP tools and the background workers that only need the reader's site.
 const layerJiraService = JiraService.layer.pipe(
   Layer.provide(JiraApi.layer),
   Layer.provide(JiraReadCache.layer),
-  Layer.provide(JiraIdentities.layer),
+  Layer.provideMerge(JiraIdentities.layer),
+);
+
+// Fork-only: links the issue a thread's branch names and keeps linked issues' snapshots current.
+const layerJiraWorkers = Layer.effectDiscard(
+  Effect.gen(function* () {
+    yield* (yield* JiraBranchLinkService.JiraBranchLinkService).start();
+    yield* (yield* JiraIssueSyncReactor.JiraIssueSyncReactor).start();
+  }),
+).pipe(
+  Layer.provide(Layer.mergeAll(JiraBranchLinkService.layer, JiraIssueSyncReactor.layer)),
+  Layer.provide(layerJiraService),
 );
 
 const layerDiffWalkthroughWriter = DiffWalkthroughWriter.layer.pipe(
@@ -633,6 +647,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   layerThreadPullRequestWorker,
   DelegatedTaskAnalytics.layer,
+  layerJiraWorkers,
   Layer.effectDiscard(
     Effect.gen(function* () {
       const service = yield* PullRequestSyncReactor.PullRequestSyncReactor;
