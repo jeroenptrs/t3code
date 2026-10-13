@@ -1,9 +1,10 @@
 // Jira issue key: project key of 2+ chars, then a number without leading zero. Like GitLab's
 // Jira integration, the match may not touch a letter or digit on either side, so `ABC-12x` and
 // `fooABC-1` are ignored while `ABC-123-fix` and `feature/ABC-123` match. Project keys may hold
-// `_` after their first letter in prose; in branches `_` stays a separator, so `abc-1_fix` works.
+// `_` after their first letter, so `my_proj-12` reads as MY_PROJ-12 rather than PROJ-12; after
+// the number `_` is a separator, so `abc-1_fix` works.
 const TEXT_KEY = /(?<![A-Za-z0-9_])[A-Z][A-Z0-9_]+-[1-9]\d*(?![A-Za-z0-9])/g;
-const BRANCH_KEY = /(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9]+-[1-9]\d*(?![A-Za-z0-9])/g;
+const BRANCH_KEY = /(?<![A-Za-z0-9_])[A-Za-z][A-Za-z0-9_]+-[1-9]\d*(?![A-Za-z0-9])/g;
 
 // Lowercase branch names make ordinary tokens look like keys: `utf-8` and friends, versions
 // like `v1-2`, and branch-type words like `release-2024`. Prose parsing is uppercase-only and
