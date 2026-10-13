@@ -62,3 +62,27 @@ it.effect("concurrent reads of one key share a single lookup", () =>
     expect(yield* Ref.get(reads)).toBe(1);
   }),
 );
+
+it.effect("a refresh skips the stored and in-flight reads and stores its own", () =>
+  Effect.gen(function* () {
+    const cache = yield* JiraReadCache.make;
+    const reads = yield* Ref.make(0);
+    const lookup = Ref.updateAndGet(reads, (count) => count + 1);
+
+    expect(yield* cache.get("issue", "bot:ABC-1", lookup)).toBe(1);
+    expect(yield* cache.get("issue", "bot:ABC-1", lookup, { refresh: true })).toBe(2);
+    expect(yield* cache.get("issue", "bot:ABC-1", lookup)).toBe(2);
+
+    const release = yield* Deferred.make<void>();
+    const slow = Ref.updateAndGet(reads, (count) => count + 1).pipe(
+      Effect.tap(() => Deferred.await(release)),
+    );
+    const pending = yield* cache.get("search", "bot", slow).pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    expect(yield* cache.get("search", "bot", lookup, { refresh: true })).toBe(4);
+    yield* Deferred.succeed(release, undefined);
+    expect(yield* Fiber.join(pending)).toBe(3);
+    // The older in-flight read finishing late does not replace the refreshed value.
+    expect(yield* cache.get("search", "bot", lookup)).toBe(4);
+  }),
+);
