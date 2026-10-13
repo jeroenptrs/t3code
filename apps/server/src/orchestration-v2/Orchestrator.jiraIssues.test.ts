@@ -174,7 +174,7 @@ const assertForkRowsMatch = (threadId: ThreadId) =>
     );
   });
 
-it.effect("links, deduplicates and unlinks a manual Jira issue", () =>
+it.effect("links, deduplicates and unlinks a manual Jira issue into a tombstone", () =>
   Effect.gen(function* () {
     const threadId = ThreadId.make("thread:jira-manual");
     yield* createThread(threadId);
@@ -202,13 +202,23 @@ it.effect("links, deduplicates and unlinks a manual Jira issue", () =>
     assert.deepStrictEqual(yield* linkSummary(threadId), [[site, "ABC-1", "manual"]]);
     assert.equal((yield* readThread(threadId)).jiraIssues?.[0]?.linkedByUserId, ada);
 
+    // Any unlink leaves a tombstone, so a branch naming the key cannot bring it back.
     yield* unlink(threadId, "ABC-1");
-    assert.deepStrictEqual(yield* linkSummary(threadId), []);
+    assert.deepStrictEqual(yield* linkSummary(threadId), [[site, "ABC-1", "branch-dismissed"]]);
     yield* assertForkRowsMatch(threadId);
+    yield* link(threadId, "ABC-1", "branch");
+    assert.deepStrictEqual(yield* linkSummary(threadId), [[site, "ABC-1", "branch-dismissed"]]);
 
     // Unlinking what is not linked changes nothing.
+    const before = yield* readThread(threadId);
     yield* unlink(threadId, "ABC-1");
-    assert.deepStrictEqual(yield* linkSummary(threadId), []);
+    yield* unlink(threadId, "ABC-9");
+    assert.deepStrictEqual(yield* readThread(threadId), before);
+
+    // An agent link revives the tombstone.
+    yield* link(threadId, "ABC-1", "agent");
+    assert.deepStrictEqual(yield* linkSummary(threadId), [[site, "ABC-1", "agent"]]);
+    yield* assertForkRowsMatch(threadId);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -242,17 +252,22 @@ it.effect("keeps a dismissed branch link as a tombstone that only a manual link 
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("records a synced snapshot without marking the thread active", () =>
+it.effect("records branch links and synced snapshots without marking the thread active", () =>
   Effect.gen(function* () {
     const threadId = ThreadId.make("thread:jira-sync");
     yield* createThread(threadId);
+    const created = yield* readThread(threadId);
+    yield* TestClock.adjust("1 second");
+    yield* link(threadId, "ABC-5", "branch");
+    assert.deepStrictEqual((yield* readThread(threadId)).updatedAt, created.updatedAt);
+
     yield* link(threadId, "ABC-3", "agent");
     const before = yield* readThread(threadId);
 
     yield* TestClock.adjust("1 second");
     yield* sync(threadId, "ABC-3");
     const after = yield* readThread(threadId);
-    assert.deepStrictEqual(after.jiraIssues?.[0]?.snapshot, snapshot);
+    assert.deepStrictEqual(after.jiraIssues?.[1]?.snapshot, snapshot);
     assert.deepStrictEqual(after.updatedAt, before.updatedAt);
     yield* assertForkRowsMatch(threadId);
 
@@ -262,7 +277,10 @@ it.effect("records a synced snapshot without marking the thread active", () =>
 
     // A sync for an issue the thread does not link is ignored.
     yield* sync(threadId, "ABC-99");
-    assert.deepStrictEqual(yield* linkSummary(threadId), [[site, "ABC-3", "agent"]]);
+    assert.deepStrictEqual(yield* linkSummary(threadId), [
+      [site, "ABC-5", "branch"],
+      [site, "ABC-3", "agent"],
+    ]);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -278,6 +296,13 @@ it.effect("drops a deleted thread's rows and restores them on a projection rebui
     yield* link(kept, "ABC-4", "manual", ada);
     yield* sync(kept, "ABC-4");
     yield* link(deleted, "ABC-4", "manual");
+    // A later thread event supersedes the Jira ones, so compaction drops them.
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: nextCommandId("rename"),
+      threadId: kept,
+      title: "Renamed",
+    });
 
     yield* orchestrator.dispatch({
       type: "thread.delete",
@@ -294,11 +319,43 @@ it.effect("drops a deleted thread's rows and restores them on a projection rebui
     );
 
     yield* sql`DELETE FROM fork_projection_thread_jira_issues`;
+    const compacted = yield* maintenance.compactEventStore();
+    assert.isAbove(compacted.deletedEventCount, 0);
     yield* maintenance.rebuild;
     assert.deepStrictEqual(
       (yield* countRows).map((row) => row.thread_id),
       [kept],
     );
     yield* assertForkRowsMatch(kept);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("leaves the reverse-lookup rows alone on a thread event that is not about Jira", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make("thread:jira-untouched");
+    yield* createThread(threadId);
+    yield* link(threadId, "ABC-6", "manual");
+    yield* assertForkRowsMatch(threadId);
+
+    // A marker the projection would overwrite if it rewrote the rows.
+    yield* sql`
+      UPDATE fork_projection_thread_jira_issues SET linked_at = 'marker'
+      WHERE thread_id = ${threadId}
+    `;
+    yield* orchestrator.dispatch({
+      type: "thread.metadata.update",
+      commandId: nextCommandId("rename"),
+      threadId,
+      title: "Renamed",
+    });
+    const rows = yield* sql<{ readonly linked_at: string }>`
+      SELECT linked_at FROM fork_projection_thread_jira_issues WHERE thread_id = ${threadId}
+    `;
+    assert.deepStrictEqual(
+      rows.map((row) => row.linked_at),
+      ["marker"],
+    );
   }).pipe(Effect.provide(layerTest)),
 );
