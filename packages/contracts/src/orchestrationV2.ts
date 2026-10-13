@@ -55,6 +55,12 @@ import {
   ThreadPullRequestWatch,
 } from "./threadPullRequest.ts";
 import {
+  JiraIssueKey,
+  ThreadJiraIssueLink,
+  ThreadJiraIssueLinkSource,
+  ThreadJiraIssueSnapshot,
+} from "./jira.ts";
+import {
   ProviderApprovalDecision,
   ProviderApprovalOption,
   ProviderInteractionMode,
@@ -384,6 +390,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   /** Pull request discovered from the thread's current branch. */
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+  /** Fork-only: Jira issues linked to this thread; optional so threads from before decode. */
+  jiraIssues: Schema.optional(Schema.Array(ThreadJiraIssueLink)),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   lineage: OrchestrationV2AppThreadLineage,
@@ -1764,6 +1772,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.marked-unread",
       "thread.metadata-updated",
       "thread.pull-request-synced",
+      "thread.jira-issues-synced",
       "thread.runtime-mode-updated",
       "thread.interaction-mode-updated",
       "thread.model-selection-updated",
@@ -1961,6 +1970,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   /** Pull request discovered from the thread's current branch. */
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+  /** Fork-only: Jira issues linked to this thread, with key, summary and status category only. */
+  jiraIssues: Schema.optional(Schema.Array(ThreadJiraIssueLink)),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(OrchestrationV2AppThread.fields.forkedFrom),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
@@ -2598,6 +2609,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.visited",
       "thread.marked-unread",
       "thread.pull-request-synced",
+      "thread.jira-issues-synced",
       "thread.metadata-updated",
       "thread.runtime-mode-updated",
       "thread.interaction-mode-updated",
@@ -2879,6 +2891,21 @@ export const OrchestrationV2Command = Schema.Union([
     ...ThreadPullRequestKey.fields,
     url: TrimmedNonEmptyString,
     source: ThreadPullRequestLinkSource,
+  }),
+  /** Fork-only. Link a Jira issue; `linkedByUserId` records the portal user it was done for. */
+  Schema.Struct({
+    type: Schema.Literal("thread.jira-issue.link"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    ...JiraIssueKey.fields,
+    source: ThreadJiraIssueLinkSource,
+    linkedByUserId: Schema.optional(AuthUserId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.jira-issue.unlink"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    ...JiraIssueKey.fields,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.unlink"),
@@ -3189,6 +3216,14 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  /** Fork-only. The Jira sync sweep records what it read for a linked issue. */
+  Schema.Struct({
+    type: Schema.Literal("thread.jira-issue.sync"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    ...JiraIssueKey.fields,
+    snapshot: ThreadJiraIssueSnapshot,
+  }),
   /**
    * Records what a pull request watch saw, and wakes the agent in the same transaction when
    * `wake` is set. Rejected once the watch started at `startedAt` has ended, and a wake is
