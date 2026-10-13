@@ -140,7 +140,6 @@ export const layer: Layer.Layer<
           yield* sql`DELETE FROM orchestration_v2_projection_run_attempts`;
           yield* sql`DELETE FROM orchestration_v2_projection_runs`;
           yield* sql`DELETE FROM orchestration_v2_projection_threads`;
-          yield* sql`DELETE FROM fork_projection_thread_jira_issues`;
           yield* sql`DELETE FROM orchestration_v2_turn_item_positions`;
 
           const pageSize = 500;
@@ -172,6 +171,31 @@ export const layer: Layer.Layer<
             if (page.length < pageSize) break;
             yield* Effect.yieldNow;
           }
+          // Fork-only. Compaction keeps only a thread's newest state event, which may not be the
+          // Jira event the live projection writes these rows on, so they come from the payloads.
+          yield* sql`DELETE FROM fork_projection_thread_jira_issues`;
+          yield* sql`
+            INSERT OR REPLACE INTO fork_projection_thread_jira_issues (
+              thread_id,
+              site,
+              issue_key,
+              source,
+              linked_at,
+              linked_by_user_id,
+              snapshot_json
+            )
+            SELECT
+              t.thread_id,
+              json_extract(link.value, '$.site'),
+              json_extract(link.value, '$.key'),
+              json_extract(link.value, '$.source'),
+              json_extract(link.value, '$.linkedAt'),
+              json_extract(link.value, '$.linkedByUserId'),
+              json_extract(link.value, '$.snapshot')
+            FROM orchestration_v2_projection_threads AS t
+            JOIN json_each(t.payload_json, '$.jiraIssues') AS link
+            WHERE t.deleted_at IS NULL
+          `;
           const now = DateTime.formatIso(yield* DateTime.now);
           yield* sql`
             INSERT INTO orchestration_v2_projection_metadata (
