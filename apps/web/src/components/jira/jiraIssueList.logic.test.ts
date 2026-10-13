@@ -165,6 +165,16 @@ describe("proposeJiraIssueBranchName", () => {
       }),
     ).toBe("abc-123-fix-the-login-redirect-loop");
   });
+
+  it("leads the last path segment with the key, ahead of keys the summary seems to carry", () => {
+    const naming = { mode: "static", prefix: "feature", instructions: "" } as const;
+    expect(
+      proposeJiraIssueBranchName({ key: "ABC-123", summary: "Bump React to 19" }, naming),
+    ).toBe("feature/abc-123-bump-react-to-19");
+    expect(
+      proposeJiraIssueBranchName({ key: "ABC-123", summary: "Bump react/dom to 19" }, naming),
+    ).toBe("feature/abc-123-bump-react-dom-to-19");
+  });
 });
 
 describe("jiraIssueThreadPrompt", () => {
