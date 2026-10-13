@@ -118,6 +118,7 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.tags-updated":
     case "thread.visited":
     case "thread.marked-unread":
+    case "thread.jira-issues-synced":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
     case "run.background-work-cancelled":
