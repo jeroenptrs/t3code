@@ -28,7 +28,7 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { toastManager } from "../ui/toast";
-import { JiraStatusBadge } from "./jiraPresentation";
+import { JiraConfigurationSteps, JiraStatusBadge } from "./jiraPresentation";
 
 /** Opens Jira where the "Open links in" setting says, for anchors that point at it. */
 function useOpenJiraLink(threadRef: ScopedThreadRef) {
@@ -124,10 +124,7 @@ export function JiraIssueDetailPanel(props: {
         title="Jira is not configured"
         description={
           <>
-            This server has no Jira identity to read {issue.key} with. Set{" "}
-            <code>T3CODE_JIRA_IDENTITIES</code> and that identity's{" "}
-            <code>T3CODE_JIRA_&lt;NAME&gt;_*</code> variables in the server's environment, then
-            restart it.
+            This server has no Jira identity to read {issue.key} with. <JiraConfigurationSteps />
           </>
         }
         url={url}

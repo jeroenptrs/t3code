@@ -118,6 +118,10 @@ export function useRetainedRelayEnvironments() {
   return emptied ? seen : discovery.environments;
 }
 
+export function useEnvironmentIds() {
+  return useAtomValue(environmentSummaries.environmentIdsAtom);
+}
+
 export function useEnvironmentIdentities() {
   return useAtomValue(environmentSummaries.identitiesAtom);
 }
