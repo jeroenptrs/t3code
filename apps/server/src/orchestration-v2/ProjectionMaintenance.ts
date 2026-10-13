@@ -134,6 +134,7 @@ export const layer: Layer.Layer<
           yield* sql`DELETE FROM orchestration_v2_projection_run_attempts`;
           yield* sql`DELETE FROM orchestration_v2_projection_runs`;
           yield* sql`DELETE FROM orchestration_v2_projection_threads`;
+          yield* sql`DELETE FROM fork_projection_thread_jira_issues`;
           yield* sql`DELETE FROM orchestration_v2_turn_item_positions`;
 
           const pageSize = 500;
@@ -211,6 +212,7 @@ export const layer: Layer.Layer<
       "thread.active-reordered",
       "thread.metadata-updated",
       "thread.pull-request-synced",
+      "thread.jira-issues-synced",
       "thread.runtime-mode-updated",
       "thread.interaction-mode-updated",
       "thread.model-selection-updated",
