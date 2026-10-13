@@ -39,6 +39,7 @@ import type {
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
+  ThreadJiraIssueLink,
 } from "@t3tools/contracts";
 import {
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
@@ -58,6 +59,7 @@ import {
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   orchestrationV2RunWorkStartedAt,
+  ThreadJiraIssueSnapshot as ThreadJiraIssueSnapshotSchema,
   RunId,
   MessageId,
   RuntimeRequestId,
@@ -792,9 +794,10 @@ export function applyToProjection(
         ...base,
         thread: event.payload,
       };
-    // Reordering and PR refreshes preserve the orchestrator's activity timestamp.
+    // Reordering, PR refreshes, and Jira syncs preserve the orchestrator's activity timestamp.
     case "thread.active-reordered":
     case "thread.pull-request-synced":
+    case "thread.jira-issues-synced":
       return {
         ...base,
         thread: event.payload,
@@ -1119,6 +1122,9 @@ const encodeThreadUpdatedAt = Schema.encodeEffect(
   OrchestrationV2AppThreadJsonSchema.fields.updatedAt,
 );
 const encodeRunPayload = Schema.encodeEffect(Schema.fromJsonString(OrchestrationV2RunJsonSchema));
+const encodeJiraIssueSnapshot = Schema.encodeEffect(
+  Schema.fromJsonString(ThreadJiraIssueSnapshotSchema),
+);
 const encodeRestartCancelledBackgroundWork = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2RunJsonSchema.fields.restartCancelledBackgroundWork),
 );
@@ -1583,6 +1589,9 @@ export function threadShellFromProjection(
     ...(projection.thread.branchPullRequest === undefined
       ? {}
       : { branchPullRequest: projection.thread.branchPullRequest }),
+    ...(projection.thread.jiraIssues === undefined
+      ? {}
+      : { jiraIssues: projection.thread.jiraIssues }),
     ...(projection.thread.activeOrderKey === undefined
       ? {}
       : { activeOrderKey: projection.thread.activeOrderKey }),
@@ -1837,6 +1846,9 @@ function shellFromState(input: {
     ...(input.state.thread.branchPullRequest === undefined
       ? {}
       : { branchPullRequest: input.state.thread.branchPullRequest }),
+    ...(input.state.thread.jiraIssues === undefined
+      ? {}
+      : { jiraIssues: input.state.thread.jiraIssues }),
     ...(input.state.thread.activeOrderKey === undefined
       ? {}
       : { activeOrderKey: input.state.thread.activeOrderKey }),
@@ -1905,6 +1917,40 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       END
     `;
 
+    /**
+     * Fork-only. Mirrors a thread's Jira links into `fork_projection_thread_jira_issues`, the
+     * reverse lookup from an issue to its threads. Tombstones are stored; readers filter them.
+     */
+    const replaceForkThreadJiraIssues = (
+      threadId: ThreadId,
+      links: ReadonlyArray<ThreadJiraIssueLink>,
+    ) =>
+      Effect.gen(function* () {
+        yield* sql`DELETE FROM fork_projection_thread_jira_issues WHERE thread_id = ${threadId}`;
+        for (const link of links) {
+          yield* sql`
+            INSERT OR REPLACE INTO fork_projection_thread_jira_issues (
+              thread_id,
+              site,
+              issue_key,
+              source,
+              linked_at,
+              linked_by_user_id,
+              snapshot_json
+            )
+            VALUES (
+              ${threadId},
+              ${link.site},
+              ${link.key},
+              ${link.source},
+              ${link.linkedAt},
+              ${link.linkedByUserId ?? null},
+              ${link.snapshot === null ? null : yield* encodeJiraIssueSnapshot(link.snapshot)}
+            )
+          `;
+        }
+      });
+
     const apply: ProjectionStoreV2Shape["apply"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(
@@ -1936,6 +1982,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "thread.marked-unread":
             case "thread.metadata-updated":
             case "thread.pull-request-synced":
+            case "thread.jira-issues-synced":
             case "thread.runtime-mode-updated":
             case "thread.interaction-mode-updated":
             case "thread.model-selection-updated":
@@ -1988,6 +2035,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 deleted_at = excluded.deleted_at,
                 payload_json = excluded.payload_json
             `;
+              // Only Jira events change the links, but a replay after compaction may keep only a
+              // later thread event, so any payload that carries links rewrites them.
+              const jiraIssues = event.payload.jiraIssues ?? [];
+              if (
+                event.type === "thread.jira-issues-synced" ||
+                event.type === "thread.deleted" ||
+                jiraIssues.length > 0
+              ) {
+                yield* replaceForkThreadJiraIssues(
+                  event.payload.id,
+                  event.payload.deletedAt === null ? jiraIssues : [],
+                );
+              }
               break;
             }
             case "run.created":
@@ -2769,6 +2829,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.metadata-updated" &&
             event.type !== "thread.pull-request-synced" &&
             event.type !== "thread.pull-request-link-updated" &&
+            // The payload decides: a Jira link bumps updatedAt, a snapshot sync does not.
+            event.type !== "thread.jira-issues-synced" &&
             event.type !== "thread.runtime-mode-updated" &&
             event.type !== "thread.interaction-mode-updated" &&
             event.type !== "thread.model-selection-updated" &&
