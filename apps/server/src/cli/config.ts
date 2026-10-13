@@ -25,6 +25,7 @@ import * as CliError from "effect/cli/CliError";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
+import { JiraConfig } from "../jira/JiraConfig.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
@@ -464,7 +465,8 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   );
   const devAuthToken =
     mode === "web" && devUrl !== undefined ? yield* DevAuthTokenConfig : undefined;
-    const entraSignIn = yield* EntraSignInConfig;
+  const entraSignIn = yield* EntraSignInConfig;
+  const jira = yield* JiraConfig;
   const explicitBaseDir = resolveOptionPrecedence(
     normalizedFlags.baseDir,
     Option.fromUndefinedOr(env.t3Home),
@@ -655,7 +657,8 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     logWebSocketEvents,
     tailscaleServeEnabled,
     tailscaleServePort,
-      ...(entraSignIn === undefined ? {} : { entraSignIn }),
+    ...(entraSignIn === undefined ? {} : { entraSignIn }),
+    ...(jira === undefined ? {} : { jira }),
   };
 
   return config;
