@@ -228,7 +228,7 @@ describe("Jira issue toolkit handlers", () => {
         key: "ABC-4",
         wasLinked: true,
       });
-      // A dismissed branch link is already unlinked.
+      // A tombstone, left by any earlier unlink, is already unlinked.
       expect(yield* harness.call("unlink_jira_issue", { key: "ABC-5" })).toEqual({
         site: null,
         key: "ABC-5",
