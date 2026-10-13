@@ -441,7 +441,7 @@ const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLin
 
 /**
  * Fork-only. The thread's Jira links after a link, unlink or sync, or null when the command
- * changes nothing. Unlinking a branch link leaves a `branch-dismissed` tombstone so the branch
+ * changes nothing. Unlinking any link leaves a `branch-dismissed` tombstone so the branch
  * detector does not re-add it; a manual or agent link replaces the tombstone.
  */
 function decideThreadJiraIssues(
@@ -483,11 +483,9 @@ function decideThreadJiraIssues(
     }
     case "thread.jira-issue.unlink":
       if (!existing || existing.source === "branch-dismissed") return null;
-      return existing.source === "branch"
-        ? links.map((link) =>
+      return links.map((link) =>
             link === existing ? { ...link, source: "branch-dismissed" as const } : link,
-          )
-        : links.filter((link) => link !== existing);
+      );
     case "thread.jira-issue.sync":
       if (!existing || existing.source === "branch-dismissed") return null;
       return links.map((link) =>
@@ -3390,7 +3388,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             jiraIssues,
-            updatedAt: command.type === "thread.jira-issue.sync" ? thread.updatedAt : now,
+            // Syncs and branch auto-links are the server's bookkeeping, not thread activity.
+            updatedAt:
+              command.type === "thread.jira-issue.sync" ||
+              (command.type === "thread.jira-issue.link" && command.source === "branch")
+                ? thread.updatedAt
+                : now,
           };
         }
         case "thread.pull-request.watch":
