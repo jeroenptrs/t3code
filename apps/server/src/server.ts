@@ -53,6 +53,10 @@ import * as DiffWalkthroughChangeReader from "./diffWalkthrough/DiffWalkthroughC
 import * as DiffWalkthroughRunService from "./diffWalkthrough/DiffWalkthroughRunService.ts";
 import * as DiffWalkthroughService from "./diffWalkthrough/DiffWalkthroughService.ts";
 import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.ts";
+import * as JiraApi from "./jira/JiraApi.ts";
+import * as JiraIdentities from "./jira/JiraIdentities.ts";
+import * as JiraReadCache from "./jira/JiraReadCache.ts";
+import * as JiraService from "./jira/JiraService.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
@@ -360,6 +364,13 @@ const layerPullRequestService = PullRequestService.layer.pipe(
 
 const layerDiffWalkthroughService = DiffWalkthroughService.layer.pipe(
   Layer.provide(DiffWalkthroughs.layer),
+);
+
+// Fork-only Jira reads; a no-op until T3CODE_JIRA_IDENTITIES is set.
+const layerJiraService = JiraService.layer.pipe(
+  Layer.provide(JiraApi.layer),
+  Layer.provide(JiraReadCache.layer),
+  Layer.provide(JiraIdentities.layer),
 );
 
 const layerDiffWalkthroughWriter = DiffWalkthroughWriter.layer.pipe(
@@ -750,6 +761,8 @@ const layerMakeRoutes = Layer.mergeAll(
   // One instance for both transports, so a walkthrough an agent writes over MCP reaches every
   // WebSocket subscriber.
   Layer.provide(layerDiffWalkthroughService),
+  // One instance, so every client reads through the same Jira caches.
+  Layer.provide(layerJiraService),
   Layer.provide(ServerBrowser.layer.pipe(Layer.provide(DesktopBrowserChannel.layer))),
   Layer.provide(PreviewBrowser.layer),
   Layer.provide(PreviewAutomationBroker.layer),
