@@ -21,6 +21,7 @@ import {
 } from "../PersistentThreadTerminals";
 import { pullRequestPanelContext } from "../pullRequest/pullRequestDetail.logic";
 import type { DiffWalkthroughViewHandle } from "../diffs/DiffWalkthroughView";
+import { JiraIssueDetailPanel } from "../jira/JiraIssueDetailPanel";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
@@ -186,6 +187,15 @@ export function RightPanelSurfaceContent(props: {
           threadId={surface.threadId}
           parentPanel={props.sideChatParentPanel}
           onClose={() => onCloseSurface(surface)}
+        />
+      );
+    case "jira-issue":
+      return (
+        <JiraIssueDetailPanel
+          key={surface.id}
+          environmentId={props.environmentId}
+          threadRef={threadRef}
+          issue={surface}
         />
       );
     case "device":
