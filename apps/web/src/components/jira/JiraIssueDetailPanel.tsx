@@ -17,6 +17,7 @@ import type { MouseEvent, ReactNode } from "react";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { jiraEnvironment, jiraFailureReason, useJiraCapabilities } from "~/state/jira";
 import { useEnvironmentQuery } from "~/state/query";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -101,24 +102,14 @@ export function JiraIssueDetailPanel(props: {
 }) {
   const { environmentId, threadRef, issue } = props;
   const capabilities = useJiraCapabilities(environmentId);
+  const target = { environmentId, input: { site: issue.site, key: issue.key } };
   const query = useEnvironmentQuery(
-    capabilities?.configured === true
-      ? jiraEnvironment.issue({
-          environmentId,
-          input: { site: issue.site, key: issue.key },
-        })
-      : null,
+    capabilities?.configured === true ? jiraEnvironment.issue(target) : null,
   );
+  const refresh = () => jiraEnvironment.refreshIssue(appAtomRegistry, target);
   const url = jiraIssueUrl(issue);
 
-  if (capabilities === null || (query.data === null && query.error === null)) {
-    return (
-      <div className="flex flex-1 items-center justify-center p-6 text-muted-foreground text-sm">
-        Loading {issue.key}…
-      </div>
-    );
-  }
-  if (!capabilities.configured) {
+  if (capabilities !== null && !capabilities.configured) {
     return (
       <JiraIssueUnavailable
         title="Jira is not configured"
@@ -129,6 +120,13 @@ export function JiraIssueDetailPanel(props: {
         }
         url={url}
       />
+    );
+  }
+  if (capabilities === null || (query.data === null && query.error === null)) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-6 text-muted-foreground text-sm">
+        Loading {issue.key}…
+      </div>
     );
   }
   if (query.data === null) {
@@ -150,7 +148,7 @@ export function JiraIssueDetailPanel(props: {
               : (query.error ?? "The request failed.")
         }
         url={url}
-        onRetry={query.refresh}
+        onRetry={refresh}
         refreshing={query.isPending}
       />
     );
@@ -161,7 +159,7 @@ export function JiraIssueDetailPanel(props: {
       environmentId={environmentId}
       threadRef={threadRef}
       refreshing={query.isPending}
-      onRefresh={query.refresh}
+      onRefresh={refresh}
     />
   );
 }
