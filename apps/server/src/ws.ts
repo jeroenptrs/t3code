@@ -236,6 +236,7 @@ import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewG
 import * as DiffWalkthroughRunService from "./diffWalkthrough/DiffWalkthroughRunService.ts";
 import * as DiffWalkthroughService from "./diffWalkthrough/DiffWalkthroughService.ts";
 import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.ts";
+import * as JiraService from "./jira/JiraService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -623,16 +624,23 @@ export function visibleScheduledTasks(
 }
 
 /**
- * Records the session's portal user as the creator of a thread it creates.
- * The server owns this audit field, so a value the client sent is replaced.
+ * Records the session's portal user on commands that carry one: the creator of a thread it
+ * creates and who linked a Jira issue. The server owns these audit fields, so a value the client
+ * sent is replaced.
  */
-export function withSessionThreadCreator(
+export function withSessionUserAttribution(
   command: OrchestrationV2Command,
   userId: AuthUserId | null,
 ): OrchestrationV2Command {
-  if (command.type !== "thread.create") return command;
+  if (command.type === "thread.create") {
   const { createdByUserId: _clientValue, ...rest } = command;
   return userId === null ? rest : { ...rest, createdByUserId: userId };
+  }
+  if (command.type === "thread.jira-issue.link") {
+    const { linkedByUserId: _clientValue, ...rest } = command;
+    return userId === null ? rest : { ...rest, linkedByUserId: userId };
+  }
+  return command;
 }
 
 function hasCompatibleOrchestrationProtocol(url: URL): boolean {
@@ -1261,6 +1269,8 @@ export const layerWsRpc = (
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const diffWalkthroughWriter = yield* DiffWalkthroughWriter.DiffWalkthroughWriter;
       const diffWalkthroughRuns = yield* DiffWalkthroughRunService.DiffWalkthroughRunService;
+      const jira = yield* JiraService.JiraService;
+      const jiraRequest = { actingUserId: currentSession.userId };
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
@@ -1876,7 +1886,7 @@ export const layerWsRpc = (
                   (command.type === "prepared-run.retry"
                     ? threadLaunch.retryPreparation(command)
                     : ThreadMessageIntake.dispatchCommand(
-                        withSessionThreadCreator(
+                        withSessionUserAttribution(
                         ThreadManagementService.withCreationProvenance(command, {
                           createdBy: "user",
                           creationSource:
@@ -2604,6 +2614,11 @@ export const layerWsRpc = (
             .write(input.walkthrough)
             .pipe(Effect.map(({ walkthrough }) => ({ walkthrough }))),
         [WS_METHODS.diffWalkthroughGenerate]: (input) => diffWalkthroughRuns.generate(input.target),
+        [WS_METHODS.jiraCapabilities]: () => jira.capabilities(jiraRequest),
+        [WS_METHODS.jiraFilters]: (input) => jira.filters(input, jiraRequest),
+        [WS_METHODS.jiraFilter]: (input) => jira.filter(input, jiraRequest),
+        [WS_METHODS.jiraSearch]: (input) => jira.search(input, jiraRequest),
+        [WS_METHODS.jiraIssue]: (input) => jira.issue(input, jiraRequest),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           Effect.andThen(
             input.cwd === undefined ? Effect.void : ensureReadable(input.cwd),
@@ -3257,6 +3272,7 @@ export const layer = Layer.unwrap(
     const diffWalkthroughs = yield* DiffWalkthroughService.DiffWalkthroughService;
     const diffWalkthroughWriter = yield* DiffWalkthroughWriter.DiffWalkthroughWriter;
     const diffWalkthroughRuns = yield* DiffWalkthroughRunService.DiffWalkthroughRunService;
+    const jira = yield* JiraService.JiraService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3362,6 +3378,8 @@ export const layer = Layer.unwrap(
               Layer.provide(
                 Layer.succeed(DiffWalkthroughWriter.DiffWalkthroughWriter, diffWalkthroughWriter),
               ),
+              // Shared, so every client reads through the same Jira caches.
+              Layer.provide(Layer.succeed(JiraService.JiraService, jira)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
