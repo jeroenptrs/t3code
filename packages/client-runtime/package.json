@@ -303,6 +303,10 @@
       "types": "./src/state/issues.ts",
       "default": "./src/state/issues.ts"
     },
+    "./state/jira": {
+      "types": "./src/state/jira.ts",
+      "default": "./src/state/jira.ts"
+    },
     "./state/pull-requests": {
       "types": "./src/state/pullRequests.ts",
       "default": "./src/state/pullRequests.ts"
