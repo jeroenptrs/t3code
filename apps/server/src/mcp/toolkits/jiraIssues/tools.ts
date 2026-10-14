@@ -236,7 +236,7 @@ const ProposalWait = {
   }),
   clientRequestId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))).annotate({
     description:
-      "Reuse when retrying a call that lost its result, so the user sees one card and its outcome is returned again.",
+      "Reuse when retrying a call that lost its result, so the user sees one card and its outcome is returned again. Without one, proposing the same change again in this turn finds the same card.",
   }),
 };
 
