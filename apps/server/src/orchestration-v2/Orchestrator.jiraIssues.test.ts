@@ -2,11 +2,13 @@ import { assert, it } from "@effect/vitest";
 import {
   AuthUserId,
   CommandId,
+  MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   type ThreadJiraIssueLinkSource,
+  type ThreadJiraIssueWatch,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -146,8 +148,9 @@ const assertForkRowsMatch = (threadId: ThreadId) =>
       readonly linked_at: string;
       readonly linked_by_user_id: string | null;
       readonly snapshot_json: string | null;
+      readonly watch_json: string | null;
     }>`
-      SELECT site, issue_key, source, linked_at, linked_by_user_id, snapshot_json
+      SELECT site, issue_key, source, linked_at, linked_by_user_id, snapshot_json, watch_json
       FROM fork_projection_thread_jira_issues
       WHERE thread_id = ${threadId}
       ORDER BY issue_key
@@ -160,6 +163,7 @@ const assertForkRowsMatch = (threadId: ThreadId) =>
         linkedAt: row.linked_at,
         linkedByUserId: row.linked_by_user_id,
         snapshot: row.snapshot_json === null ? null : JSON.parse(row.snapshot_json),
+        watch: row.watch_json === null ? null : JSON.parse(row.watch_json),
       })),
       (thread.jiraIssues ?? [])
         .map((entry) => ({
@@ -169,6 +173,7 @@ const assertForkRowsMatch = (threadId: ThreadId) =>
           linkedAt: entry.linkedAt,
           linkedByUserId: entry.linkedByUserId ?? null,
           snapshot: entry.snapshot,
+          watch: entry.watch ?? null,
         }))
         .toSorted((left, right) => left.key.localeCompare(right.key)),
     );
@@ -358,4 +363,242 @@ it.effect("leaves the reverse-lookup rows alone on a thread event that is not ab
       ["marker"],
     );
   }).pipe(Effect.provide(layerTest)),
+);
+
+const watch = (
+  threadId: ThreadId,
+  key: string,
+  watching: boolean,
+  link?: { readonly linkSource: "manual" | "agent"; readonly linkedByUserId?: AuthUserId },
+) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* orchestrator.dispatch({
+      type: "thread.jira-issue.watch",
+      commandId: nextCommandId("watch"),
+      threadId,
+      site,
+      key,
+      watching,
+      ...link,
+    });
+  });
+
+const recordWatch = (
+  threadId: ThreadId,
+  key: string,
+  startedAt: string,
+  next: ThreadJiraIssueWatch | null,
+  wakeText?: string,
+) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const commandId = nextCommandId("watch-sync");
+    yield* orchestrator.dispatch({
+      type: "thread.jira-issue-watch.sync",
+      commandId,
+      threadId,
+      site,
+      key,
+      startedAt,
+      watch: next,
+      ...(wakeText === undefined
+        ? {}
+        : {
+            wake: {
+              messageId: MessageId.make(`message:${commandId}`),
+              text: wakeText,
+              notification: {
+                source: { kind: "monitor" as const },
+                outcome: "updated" as const,
+                summary: `${key}: new comments`,
+              },
+            },
+          }),
+    });
+  });
+
+const watchOf = (threadId: ThreadId, key: string) =>
+  Effect.map(
+    readThread(threadId),
+    (thread) => thread.jiraIssues?.find((entry) => entry.key === key)?.watch,
+  );
+
+const messagesOf = (threadId: ThreadId) =>
+  Effect.flatMap(Orchestrator.OrchestratorV2, (orchestrator) =>
+    orchestrator
+      .getThreadRecords(threadId, ["messages"])
+      .pipe(Effect.map((records) => records.messages)),
+  );
+
+it.effect("watching links the issue first, records progress, and stops", () =>
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const threadId = ThreadId.make("thread:jira-watch");
+    yield* createThread(threadId);
+    yield* TestClock.adjust("1 second");
+    yield* watch(threadId, "abc-10", true, { linkSource: "manual", linkedByUserId: ada });
+    const linked = (yield* readThread(threadId)).jiraIssues?.[0];
+    assert.deepStrictEqual(
+      [linked?.key, linked?.source, linked?.linkedByUserId],
+      ["ABC-10", "manual", ada],
+    );
+    const started = linked?.watch;
+    assert.isDefined(started);
+    if (started === undefined) return;
+    assert.deepStrictEqual(started, {
+      startedAt: started.startedAt,
+      updatedThrough: null,
+      statusCategory: null,
+      assigneeAccountId: null,
+      commentsThrough: started.startedAt,
+      wakes: 0,
+    });
+    yield* assertForkRowsMatch(threadId);
+    const shell = yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadShell(threadId);
+    assert.deepStrictEqual(shell?.pendingBackgroundTasks, [
+      {
+        taskId: `jira-issue-watch:${site}/ABC-10`,
+        description: "Watching Jira issue ABC-10",
+        kind: "monitor",
+      },
+    ]);
+
+    // Watching again keeps the running watch.
+    yield* watch(threadId, "ABC-10", true, { linkSource: "agent" });
+    assert.deepStrictEqual(yield* watchOf(threadId, "ABC-10"), started);
+
+    const before = yield* readThread(threadId);
+    yield* TestClock.adjust("1 second");
+    const recorded = {
+      ...started,
+      updatedThrough: "2026-10-14T10:00:00.000Z",
+      statusCategory: "todo" as const,
+      assigneeAccountId: "account-ada",
+    };
+    yield* recordWatch(threadId, "ABC-10", started.startedAt, recorded);
+    assert.deepStrictEqual(yield* watchOf(threadId, "ABC-10"), recorded);
+    // Recorded progress is bookkeeping, not thread activity.
+    assert.deepStrictEqual((yield* readThread(threadId)).updatedAt, before.updatedAt);
+    yield* assertForkRowsMatch(threadId);
+    assert.isTrue((yield* maintenance.rebuild).valid);
+    assert.deepStrictEqual(yield* watchOf(threadId, "ABC-10"), recorded);
+    yield* assertForkRowsMatch(threadId);
+
+    yield* watch(threadId, "ABC-10", false);
+    assert.isUndefined(yield* watchOf(threadId, "ABC-10"));
+    assert.deepStrictEqual(yield* linkSummary(threadId), [[site, "ABC-10", "manual"]]);
+    yield* assertForkRowsMatch(threadId);
+
+    // A read from before the stop neither wakes the agent nor brings the watch back.
+    const late = yield* recordWatch(
+      threadId,
+      "ABC-10",
+      started.startedAt,
+      { ...recorded, wakes: 1 },
+      "Update",
+    ).pipe(Effect.flip);
+    assert.equal(late._tag, "OrchestratorDispatchError");
+    assert.isUndefined(yield* watchOf(threadId, "ABC-10"));
+    assert.deepStrictEqual(yield* messagesOf(threadId), []);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("starts from the link's snapshot and refuses an issue the thread does not link", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:jira-watch-refused");
+    yield* createThread(threadId);
+    const refused = yield* watch(threadId, "ABC-11", true).pipe(Effect.flip);
+    assert.equal(refused._tag, "OrchestratorDispatchError");
+    assert.deepStrictEqual(yield* linkSummary(threadId), []);
+
+    yield* link(threadId, "ABC-11", "branch");
+    yield* sync(threadId, "ABC-11");
+    yield* watch(threadId, "ABC-11", true);
+    assert.equal((yield* watchOf(threadId, "ABC-11"))?.statusCategory, snapshot.statusCategory);
+
+    // Unlinking ends the watch; an unlinked issue is watched only by linking it again.
+    yield* unlink(threadId, "ABC-11");
+    assert.isUndefined(yield* watchOf(threadId, "ABC-11"));
+    assert.deepStrictEqual(yield* linkSummary(threadId), [[site, "ABC-11", "branch-dismissed"]]);
+    yield* assertForkRowsMatch(threadId);
+    const dismissed = yield* watch(threadId, "ABC-11", true).pipe(Effect.flip);
+    assert.equal(dismissed._tag, "OrchestratorDispatchError");
+    yield* watch(threadId, "ABC-11", true, { linkSource: "agent" });
+    assert.deepStrictEqual(yield* linkSummary(threadId), [[site, "ABC-11", "agent"]]);
+    assert.isDefined(yield* watchOf(threadId, "ABC-11"));
+    yield* assertForkRowsMatch(threadId);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a wake queues a message for the agent with the watch it recorded", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:jira-watch-wake");
+    yield* createThread(threadId);
+    yield* watch(threadId, "ABC-12", true, { linkSource: "agent" });
+    const started = yield* watchOf(threadId, "ABC-12");
+    if (started === undefined) return assert.fail("the watch did not start");
+
+    // A read for a watch that was restarted since is refused.
+    const stale = yield* recordWatch(
+      threadId,
+      "ABC-12",
+      "2026-01-01T00:00:00.000Z",
+      started,
+      "x",
+    ).pipe(Effect.flip);
+    assert.equal(stale._tag, "OrchestratorDispatchError");
+
+    const next = { ...started, wakes: 1, commentsThrough: "2026-10-14T10:04:00.000Z" };
+    yield* recordWatch(threadId, "ABC-12", started.startedAt, next, "Update on Jira issue ABC-12");
+    assert.deepStrictEqual(yield* watchOf(threadId, "ABC-12"), next);
+    const messages = yield* messagesOf(threadId);
+    assert.deepStrictEqual(
+      messages.map((message) => [message.text, message.createdBy, message.notification?.summary]),
+      [["Update on Jira issue ABC-12", "agent", "ABC-12: new comments"]],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each(["archive", "settle", "stop"] as const)(
+  "%s ends the thread's Jira watches",
+  (action) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make(`thread:jira-watch-${action}`);
+      yield* createThread(threadId);
+      yield* watch(threadId, "ABC-13", true, { linkSource: "agent" });
+      yield* watch(threadId, "ABC-14", true, { linkSource: "manual" });
+      const started = yield* watchOf(threadId, "ABC-13");
+      if (started === undefined) return assert.fail("the watch did not start");
+
+      yield* orchestrator.dispatch(
+        action === "archive"
+          ? { type: "thread.archive", commandId: nextCommandId(action), threadId }
+          : action === "settle"
+            ? { type: "thread.settle", commandId: nextCommandId(action), threadId }
+            : { type: "thread.stop", commandId: nextCommandId(action), threadId },
+      );
+      const thread = yield* readThread(threadId);
+      assert.deepStrictEqual(
+        thread.jiraIssues?.map((entry) => [entry.key, entry.watch]),
+        [
+          ["ABC-13", undefined],
+          ["ABC-14", undefined],
+        ],
+      );
+      yield* assertForkRowsMatch(threadId);
+      const late = yield* recordWatch(threadId, "ABC-13", started.startedAt, started, "x").pipe(
+        Effect.flip,
+      );
+      assert.equal(late._tag, "OrchestratorDispatchError");
+      assert.deepStrictEqual(yield* messagesOf(threadId), []);
+
+      // A settled or archived thread takes no new watch; Stop only ends the running ones.
+      if (action === "stop") return;
+      const restart = yield* watch(threadId, "ABC-13", true, { linkSource: "agent" }).pipe(
+        Effect.flip,
+      );
+      assert.equal(restart._tag, "OrchestratorDispatchError");
+    }).pipe(Effect.provide(layerTest)),
 );
