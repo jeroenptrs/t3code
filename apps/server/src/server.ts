@@ -397,11 +397,13 @@ const layerJiraService = JiraProposals.layer.pipe(
   Layer.provideMerge(JiraIdentities.layer),
 );
 
-// Fork-only: links the issue a thread's branch names and keeps linked issues' snapshots current.
+// Fork-only: links the issue a thread's branch names, keeps linked issues' snapshots current, and
+// fails Jira approvals the previous process left mid-write so they can be approved again.
 const layerJiraWorkers = Layer.effectDiscard(
   Effect.gen(function* () {
     yield* (yield* JiraBranchLinkService.JiraBranchLinkService).start();
     yield* (yield* JiraIssueSyncReactor.JiraIssueSyncReactor).start();
+    yield* ServerActivation.forkParked((yield* JiraProposals.JiraProposals).recoverInterrupted);
   }),
 ).pipe(
   Layer.provide(Layer.mergeAll(JiraBranchLinkService.layer, JiraIssueSyncReactor.layer)),
