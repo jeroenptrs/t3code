@@ -148,12 +148,18 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsLabelCandidates]: AuthOrchestrationReadScope,
   [WS_METHODS.diffWalkthroughSubscribe]: AuthOrchestrationReadScope,
-  // Jira reads go out as the server's reader identity, never the caller's, so a read grant is enough.
+  // Jira reads go out as the reader identity or the caller's own personal token, so a read grant
+  // is enough.
   [WS_METHODS.jiraCapabilities]: AuthOrchestrationReadScope,
   [WS_METHODS.jiraFilters]: AuthOrchestrationReadScope,
   [WS_METHODS.jiraFilter]: AuthOrchestrationReadScope,
   [WS_METHODS.jiraSearch]: AuthOrchestrationReadScope,
   [WS_METHODS.jiraIssue]: AuthOrchestrationReadScope,
+  // A user only manages their own personal token, Readers included: the server keys it by the
+  // session's user, never by the payload.
+  [WS_METHODS.jiraSetPersonalToken]: AuthOrchestrationReadScope,
+  [WS_METHODS.jiraTestPersonalToken]: AuthOrchestrationReadScope,
+  [WS_METHODS.jiraClearPersonalToken]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,

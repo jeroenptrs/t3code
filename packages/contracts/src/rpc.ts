@@ -2006,7 +2006,24 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
-export const WsRpcGroup = RpcGroup.make(
+/**
+ * The fork's Jira RPCs. The server implements them in a handler layer of their own: typing one
+ * `toLayer` over a group costs the checker quadratically in its RPC count, and a single group of
+ * every RPC went past its instantiation limit.
+ */
+export const WsJiraRpcGroup = RpcGroup.make(
+  WsJiraCapabilitiesRpc,
+  WsJiraFiltersRpc,
+  WsJiraFilterRpc,
+  WsJiraSearchRpc,
+  WsJiraIssueRpc,
+  WsJiraSetPersonalTokenRpc,
+  WsJiraTestPersonalTokenRpc,
+  WsJiraClearPersonalTokenRpc,
+).middleware(RpcScopeAuthorization);
+
+/** Every RPC except those in `WsJiraRpcGroup`. */
+export const WsCoreRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -2108,14 +2125,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsDiffWalkthroughSubscribeRpc,
   WsDiffWalkthroughPutRpc,
   WsDiffWalkthroughGenerateRpc,
-  WsJiraCapabilitiesRpc,
-  WsJiraFiltersRpc,
-  WsJiraFilterRpc,
-  WsJiraSearchRpc,
-  WsJiraIssueRpc,
-  WsJiraSetPersonalTokenRpc,
-  WsJiraTestPersonalTokenRpc,
-  WsJiraClearPersonalTokenRpc,
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
@@ -2214,3 +2223,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
 ).middleware(RpcScopeAuthorization);
+
+export const WsRpcGroup = WsCoreRpcGroup.merge(WsJiraRpcGroup);
