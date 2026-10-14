@@ -18,6 +18,7 @@ import type { Tool } from "effect/ai";
 
 import type { JiraConfig } from "../../../jira/JiraConfig.ts";
 import * as JiraIdentities from "../../../jira/JiraIdentities.ts";
+import * as JiraProposals from "../../../jira/JiraProposals.ts";
 import { jiraConfig, OTHER_SITE, SITE } from "../../../jira/JiraLinks.testkit.ts";
 import * as JiraService from "../../../jira/JiraService.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
@@ -120,6 +121,7 @@ const makeHarness = Effect.fn("makeJiraIssuesToolkitHarness")(function* (
       JiraIdentities.JiraIdentities,
       JiraIdentities.make("config" in options ? options.config : jiraConfig),
     ),
+    Layer.mock(JiraProposals.JiraProposals)({}),
     Layer.succeed(Crypto.Crypto, testCrypto),
     McpToolAccessTestkit.liveThreadsLayer,
   );
