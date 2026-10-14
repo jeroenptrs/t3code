@@ -422,6 +422,9 @@ const PersistedDraftThreadState = Schema.Struct({
     Schema.Struct({ url: Schema.String, branch: Schema.String }),
   ),
   worktreeRepositories: Schema.optionalKey(Schema.Array(Schema.String)),
+  newWorktreeBranch: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -527,6 +530,11 @@ export interface DraftSessionState {
    * until the user chooses, which leaves the choice to the server's default.
    */
   worktreeRepositories?: ReadonlyArray<string>;
+  /**
+   * The name the new worktree's own branch gets, when the thread starts in a new worktree.
+   * `branch` stays the base. Null lets the server name it.
+   */
+  newWorktreeBranch: string | null;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -596,6 +604,7 @@ interface ComposerDraftStoreState {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
       workspaceExplicit?: boolean;
+      newWorktreeBranch?: string | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -614,6 +623,7 @@ interface ComposerDraftStoreState {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
       workspaceExplicit?: boolean;
+      newWorktreeBranch?: string | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -631,6 +641,7 @@ interface ComposerDraftStoreState {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
       workspaceExplicit?: boolean;
+      newWorktreeBranch?: string | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -1723,6 +1734,33 @@ function toProjectDraftSession(
   };
 }
 
+/**
+ * The new-worktree branch name a draft keeps after an update. A name asked for wins. Otherwise
+ * the existing one carries, except where it could no longer apply: another project, a switch to
+ * the project checkout, or an attached existing worktree. Switching back to a new worktree then
+ * starts unnamed instead of resurrecting a stale name.
+ */
+export function resolveNewWorktreeBranch(input: {
+  requested: string | null | undefined;
+  existing: string | null;
+  projectChanged: boolean;
+  requestedEnvMode: DraftThreadEnvMode | undefined;
+  requestedWorktreePath: string | null | undefined;
+}): string | null {
+  if (input.requested !== undefined) {
+    const trimmed = input.requested?.trim() ?? "";
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (
+    input.projectChanged ||
+    input.requestedEnvMode === "local" ||
+    (input.requestedWorktreePath ?? null) !== null
+  ) {
+    return null;
+  }
+  return input.existing;
+}
+
 function createDraftThreadState(
   projectRef: ScopedProjectRef,
   threadId: ThreadId,
@@ -1736,6 +1774,7 @@ function createDraftThreadState(
     envMode?: DraftThreadEnvMode;
     startFromOrigin?: boolean;
     workspaceExplicit?: boolean;
+    newWorktreeBranch?: string | null;
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
     environmentSelection?: "auto" | "manual";
@@ -1763,6 +1802,13 @@ function createDraftThreadState(
     options?.startFromOrigin === undefined
       ? (existingThread?.startFromOrigin ?? false)
       : options.startFromOrigin;
+  const nextNewWorktreeBranch = resolveNewWorktreeBranch({
+    requested: options?.newWorktreeBranch,
+    existing: existingThread?.newWorktreeBranch ?? null,
+    projectChanged,
+    requestedEnvMode: options?.envMode,
+    requestedWorktreePath: options?.worktreePath,
+  });
   const environmentSelection =
     options?.environmentSelection ?? existingThread?.environmentSelection;
   const checkoutPullRequest = resolveCheckoutPullRequest(
@@ -1801,6 +1847,7 @@ function createDraftThreadState(
     ...(!projectChanged && existingThread?.worktreeRepositories !== undefined
       ? { worktreeRepositories: existingThread.worktreeRepositories }
       : {}),
+    newWorktreeBranch: nextNewWorktreeBranch,
     promotedTo: null,
   };
 }
@@ -1864,6 +1911,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.workspaceExplicit === right.workspaceExplicit &&
     checkoutPullRequestsEqual(left.checkoutPullRequest, right.checkoutPullRequest) &&
     worktreeRepositoriesEqual(left.worktreeRepositories, right.worktreeRepositories) &&
+    left.newWorktreeBranch === right.newWorktreeBranch &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1975,6 +2023,11 @@ function normalizePersistedDraftThreads(
       const branch = candidateDraftThread.branch;
       const worktreePath = candidateDraftThread.worktreePath;
       const startFromOrigin = candidateDraftThread.startFromOrigin === true;
+      const newWorktreeBranch =
+        typeof candidateDraftThread.newWorktreeBranch === "string" &&
+        candidateDraftThread.newWorktreeBranch.length > 0
+          ? candidateDraftThread.newWorktreeBranch
+          : null;
       const normalizedWorktreePath = typeof worktreePath === "string" ? worktreePath : null;
       const checkoutPullRequest = normalizePersistedCheckoutPullRequest(
         candidateDraftThread.checkoutPullRequest,
@@ -2027,6 +2080,7 @@ function normalizePersistedDraftThreads(
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
         startFromOrigin,
         ...(candidateDraftThread.workspaceExplicit === true ? { workspaceExplicit: true } : {}),
+        newWorktreeBranch,
         ...(candidateDraftThread.environmentSelection === "manual" ||
         candidateDraftThread.environmentSelection === "auto"
           ? { environmentSelection: candidateDraftThread.environmentSelection }
@@ -2095,6 +2149,7 @@ function normalizePersistedDraftThreads(
           worktreePath: null,
           envMode: "local",
           startFromOrigin: false,
+          newWorktreeBranch: null,
           promotedTo: null,
         };
       } else if (
@@ -2817,6 +2872,7 @@ function toHydratedDraftThreadState(
     envMode: persistedDraftThread.envMode,
     startFromOrigin: persistedDraftThread.startFromOrigin,
     ...(persistedDraftThread.workspaceExplicit ? { workspaceExplicit: true } : {}),
+    newWorktreeBranch: persistedDraftThread.newWorktreeBranch,
     ...(persistedDraftThread.environmentSelection
       ? { environmentSelection: persistedDraftThread.environmentSelection }
       : {}),
@@ -3086,6 +3142,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               options.startFromOrigin === undefined
                 ? existing.startFromOrigin
                 : options.startFromOrigin;
+            const nextNewWorktreeBranch = resolveNewWorktreeBranch({
+              requested: options.newWorktreeBranch,
+              existing: existing.newWorktreeBranch,
+              projectChanged,
+              requestedEnvMode: options.envMode,
+              requestedWorktreePath: options.worktreePath,
+            });
             const environmentSelection =
               options.environmentSelection ??
               (options.branch != null || options.worktreePath != null
@@ -3130,6 +3193,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 : {}),
               ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
               ...(worktreeRepositories ? { worktreeRepositories } : {}),
+              newWorktreeBranch: nextNewWorktreeBranch,
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -3154,6 +3218,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 nextDraftThread.worktreeRepositories,
                 existing.worktreeRepositories,
               ) &&
+              nextDraftThread.newWorktreeBranch === existing.newWorktreeBranch &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
               return state;
