@@ -280,12 +280,14 @@ export type JiraSearchResult = typeof JiraSearchResult.Type;
 
 export class JiraError extends Schema.TaggedError<JiraError>()("JiraError", {
   /**
-   * `not-configured`: no identity; `unauthorized`/`forbidden`: Jira refused the identity;
+   * `not-configured`: no identity; `personal-token-required`: a write needs the caller's own
+   * token and they have none; `unauthorized`/`forbidden`: Jira refused the identity;
    * `not-found`: the issue or filter does not exist or is not visible; `invalid`: the request or
    * JQL was rejected; `unavailable`: Jira could not be reached or failed.
    */
   reason: Schema.Literals([
     "not-configured",
+    "personal-token-required",
     "unauthorized",
     "forbidden",
     "not-found",
@@ -313,3 +315,129 @@ export const ThreadJiraIssueLink = Schema.Struct({
   snapshot: Schema.NullOr(ThreadJiraIssueSnapshot),
 });
 export type ThreadJiraIssueLink = typeof ThreadJiraIssueLink.Type;
+
+// Proposals: Jira writes an agent asks for and a user approves. The server performs an approved
+// write with the approver's personal token, never a service account's, and records who approved.
+
+const JiraProjectKey = TrimmedNonEmptyString.check(Schema.isPattern(/^[A-Z][A-Z0-9_]+$/));
+/** Markdown the server converts to Atlassian Document Format when it writes. */
+const JiraMarkdown = Schema.String.check(Schema.isMaxLength(32_000));
+const JiraLabel = TrimmedNonEmptyString.check(Schema.isPattern(/^\S+$/), Schema.isMaxLength(255));
+
+/** One issue an agent proposes to create. The approver may edit every field before approving. */
+export const JiraIssueDraft = Schema.Struct({
+  projectKey: JiraProjectKey,
+  /** Issue type name as the project names it, such as `Story`, `Task`, `Bug` or `Sub-task`. */
+  issueType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  summary: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  description: Schema.NullOr(JiraMarkdown),
+  /** An epic or parent issue; required by Jira for sub-tasks. */
+  parentKey: Schema.NullOr(JiraIssueKeyString),
+  labels: Schema.Array(JiraLabel).check(Schema.isMaxLength(20)),
+  storyPoints: Schema.NullOr(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** Numeric sprint id, as the issue sprint field takes it. */
+  sprintId: Schema.NullOr(PositiveInt),
+  assigneeAccountId: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+});
+export type JiraIssueDraft = typeof JiraIssueDraft.Type;
+
+export const JiraCreateIssuesProposal = Schema.Struct({
+  kind: Schema.Literal("create-issues"),
+  site: TrimmedNonEmptyString,
+  issues: Schema.Array(JiraIssueDraft).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
+});
+export type JiraCreateIssuesProposal = typeof JiraCreateIssuesProposal.Type;
+
+export const JiraCommentProposal = Schema.Struct({
+  kind: Schema.Literal("comment"),
+  ...JiraIssueKey.fields,
+  body: JiraMarkdown.check(Schema.isMinLength(1)),
+});
+export type JiraCommentProposal = typeof JiraCommentProposal.Type;
+
+/** Checked against the issue's available transitions again when it is approved. */
+export const JiraTransitionProposal = Schema.Struct({
+  kind: Schema.Literal("transition"),
+  ...JiraIssueKey.fields,
+  transitionId: TrimmedNonEmptyString.check(Schema.isMaxLength(40)),
+  /** The transition's name when proposed, shown on the card. */
+  transitionName: Schema.String,
+  /** Posted as a comment after the transition when present. */
+  comment: Schema.NullOr(JiraMarkdown),
+});
+export type JiraTransitionProposal = typeof JiraTransitionProposal.Type;
+
+export const JiraProposal = Schema.Union([
+  JiraCreateIssuesProposal,
+  JiraCommentProposal,
+  JiraTransitionProposal,
+]);
+export type JiraProposal = typeof JiraProposal.Type;
+
+/**
+ * `pending` waits for a user. `approved` is being written to Jira. `applied` and `rejected` are
+ * final. `failed` keeps whatever was already written and may be approved again, which writes only
+ * what is missing.
+ */
+export const JiraProposalStatus = Schema.Literals([
+  "pending",
+  "approved",
+  "applied",
+  "rejected",
+  "failed",
+]);
+export type JiraProposalStatus = typeof JiraProposalStatus.Type;
+
+/** What an approval wrote. Issues are the created ones, or the issue commented on or transitioned. */
+export const JiraProposalResult = Schema.Struct({
+  issues: Schema.Array(
+    Schema.Struct({
+      ...JiraIssueKey.fields,
+      url: TrimmedNonEmptyString,
+      /** For `create-issues`, the draft this issue was created from. */
+      draftIndex: Schema.optional(NonNegativeInt),
+    }),
+  ),
+});
+export type JiraProposalResult = typeof JiraProposalResult.Type;
+
+/**
+ * Approve, with the approver's edits, or reject. An edit may not change the proposal's kind,
+ * site or issue key.
+ */
+export const JiraProposalDecisionInput = Schema.Struct({
+  threadId: ThreadId,
+  /** The proposal's turn item id. */
+  proposalId: TrimmedNonEmptyString,
+  decision: Schema.Union([
+    Schema.Struct({ type: Schema.Literal("approve"), proposal: JiraProposal }),
+    Schema.Struct({ type: Schema.Literal("reject") }),
+  ]),
+});
+export type JiraProposalDecisionInput = typeof JiraProposalDecisionInput.Type;
+
+export const JiraProposalDecisionResult = Schema.Struct({
+  status: JiraProposalStatus,
+  result: Schema.NullOr(JiraProposalResult),
+  error: Schema.NullOr(Schema.String),
+});
+export type JiraProposalDecisionResult = typeof JiraProposalDecisionResult.Type;
+
+/** What a proposal card offers for editing a draft in one project, read as the caller. */
+export const JiraCreateMetaInput = Schema.Struct({
+  site: TrimmedNonEmptyString,
+  projectKey: JiraProjectKey,
+});
+export type JiraCreateMetaInput = typeof JiraCreateMetaInput.Type;
+
+export const JiraCreateMeta = Schema.Struct({
+  issueTypes: Schema.Array(
+    Schema.Struct({ id: TrimmedNonEmptyString, name: Schema.String, subtask: Schema.Boolean }),
+  ),
+  /**
+   * Active and future sprints found on the project's issues. Scoped tokens cannot list sprints,
+   * so a future sprint with no issues yet is missing.
+   */
+  sprints: Schema.Array(JiraSprint),
+});
+export type JiraCreateMeta = typeof JiraCreateMeta.Type;
