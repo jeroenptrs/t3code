@@ -800,6 +800,18 @@ export function resolveSendEnvMode(input: {
   return input.isGitRepo ? input.requestedEnvMode : "local";
 }
 
+/**
+ * The branch a first send names its new worktree, if the draft carries a name for it. Only a send
+ * that creates a worktree uses it; a send into an existing checkout has nothing to name.
+ */
+export function resolveNewWorktreeBranchForSend(input: {
+  baseBranchForWorktree: string | null;
+  draftNewWorktreeBranch: string | null | undefined;
+}): string | null {
+  if (input.baseBranchForWorktree === null) return null;
+  return input.draftNewWorktreeBranch?.trim() || null;
+}
+
 export function resolveBackgroundDraftWorkspaceOptions(input: {
   envMode: DraftThreadEnvMode;
   branch: string | null;
