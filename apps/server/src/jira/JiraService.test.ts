@@ -563,3 +563,80 @@ it.effect("a personal token Jira rejects is recorded and never falls back to the
     }),
   );
 });
+
+it.effect(
+  "offers a project's issue types and open sprints for editing a proposal, as the caller",
+  () => {
+    const sprint = (id: number, state: string) => ({ id, name: `Sprint ${id}`, state, boardId: 1 });
+    const people = makeJira((path, body, authorization) => {
+      if (path === "/_edge/tenant_info") return { status: 200, body: { cloudId: "cloud-1" } };
+      if (authorization !== basic("alice") && authorization !== "Bearer secret-token") {
+        return { status: 401, body: null };
+      }
+      switch (path) {
+        case "/rest/api/3/myself":
+          return { status: 200, body: { accountId: "acc-alice", displayName: "alice" } };
+        case "/rest/api/3/field":
+          return { status: 200, body: FIELDS };
+        case "/rest/api/3/issue/createmeta/ABC/issuetypes":
+          return {
+            status: 200,
+            body: {
+              issueTypes: [
+                { id: "1", name: "Geschichte", untranslatedName: "Story", subtask: false },
+                { id: "2", name: "Sub-task", subtask: true },
+              ],
+            },
+          };
+        case "/rest/api/3/search/jql":
+          expect(body).toMatchObject({
+            jql: 'project = "ABC" AND (sprint in openSprints() OR sprint in futureSprints())',
+            fields: ["customfield_10020"],
+          });
+          return {
+            status: 200,
+            body: {
+              issues: [
+                {
+                  id: "1",
+                  key: "ABC-1",
+                  fields: { customfield_10020: [sprint(7, "closed"), sprint(8, "active")] },
+                },
+                {
+                  id: "2",
+                  key: "ABC-2",
+                  fields: { customfield_10020: [sprint(8, "active"), sprint(9, "future")] },
+                },
+              ],
+            },
+          };
+        default:
+          return { status: 404, body: null };
+      }
+    });
+    return run(
+      config,
+      people.client,
+      Effect.gen(function* () {
+        yield* storeToken(ALICE, "alice");
+        const service = yield* JiraService.JiraService;
+        const meta = yield* service.createMeta(
+          { site: "acme.atlassian.net", projectKey: "ABC" },
+          { actingUserId: ALICE },
+        );
+        expect(meta).toEqual({
+          issueTypes: [
+            { id: "1", name: "Story", subtask: false },
+            { id: "2", name: "Sub-task", subtask: true },
+          ],
+          sprints: [
+            { id: 8, name: "Sprint 8", state: "active" },
+            { id: 9, name: "Sprint 9", state: "future" },
+          ],
+        });
+        const reads = people.requests.filter((request) => request.url.includes("createmeta"));
+        expect(reads.map((request) => request.authorization)).toEqual([basic("alice")]);
+      }),
+    );
+  },
+);

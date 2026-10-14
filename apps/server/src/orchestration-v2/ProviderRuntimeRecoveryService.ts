@@ -768,6 +768,8 @@ export const make = Effect.gen(function* () {
               (candidate.inputIntent === "steer" ||
                 candidate.inputIntent === "promoted_queued_to_steer")
             ) &&
+            // A Jira proposal waits for its user, not for the run; it stays approvable.
+            candidate.type !== "jira_proposal" &&
             (candidate.status === "pending" ||
               candidate.status === "running" ||
               candidate.status === "waiting"),
