@@ -18,8 +18,8 @@ import { useAtomCommand } from "~/state/use-atom-command";
 /**
  * Jira linking for one environment. Linking needs Jira configured there, since the dialog checks
  * the issue through the reader first; unlinking is only a thread command, so it stays available
- * for links made while Jira was configured. Both need the session's operate grant, as every
- * orchestration command does.
+ * for links made while Jira was configured, and so is stopping a watch. All need the session's
+ * operate grant, as every orchestration command does.
  */
 export function useJiraIssueLinking(environmentId: EnvironmentId | null) {
   const capabilities = useJiraCapabilities(environmentId);
@@ -48,6 +48,8 @@ export function useJiraIssueLinking(environmentId: EnvironmentId | null) {
       defaultSite: capabilities?.reader?.site ?? null,
       canLink: configured && canOperate,
       canUnlink: canOperate,
+      /** Starting a watch needs the same Jira read the sweep makes; stopping one never does. */
+      canWatch: configured && canOperate,
       changeLink,
     };
   }, [canOperate, capabilities, link, unlink]);
