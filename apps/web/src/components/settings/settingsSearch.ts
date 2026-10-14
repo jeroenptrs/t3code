@@ -38,6 +38,7 @@ export type SettingsPath =
   | "/settings/maintenance"
   | "/settings/labs"
   | "/settings/about"
+  | "/settings/account"
   | "/settings/users"
   | "/settings/archived";
 
@@ -110,6 +111,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/labs": "Labs",
   "/settings/about": "About",
   "/settings/voice": "Voice",
+  "/settings/account": "Account",
   "/settings/users": "Users",
   "/settings/archived": "Archive",
 };
@@ -151,9 +153,9 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/connections",
       "/settings/access",
       ...(isSecretsFeatureEnabled ? (["/settings/secrets"] as const) : []),
-      "/settings/users",
     ],
   },
+  { heading: "Portal", paths: ["/settings/account", "/settings/users"] },
   {
     heading: null,
     paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
@@ -1333,6 +1335,8 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/connections": "connections",
   "/settings/access": "connections",
   "/settings/secrets": null,
+  // The signed-in user's own settings live on the primary environment; there is no scope to pick.
+  "/settings/account": null,
   // Portal users live on the primary environment; there is no scope to pick.
   "/settings/users": null,
   "/settings/scheduled-tasks": null,
