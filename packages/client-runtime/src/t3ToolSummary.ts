@@ -715,6 +715,63 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "link-jira": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Linked {count} Jira issue} other {Linked {count} Jira issues}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to link {count} Jira issue} other {Tried to link {count} Jira issues}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "unlink-jira": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Unlinked {count} Jira issue} other {Unlinked {count} Jira issues}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to unlink {count} Jira issue} other {Tried to unlink {count} Jira issues}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "list-jira": {
+      const count = selected.length;
+      if (count === 1) {
+        label = done
+          ? resolve(msg("Checked linked Jira issues"))
+          : resolve(msg("Tried to check linked Jira issues"));
+      } else {
+        label = done
+          ? resolve(
+              msg(
+                "{count, plural, one {Checked linked Jira issues {count} time} other {Checked linked Jira issues {count} times}}",
+                { count },
+              ),
+            )
+          : resolve(
+              msg(
+                "{count, plural, one {Tried to check linked Jira issues {count} time} other {Tried to check linked Jira issues {count} times}}",
+                { count },
+              ),
+            );
+      }
+      break;
+    }
     case "list-issues": {
       const count = selected.length;
       label = done
