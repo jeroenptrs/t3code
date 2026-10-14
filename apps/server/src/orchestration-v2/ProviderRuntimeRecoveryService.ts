@@ -470,6 +470,8 @@ export const make = Effect.gen(function* () {
             !isAppOwnedDelegationItem(candidate) &&
             // A link card waits on the user, not the run, and answers by message.
             candidate.type !== "link_request" &&
+            // A Jira proposal waits for its user, not for the run; it stays approvable.
+            candidate.type !== "jira_proposal" &&
             (candidate.status === "pending" ||
               candidate.status === "running" ||
               candidate.status === "waiting"),
