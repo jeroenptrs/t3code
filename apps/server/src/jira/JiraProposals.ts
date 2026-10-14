@@ -29,7 +29,8 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -319,7 +320,8 @@ const make = Effect.gen(function* () {
   const jira = yield* JiraService.JiraService;
   const api = yield* JiraApi.JiraApi;
   const sql = yield* SqlClient.SqlClient;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
@@ -613,10 +615,9 @@ const make = Effect.gen(function* () {
         ? { ...request, issues: request.issues.map(toDraft) }
         : request;
     const content = new TextEncoder().encode(JSON.stringify([origin.id, change]));
-    return crypto.digest("SHA-256", content).pipe(
-      Effect.map((digest) => `auto:${Buffer.from(digest).toString("base64url")}`),
-      Effect.orDie,
-    );
+    return digest
+      .digest(Digest.sha256, content)
+      .pipe(Effect.map((hash) => `auto:${Buffer.from(hash).toString("base64url")}`));
   };
 
   const propose: JiraProposals["Service"]["propose"] = Effect.fn("JiraProposals.propose")(
@@ -768,7 +769,12 @@ const make = Effect.gen(function* () {
         }
         case "comment": {
           if ((yield* Ref.get(progress)).steps.includes("comment")) return;
-          yield* api.addComment(identity, proposal.key, markdownToAdf(proposal.body));
+          const posted = yield* api.addComment(
+            identity,
+            proposal.key,
+            markdownToAdf(proposal.body),
+          );
+          yield* jira.recordPostedComment(identity.site, proposal.key, posted.id);
           yield* advance((current) => ({
             ...withIssue(current, proposal.key),
             steps: [...current.steps, "comment"],
@@ -795,7 +801,12 @@ const make = Effect.gen(function* () {
             proposal.comment.trim().length > 0 &&
             !(yield* Ref.get(progress)).steps.includes("comment")
           ) {
-            yield* api.addComment(identity, proposal.key, markdownToAdf(proposal.comment));
+            const posted = yield* api.addComment(
+              identity,
+              proposal.key,
+              markdownToAdf(proposal.comment),
+            );
+            yield* jira.recordPostedComment(identity.site, proposal.key, posted.id);
             yield* advance((current) => ({ ...current, steps: [...current.steps, "comment"] }));
           }
           return;
@@ -930,7 +941,7 @@ const make = Effect.gen(function* () {
       if (identity === undefined) return yield* personalTokenRequired;
       const claimedAt = yield* nowIso;
       // Names this approval's records, so a later approval is never mistaken for a replay.
-      const claimId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
+      const claimId = yield* random.uuidV4().pipe(Effect.orDie);
       if (!(yield* claim({ proposalId: item.id, claimId, userId, proposal, claimedAt }))) {
         const current = yield* readLedger(item.id);
         return current === null ? outcomeOf(item) : yield* outcomeFromLedger(item, current);

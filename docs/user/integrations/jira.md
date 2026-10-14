@@ -196,9 +196,11 @@ agent stops watching with `unwatch_jira_issue`.
 
 The server checks a watched issue every two minutes, with the server's identity, and
 wakes the agent when someone else comments, the issue moves to another status
-category, or its assignee changes. Comments by the reader's own account do not wake
-it. A watching thread counts as working between wakes, like one watching a pull
-request.
+category, or its assignee changes. Comments T3 Code posts, for you or for an approved
+proposal, do not wake it, and neither do comments by any account listed in
+`T3CODE_JIRA_IDENTITIES`. List the Jira account your agents comment with through jtk
+there too, so an agent's own comments do not wake it. A watching thread counts as
+working between wakes, like one watching a pull request.
 
 A watch ends after ten wakes in a row that bring only comments. It also ends when you
 unlink the issue, when the reader can no longer see it, or when the thread is stopped,
