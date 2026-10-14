@@ -927,6 +927,8 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return `Created thread ${item.targetThreadId} with ${item.targetProviderInstanceId} (${item.targetModel}).`;
     case "secret_request":
       return `Asked the user for ${item.label}: ${item.secretStatus}.`;
+    case "jira_proposal":
+      return `${item.title ?? "Jira proposal"}: ${item.proposalStatus}.${item.error === undefined ? "" : ` ${item.error}`}`;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
