@@ -1,11 +1,13 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
+  CircleDotIcon,
   CircleUserRoundIcon,
   CodeIcon,
   FilterIcon,
   FlagIcon,
   ListFilterIcon,
+  RepeatIcon,
   SearchIcon,
   ShapesIcon,
   StarIcon,
@@ -131,7 +133,7 @@ export function JiraViewPicker({
                 ? (filtersQuery.error ?? "Could not list filters.")
                 : sentQuery.length > 0
                   ? "No filters match"
-                  : "Star a filter in Jira to see it here"}
+                  : "Search for a filter by name"}
           </MenuItem>
         )}
         <MenuSeparator />
@@ -148,6 +150,8 @@ const FACETS: ReadonlyArray<{ key: JiraIssueFacetKey; label: string; Icon: Lucid
   { key: "assignee", label: "Assignee", Icon: CircleUserRoundIcon },
   { key: "priority", label: "Priority", Icon: FlagIcon },
   { key: "issueType", label: "Issue type", Icon: ShapesIcon },
+  { key: "sprint", label: "Sprint", Icon: RepeatIcon },
+  { key: "status", label: "Status", Icon: CircleDotIcon },
 ];
 
 function JiraFacetSubmenu({
@@ -175,6 +179,10 @@ function JiraFacetSubmenu({
         </span>
       </MenuSubTrigger>
       <MenuSubPopup>
+        <MenuCheckboxItem checked={value.length === 0} onCheckedChange={() => onChange([])}>
+          Any
+        </MenuCheckboxItem>
+        <MenuSeparator />
         {options.length === 0 ? (
           <MenuItem disabled>Nothing loaded</MenuItem>
         ) : (
@@ -219,7 +227,7 @@ function JiraFacetSubmenu({
 }
 
 /**
- * Narrows the loaded rows by assignee, priority and issue type, without asking Jira again. The
+ * Narrows the loaded rows by assignee, priority, issue type, sprint and status, without asking Jira again. The
  * trigger counts the values chosen, so a narrowed list is never a mystery.
  */
 export function JiraIssueFacetsMenu({

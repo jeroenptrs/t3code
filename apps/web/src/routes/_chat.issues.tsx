@@ -30,6 +30,7 @@ import {
   groupJiraIssuesByStatusCategory,
   matchesJiraIssueFacets,
   mergeJiraSearchPages,
+  personalCredentialForSite,
   readJiraIssuesViewId,
   sortJiraFilterViews,
   writeJiraIssuesViewId,
@@ -502,7 +503,8 @@ function JiraIssuesList({
   const jqlError =
     view?.kind === "jql" && failureReason === "invalid" ? (firstPage.error ?? null) : null;
   const refused = failureReason === "unauthorized" || failureReason === "forbidden";
-  const personalCredential = capabilities.personalCredential;
+  // Only a credential on the reader's site changes who reads; elsewhere the reader still does.
+  const personalCredential = personalCredentialForSite(capabilities, capabilities.reader?.site);
 
   return (
     <>
@@ -639,7 +641,7 @@ function JiraIssuesList({
               <EmptyTitle>Choose a view</EmptyTitle>
               <EmptyDescription>
                 {defaultFiltersQuery.error ??
-                  "Star a filter in Jira, find one by name in the view picker, or use JQL."}
+                  "Search for a filter by name in the view picker, or use JQL."}
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
