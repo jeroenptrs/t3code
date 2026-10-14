@@ -408,6 +408,12 @@ export function summarizeT3ToolCalls(
         `linked Jira issues${selected.length === 1 ? "" : ` ${times}`}`,
       );
       break;
+    case "watch-jira":
+      label = phrase("Watched", "watch", quantity(selected.length, "Jira issue"));
+      break;
+    case "unwatch-jira":
+      label = phrase("Stopped watching", "stop watching", quantity(selected.length, "Jira issue"));
+      break;
     case "propose-jira-issues": {
       // One call proposes a batch of drafts.
       const drafts = selected.reduce(
