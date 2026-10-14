@@ -424,6 +424,21 @@ export function summarizeT3ToolCalls(
         `linked Jira issues${selected.length === 1 ? "" : ` ${times}`}`,
       );
       break;
+    case "propose-jira-issues": {
+      // One call proposes a batch of drafts.
+      const drafts = selected.reduce(
+        (count, call) => count + (Array.isArray(call.input?.issues) ? call.input.issues.length : 1),
+        0,
+      );
+      label = phrase("Proposed", "propose", quantity(drafts, "Jira issue"));
+      break;
+    }
+    case "propose-jira-comment":
+      label = phrase("Proposed", "propose", quantity(selected.length, "Jira comment"));
+      break;
+    case "propose-jira-transition":
+      label = phrase("Proposed", "propose", quantity(selected.length, "Jira transition"));
+      break;
     case "write-pr-guides": {
       // One call writes many guides, and reports a refusal per guide rather than failing.
       const outcomes = selected.flatMap((call) =>
