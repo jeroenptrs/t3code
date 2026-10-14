@@ -770,7 +770,8 @@ function eventPathContainsSelector(event: Event, selector: string): boolean {
   return path.some((target) => target instanceof Element && target.closest(selector));
 }
 
-const SECRET_REQUEST_SELECTOR = '[data-v2-item-type="secret_request"]';
+const ANSWER_CARD_SELECTOR =
+  '[data-v2-item-type="secret_request"], [data-v2-item-type="jira_proposal"]';
 
 /**
  * Whether input that landed outside any editable or interactive element
@@ -780,8 +781,9 @@ const SECRET_REQUEST_SELECTOR = '[data-v2-item-type="secret_request"]';
 function shouldRedirectInputToComposer(event: Event): boolean {
   if (event.defaultPrevented) return false;
   // Near a pending secret request, input is meant for its private field: it
-  // must never land in the composer draft, which is persisted and sent.
-  if (eventPathContainsSelector(event, SECRET_REQUEST_SELECTOR)) return false;
+  // must never land in the composer draft, which is persisted and sent. A Jira
+  // proposal's fields likewise keep what is typed near them.
+  if (eventPathContainsSelector(event, ANSWER_CARD_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
   if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
