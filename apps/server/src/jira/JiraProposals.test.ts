@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import {
   AuthUserId,
   CommandId,
+  EventId,
   type JiraProposalStatus,
   MessageId,
   OrchestrationV2Command,
@@ -11,6 +12,7 @@ import {
   ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -70,14 +72,17 @@ const basic = (who: string) =>
 
 /**
  * Jira as the bot's bearer token and Alice's and Bob's personal tokens. Created issues are
- * numbered from ABC-101; `failCreates` makes the given create attempts (1-based) fail once.
+ * numbered from ABC-101; `failCreates` and `failEdits` make the given create and issue edit
+ * attempts (1-based) fail. Like many projects, its create screen has no story points or sprint.
  */
 const makeJira = (options: {
   readonly failCreates?: ReadonlyArray<number>;
+  readonly failEdits?: ReadonlyArray<number>;
   readonly transitionsFor?: (who: string) => ReadonlyArray<unknown>;
 }) => {
   const requests: Array<Recorded> = [];
   let createAttempts = 0;
+  let editAttempts = 0;
   let created = 100;
   const transitions = [
     {
@@ -117,8 +122,24 @@ const makeJira = (options: {
         if (options.failCreates?.includes(createAttempts)) {
           return answer(400, { errors: { summary: "Summary is too vague." } });
         }
+        const fields = (body as { fields: Record<string, unknown> }).fields;
+        const offScreen = Object.keys(fields).find((field) => field.startsWith("customfield_"));
+        if (offScreen !== undefined) {
+          return answer(400, {
+            errors: {
+              [offScreen]: `Field '${offScreen}' cannot be set. It is not on the appropriate screen, or unknown.`,
+            },
+          });
+        }
         created += 1;
         return answer(201, { id: String(created), key: `ABC-${created}` });
+      }
+      if (request.method === "PUT" && /^\/rest\/api\/3\/issue\/[A-Z]+-\d+$/.test(path)) {
+        editAttempts += 1;
+        if (options.failEdits?.includes(editAttempts)) {
+          return answer(400, { errors: { customfield_10020: "Sprint 7 is closed." } });
+        }
+        return answer(204, null);
       }
       const issuePath = /^\/rest\/api\/3\/issue\/([A-Z]+-\d+)\/(comment|transitions)$/.exec(path);
       if (issuePath?.[2] === "comment") return answer(201, { id: "c-1" });
@@ -188,7 +209,7 @@ const startRun = (threadId: ThreadId) =>
 const propose = (
   threadId: ThreadId,
   request: JiraProposals.JiraProposalRequest,
-  clientRequestId: string,
+  clientRequestId?: string,
 ) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -246,6 +267,37 @@ const decide = (
   );
 
 const draft = (summary: string) => ({ projectKey: "ABC", issueType: "Story", summary });
+
+const creates = (requests: ReadonlyArray<Recorded>) =>
+  requests
+    .filter((entry) => entry.method === "POST" && entry.path === "/rest/api/3/issue")
+    .map((entry) => (entry.body as { fields: { summary: string } }).fields.summary);
+
+const readLedger = (proposalId: TurnItemId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [row] = yield* sql<{
+      readonly status: string;
+      readonly error: string | null;
+      readonly progress_json: string | null;
+    }>`SELECT status, error, progress_json FROM fork_jira_proposals WHERE proposal_id = ${proposalId}`;
+    return row!;
+  });
+
+/** Makes the ledger refuse to store progress: only mid-approval steps, or every write of it. */
+const failProgressWrites = (scope: "steps" | "all") =>
+  Effect.flatMap(SqlClient.SqlClient, (sql) =>
+    sql.unsafe(`
+      CREATE TRIGGER fail_progress_writes BEFORE UPDATE OF progress_json ON fork_jira_proposals
+      WHEN NEW.progress_json IS NOT OLD.progress_json
+        ${scope === "steps" ? "AND NEW.status = 'approved'" : ""}
+      BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END
+    `),
+  );
+
+const restoreProgressWrites = Effect.flatMap(SqlClient.SqlClient, (sql) =>
+  sql.unsafe("DROP TRIGGER fail_progress_writes"),
+);
 
 it.effect("approves a proposal only as a signed-in user with their own token, once", () => {
   const jira = makeJira({});
@@ -343,10 +395,21 @@ it.effect("approves a proposal only as a signed-in user with their own token, on
       issuetype: { name: "Story" },
       summary: "Login page",
       labels: ["auth"],
-      customfield_10016: 3,
-      customfield_10020: 7,
     });
     assert.include(JSON.stringify(first?.description), '"type":"doc"');
+    // Story points and sprint, off the create screen, are set on the created issue after.
+    assert.deepStrictEqual(
+      jira.requests
+        .filter((entry) => entry.method === "PUT")
+        .map((entry) => [entry.path, entry.who, entry.body]),
+      [
+        [
+          "/rest/api/3/issue/ABC-101",
+          "alice",
+          { fields: { customfield_10016: 3, customfield_10020: 7 } },
+        ],
+      ],
+    );
     assert.deepStrictEqual(second, {
       project: { key: "ABC" },
       issuetype: { name: "Story" },
@@ -596,4 +659,224 @@ it.effect("keeps a proposal open after its run ends, where only a user can decid
     assert.include(JSON.stringify(comments[0]?.body), '"type":"doc"');
     assert.isNull((yield* projections.getThreadShell(threadId))?.pendingRuntimeRequest ?? null);
   }).pipe(Effect.provide(layerFor("proposal-outlives-run", jira.client)));
+});
+
+it.effect("sets story points and sprint after creating, and retries only that edit", () => {
+  const jira = makeJira({ failEdits: [1] });
+  return Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:proposal-follow-up");
+    yield* startRun(threadId);
+    yield* storeToken(ALICE, "alice");
+    const { proposalId } = yield* propose(
+      threadId,
+      { kind: "create-issues", issues: [{ ...draft("Sized"), storyPoints: 5, sprintId: 7 }] },
+      "sized",
+    );
+    const approve = {
+      type: "approve",
+      proposal: (yield* readCard(threadId, proposalId)).proposal,
+    } as const;
+
+    const failed = yield* decide(ALICE, threadId, proposalId, approve);
+    assert.equal(failed.status, "failed");
+    assert.include(failed.error, "Created ABC-101");
+    assert.include(failed.error, "Sprint 7 is closed.");
+    assert.deepStrictEqual(
+      failed.result?.issues.map((issue) => issue.key),
+      ["ABC-101"],
+    );
+
+    const retried = yield* decide(ALICE, threadId, proposalId, approve);
+    assert.equal(retried.status, "applied");
+    assert.deepStrictEqual(creates(jira.requests), ["Sized"]);
+    assert.deepStrictEqual(
+      jira.requests.filter((entry) => entry.method === "PUT").map((entry) => entry.path),
+      ["/rest/api/3/issue/ABC-101", "/rest/api/3/issue/ABC-101"],
+    );
+  }).pipe(Effect.provide(layerFor("proposal-follow-up", jira.client)));
+});
+
+it.effect("keeps an issue Jira created when storing the step fails, and never repeats it", () => {
+  const jira = makeJira({});
+  return Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:proposal-unsaved-step");
+    yield* startRun(threadId);
+    yield* storeToken(ALICE, "alice");
+    const { proposalId } = yield* propose(
+      threadId,
+      { kind: "create-issues", issues: [draft("One"), draft("Two")] },
+      "unsaved-step",
+    );
+    const approve = {
+      type: "approve",
+      proposal: (yield* readCard(threadId, proposalId)).proposal,
+    } as const;
+
+    yield* failProgressWrites("steps");
+    const failed = yield* decide(ALICE, threadId, proposalId, approve);
+    // Writing stopped at the step the ledger could not take; ending the approval stored it.
+    assert.equal(failed.status, "failed");
+    assert.deepStrictEqual(creates(jira.requests), ["One"]);
+    assert.include((yield* readLedger(proposalId)).progress_json, "ABC-101");
+    assert.equal((yield* readCard(threadId, proposalId)).proposalStatus, "failed");
+
+    yield* restoreProgressWrites;
+    assert.equal((yield* decide(ALICE, threadId, proposalId, approve)).status, "applied");
+    assert.deepStrictEqual(creates(jira.requests), ["One", "Two"]);
+  }).pipe(Effect.provide(layerFor("proposal-unsaved-step", jira.client)));
+});
+
+it.effect(
+  "fails the card when the ledger cannot store the approval, and retries from memory",
+  () => {
+    const jira = makeJira({});
+    return Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:proposal-unsaved-end");
+      yield* startRun(threadId);
+      yield* storeToken(ALICE, "alice");
+      const { proposalId } = yield* propose(
+        threadId,
+        { kind: "create-issues", issues: [draft("One"), draft("Two")] },
+        "unsaved-end",
+      );
+      const approve = {
+        type: "approve",
+        proposal: (yield* readCard(threadId, proposalId)).proposal,
+      } as const;
+
+      yield* failProgressWrites("all");
+      const failed = yield* decide(ALICE, threadId, proposalId, approve);
+      assert.equal(failed.status, "failed");
+      assert.include(failed.error, "could not save what it wrote");
+      assert.include(yield* readCard(threadId, proposalId), {
+        proposalStatus: "failed",
+        error: failed.error ?? "",
+      });
+      // The ledger still holds the approval; nothing it wrote is lost to the next one.
+      assert.equal((yield* readLedger(proposalId)).status, "approved");
+
+      yield* restoreProgressWrites;
+      const retried = yield* decide(ALICE, threadId, proposalId, approve);
+      assert.equal(retried.status, "applied");
+      assert.deepStrictEqual(
+        retried.result?.issues.map((issue) => issue.key),
+        ["ABC-101", "ABC-102"],
+      );
+      assert.deepStrictEqual(creates(jira.requests), ["One", "Two"]);
+    }).pipe(Effect.provide(layerFor("proposal-unsaved-end", jira.client)));
+  },
+);
+
+it.effect("fails approvals a previous process left mid-write so they can be approved again", () => {
+  const jira = makeJira({});
+  return Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const proposals = yield* JiraProposals.JiraProposals;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make("thread:proposal-recovery");
+    const run = yield* startRun(threadId);
+    yield* storeToken(ALICE, "alice");
+    const interrupted = (yield* propose(
+      threadId,
+      { kind: "create-issues", issues: [draft("One"), draft("Two")] },
+      "interrupted",
+    )).proposalId;
+    const unrecorded = (yield* propose(
+      threadId,
+      { kind: "comment", key: "ABC-1", body: "Done." },
+      "unrecorded",
+    )).proposalId;
+    // As a writer that died left them: both cards approved; one ledger mid-write, with the
+    // first issue created, the other already applied.
+    for (const proposalId of [interrupted, unrecorded]) {
+      yield* orchestrator.dispatch({
+        type: "jira_proposal.record",
+        commandId: CommandId.make(`proposals-test:approved:${proposalId}`),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId!,
+        turnItemId: proposalId,
+        proposal: (yield* readCard(threadId, proposalId)).proposal,
+        proposalStatus: "approved",
+        decidedByUserId: ALICE,
+        decidedAt: "2026-10-14T12:00:00.000Z",
+      });
+    }
+    const created = JSON.stringify({
+      issues: [{ site: SITE, key: "ABC-99", url: `https://${SITE}/browse/ABC-99`, draftIndex: 0 }],
+      steps: [],
+    });
+    yield* sql`
+      UPDATE fork_jira_proposals SET status = 'approved', claim_id = 'dead',
+        claimed_at = '2026-10-14T12:00:00.000Z', progress_json = ${created}
+      WHERE proposal_id = ${interrupted}
+    `;
+    yield* sql`UPDATE fork_jira_proposals SET status = 'applied' WHERE proposal_id = ${unrecorded}`;
+
+    yield* proposals.recoverInterrupted;
+    assert.include(yield* readCard(threadId, interrupted), {
+      proposalStatus: "failed",
+      error: "Interrupted before it finished; approve again to finish what is missing.",
+    });
+    assert.equal((yield* readLedger(interrupted)).status, "failed");
+    assert.equal((yield* readCard(threadId, unrecorded)).proposalStatus, "applied");
+
+    const outcome = yield* decide(ALICE, threadId, interrupted, {
+      type: "approve",
+      proposal: (yield* readCard(threadId, interrupted)).proposal,
+    });
+    assert.equal(outcome.status, "applied");
+    assert.deepStrictEqual(creates(jira.requests), ["Two"]);
+  }).pipe(Effect.provide(layerFor("proposal-recovery", jira.client)));
+});
+
+it.effect("finds the same card when an agent proposes the same change again without a key", () => {
+  const jira = makeJira({});
+  return Effect.gen(function* () {
+    const proposals = yield* JiraProposals.JiraProposals;
+    const threadId = ThreadId.make("thread:proposal-implicit-key");
+    yield* startRun(threadId);
+    yield* storeToken(ALICE, "alice");
+    const request = { kind: "comment", key: "ABC-1", body: "Shipped." } as const;
+    const { proposalId } = yield* propose(threadId, request);
+    yield* decide(ALICE, threadId, proposalId, { type: "reject" });
+
+    const again = yield* proposals.propose({ threadId, providerInstanceId: codex, request });
+    assert.deepStrictEqual(again, { proposalId, status: "rejected", result: null, error: null });
+    const other = yield* propose(threadId, { ...request, body: "Shipped in 1.2." });
+    assert.notEqual(other.proposalId, proposalId);
+  }).pipe(Effect.provide(layerFor("proposal-implicit-key", jira.client)));
+});
+
+it.effect("refuses to decide a proposal whose turn was rolled back", () => {
+  const jira = makeJira({});
+  return Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:proposal-rolled-back");
+    const run = yield* startRun(threadId);
+    yield* storeToken(ALICE, "alice");
+    const { proposalId } = yield* propose(
+      threadId,
+      { kind: "comment", key: "ABC-1", body: "Done." },
+      "rolled-back",
+    );
+    yield* projections.apply({
+      id: EventId.make("event:proposals-test:rolled-back"),
+      type: "run.updated",
+      threadId,
+      runId: run.id,
+      nodeId: run.rootNodeId!,
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: DateTime.makeUnsafe("2026-10-14T12:00:00.000Z"),
+      payload: { ...run, status: "rolled_back" },
+    });
+    const proposal = (yield* readCard(threadId, proposalId)).proposal;
+    for (const decision of [{ type: "approve", proposal }, { type: "reject" }] as const) {
+      const refused = yield* decide(ALICE, threadId, proposalId, decision).pipe(Effect.flip);
+      assert.equal(refused.reason, "not-found");
+      assert.include(refused.message, "rolled back");
+    }
+    assert.isFalse(jira.requests.some((entry) => entry.path.endsWith("/comment")));
+    assert.equal((yield* readCard(threadId, proposalId)).proposalStatus, "pending");
+  }).pipe(Effect.provide(layerFor("proposal-rolled-back", jira.client)));
 });

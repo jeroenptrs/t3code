@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import {
   AuthUserId,
   CommandId,
+  EventId,
   type JiraProposal,
   type JiraProposalStatus,
   MessageId,
@@ -9,6 +10,7 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import { createThread, layerOrchestration, SITE } from "../jira/JiraLinks.testkit.ts";
@@ -206,4 +208,84 @@ it.effect("refuses a record outside its run's root or over another kind of item"
     const overwrite = yield* record(run, message.id, "pending").pipe(Effect.flip);
     assert.include(refusal(overwrite), "is not a Jira proposal");
   }).pipe(Effect.provide(layerOrchestration("jira-proposal-refusals"))),
+);
+
+it.effect("records another approval of the same status, and ignores an exact replay", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make("thread:jira-proposal-reapproved");
+    const run = yield* startRun(threadId);
+    const turnItemId = TurnItemId.make("turn-item:jira-proposal:reapproved");
+    yield* record(run, turnItemId, "pending");
+    const approve = (userId: AuthUserId, decidedAt: string, body: string) =>
+      orchestrator.dispatch({
+        type: "jira_proposal.record",
+        commandId: nextCommandId("approved"),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId!,
+        turnItemId,
+        proposal: { ...proposal, body },
+        proposalStatus: "approved",
+        decidedByUserId: userId,
+        decidedAt,
+      });
+
+    yield* approve(ada, "2026-10-14T12:00:00.000Z", proposal.body);
+    const first = yield* readCard(threadId, turnItemId);
+    // An approval taking over an interrupted one records its own approver, time and edits.
+    const grace = AuthUserId.make("user-grace");
+    yield* approve(grace, "2026-10-14T13:00:00.000Z", "Shipped in 1.2.");
+    const second = yield* readCard(threadId, turnItemId);
+    assert.include(second, {
+      proposalStatus: "approved",
+      decidedByUserId: grace,
+      decidedAt: "2026-10-14T13:00:00.000Z",
+    });
+    assert.include(second.proposal, { body: "Shipped in 1.2." });
+    assert.equal(second.ordinal, first.ordinal);
+
+    yield* approve(grace, "2026-10-14T13:00:00.000Z", "Shipped in 1.2.");
+    assert.deepStrictEqual(yield* readCard(threadId, turnItemId), second);
+  }).pipe(Effect.provide(layerOrchestration("jira-proposal-reapproved"))),
+);
+
+it.effect("stops waiting on a proposal whose turn was rolled back", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:jira-proposal-rolled-back");
+    const run = yield* startRun(threadId);
+    const turnItemId = TurnItemId.make("turn-item:jira-proposal:rolled-back");
+    yield* record(run, turnItemId, "pending");
+    const settleable = Effect.map(projections.getSettlementCandidates(), (candidates) =>
+      candidates.some((candidate) => candidate.id === threadId),
+    );
+    const interrupted = { ...run, status: "interrupted" as const };
+    yield* projections.apply({
+      id: EventId.make("event:jira-proposal-rolled-back:stopped"),
+      type: "run.updated",
+      threadId,
+      runId: run.id,
+      nodeId: run.rootNodeId!,
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: DateTime.makeUnsafe("2026-10-14T12:00:00.000Z"),
+      payload: interrupted,
+    });
+    // An ended run's proposal still waits on the user, and holds the thread open.
+    assert.deepStrictEqual(yield* pendingInputIds(threadId), [turnItemId, turnItemId]);
+    assert.isFalse(yield* settleable);
+
+    yield* projections.apply({
+      id: EventId.make("event:jira-proposal-rolled-back:rolled-back"),
+      type: "run.updated",
+      threadId,
+      runId: run.id,
+      nodeId: run.rootNodeId!,
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: DateTime.makeUnsafe("2026-10-14T12:01:00.000Z"),
+      payload: { ...interrupted, status: "rolled_back" },
+    });
+    assert.deepStrictEqual(yield* pendingInputIds(threadId), [null, null]);
+    assert.isTrue(yield* settleable);
+  }).pipe(Effect.provide(layerOrchestration("jira-proposal-rolled-back"))),
 );
