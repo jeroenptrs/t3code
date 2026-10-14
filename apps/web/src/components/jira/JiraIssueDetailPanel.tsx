@@ -137,14 +137,18 @@ export function JiraIssueDetailPanel(props: {
           reason === "not-found"
             ? `${issue.key} is not available`
             : reason === "unauthorized" || reason === "forbidden"
-              ? "Jira refused the reader"
+              ? capabilities.personalCredential === null
+                ? "Jira refused the reader"
+                : "Jira refused your token"
               : `Could not load ${issue.key}`
         }
         description={
           reason === "not-found"
             ? `The issue does not exist on ${issue.site}, or the server's reader identity cannot see it.`
             : reason === "unauthorized" || reason === "forbidden"
-              ? `Jira refused the server's reader identity${capabilities.reader ? ` (${capabilities.reader.name})` : ""}. Check its token and project permissions.`
+              ? capabilities.personalCredential === null
+                ? `Jira refused the server's reader identity${capabilities.reader ? ` (${capabilities.reader.name})` : ""}. Check its token and project permissions.`
+                : "Check your token and project permissions in Settings → Account."
               : (query.error ?? "The request failed.")
         }
         url={url}
