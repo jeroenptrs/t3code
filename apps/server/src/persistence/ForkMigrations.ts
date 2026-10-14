@@ -24,7 +24,7 @@
  *
  * Fork-owned tables: `auth_users`, `auth_user_access_changes` (001);
  * `fork_diff_walkthroughs` (005, documents rewritten by 006);
- * `fork_projection_thread_jira_issues` (007).
+ * `fork_projection_thread_jira_issues` (007); `fork_jira_user_credentials` (008).
  */
 
 import * as Migrator from "effect/sql/Migrator";
@@ -40,6 +40,7 @@ import ForkMigration0004 from "./ForkMigrations/004_WebhookDeliveryDispatchedAt.
 import ForkMigration0005 from "./ForkMigrations/005_DiffWalkthroughs.ts";
 import ForkMigration0006 from "./ForkMigrations/006_DiffWalkthroughGuideShape.ts";
 import ForkMigration0007 from "./ForkMigrations/007_ProjectionThreadJiraIssues.ts";
+import ForkMigration0008 from "./ForkMigrations/008_JiraUserCredentials.ts";
 
 export const forkMigrationsTable = "fork_sql_migrations";
 
@@ -51,6 +52,7 @@ export const forkMigrationEntries = [
   [5, "DiffWalkthroughs", ForkMigration0005],
   [6, "DiffWalkthroughGuideShape", ForkMigration0006],
   [7, "ProjectionThreadJiraIssues", ForkMigration0007],
+  [8, "JiraUserCredentials", ForkMigration0008],
 ] as const;
 
 export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);

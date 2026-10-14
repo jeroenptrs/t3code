@@ -1,12 +1,14 @@
 import { expect, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { AuthUserId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import type { JiraConfig } from "./JiraConfig.ts";
 import * as JiraApi from "./JiraApi.ts";
@@ -22,6 +24,7 @@ import {
   unlinkIssue,
 } from "./JiraLinks.testkit.ts";
 import * as JiraService from "./JiraService.ts";
+import * as JiraUserCredentials from "./JiraUserCredentials.ts";
 
 interface Recorded {
   readonly method: string;
@@ -67,8 +70,14 @@ const issue = (key: string) => ({
   },
 });
 
-/** A fake Jira answering by path; every request is recorded. */
-const makeJira = (respond: (path: string, body: unknown) => { status: number; body: unknown }) => {
+/** A fake Jira answering by path and authorization; every request is recorded. */
+const makeJira = (
+  respond: (
+    path: string,
+    body: unknown,
+    authorization: string | undefined,
+  ) => { status: number; body: unknown },
+) => {
   const requests: Array<Recorded> = [];
   const client = HttpClient.make((request) =>
     Effect.sync(() => {
@@ -84,7 +93,7 @@ const makeJira = (respond: (path: string, body: unknown) => { status: number; bo
         body,
       });
       const path = url.pathname.replace("/ex/jira/cloud-1", "");
-      const answer = respond(path, body);
+      const answer = respond(path, body, request.headers.authorization);
       return HttpClientResponse.fromWeb(
         request,
         new Response(JSON.stringify(answer.body), { status: answer.status }),
@@ -94,8 +103,22 @@ const makeJira = (respond: (path: string, body: unknown) => { status: number; bo
   return { requests, client };
 };
 
+/** Personal tokens live in memory; everything else is the real service. */
+const memorySecretStore = Layer.sync(ServerSecretStore.ServerSecretStore, () => {
+  const entries = new Map<string, Uint8Array>();
+  return ServerSecretStore.ServerSecretStore.of({
+    get: (name) => Effect.sync(() => Option.fromNullishOr(entries.get(name))),
+    set: (name, value) => Effect.sync(() => void entries.set(name, value)),
+    create: (name, value) => Effect.sync(() => void entries.set(name, value)),
+    getOrCreateRandom: () => Effect.die("unused"),
+    remove: (name) => Effect.sync(() => void entries.delete(name)),
+  });
+});
+
 const serviceLayer = (jiraConfig: JiraConfig | undefined, client: HttpClient.HttpClient) =>
   JiraService.layer.pipe(
+    Layer.provideMerge(JiraUserCredentials.layer),
+    Layer.provide(memorySecretStore),
     Layer.provide(JiraApi.layer),
     Layer.provide(JiraReadCache.layer),
     Layer.provide(Layer.succeed(JiraIdentities.JiraIdentities, JiraIdentities.make(jiraConfig))),
@@ -106,7 +129,11 @@ const serviceLayer = (jiraConfig: JiraConfig | undefined, client: HttpClient.Htt
 const run = <A, E>(
   jiraConfig: JiraConfig | undefined,
   client: HttpClient.HttpClient,
-  effect: Effect.Effect<A, E, JiraService.JiraService | SqlClient.SqlClient>,
+  effect: Effect.Effect<
+    A,
+    E,
+    JiraService.JiraService | JiraUserCredentials.JiraUserCredentials | SqlClient.SqlClient
+  >,
 ) => effect.pipe(Effect.provide(serviceLayer(jiraConfig, client)));
 
 it.effect("capabilities says unconfigured without touching Jira", () => {
@@ -122,6 +149,8 @@ it.effect("capabilities says unconfigured without touching Jira", () => {
         reader: null,
         viewer: null,
         readerError: null,
+        personalTokens: false,
+        personalCredential: null,
       });
       expect((yield* service.search({ jql: "project = ABC" }).pipe(Effect.flip)).reason).toBe(
         "not-configured",
@@ -438,5 +467,99 @@ it.effect("linked threads leave out dismissed links and deleted threads", () => 
     Effect.provide(
       Layer.mergeAll(serviceLayer(config, jira.client), layerOrchestration("jira-linked-threads")),
     ),
+  );
+});
+
+const ALICE = AuthUserId.make("alice");
+const BOB = AuthUserId.make("bob");
+const basic = (who: string) =>
+  `Basic ${Buffer.from(`${who}@acme.test:${who}-token`).toString("base64")}`;
+
+/** Jira as three accounts: the bot's bearer token and Alice's and Bob's personal tokens. */
+const makePeopleJira = (rejected: Set<string>) =>
+  makeJira((path, _body, authorization) => {
+    if (path === "/_edge/tenant_info") return { status: 200, body: { cloudId: "cloud-1" } };
+    const who =
+      authorization === "Bearer secret-token"
+        ? "bot"
+        : ["alice", "bob"].find((name) => authorization === basic(name));
+    if (who === undefined || rejected.has(who)) return { status: 401, body: null };
+    switch (path) {
+      case "/rest/api/3/myself":
+        return { status: 200, body: { accountId: `acc-${who}`, displayName: who } };
+      case "/rest/api/3/filter/10000":
+        return { status: 200, body: { id: "10000", name: `Seen by ${who}`, jql: "x" } };
+      default:
+        return { status: 404, body: null };
+    }
+  });
+
+const storeToken = (userId: AuthUserId, who: string) =>
+  Effect.gen(function* () {
+    const credentials = yield* JiraUserCredentials.JiraUserCredentials;
+    yield* credentials.set(userId, { email: `${who}@acme.test`, token: `${who}-token` });
+  });
+
+it.effect("reads as the acting user's own token, and as the reader for everyone else", () => {
+  const jira = makePeopleJira(new Set());
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      const service = yield* JiraService.JiraService;
+      yield* storeToken(ALICE, "alice");
+      yield* storeToken(BOB, "bob");
+      const filterReads = () =>
+        jira.requests.filter((request) => request.url.endsWith("/filter/10000")).length;
+      const nameFor = (actingUserId?: AuthUserId) =>
+        service.filter({ id: "10000" }, { actingUserId }).pipe(Effect.map((view) => view.name));
+
+      expect(yield* nameFor(ALICE)).toBe("Seen by alice");
+      expect(yield* nameFor(BOB)).toBe("Seen by bob");
+      expect(yield* nameFor()).toBe("Seen by bot");
+      expect(yield* nameFor(AuthUserId.make("carol"))).toBe("Seen by bot");
+      expect(filterReads()).toBe(3);
+      // Each account's read is cached for that account only.
+      expect(yield* nameFor(ALICE)).toBe("Seen by alice");
+      expect(filterReads()).toBe(3);
+
+      const capabilities = yield* service.capabilities({ actingUserId: ALICE });
+      expect(capabilities.personalTokens).toBe(true);
+      expect(capabilities.personalCredential?.account?.accountId).toBe("acc-alice");
+      expect(capabilities.viewer?.accountId).toBe("acc-bot");
+      expect(yield* service.capabilities()).toMatchObject({
+        personalTokens: false,
+        personalCredential: null,
+      });
+    }),
+  );
+});
+
+it.effect("a personal token Jira rejects is recorded and never falls back to the reader", () => {
+  const rejected = new Set<string>();
+  const jira = makePeopleJira(rejected);
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      const service = yield* JiraService.JiraService;
+      yield* storeToken(ALICE, "alice");
+      rejected.add("alice");
+      const count = jira.requests.length;
+
+      const error = yield* service
+        .filter({ id: "10000" }, { actingUserId: ALICE })
+        .pipe(Effect.flip);
+      expect(error.reason).toBe("unauthorized");
+      expect(error.message).toContain("Settings → Account");
+      expect(
+        jira.requests.slice(count).map((request) => request.authorization === basic("alice")),
+      ).toEqual([true]);
+
+      const capabilities = yield* service.capabilities({ actingUserId: ALICE });
+      expect(capabilities.personalCredential?.error).toBe(
+        "Jira rejected your personal Jira token.",
+      );
+    }),
   );
 });
