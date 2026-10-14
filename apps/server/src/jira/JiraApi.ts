@@ -14,9 +14,11 @@ import {
 import type { JiraServerIdentity } from "./JiraConfig.ts";
 
 /**
- * Thin Jira Cloud REST v3 client. Writes (create, comment, transition) only ever run for an
- * approved proposal, as the approver. Scoped tokens cannot call the Agile API, the Development
- * panel, Automation or Dashboards, so nothing here does.
+ * Thin Jira Cloud REST v3 client. Issue writes (create, edit, comment, transition) run as a
+ * user's personal token: the approver of a proposal, or the user commenting or moving an issue
+ * themselves. Remote links to threads are the one write a service identity makes. Scoped tokens
+ * cannot call the Agile API, the Development panel, Automation or Dashboards, so nothing here
+ * does.
  */
 
 const REQUEST_TIMEOUT = "15 seconds";
@@ -107,8 +109,6 @@ export type JiraRawField = typeof RawField.Type;
 const RawCreatedIssue = Schema.Struct({ id: Schema.String, key: Schema.String });
 export type JiraRawCreatedIssue = typeof RawCreatedIssue.Type;
 
-const RawCreatedComment = Schema.Struct({ id: Schema.String });
-
 const RawCreateMetaIssueType = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
@@ -142,7 +142,7 @@ const decodeRawFilter = Schema.decodeUnknownEffect(RawFilter);
 const decodeRawFilters = Schema.decodeUnknownEffect(Schema.Array(RawFilter));
 const decodeRawFields = Schema.decodeUnknownEffect(Schema.Array(RawField));
 const decodeRawCreatedIssue = Schema.decodeUnknownEffect(RawCreatedIssue);
-const decodeRawCreatedComment = Schema.decodeUnknownEffect(RawCreatedComment);
+const decodeRawComment = Schema.decodeUnknownEffect(RawComment);
 const decodeRawCreateMetaIssueTypes = Schema.decodeUnknownEffect(RawCreateMetaIssueTypes);
 
 export class JiraApi extends Context.Service<
@@ -224,12 +224,29 @@ export class JiraApi extends Context.Service<
       identity: JiraServerIdentity,
       key: string,
       body: unknown,
-    ) => Effect.Effect<{ readonly id: string }, JiraError>;
+    ) => Effect.Effect<JiraRawComment, JiraError>;
     /** `POST /rest/api/3/issue/{key}/transitions`. */
     readonly transitionIssue: (
       identity: JiraServerIdentity,
       key: string,
       transitionId: string,
+    ) => Effect.Effect<void, JiraError>;
+    /** `POST /rest/api/3/issue/{key}/remotelink`: creates the link, or updates its `globalId`'s. */
+    readonly upsertRemoteLink: (
+      identity: JiraServerIdentity,
+      key: string,
+      link: {
+        readonly globalId: string;
+        readonly url: string;
+        readonly title: string;
+        readonly iconUrl?: string | undefined;
+      },
+    ) => Effect.Effect<void, JiraError>;
+    /** `DELETE /rest/api/3/issue/{key}/remotelink?globalId=…`; `not-found` when already gone. */
+    readonly deleteRemoteLink: (
+      identity: JiraServerIdentity,
+      key: string,
+      globalId: string,
     ) => Effect.Effect<void, JiraError>;
   }
 >()("t3/jira/JiraApi") {}
@@ -525,7 +542,7 @@ const make = Effect.gen(function* () {
         HttpClientRequest.post(`/rest/api/3/issue/${encodeURIComponent(key)}/comment`).pipe(
           HttpClientRequest.bodyJsonUnsafe({ body }),
         ),
-        decodeRawCreatedComment,
+        decodeRawComment,
       ).pipe(Effect.withSpan("JiraApi.addComment")),
     transitionIssue: (identity, key, transitionId) =>
       // Jira answers 204 with no body.
@@ -536,6 +553,32 @@ const make = Effect.gen(function* () {
         ),
         () => Effect.void,
       ).pipe(Effect.withSpan("JiraApi.transitionIssue")),
+    upsertRemoteLink: (identity, key, link) =>
+      send(
+        identity,
+        HttpClientRequest.post(`/rest/api/3/issue/${encodeURIComponent(key)}/remotelink`).pipe(
+          HttpClientRequest.bodyJsonUnsafe({
+            globalId: link.globalId,
+            object: {
+              url: link.url,
+              title: link.title,
+              ...(link.iconUrl === undefined
+                ? {}
+                : { icon: { url16x16: link.iconUrl, title: "T3 Code" } }),
+            },
+          }),
+        ),
+        () => Effect.void,
+      ).pipe(Effect.withSpan("JiraApi.upsertRemoteLink")),
+    deleteRemoteLink: (identity, key, globalId) =>
+      // Jira answers 204 with no body.
+      send(
+        identity,
+        HttpClientRequest.delete(`/rest/api/3/issue/${encodeURIComponent(key)}/remotelink`).pipe(
+          HttpClientRequest.setUrlParams({ globalId }),
+        ),
+        () => Effect.void,
+      ).pipe(Effect.withSpan("JiraApi.deleteRemoteLink")),
   });
 });
 

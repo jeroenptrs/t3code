@@ -1,8 +1,10 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
   JiraError,
   ThreadId,
+  type JiraComment,
   type JiraIssueSummary,
   type JiraStatusCategory,
 } from "@t3tools/contracts";
@@ -10,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
 
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as JiraIdentities from "./JiraIdentities.ts";
 import * as JiraIssueSyncReactor from "./JiraIssueSyncReactor.ts";
 import {
@@ -29,6 +32,7 @@ import * as JiraService from "./JiraService.ts";
 interface FakeIssue {
   readonly summary: string;
   readonly statusCategory: JiraStatusCategory;
+  readonly updated?: string;
 }
 
 const toSummary = (site: string, key: string, issue: FakeIssue): JiraIssueSummary => ({
@@ -43,7 +47,7 @@ const toSummary = (site: string, key: string, issue: FakeIssue): JiraIssueSummar
   assignee: null,
   sprints: [],
   storyPoints: null,
-  updated: null,
+  updated: issue.updated ?? null,
 });
 
 /** A Jira that answers from `issues` by site and key, recording every batched read. */
@@ -51,7 +55,14 @@ const makeJira = () => {
   const issues = new Map<string, FakeIssue>();
   const failingSites = new Set<string>();
   const calls: Array<{ readonly site: string; readonly keys: ReadonlyArray<string> }> = [];
+  const comments = new Map<string, ReadonlyArray<JiraComment>>();
+  const commentReads: Array<string> = [];
   const layer = Layer.mock(JiraService.JiraService)({
+    watchComments: (site, key) =>
+      Effect.sync(() => {
+        commentReads.push(`${site}/${key}`);
+        return { comments: comments.get(`${site}/${key}`) ?? [], readerAccountId: "acc-bot" };
+      }),
     issuesByKeys: (site, keys) =>
       Effect.suspend(() => {
         calls.push({ site, keys: keys.toSorted() });
@@ -66,7 +77,7 @@ const makeJira = () => {
         );
       }),
   });
-  return { issues, failingSites, calls, layer };
+  return { issues, failingSites, calls, comments, commentReads, layer };
 };
 
 const layerTest = (jira: ReturnType<typeof makeJira>) =>
@@ -186,5 +197,105 @@ it.effect("backs off a failing site without holding up the others", () => {
       ["ABC-1", ["Ship it", "todo"]],
       ["XYZ-1", ["Elsewhere", "todo"]],
     ]);
+  }).pipe(Effect.provide(layerTest(jira)));
+});
+
+const watchIssue = (threadId: ThreadId, key: string) =>
+  Effect.flatMap(Orchestrator.OrchestratorV2, (orchestrator) =>
+    orchestrator.dispatch({
+      type: "thread.jira-issue.watch",
+      commandId: CommandId.make(`test:watch:${threadId}:${key}`),
+      threadId,
+      site: SITE,
+      key,
+      watching: true,
+      linkSource: "agent",
+    }),
+  );
+
+const watchOf = (threadId: ThreadId, key: string) =>
+  Effect.map(threadLinks(threadId), (links) => links.find((link) => link.key === key)?.watch);
+
+const wakes = (threadId: ThreadId) =>
+  Effect.flatMap(Orchestrator.OrchestratorV2, (orchestrator) =>
+    orchestrator
+      .getThreadRecords(threadId, ["messages"])
+      .pipe(
+        Effect.map((records) =>
+          records.messages.map((message) => message.notification?.summary ?? null),
+        ),
+      ),
+  );
+
+const comment = (id: string, created: string, accountId: string): JiraComment => ({
+  id,
+  author: { accountId, displayName: accountId, avatarUrl: null },
+  body: `Comment ${id}`,
+  created,
+  updated: null,
+});
+
+it.effect("reads a watched issue's comments only when it changed, once for every watcher", () => {
+  const jira = makeJira();
+  const at = (minute: number) => `2026-10-14T10:0${minute}:00.000Z`;
+  jira.issues.set(`${SITE}/ABC-1`, {
+    summary: "Ship it",
+    statusCategory: "in-progress",
+    updated: at(1),
+  });
+  return Effect.gen(function* () {
+    const reactor = yield* JiraIssueSyncReactor.JiraIssueSyncReactor;
+    const one = ThreadId.make("thread:watch-one");
+    const two = ThreadId.make("thread:watch-two");
+    for (const threadId of [one, two]) {
+      yield* createThread(threadId);
+      yield* watchIssue(threadId, "ABC-1");
+    }
+
+    // The first read takes the issue as it is, without waking anyone.
+    yield* reactor.sweep;
+    assert.deepStrictEqual(jira.commentReads, [`${SITE}/ABC-1`]);
+    assert.equal((yield* watchOf(one, "ABC-1"))?.updatedThrough, at(1));
+    assert.equal((yield* watchOf(two, "ABC-1"))?.updatedThrough, at(1));
+    assert.lengthOf(yield* jiraCommandIds("server:jira-watch:"), 2);
+
+    // Nothing moved: no comment read and nothing recorded.
+    yield* reactor.sweep;
+    assert.lengthOf(jira.commentReads, 1);
+    assert.lengthOf(yield* jiraCommandIds("server:jira-watch:"), 2);
+
+    // Someone comments; the reader's own comment never wakes.
+    jira.issues.set(`${SITE}/ABC-1`, {
+      summary: "Ship it",
+      statusCategory: "in-progress",
+      updated: at(3),
+    });
+    jira.comments.set(`${SITE}/ABC-1`, [
+      comment("2", at(3), "acc-bot"),
+      comment("1", at(2), "acc-ada"),
+    ]);
+    yield* reactor.sweep;
+    assert.lengthOf(jira.commentReads, 2);
+    assert.deepStrictEqual(yield* wakes(one), ["ABC-1: new comments"]);
+    assert.deepStrictEqual(yield* wakes(two), ["ABC-1: new comments"]);
+    const recorded = yield* watchOf(one, "ABC-1");
+    assert.deepStrictEqual(
+      [recorded?.updatedThrough, recorded?.commentsThrough, recorded?.wakes],
+      [at(3), at(3), 1],
+    );
+  }).pipe(Effect.provide(layerTest(jira)));
+});
+
+it.effect("ends a watch on an issue the reader can no longer see, and tells the agent", () => {
+  const jira = makeJira();
+  return Effect.gen(function* () {
+    const reactor = yield* JiraIssueSyncReactor.JiraIssueSyncReactor;
+    const threadId = ThreadId.make("thread:watch-lost");
+    yield* createThread(threadId);
+    yield* watchIssue(threadId, "ABC-9");
+    yield* reactor.sweep;
+    assert.isUndefined(yield* watchOf(threadId, "ABC-9"));
+    assert.deepStrictEqual(yield* wakes(threadId), ["ABC-9: stopped watching, cannot see it"]);
+    assert.deepStrictEqual(jira.commentReads, []);
   }).pipe(Effect.provide(layerTest(jira)));
 });
