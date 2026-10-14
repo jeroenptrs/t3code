@@ -188,10 +188,23 @@ export function proposeJiraIssueBranchName(
 }
 
 /**
+ * `name`, or `name-2`, `name-3`, ... for the first one no local branch has. Starting from the same
+ * issue twice must not hand `git worktree add -b` a branch that already exists.
+ */
+export function availableBranchName(name: string, takenBranchNames: ReadonlySet<string>): string {
+  if (!takenBranchNames.has(name)) return name;
+  for (let suffix = 2; ; suffix += 1) {
+    const candidate = `${name}-${suffix}`;
+    if (!takenBranchNames.has(candidate)) return candidate;
+  }
+}
+
+/**
  * The composer text for a thread started from an issue: `KEY: summary`, the description, the
- * browse URL, then the proposed branch. The draft has nowhere to carry the name of the branch a
- * new worktree gets, so the proposal rides in the text where the user can see and edit it, and
- * where the server's branch naming reads it.
+ * browse URL, then the proposed branch. The draft carries the branch for a new worktree on its
+ * own; the line in the text is the hint for a thread that runs in the project checkout, where
+ * nothing else names the branch, and where the user can edit it and the server's branch naming
+ * reads it.
  */
 export function jiraIssueThreadPrompt(
   issue: Pick<JiraIssueSummary, "key" | "summary" | "url"> & {

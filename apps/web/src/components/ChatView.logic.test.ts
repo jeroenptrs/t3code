@@ -39,6 +39,7 @@ import type { Thread } from "../types";
 import { makeThreadFixture, makeThreadProjectionFixture } from "../test-fixtures";
 import {
   getAntigravitySendBlockReason,
+  resolveNewWorktreeBranchForSend,
   resolveComposerProviderSelection,
   resolveWorktreeSetupProgress,
   peekRememberedThreadTimeline,
@@ -619,6 +620,29 @@ describe("resolveComposerProviderSelection", () => {
     });
 
     expect(selection.selectedProviderEntry).toBeUndefined();
+  });
+});
+
+describe("resolveNewWorktreeBranchForSend", () => {
+  it("names the worktree only when the send creates one", () => {
+    expect(
+      resolveNewWorktreeBranchForSend({
+        baseBranchForWorktree: "main",
+        draftNewWorktreeBranch: " abc-1-fix ",
+      }),
+    ).toBe("abc-1-fix");
+    expect(
+      resolveNewWorktreeBranchForSend({
+        baseBranchForWorktree: null,
+        draftNewWorktreeBranch: "abc-1-fix",
+      }),
+    ).toBeNull();
+    expect(
+      resolveNewWorktreeBranchForSend({
+        baseBranchForWorktree: "main",
+        draftNewWorktreeBranch: undefined,
+      }),
+    ).toBeNull();
   });
 });
 
