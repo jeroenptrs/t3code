@@ -7795,6 +7795,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 pullRequestLinking:
                   sessionSetup === null ||
                   flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !== true,
+                mcpCapabilities: instructionState.hasT3Mcp
+                  ? (yield* mcpSessions.read(turnInput.threadId))?.capabilities
+                  : undefined,
               }),
             });
           }
