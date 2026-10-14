@@ -25,7 +25,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
   type ProviderInstanceId,
-  type ThreadId,
+  ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -36,7 +36,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 
@@ -51,6 +50,7 @@ import * as JiraIdentities from "./JiraIdentities.ts";
 import * as JiraService from "./JiraService.ts";
 import * as JiraUserCredentials from "./JiraUserCredentials.ts";
 import { browseUrl, toTransition } from "./issueMapping.ts";
+import { makeKeyedLock } from "./keyedLock.ts";
 import { markdownToAdf } from "./markdownToAdf.ts";
 
 export class JiraProposalRunInactiveError extends Schema.TaggedError<JiraProposalRunInactiveError>()(
@@ -114,7 +114,8 @@ export class JiraProposals extends Context.Service<
      * Records a proposal in the calling thread's active run and waits up to `timeoutMs` for the
      * user to decide it. A wait that ends first, by timeout or with the run, leaves the card open
      * and reports it pending (or approved, while it is being written). Proposing again with the
-     * same `clientRequestId` finds the same card.
+     * same `clientRequestId` finds the same card; without one, so does proposing the same change
+     * again from the same run or its restart continuations.
      */
     readonly propose: (input: {
       readonly threadId: ThreadId;
@@ -135,6 +136,11 @@ export class JiraProposals extends Context.Service<
       userId: AuthUserId | undefined,
       input: JiraProposalDecisionInput,
     ) => Effect.Effect<JiraProposalDecisionResult, JiraError>;
+    /**
+     * Fails every approval no one is writing anymore, such as one a previous server process left
+     * mid-write, so its card can be approved again or rejected. Run once at startup.
+     */
+    readonly recoverInterrupted: Effect.Effect<void>;
   }
 >()("t3/jira/JiraProposals") {}
 
@@ -145,8 +151,10 @@ type ProposalItem = Extract<OrchestrationV2TurnItem, { readonly type: "jira_prop
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
 const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
-/** An approval claimed longer ago than this died mid-write; another approval may take over. */
-const STALE_CLAIM = { minutes: 5 } as const;
+const INTERRUPTED = "Interrupted before it finished; approve again to finish what is missing.";
+const PROGRESS_UNSAVED =
+  "T3 Code could not save what it wrote to Jira; approve again to finish what is missing.";
+const APPROVAL_UNRECORDED = "T3 Code could not record the approval; approve again.";
 const FINAL_STATUSES: ReadonlySet<JiraProposalStatus> = new Set(["applied", "rejected", "failed"]);
 /** The card's item statuses for those, as the thread's events carry them. */
 const SETTLED_ITEM_STATUSES: ReadonlySet<OrchestrationV2TurnItem["status"]> = new Set([
@@ -155,10 +163,14 @@ const SETTLED_ITEM_STATUSES: ReadonlySet<OrchestrationV2TurnItem["status"]> = ne
   "failed",
 ]);
 
-/** What an approval has written so far: the issues and, for a transition, the steps done. */
+/**
+ * What an approval has written so far: the issues, the steps done for a transition or comment,
+ * and the drafts whose story points and sprint were set after creating them.
+ */
 const Progress = Schema.Struct({
   issues: JiraProposalResult.fields.issues,
   steps: Schema.Array(Schema.Literals(["transition", "comment"])),
+  edited: Schema.optional(Schema.Array(Schema.Int)),
 });
 type Progress = typeof Progress.Type;
 const ProgressJson = Schema.fromJsonString(Progress);
@@ -166,6 +178,21 @@ const decodeProgress = Schema.decodeUnknownEffect(ProgressJson);
 const encodeProgress = Schema.encodeEffect(ProgressJson);
 const encodeProposal = Schema.encodeEffect(Schema.fromJsonString(JiraProposal));
 const EMPTY_PROGRESS: Progress = { issues: [], steps: [] };
+
+/** Everything either one says was written. */
+const mergeProgress = (left: Progress, right: Progress | undefined): Progress => {
+  if (right === undefined) return left;
+  const issues = [...left.issues];
+  for (const entry of right.issues) {
+    if (!issues.some((known) => known.key === entry.key)) issues.push(entry);
+  }
+  const edited = [...new Set([...(left.edited ?? []), ...(right.edited ?? [])])];
+  return {
+    issues,
+    steps: [...new Set([...left.steps, ...right.steps])],
+    ...(edited.length === 0 ? {} : { edited }),
+  };
+};
 
 const LedgerRow = Schema.Struct({
   status: JiraProposalStatus,
@@ -191,6 +218,11 @@ const personalTokenRequired = new JiraError({
 const notFound = new JiraError({
   reason: "not-found",
   message: "The Jira proposal was not found.",
+});
+
+const rolledBack = new JiraError({
+  reason: "not-found",
+  message: "This Jira proposal is no longer available; the turn that proposed it was rolled back.",
 });
 
 const ledgerFailed = () =>
@@ -219,11 +251,8 @@ const toDraft = (draft: JiraIssueDraftInput): JiraIssueDraft => ({
   assigneeAccountId: draft.assigneeAccountId ?? null,
 });
 
-/** Jira's create body for one draft. A field the site has no id for is left out. */
-const issueFields = (
-  draft: JiraIssueDraft,
-  fieldIds: { readonly storyPoints: string | null; readonly sprint: string | null },
-): Record<string, unknown> => ({
+/** Jira's create body for one draft: the fields every create screen has. */
+const createFields = (draft: JiraIssueDraft): Record<string, unknown> => ({
   project: { key: draft.projectKey },
   issuetype: { name: draft.issueType },
   summary: draft.summary,
@@ -232,14 +261,28 @@ const issueFields = (
     : { description: markdownToAdf(draft.description) }),
   ...(draft.parentKey === null ? {} : { parent: { key: draft.parentKey } }),
   ...(draft.labels.length === 0 ? {} : { labels: draft.labels }),
-  ...(draft.storyPoints === null || fieldIds.storyPoints === null
-    ? {}
-    : { [fieldIds.storyPoints]: draft.storyPoints }),
-  ...(draft.sprintId === null || fieldIds.sprint === null
-    ? {}
-    : { [fieldIds.sprint]: draft.sprintId }),
   ...(draft.assigneeAccountId === null ? {} : { assignee: { accountId: draft.assigneeAccountId } }),
 });
+
+/**
+ * Story points and sprint, set by editing the created issue: many projects leave them off the
+ * create screen, where Jira refuses the whole create. Null when there is nothing to set; a field
+ * the site has no id for is left out.
+ */
+const followUpFields = (
+  draft: JiraIssueDraft,
+  fieldIds: { readonly storyPoints: string | null; readonly sprint: string | null },
+): Record<string, unknown> | null => {
+  const fields = {
+    ...(draft.storyPoints === null || fieldIds.storyPoints === null
+      ? {}
+      : { [fieldIds.storyPoints]: draft.storyPoints }),
+    ...(draft.sprintId === null || fieldIds.sprint === null
+      ? {}
+      : { [fieldIds.sprint]: draft.sprintId }),
+  };
+  return Object.keys(fields).length === 0 ? null : fields;
+};
 
 /** An approver may edit a proposal, but not into another kind, site or issue. */
 const checkEdit = (
@@ -280,18 +323,17 @@ const make = Effect.gen(function* () {
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
-  /** Decisions on one proposal run one at a time, on top of the ledger's claim. */
-  const locks = new Map<string, Semaphore.Semaphore>();
-  const exclusive =
-    (proposalId: string) =>
-    <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E> => {
-      let lock = locks.get(proposalId);
-      if (lock === undefined) {
-        lock = Semaphore.makeUnsafe(1);
-        locks.set(proposalId, lock);
-      }
-      return lock.withPermit(effect);
-    };
+  /**
+   * Decisions on one proposal, and its recovery, run one at a time. One server owns the
+   * database, so a ledger row read under this lock that says approved was left by an approval
+   * that is no longer writing: one that died with its process or could not record its end.
+   */
+  const exclusive = makeKeyedLock<string>().withLock;
+  /**
+   * Progress Jira confirmed but the ledger could not store, by proposal. Approving again starts
+   * from it, so a retry never repeats a write the ledger missed.
+   */
+  const unsaved = new Map<string, Progress>();
 
   // ---- ledger -------------------------------------------------------------------------------
 
@@ -343,8 +385,8 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.mapError(ledgerFailed));
 
   /**
-   * Takes the ledger row for one approval: from pending or failed, or from an approval whose
-   * writer died mid-write. False when another approval holds it or it is already final.
+   * Takes the ledger row for one approval, unless it is already applied or rejected. Called
+   * under the proposal's lock, where an approved row is one no approval is writing anymore.
    */
   const claim = (input: {
     readonly proposalId: string;
@@ -354,9 +396,6 @@ const make = Effect.gen(function* () {
     readonly claimedAt: string;
   }) =>
     Effect.gen(function* () {
-      const staleBefore = DateTime.formatIso(
-        DateTime.subtract(DateTime.makeUnsafe(input.claimedAt), STALE_CLAIM),
-      );
       const proposalJson = yield* encodeProposal(input.proposal);
       const rows = yield* sql<{ readonly proposal_id: string }>`
         UPDATE fork_jira_proposals SET
@@ -364,20 +403,28 @@ const make = Effect.gen(function* () {
           approved_by_user_id = ${input.userId}, approved_at = ${input.claimedAt},
           proposal_json = ${proposalJson}, error = NULL, updated_at = ${input.claimedAt}
         WHERE proposal_id = ${input.proposalId}
-          AND (status IN ('pending', 'failed') OR (status = 'approved' AND claimed_at < ${staleBefore}))
+          AND status IN ('pending', 'failed', 'approved')
         RETURNING proposal_id
       `;
       return rows.length > 0;
     }).pipe(Effect.mapError(ledgerFailed));
 
+  /**
+   * Ends an approval, or a rejection, in the ledger. `progress`, when given, is stored with it,
+   * so what Jira confirmed is kept even if storing it step by step failed. The claim id stays as
+   * the name of the approval that ended.
+   */
   const settleLedger = (
     proposalId: string,
     status: "applied" | "failed" | "rejected",
     error: string | null,
+    progress?: Progress,
   ) =>
     Effect.gen(function* () {
+      const json = progress === undefined ? null : yield* encodeProgress(progress);
       yield* sql`
         UPDATE fork_jira_proposals SET status = ${status}, error = ${error},
+          progress_json = COALESCE(${json}, progress_json), claimed_at = NULL,
           updated_at = ${yield* nowIso}
         WHERE proposal_id = ${proposalId}
       `;
@@ -544,6 +591,34 @@ const make = Effect.gen(function* () {
       return { proposalId: input.proposalId, ...outcomeOf(item) };
     });
 
+  /**
+   * The key of a proposal made without a `clientRequestId`: the change itself, in the run that
+   * proposed it. A restart continuation counts as the run it continues, so an agent that picks
+   * up after a restart and proposes the same change again finds the same card.
+   */
+  const requestKey = (
+    run: OrchestrationV2Run,
+    runs: ReadonlyArray<OrchestrationV2Run>,
+    request: JiraProposalRequest,
+  ) => {
+    let origin = run;
+    for (let hops = 0; origin.restartContinuationOfRunId !== undefined && hops < 100; hops++) {
+      const previous = runs.find((candidate) => candidate.id === origin.restartContinuationOfRunId);
+      if (previous === undefined) break;
+      origin = previous;
+    }
+    // Drafts with defaults left out and spelled out are the same change.
+    const change =
+      request.kind === "create-issues"
+        ? { ...request, issues: request.issues.map(toDraft) }
+        : request;
+    const content = new TextEncoder().encode(JSON.stringify([origin.id, change]));
+    return crypto.digest("SHA-256", content).pipe(
+      Effect.map((digest) => `auto:${Buffer.from(digest).toString("base64url")}`),
+      Effect.orDie,
+    );
+  };
+
   const propose: JiraProposals["Service"]["propose"] = Effect.fn("JiraProposals.propose")(
     function* (input) {
       yield* Effect.annotateCurrentSpan({
@@ -566,9 +641,9 @@ const make = Effect.gen(function* () {
       ) {
         return yield* new JiraProposalRunInactiveError();
       }
-      const key = input.clientRequestId ?? (yield* crypto.randomUUIDv4.pipe(Effect.orDie));
-      // Turn item ids are global; scope the key to this thread. A retry with the same
-      // clientRequestId finds this card, decided or not.
+      const key = input.clientRequestId ?? (yield* requestKey(run, records.runs, input.request));
+      // Turn item ids are global; scope the key to this thread. A retry with the same key finds
+      // this card, decided or not.
       const proposalId = TurnItemId.make(
         `turn-item:jira-proposal:${encodeURIComponent(input.threadId)}:${encodeURIComponent(key)}`,
       );
@@ -630,7 +705,12 @@ const make = Effect.gen(function* () {
         }),
       );
 
-  /** Writes what the ledger does not have yet, recording each step as Jira confirms it. */
+  /**
+   * Writes what the ledger does not have yet, recording each step as Jira confirms it. `progress`
+   * holds every confirmed step even when storing it failed, which stops the writing: the caller
+   * stores it again with the approval's end, and nothing is written past a step the ledger may
+   * not know about.
+   */
   const apply = (
     proposalId: string,
     proposal: JiraProposal,
@@ -656,14 +736,32 @@ const make = Effect.gen(function* () {
         case "create-issues": {
           const fieldIds = yield* jira.fieldIds(identity);
           for (const [index, draft] of proposal.issues.entries()) {
-            const done = (yield* Ref.get(progress)).issues.some(
+            let key = (yield* Ref.get(progress)).issues.find(
               (entry) => entry.draftIndex === index,
+            )?.key;
+            if (key === undefined) {
+              const created = yield* api.createIssue(identity, createFields(draft));
+              key = created.key;
+              yield* advance((current) => ({
+                ...current,
+                issues: [...current.issues, issue(created.key, index)],
+              }));
+            }
+            const followUp = followUpFields(draft, fieldIds);
+            if (followUp === null || (yield* Ref.get(progress)).edited?.includes(index)) continue;
+            const created = key;
+            yield* api.editIssue(identity, created, followUp).pipe(
+              Effect.mapError(
+                (error) =>
+                  new JiraError({
+                    reason: error.reason,
+                    message: `Created ${created}, but Jira did not take its story points or sprint: ${error.message}`,
+                  }),
+              ),
             );
-            if (done) continue;
-            const created = yield* api.createIssue(identity, issueFields(draft, fieldIds));
             yield* advance((current) => ({
               ...current,
-              issues: [...current.issues, issue(created.key, index)],
+              edited: [...(current.edited ?? []), index],
             }));
           }
           return;
@@ -743,22 +841,17 @@ const make = Effect.gen(function* () {
       Effect.andThen(Effect.fail(ledgerFailed())),
     );
 
-  /** Gives a claim back when its card could not say approved, so the user can approve again. */
-  const releaseClaim = (proposalId: string, previous: LedgerRow["status"]) =>
-    sql`
-      UPDATE fork_jira_proposals SET status = ${previous}, claim_id = NULL, claimed_at = NULL
-      WHERE proposal_id = ${proposalId}
-    `.pipe(Effect.ignore);
+  /** Whether the card may move from `from` to the ledger's `to`, as the orchestrator allows. */
+  const repairable = (from: JiraProposalStatus, to: LedgerRow["status"]) =>
+    (from === "approved" && (to === "applied" || to === "failed")) ||
+    ((from === "pending" || from === "failed") && to === "rejected");
 
   /** Brings the card in line with a ledger that already settled, then reports it. */
   const outcomeFromLedger = (item: ProposalItem, row: LedgerRow) =>
     Effect.gen(function* () {
       const progress = yield* progressOf(row);
       const result = { issues: progress.issues };
-      if (
-        (row.status === "applied" || row.status === "failed") &&
-        item.proposalStatus === "approved"
-      ) {
+      if (repairable(item.proposalStatus, row.status)) {
         yield* record(
           item,
           `jira-proposal:${item.id}:${row.status}:${row.claimId ?? "unclaimed"}:repair`,
@@ -781,6 +874,47 @@ const make = Effect.gen(function* () {
       } satisfies JiraProposalDecisionResult;
     });
 
+  /**
+   * Ends a claimed approval in the ledger and on its card. What Jira confirmed is stored with
+   * the end, a second time when it fails; if both fail it is kept for the next approval to
+   * start from, and the card says failed, since the ledger does not know what was written.
+   */
+  const finishApproval = (input: {
+    readonly item: ProposalItem;
+    readonly claimId: string;
+    readonly proposal: JiraProposal;
+    readonly decided: { readonly decidedByUserId: AuthUserId; readonly decidedAt: string };
+    readonly status: "applied" | "failed";
+    readonly error: string | null;
+    readonly written: Progress;
+  }) =>
+    Effect.gen(function* () {
+      const { item, written } = input;
+      const settled = yield* Effect.result(
+        settleLedger(item.id, input.status, input.error, written).pipe(Effect.retry({ times: 1 })),
+      );
+      if (settled._tag === "Failure") {
+        unsaved.set(item.id, written);
+        yield* Effect.logWarning("Could not store what a Jira approval wrote", {
+          proposalId: item.id,
+        });
+      } else {
+        unsaved.delete(item.id);
+      }
+      const status = settled._tag === "Failure" ? "failed" : input.status;
+      const error = settled._tag === "Failure" ? PROGRESS_UNSAVED : input.error;
+      const result = { issues: written.issues };
+      // The command id names this approval, so a second attempt replays a first that landed.
+      yield* record(item, `jira-proposal:${item.id}:${status}:${input.claimId}`, {
+        proposal: input.proposal,
+        proposalStatus: status,
+        ...input.decided,
+        result,
+        ...(error === null ? {} : { error }),
+      }).pipe(Effect.retry({ times: 1 }), Effect.catch(recordFailedDecision));
+      return { status, result, error } satisfies JiraProposalDecisionResult;
+    });
+
   const approve = (
     userId: AuthUserId,
     item: ProposalItem,
@@ -788,7 +922,8 @@ const make = Effect.gen(function* () {
     row: LedgerRow,
   ): Effect.Effect<JiraProposalDecisionResult, JiraError> =>
     Effect.gen(function* () {
-      yield* checkEdit(item.proposal, edited, yield* progressOf(row));
+      const stored = mergeProgress(yield* progressOf(row), unsaved.get(item.id));
+      yield* checkEdit(item.proposal, edited, stored);
       const site = proposalSite(item.proposal);
       const proposal: JiraProposal = { ...edited, site };
       const identity = yield* credentials.identityFor(userId, site);
@@ -803,34 +938,43 @@ const make = Effect.gen(function* () {
       // The ledger is ours until it settles; a client hanging up must not strand it approved.
       return yield* Effect.uninterruptible(
         Effect.gen(function* () {
-          const before = yield* progressOf((yield* readLedger(item.id)) ?? row);
           const decided = { decidedByUserId: userId, decidedAt: claimedAt };
-          yield* record(item, `jira-proposal:${item.id}:approved:${claimId}`, {
-            proposal,
-            proposalStatus: "approved",
-            ...decided,
-            ...(before.issues.length === 0 ? {} : { result: { issues: before.issues } }),
-          }).pipe(
-            Effect.catch((error) =>
-              releaseClaim(item.id, row.status).pipe(Effect.andThen(recordFailedDecision(error))),
-            ),
+          const shown = yield* Effect.result(
+            record(item, `jira-proposal:${item.id}:approved:${claimId}`, {
+              proposal,
+              proposalStatus: "approved",
+              ...decided,
+              ...(stored.issues.length === 0 ? {} : { result: { issues: stored.issues } }),
+            }),
           );
-          const progress = yield* Ref.make(before);
+          if (shown._tag === "Failure") {
+            // Nothing was written. The ledger goes back to claimable; the card, in case the
+            // approval landed anyway, to failed, which may be approved again or rejected.
+            yield* settleLedger(item.id, "failed", APPROVAL_UNRECORDED).pipe(Effect.ignore);
+            yield* record(item, `jira-proposal:${item.id}:failed:${claimId}`, {
+              proposal,
+              proposalStatus: "failed",
+              ...decided,
+              ...(stored.issues.length === 0 ? {} : { result: { issues: stored.issues } }),
+              error: APPROVAL_UNRECORDED,
+            }).pipe(Effect.ignore);
+            return yield* recordFailedDecision(shown.failure);
+          }
+          const progress = yield* Ref.make(stored);
           const applied = yield* Effect.result(apply(item.id, proposal, identity, progress));
           const written = yield* Ref.get(progress);
-          const result = { issues: written.issues };
           const error = applied._tag === "Failure" ? applied.failure.message : null;
-          const status = error === null ? "applied" : "failed";
-          yield* settleLedger(item.id, status, error);
-          yield* record(item, `jira-proposal:${item.id}:${status}:${claimId}`, {
+          const outcome = yield* finishApproval({
+            item,
+            claimId,
             proposal,
-            proposalStatus: status,
-            ...decided,
-            result,
-            ...(error === null ? {} : { error }),
-          }).pipe(Effect.catch(recordFailedDecision));
+            decided,
+            status: error === null ? "applied" : "failed",
+            error,
+            written,
+          });
           yield* linkIssues(item.threadId, item.id, written.issues, userId);
-          return { status, result, error } satisfies JiraProposalDecisionResult;
+          return outcome;
         }),
       );
     });
@@ -841,7 +985,8 @@ const make = Effect.gen(function* () {
         return outcomeOf(item);
       }
       const decidedAt = yield* nowIso;
-      yield* settleLedger(item.id, "rejected", null);
+      yield* settleLedger(item.id, "rejected", null, unsaved.get(item.id));
+      unsaved.delete(item.id);
       yield* record(item, `jira-proposal:${item.id}:rejected`, {
         proposal: item.proposal,
         proposalStatus: "rejected",
@@ -859,13 +1004,22 @@ const make = Effect.gen(function* () {
         "jira_proposal.decision": input.decision.type,
       });
       if (userId === undefined) return yield* signInRequired;
+      const decidable = loadProposal(input.threadId, input.proposalId).pipe(
+        Effect.mapError(ledgerFailed),
+        Effect.flatMap((loaded) =>
+          loaded === null
+            ? Effect.fail(notFound)
+            : // A rolled-back turn's card is hidden; what it proposed is no longer on offer.
+              loaded.run?.status === "rolled_back"
+              ? Effect.fail(rolledBack)
+              : Effect.succeed(loaded),
+        ),
+      );
+      // Only a proposal that exists gets a lock.
+      yield* decidable;
       return yield* exclusive(input.proposalId)(
         Effect.gen(function* () {
-          const loaded = yield* loadProposal(input.threadId, input.proposalId).pipe(
-            Effect.mapError(ledgerFailed),
-          );
-          if (loaded === null) return yield* notFound;
-          const { item, run } = loaded;
+          const { item, run } = yield* decidable;
           // The card may have been recorded while its ledger row was not.
           yield* insertLedger({
             proposalId: item.id,
@@ -885,7 +1039,58 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return JiraProposals.of({ propose, decide });
+  // ---- recovery -----------------------------------------------------------------------------
+
+  /** Fails one approval no one is writing anymore and brings its card in line. */
+  const recoverOne = (threadId: ThreadId, proposalId: string) =>
+    Effect.gen(function* () {
+      const row = yield* readLedger(proposalId);
+      if (row === null) return;
+      const loaded = yield* loadProposal(threadId, proposalId);
+      const cardApproved = loaded?.item.proposalStatus === "approved";
+      let settled = row;
+      if (row.status === "approved" || (cardApproved && row.status === "pending")) {
+        yield* settleLedger(proposalId, "failed", INTERRUPTED, unsaved.get(proposalId));
+        unsaved.delete(proposalId);
+        settled = (yield* readLedger(proposalId)) ?? row;
+      }
+      if (loaded !== null) yield* outcomeFromLedger(loaded.item, settled);
+    });
+
+  const recoverInterrupted: JiraProposals["Service"]["recoverInterrupted"] = Effect.gen(
+    function* () {
+      // Approvals the ledger holds, and cards still saying approved whatever the ledger says.
+      const rows = yield* sql<{ readonly proposalId: string; readonly threadId: string }>`
+        SELECT proposal.proposal_id AS "proposalId", proposal.thread_id AS "threadId"
+        FROM fork_jira_proposals proposal
+        WHERE proposal.status = 'approved'
+          OR EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_turn_items item
+            WHERE item.turn_item_id = proposal.proposal_id AND item.status = 'running'
+          )
+      `;
+      yield* Effect.forEach(
+        rows,
+        (row) =>
+          exclusive(row.proposalId)(recoverOne(ThreadId.make(row.threadId), row.proposalId)).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Could not recover an interrupted Jira approval", {
+                proposalId: row.proposalId,
+                errorTag: error._tag,
+              }),
+            ),
+          ),
+        { discard: true },
+      );
+    },
+  ).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning("Could not look for interrupted Jira approvals", { errorTag: error._tag }),
+    ),
+    Effect.withSpan("JiraProposals.recoverInterrupted"),
+  );
+
+  return JiraProposals.of({ propose, decide, recoverInterrupted });
 });
 
 export const layer = Layer.effect(JiraProposals, make);

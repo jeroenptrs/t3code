@@ -11,7 +11,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -19,6 +18,7 @@ import * as JiraApi from "./JiraApi.ts";
 import { normalizeJiraSite, type JiraServerIdentity } from "./JiraConfig.ts";
 import * as JiraIdentities from "./JiraIdentities.ts";
 import { toJiraUser } from "./issueMapping.ts";
+import { makeKeyedLock } from "./keyedLock.ts";
 
 /**
  * A portal user's own Jira token. Only the user's own UI reads use it; background work and agents
@@ -214,17 +214,7 @@ const make = Effect.gen(function* () {
    * Set, test, clear and rejection records for one user run one at a time, so a token is never
    * stored next to another request's row and the resolved cache is never refilled mid-change.
    */
-  const locks = new Map<AuthUserId, Semaphore.Semaphore>();
-  const exclusive =
-    (userId: AuthUserId) =>
-    <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E> => {
-      let lock = locks.get(userId);
-      if (lock === undefined) {
-        lock = Semaphore.makeUnsafe(1);
-        locks.set(userId, lock);
-      }
-      return lock.withPermit(effect);
-    };
+  const exclusive = makeKeyedLock<AuthUserId>().withLock;
 
   /**
    * Each user's row and secret as last read, so steady-state UI reads touch neither the database
