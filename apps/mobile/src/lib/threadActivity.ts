@@ -633,6 +633,9 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
       return "message";
     case "link_request":
       return "globe";
+    // Fork-only; mobile shows Jira proposals as plain rows and cannot decide them.
+    case "jira_proposal":
+      return "wrench";
   }
 }
 
@@ -709,6 +712,8 @@ function itemSummary(
       return resolve(msg("Feedback for the T3 team"));
     case "link_request":
       return resolve(msg("Link {target}", { target: linkRequestTargetName(item, resolve) }));
+    case "jira_proposal":
+      return "Jira proposal";
     case "dynamic_tool": {
       const classified = classifyToolActivity({
         itemType: "dynamic_tool_call",
@@ -779,6 +784,8 @@ function itemPreview(item: OrchestrationV2TurnItem, resolve: MessageResolver): s
       return item.reason || null;
     case "feedback_request":
       return item.preview.subject;
+    case "jira_proposal":
+      return null;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":

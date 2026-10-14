@@ -244,9 +244,16 @@ function resolveT3McpToolPresentation(
             : status === "stopped"
               ? `Stopped ${running.toLowerCase()}`
               : running;
+  // A batch proposal names how many issues it carries.
+  const draftCount =
+    definition.summaryAction === "propose-jira-issues" && Array.isArray(input?.issues)
+      ? input.issues.length
+      : 0;
+  const jiraTarget =
+    draftCount === 0 ? jiraKey : draftCount === 1 ? "a Jira issue" : `${draftCount} Jira issues`;
   const displayName =
-    jiraKey !== null
-      ? `${fallbackVerb} ${jiraKey}`
+    jiraTarget !== null
+      ? `${fallbackVerb} ${jiraTarget}`
       : sentence === undefined
       ? `${fallbackVerb} ${pullRequestNumber === null ? detail : `${shortLabel} #${pullRequestNumber}`}`
       : pullRequestNumber !== null && sentence.changeRequest !== undefined
@@ -735,6 +742,9 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "attachment-discard":
     case "attachment-send":
     case "diff-walkthrough-write":
+    case "propose-jira-issues":
+    case "propose-jira-comment":
+    case "propose-jira-transition":
       return 0;
     case "other":
     case "update":
