@@ -29,6 +29,7 @@ import {
   ShieldCheckIcon,
   SmartphoneIcon,
   WrenchIcon,
+  UserRoundIcon,
   UsersRoundIcon,
   XIcon,
 } from "lucide-react";
@@ -57,6 +58,7 @@ import {
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
+import { useCanOpenAccountSettings } from "./useCanOpenAccountSettings";
 import { useCanReadPortalUsers } from "./useCanReadPortalUsers";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
@@ -105,6 +107,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/maintenance": WrenchIcon,
   "/settings/labs": FlaskConicalIcon,
   "/settings/about": InfoIcon,
+  "/settings/account": UserRoundIcon,
   "/settings/users": UsersRoundIcon,
   "/settings/archived": ArchiveIcon,
 };
@@ -132,6 +135,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
   const canReadUsers = useCanReadPortalUsers();
+  const canOpenAccount = useCanOpenAccountSettings();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   // Below md the nav is an icon rail; searching expands it over the page.
@@ -364,7 +368,13 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     </SidebarMenuItem>
                   </SidebarMenu>
                 )}
-                {SETTINGS_NAV_GROUPS.map((group, index) => (
+                {SETTINGS_NAV_GROUPS.map((group, index) => {
+                  const paths = group.paths.filter(
+                    (to) =>
+                      (to !== "/settings/account" || canOpenAccount) &&
+                      (to !== "/settings/users" || canReadUsers),
+                  );
+                  return paths.length === 0 ? null : (
                   <div
                     key={group.heading ?? index}
                     role="group"
@@ -382,9 +392,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       </h3>
                     ) : null}
                     <SidebarMenu>
-                      {group.paths
-                        .filter((to) => to !== "/settings/users" || canReadUsers)
-                        .map((to) => {
+                      {paths.map((to) => {
                         const Icon = SETTINGS_SECTION_ICONS[to];
                         const isActive = activePath === to || activePath.startsWith(`${to}/`);
                         return (
@@ -405,7 +413,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       })}
                     </SidebarMenu>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
