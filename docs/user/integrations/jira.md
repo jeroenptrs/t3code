@@ -4,9 +4,12 @@ T3 Code reads your Jira Cloud site so you can see issues next to your threads. Y
 can browse issues by saved filter, open an issue, link it to a thread, and start a
 thread from it.
 
-T3 Code only changes Jira when you approve a change an agent proposed, and then it
-writes as you, with your own token. Everything else is read-only. See
-[Agents that write to Jira](#agents-that-write-to-jira).
+T3 Code changes Jira as you, with your own token. That covers changes you approve
+after an agent proposes them and the comments and moves you make yourself. The one
+thing the server writes with its own identity is a link on the Jira issue back to a
+linked thread. Everything else is read-only. See
+[Agents that write to Jira](#agents-that-write-to-jira) and
+[Link back to the thread](#link-back-to-the-thread).
 
 ## What you can do
 
@@ -17,6 +20,12 @@ writes as you, with your own token. Everything else is read-only. See
 - Link an issue to a thread.
 - Start a new thread from an issue.
 - Approve issues, comments, and transitions that an agent proposes.
+- Post a comment or move an issue to another status from the issue's detail. You act
+  as yourself, so this needs your [personal Jira token](#use-your-own-jira-token) for
+  the issue's site and permission to operate the environment. Readers cannot. A move
+  offers only the statuses Jira currently allows for the issue.
+- Let an agent [watch a linked issue](#watch-linked-issues) and pick up where it
+  left off when the issue changes.
 
 ## Set up the connection
 
@@ -68,9 +77,9 @@ names the variable.
 
 ## Choose a token
 
-We recommend an Atlassian service account with a scoped API token. Give it at least
-read access to work items and users, for example the `read:jira-work` and
-`read:jira-user` scopes.
+We recommend an Atlassian service account with a scoped API token. For reading, give
+it the `read:jira-work` and `read:jira-user` scopes. Add `write:jira-work` if you want
+T3 Code to put [thread links](#link-back-to-the-thread) on issues.
 
 Scoped tokens cannot use Jira's Agile API, which covers boards and sprint endpoints.
 They also cannot use the Development panel, Automation, or Dashboards. T3 Code does
@@ -95,11 +104,13 @@ dedicated service account if you want to limit what the team can see.
 When the server uses organisation sign-in, each signed-in user can store a personal
 Jira token instead. While it is stored, your Issues page and issue details read Jira
 as you, so you see what your own Jira account can see, and changes you approve are
-made as you. Everyone without a token still reads as the reader identity and cannot
-approve changes.
+made as you. So are the comments and moves you make from an issue's detail. Everyone
+without a token still reads as the reader identity and cannot approve changes,
+comment, or move issues.
 
-Agents never receive your token. Background work, such as linking branches and
-refreshing linked issues, always uses the server's identities.
+Agents never receive your token. Background work, such as linking branches,
+refreshing linked issues, watching issues, and writing thread links, always uses the
+server's identities.
 
 ## Use your own Jira token
 
@@ -108,6 +119,8 @@ refreshing linked issues, always uses the server's identities.
    A classic token also works.
 2. In T3 Code, open Settings → Account and enter the email of your Atlassian account
    and the token.
+
+The token needs `write:jira-work` for approvals, comments, and moves.
 
 T3 Code checks the token with Jira before saving it. A rejected token is not saved.
 The token can only be for a site the server is configured for. The server stores it
@@ -156,16 +169,6 @@ Linked issues refresh their summary and status every few minutes. An issue's det
 lists pull requests whose branch or title contains its key. Only pull requests
 linked to threads in T3 Code are considered.
 
-Ask the agent to watch or follow an issue and it calls `watch_jira_issue`. The
-server then checks the issue every two minutes, as the reader identity, and wakes the
-agent when someone else comments, the issue moves to another status category, or its
-assignee changes. Comments by the reader's own account do not wake it. To watch an
-issue yourself, use the eye on its row in the thread's details. A watched thread
-counts as working between wakes, like one watching a pull request. Watching ends
-when the agent calls `unwatch_jira_issue`, when you unlink the issue or press Stop,
-when the thread settles or is archived, when the reader can no longer see the issue,
-or after 10 wakes in a row that bring only comments. Subagents cannot watch issues.
-
 Choosing "Start thread from issue" on the Issues page fills a new thread's message
 with the issue. When the thread starts in a new worktree, the worktree's branch is
 named after the issue and contains its key, so the thread links itself. If a branch
@@ -173,6 +176,33 @@ with that name already exists, T3 Code adds a numbered suffix. Clear the name be
 you send to let T3 Code name the branch as usual, then link the issue by hand if the
 branch lacks the key. A thread that runs locally only gets the suggested branch name
 in its message.
+
+## Link back to the thread
+
+When a thread links an issue and the server has a public URL (`T3CODE_PUBLIC_URL`,
+used with organisation sign-in), T3 Code adds a link on the Jira issue back to the
+thread. It removes the link when the thread unlinks the issue or is archived or
+deleted.
+
+The server writes this link with its own identity for that site, which needs
+write access (`write:jira-work` for a scoped token). Without write access, T3 Code
+skips the link without an error. This is the only thing the server writes on its own.
+
+## Watch linked issues
+
+A thread can watch a linked issue. Use the eye on the issue's row in the thread's
+Jira section, or ask the agent to watch it and it calls `watch_jira_issue`. The
+agent stops watching with `unwatch_jira_issue`.
+
+The server checks a watched issue every two minutes, with the server's identity, and
+wakes the agent when someone else comments, the issue moves to another status
+category, or its assignee changes. Comments by the reader's own account do not wake
+it. A watching thread counts as working between wakes, like one watching a pull
+request.
+
+A watch ends after ten wakes in a row that bring only comments. It also ends when you
+unlink the issue, when the reader can no longer see it, or when the thread is stopped,
+archived, or settles. Subagents cannot watch issues.
 
 ## Agents that write to Jira
 
