@@ -292,7 +292,8 @@ export const endOrphanedNativeSubagent = <E>(input: {
     if (subagent?.origin !== "provider_native") return [];
     const node = input.projection.nodes.find((entry) => entry.id === subagentId);
     const item = input.projection.turnItems.find(
-      (entry) => entry.type === "subagent" && entry.subagentId === subagentId,
+      (entry): entry is Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }> =>
+        entry.type === "subagent" && entry.subagentId === subagentId,
     );
     const scope = {
       threadId: subagent.threadId,

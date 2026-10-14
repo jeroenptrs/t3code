@@ -78,14 +78,18 @@ function restartContinuationBlocked(
   if (waitingRequest) return true;
   return projection.turnItems.some(
     (item) =>
-      item.type === "secret_request" &&
-      item.runId === source.id &&
-      (item.secretStatus === "pending" ||
-        // Recovery cancels an open secret card and its run at the same instant.
-        (item.secretStatus === "cancelled" &&
-          item.completedAt !== null &&
-          source.completedAt !== null &&
-          DateTime.Equivalence(item.completedAt, source.completedAt))),
+      // The agent may be waiting on a proposal's outcome; the card outlives the restart.
+      (item.type === "jira_proposal" &&
+        item.runId === source.id &&
+        item.proposalStatus === "pending") ||
+      (item.type === "secret_request" &&
+        item.runId === source.id &&
+        (item.secretStatus === "pending" ||
+          // Recovery cancels an open secret card and its run at the same instant.
+          (item.secretStatus === "cancelled" &&
+            item.completedAt !== null &&
+            source.completedAt !== null &&
+            DateTime.Equivalence(item.completedAt, source.completedAt)))),
   );
 }
 
@@ -204,7 +208,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const projection = yield* threads.getThreadRecords(
       input.threadId,
       ["messages", "runs", "providerTurns", "attempts", "runtimeRequests", "turnItems"],
-      { messageIds: [messageId], turnItemTypes: ["secret_request"] },
+      { messageIds: [messageId], turnItemTypes: ["secret_request", "jira_proposal"] },
     );
     if (
       !resolveProjectSettings(enabled, projection.thread.projectId).settings

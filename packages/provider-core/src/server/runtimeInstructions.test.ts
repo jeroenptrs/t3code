@@ -17,7 +17,11 @@ describe("buildRuntimeInstructions", () => {
     });
     expect(withJira).toContain("<jira_issue_linking>");
     expect(withJira).toContain("call link_jira_issue");
-    expect(withJira).toContain("use jtk");
+    expect(withJira).toContain("Use jtk");
+    for (const tool of ["propose_jira_issues", "propose_jira_comment", "propose_jira_transition"]) {
+      expect(withJira).toContain(tool);
+    }
+    expect(withJira).toContain("Do not also make the same change with jtk");
 
     for (const mcpCapabilities of [undefined, new Set(["orchestration", "pull-requests"])]) {
       const instructions = buildRuntimeInstructions({ harness: "Codex", mcpCapabilities });
