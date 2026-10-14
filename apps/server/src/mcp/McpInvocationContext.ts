@@ -25,6 +25,9 @@ const ALL_MCP_CAPABILITIES = [
   "pull-requests",
   "issues",
   "background-wait",
+  // Fork-only: granted to thread sessions when Jira is configured on this server. The Jira tools
+  // do not require it; it decides whether agents are told about them.
+  "jira",
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
