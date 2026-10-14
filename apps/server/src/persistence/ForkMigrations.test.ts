@@ -84,6 +84,7 @@ const assertThreadJiraIssuesSchema = Effect.gen(function* () {
       ["linked_at", 0],
       ["linked_by_user_id", 0],
       ["snapshot_json", 0],
+      ["watch_json", 0],
     ],
   );
 });
@@ -113,6 +114,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [7, "ProjectionThreadJiraIssues"],
       [8, "JiraUserCredentials"],
       [9, "JiraProposals"],
+      [10, "ProjectionThreadJiraIssueWatch"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
