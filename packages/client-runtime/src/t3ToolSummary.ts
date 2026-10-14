@@ -772,6 +772,61 @@ export function summarizeT3ToolCalls(
       }
       break;
     }
+    case "propose-jira-issues": {
+      // One call proposes a batch of drafts.
+      const drafts = selected.reduce(
+        (count, call) => count + (Array.isArray(call.input?.issues) ? call.input.issues.length : 1),
+        0,
+      );
+      label = done
+        ? resolve(
+            msg(
+              "{drafts, plural, one {Proposed {drafts} Jira issue} other {Proposed {drafts} Jira issues}}",
+              { drafts },
+            ),
+          )
+        : resolve(
+            msg(
+              "{drafts, plural, one {Tried to propose {drafts} Jira issue} other {Tried to propose {drafts} Jira issues}}",
+              { drafts },
+            ),
+          );
+      break;
+    }
+    case "propose-jira-comment": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Proposed {count} Jira comment} other {Proposed {count} Jira comments}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to propose {count} Jira comment} other {Tried to propose {count} Jira comments}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "propose-jira-transition": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Proposed {count} Jira transition} other {Proposed {count} Jira transitions}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to propose {count} Jira transition} other {Tried to propose {count} Jira transitions}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "list-issues": {
       const count = selected.length;
       label = done
