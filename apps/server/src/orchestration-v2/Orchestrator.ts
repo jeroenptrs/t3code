@@ -30,6 +30,7 @@ import {
   type JiraProposal,
   type JiraProposalStatus,
   type ThreadJiraIssueLink,
+  type ThreadJiraIssueWatch,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
   type OrchestrationV2AppThread,
@@ -438,10 +439,37 @@ function isGoalCommand(message: {
 
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
+/** Fork-only. The Jira link with its watch replaced, or removed when `watch` is undefined. */
+function withJiraIssueWatch(
+  link: ThreadJiraIssueLink,
+  watch: ThreadJiraIssueWatch | undefined,
+): ThreadJiraIssueLink {
+  const { watch: _previous, ...rest } = link;
+  return watch === undefined ? rest : { ...rest, watch };
+}
+
+/** Fork-only. The thread with every Jira watch ended, for archive, settle and Stop. */
+function withoutJiraIssueWatches<T extends Pick<OrchestrationV2AppThread, "jiraIssues">>(
+  thread: T,
+): T {
+  return thread.jiraIssues?.some((link) => link.watch !== undefined)
+    ? {
+        ...thread,
+        jiraIssues: thread.jiraIssues.map((link) => withJiraIssueWatch(link, undefined)),
+      }
+    : thread;
+}
+
+/** Fork-only. The site and key a Jira command names, as links store them. */
+function jiraIssueKeyOf(command: { readonly site: string; readonly key: string }) {
+  return { site: command.site.trim().toLowerCase(), key: command.key.trim().toUpperCase() };
+}
+
 /**
- * Fork-only. The thread's Jira links after a link, unlink or sync, or null when the command
- * changes nothing. Unlinking any link leaves a `branch-dismissed` tombstone so the branch
- * detector does not re-add it; a manual or agent link replaces the tombstone.
+ * Fork-only. The thread's Jira links after a link, unlink, sync or watch command, or null when
+ * the command changes nothing. Unlinking any link leaves a `branch-dismissed` tombstone so the
+ * branch detector does not re-add it, and ends its watch; a manual or agent link replaces the
+ * tombstone. Starting a watch on an issue the thread does not link links it with `linkSource`.
  */
 function decideThreadJiraIssues(
   links: ReadonlyArray<ThreadJiraIssueLink>,
@@ -451,14 +479,16 @@ function decideThreadJiraIssues(
       readonly type:
         | "thread.jira-issue.link"
         | "thread.jira-issue.unlink"
-        | "thread.jira-issue.sync";
+        | "thread.jira-issue.sync"
+        | "thread.jira-issue.watch"
+        | "thread.jira-issue-watch.sync";
     }
   >,
   now: DateTime.Utc,
 ): ReadonlyArray<ThreadJiraIssueLink> | null {
-  const site = command.site.trim().toLowerCase();
-  const key = command.key.trim().toUpperCase();
+  const { site, key } = jiraIssueKeyOf(command);
   const existing = links.find((link) => link.site === site && link.key === key);
+  const visible = existing?.source === "branch-dismissed" ? undefined : existing;
   switch (command.type) {
     case "thread.jira-issue.link": {
       // A branch re-detection must not revive a link the user dismissed.
@@ -481,14 +511,57 @@ function decideThreadJiraIssues(
       return [...links.filter((entry) => entry !== existing), link];
     }
     case "thread.jira-issue.unlink":
-      if (!existing || existing.source === "branch-dismissed") return null;
+      if (!visible) return null;
       return links.map((link) =>
-        link === existing ? { ...link, source: "branch-dismissed" as const } : link,
+        link === visible
+          ? { ...withJiraIssueWatch(link, undefined), source: "branch-dismissed" as const }
+          : link,
       );
     case "thread.jira-issue.sync":
-      if (!existing || existing.source === "branch-dismissed") return null;
+      if (!visible) return null;
       return links.map((link) =>
-        link === existing ? { ...link, snapshot: command.snapshot } : link,
+        link === visible ? { ...link, snapshot: command.snapshot } : link,
+      );
+    case "thread.jira-issue.watch": {
+      if (!command.watching) {
+        if (visible?.watch === undefined) return null;
+        return links.map((link) => (link === visible ? withJiraIssueWatch(link, undefined) : link));
+      }
+      if (visible?.watch !== undefined) return null;
+      const startedAt = DateTime.formatIso(now);
+      const linked: ThreadJiraIssueLink | null =
+        visible ??
+        (command.linkSource === undefined
+          ? null
+          : {
+              site,
+              key,
+              source: command.linkSource,
+              linkedAt: startedAt,
+              ...(command.linkedByUserId === undefined
+                ? {}
+                : { linkedByUserId: command.linkedByUserId }),
+              snapshot: existing?.snapshot ?? null,
+            });
+      if (linked === null) return null;
+      // Changes count from now: the first read takes the issue's assignee as it finds it.
+      const watched = withJiraIssueWatch(linked, {
+        startedAt,
+        updatedThrough: null,
+        statusCategory: linked.snapshot?.statusCategory ?? null,
+        assigneeAccountId: null,
+        commentsThrough: startedAt,
+        wakes: 0,
+      });
+      return visible
+        ? links.map((link) => (link === visible ? watched : link))
+        : [...links.filter((link) => link !== existing), watched];
+    }
+    case "thread.jira-issue-watch.sync":
+      // Progress read before a stop or restart must not bring the old watch back.
+      if (visible?.watch?.startedAt !== command.startedAt) return null;
+      return links.map((link) =>
+        link === visible ? withJiraIssueWatch(link, command.watch ?? undefined) : link,
       );
   }
 }
@@ -518,6 +591,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.jira-issue.link":
     case "thread.jira-issue.unlink":
     case "thread.jira-issue.sync":
+    case "thread.jira-issue.watch":
+    case "thread.jira-issue-watch.sync":
     case "thread.pull-request.watch":
     case "thread.pull-request-watch.sync":
     case "thread.pull-request.sync":
@@ -2510,6 +2585,63 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  // Fork-only. The Jira issue watch's counterpart of dispatchPullRequestWatchSync, same rules.
+  const dispatchJiraIssueWatchSync = Effect.fn("orchestrationV2.dispatch.jiraIssueWatchSync")(
+    function* (
+      command: Extract<
+        OrchestrationV2ServerCommand,
+        { readonly type: "thread.jira-issue-watch.sync" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    ) {
+      const thread = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const { site, key } = jiraIssueKeyOf(command);
+      const link = thread.jiraIssues?.find(
+        (candidate) =>
+          candidate.source !== "branch-dismissed" &&
+          candidate.site === site &&
+          candidate.key === key,
+      );
+      const inactive =
+        thread.archivedAt !== null ||
+        thread.settledOverride === "settled" ||
+        thread.settledAt !== null ||
+        isProviderNativeSubagentThread(thread);
+      if (link?.watch?.startedAt !== command.startedAt || (command.wake && inactive)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The Jira issue watch ended or its thread settled while it was read.",
+        });
+      }
+      yield* dispatchThreadMutation(command, events, effects);
+      if (command.wake === undefined) return;
+      yield* dispatchMessage(
+        {
+          type: "message.dispatch",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          messageId: command.wake.messageId,
+          text: command.wake.text,
+          notification: command.wake.notification,
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+        },
+        events,
+        effects,
+      );
+    },
+  );
+
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
     command: Extract<
       OrchestrationV2ServerCommand,
@@ -2534,6 +2666,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.jira-issue.link"
           | "thread.jira-issue.unlink"
           | "thread.jira-issue.sync"
+          | "thread.jira-issue.watch"
+          | "thread.jira-issue-watch.sync"
           | "thread.pull-request.watch"
           | "thread.pull-request-watch.sync"
           | "thread.pull-request.sync"
@@ -2616,6 +2750,52 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandType: command.type,
           cause: `Thread ${command.threadId} was stopped.`,
         });
+      }
+    }
+    // Fork-only. A Jira issue watch is refused where a pull request watch is, for the same reasons.
+    if (command.type === "thread.jira-issue.watch" && command.watching) {
+      if (isProviderNativeSubagentThread(thread)) {
+        return yield* new OrchestratorSubagentThreadReadOnlyError({
+          commandId: command.commandId,
+          threadId: command.threadId,
+        });
+      }
+      const refuse = (cause: string) =>
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause,
+        });
+      if (
+        thread.settledOverride === "settled" ||
+        thread.settledAt !== null ||
+        thread.archivedAt !== null
+      ) {
+        return yield* refuse(
+          `Thread ${command.threadId} is settled or archived and cannot watch Jira issues.`,
+        );
+      }
+      if (thread.lineage.relationshipToParent === "subagent") {
+        return yield* refuse(
+          `Thread ${command.threadId} is a subagent; its parent thread watches Jira issues.`,
+        );
+      }
+      const { site, key } = jiraIssueKeyOf(command);
+      const linked = thread.jiraIssues?.some(
+        (link) => link.source !== "branch-dismissed" && link.site === site && link.key === key,
+      );
+      // An unlinked issue, including one the user unlinked, is watched only by linking it again.
+      if (!linked && command.linkSource === undefined) {
+        return yield* refuse(`Thread ${command.threadId} does not link Jira issue ${key}.`);
+      }
+      if (command.linkSource === "agent") {
+        const { runs } = yield* projectionStore
+          .getThreadRecords(command.threadId, ["runs"])
+          .pipe(mapDispatchError(command));
+        const latest = latestExecutedRun(runs);
+        if (latest !== null && (yield* stopReachedRun(command, command.threadId, latest.id))) {
+          return yield* refuse(`Thread ${command.threadId} was stopped.`);
+        }
       }
     }
     if (
@@ -2951,7 +3131,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.archive":
           // An archived thread takes no wakes, so its watches end like a settled thread's.
           return {
-            ...thread,
+            ...withoutJiraIssueWatches(thread),
             archivedAt: now,
             titleRegeneration: null,
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
@@ -2966,7 +3146,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const alreadySettled =
             thread.settledOverride === "settled" && thread.settledAt !== null && !wasPinned;
           return {
-            ...thread,
+            ...withoutJiraIssueWatches(thread),
             settledOverride: "settled",
             settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
@@ -3247,15 +3427,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         case "thread.jira-issue.link":
         case "thread.jira-issue.unlink":
-        case "thread.jira-issue.sync": {
+        case "thread.jira-issue.sync":
+        case "thread.jira-issue.watch":
+        case "thread.jira-issue-watch.sync": {
           const jiraIssues = decideThreadJiraIssues(thread.jiraIssues ?? [], command, now);
           if (jiraIssues === null) return thread;
           return {
             ...thread,
             jiraIssues,
-            // Syncs and branch auto-links are the server's bookkeeping, not thread activity.
+            // Syncs, recorded watch progress and branch auto-links are the server's bookkeeping,
+            // not thread activity.
             updatedAt:
               command.type === "thread.jira-issue.sync" ||
+              command.type === "thread.jira-issue-watch.sync" ||
               (command.type === "thread.jira-issue.link" && command.source === "branch")
                 ? thread.updatedAt
                 : now,
@@ -3412,6 +3596,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.jira-issue.link":
         case "thread.jira-issue.unlink":
         case "thread.jira-issue.sync":
+        case "thread.jira-issue.watch":
+        case "thread.jira-issue-watch.sync":
           return "thread.jira-issues-synced" as const;
         case "thread.runtime-mode.set":
           return "thread.runtime-mode-updated" as const;
@@ -9059,7 +9245,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   /**
    * What Stop holds besides the run it interrupts: durable queued messages wait for the
-   * user, buffered provider wakes are cancelled, and the thread's pull request watches end.
+   * user, buffered provider wakes are cancelled, and the thread's pull request and Jira issue
+   * watches end.
    * Every wake its delegated tasks still owe is dropped, since Stop stops those tasks too.
    * `cohortRunIds` are dropped even when they owe nothing, like a plain interrupt's.
    */
@@ -9133,8 +9320,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerInstanceId: thread.providerInstanceId,
           occurredAt: input.now,
           payload: {
-            ...thread,
+            ...withoutJiraIssueWatches(thread),
             pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
+          },
+        });
+      }
+      // Fork-only. Jira watches end in their own event, which keeps the reverse lookup in step.
+      if (thread.jiraIssues?.some((link) => link.watch !== undefined)) {
+        yield* emitEvent({
+          type: "thread.jira-issues-synced",
+          threadId: thread.id,
+          providerInstanceId: thread.providerInstanceId,
+          occurredAt: input.now,
+          payload: {
+            ...withoutJiraIssueWatches(thread),
+            ...(thread.pullRequests === undefined
+              ? {}
+              : {
+                  pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
+                }),
           },
         });
       }
@@ -11044,6 +11248,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.jira-issue.link":
       case "thread.jira-issue.unlink":
       case "thread.jira-issue.sync":
+      case "thread.jira-issue.watch":
       case "thread.pull-request.watch":
       case "thread.pull-request.sync":
       case "thread.title.regeneration.complete":
@@ -11055,6 +11260,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "thread.pull-request-watch.sync":
         yield* dispatchPullRequestWatchSync(command, events, effects);
+        break;
+      case "thread.jira-issue-watch.sync":
+        yield* dispatchJiraIssueWatchSync(command, events, effects);
         break;
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
