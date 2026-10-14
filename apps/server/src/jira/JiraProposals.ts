@@ -768,7 +768,12 @@ const make = Effect.gen(function* () {
         }
         case "comment": {
           if ((yield* Ref.get(progress)).steps.includes("comment")) return;
-          yield* api.addComment(identity, proposal.key, markdownToAdf(proposal.body));
+          const posted = yield* api.addComment(
+            identity,
+            proposal.key,
+            markdownToAdf(proposal.body),
+          );
+          yield* jira.recordPostedComment(identity.site, proposal.key, posted.id);
           yield* advance((current) => ({
             ...withIssue(current, proposal.key),
             steps: [...current.steps, "comment"],
@@ -795,7 +800,12 @@ const make = Effect.gen(function* () {
             proposal.comment.trim().length > 0 &&
             !(yield* Ref.get(progress)).steps.includes("comment")
           ) {
-            yield* api.addComment(identity, proposal.key, markdownToAdf(proposal.comment));
+            const posted = yield* api.addComment(
+              identity,
+              proposal.key,
+              markdownToAdf(proposal.comment),
+            );
+            yield* jira.recordPostedComment(identity.site, proposal.key, posted.id);
             yield* advance((current) => ({ ...current, steps: [...current.steps, "comment"] }));
           }
           return;
