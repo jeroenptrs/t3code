@@ -1700,6 +1700,7 @@ export function deriveThreadPendingBackgroundTasks(projection: ThreadProjection 
       activeProviderThreadId: projection.thread.activeProviderThreadId,
       runs: projection.runs,
       pullRequests: projection.thread.pullRequests,
+      jiraIssues: projection.thread.jiraIssues,
     }),
   ];
 }
