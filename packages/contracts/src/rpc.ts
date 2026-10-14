@@ -130,6 +130,8 @@ import {
 } from "./diffWalkthrough.ts";
 import {
   JiraCapabilities,
+  JiraCreateMeta,
+  JiraCreateMetaInput,
   JiraError,
   JiraFilterInput,
   JiraFilterView,
@@ -139,6 +141,8 @@ import {
   JiraIssueInput,
   JiraPersonalCredential,
   JiraPersonalTokenSetInput,
+  JiraProposalDecisionInput,
+  JiraProposalDecisionResult,
   JiraSearchInput,
   JiraSearchResult,
 } from "./jira.ts";
@@ -677,6 +681,9 @@ export const WS_METHODS = {
   jiraSetPersonalToken: "jira.setPersonalToken",
   jiraTestPersonalToken: "jira.testPersonalToken",
   jiraClearPersonalToken: "jira.clearPersonalToken",
+  // Proposals: agent-proposed Jira writes a user approves, performed with their personal token
+  jiraCreateMeta: "jira.createMeta",
+  jiraDecideProposal: "jira.decideProposal",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1527,6 +1534,22 @@ const WsJiraClearPersonalTokenRpc = Rpc.make(WS_METHODS.jiraClearPersonalToken, 
   error: JiraRpcError,
 });
 
+const WsJiraCreateMetaRpc = Rpc.make(WS_METHODS.jiraCreateMeta, {
+  payload: JiraCreateMetaInput,
+  success: JiraCreateMeta,
+  error: JiraRpcError,
+});
+
+/**
+ * Approving writes to Jira as the caller and waits for the write; the proposal's card shows the
+ * outcome either way. Deciding a proposal that is already decided returns its current outcome.
+ */
+const WsJiraDecideProposalRpc = Rpc.make(WS_METHODS.jiraDecideProposal, {
+  payload: JiraProposalDecisionInput,
+  success: JiraProposalDecisionResult,
+  error: JiraRpcError,
+});
+
 const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLookupRepository, {
   payload: SourceControlRepositoryLookupInput,
   success: SourceControlRepositoryInfo,
@@ -2368,6 +2391,8 @@ export const WsJiraRpcGroup = RpcGroup.make(
   WsJiraSetPersonalTokenRpc,
   WsJiraTestPersonalTokenRpc,
   WsJiraClearPersonalTokenRpc,
+  WsJiraCreateMetaRpc,
+  WsJiraDecideProposalRpc,
 ).middleware(RpcScopeAuthorization);
 
 /** Every RPC except those in `WsJiraRpcGroup`. */
