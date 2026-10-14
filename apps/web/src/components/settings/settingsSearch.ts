@@ -40,6 +40,7 @@ export type SettingsPath =
   | "/settings/maintenance"
   | "/settings/labs"
   | "/settings/about"
+  | "/settings/account"
   | "/settings/users"
   | "/settings/archived";
 
@@ -120,6 +121,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/labs": msg("Labs"),
   "/settings/about": msg("About"),
   "/settings/voice": msg("Voice"),
+  "/settings/account": msg("Account"),
   "/settings/users": msg("Users"),
   "/settings/archived": msg("Archive"),
 };
@@ -170,8 +172,9 @@ const ALL_SETTINGS_NAV_GROUPS: ReadonlyArray<SettingsNavGroup> = [
   },
   {
     heading: msg("Connections"),
-    paths: ["/settings/connections", "/settings/access", "/settings/secrets", "/settings/users"],
+    paths: ["/settings/connections", "/settings/access", "/settings/secrets"],
   },
+  { heading: msg("Portal"), paths: ["/settings/account", "/settings/users"] },
   {
     heading: msg("More"),
     headingHidden: true,
@@ -1543,6 +1546,8 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/connections": "connections",
   "/settings/access": "connections",
   "/settings/secrets": null,
+  // The signed-in user's own settings live on the primary environment; there is no scope to pick.
+  "/settings/account": null,
   // Portal users live on the primary environment; there is no scope to pick.
   "/settings/users": null,
   "/settings/scheduled-tasks": null,
