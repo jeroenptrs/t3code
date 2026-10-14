@@ -49,6 +49,16 @@ export function createJiraEnvironmentAtoms<R, E>(
   );
   const refreshTrigger = ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
     readerEpoch(environmentId);
+  // Testing a token re-reads what the server reports about it without changing who reads, so it
+  // refreshes capabilities alone. A reader change bumps both.
+  const capabilitiesRecheck = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make(0).pipe(Atom.withLabel("environment-data:jira:capabilities-recheck")),
+  );
+  const capabilitiesTrigger = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make(
+      (get) => get(readerEpoch(environmentId)) + get(capabilitiesRecheck(environmentId)),
+    ).pipe(Atom.withLabel("environment-data:jira:capabilities-trigger")),
+  );
   const readerChanged = (
     { environmentId }: { readonly environmentId: EnvironmentId },
     registry: AtomRegistry.AtomRegistry,
@@ -84,7 +94,7 @@ export function createJiraEnvironmentAtoms<R, E>(
       label: "environment-data:jira:capabilities",
       tag: WS_METHODS.jiraCapabilities,
       staleTimeMs: 5 * 60_000,
-      refreshTrigger,
+      refreshTrigger: ({ environmentId }) => capabilitiesTrigger(environmentId),
     }),
     /** The reader's favourite and own filters, or those matching a name. */
     filters: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -113,8 +123,8 @@ export function createJiraEnvironmentAtoms<R, E>(
       registry.refresh(issue(target));
     },
     /**
-     * The caller's own token. Each success re-reads capabilities and every cached read, because
-     * reads now go out as a different identity.
+     * The caller's own token. Setting or clearing re-reads capabilities and every cached read,
+     * because reads now go out as a different identity; testing re-reads capabilities only.
      */
     setPersonalToken: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:jira:set-personal-token",
@@ -124,7 +134,10 @@ export function createJiraEnvironmentAtoms<R, E>(
     testPersonalToken: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:jira:test-personal-token",
       tag: WS_METHODS.jiraTestPersonalToken,
-      onSuccess: (target, registry) => readerChanged(target, registry),
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() =>
+          registry.update(capabilitiesRecheck(environmentId), (epoch) => epoch + 1),
+        ),
     }),
     clearPersonalToken: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:jira:clear-personal-token",
