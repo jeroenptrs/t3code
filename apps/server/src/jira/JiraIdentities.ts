@@ -13,6 +13,8 @@ export class JiraIdentities extends Context.Service<
     readonly configured: boolean;
     /** Public shapes, in configuration order. */
     readonly list: ReadonlyArray<JiraIdentity>;
+    /** Every configured service identity, in configuration order; never leaves the server. */
+    readonly services: ReadonlyArray<JiraServerIdentity>;
     readonly reader: Effect.Effect<JiraServerIdentity, JiraError>;
     /**
      * The identity to read `site` with: the reader when it is on that site, else the first
@@ -39,6 +41,7 @@ export const make = (config: JiraConfig | undefined): JiraIdentities["Service"] 
     return JiraIdentities.of({
       configured: false,
       list: [],
+      services: [],
       reader: Effect.fail(notConfigured),
       forSite: () => Effect.fail(notConfigured),
     });
@@ -47,6 +50,7 @@ export const make = (config: JiraConfig | undefined): JiraIdentities["Service"] 
   return JiraIdentities.of({
     configured: true,
     list: config.identities.map((identity) => toPublicIdentity(identity, config.reader)),
+    services: config.identities,
     reader: Effect.succeed(reader),
     forSite: (site) => {
       const normalized = normalizeJiraSite(site);

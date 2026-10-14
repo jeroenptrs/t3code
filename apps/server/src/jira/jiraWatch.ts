@@ -6,6 +6,7 @@ import type {
   OrchestrationV2Notification,
   ThreadJiraIssueWatch,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 /**
  * Wakes in a row that bring only comments. A status or assignee change resets the count, so
@@ -36,10 +37,30 @@ interface JiraWatchReport {
 }
 
 /**
+ * How far before a watch's start the first read still counts comments. `startedAt` is T3 Code's
+ * clock and a comment's `created` is Jira's, which can disagree by a little.
+ */
+const START_GRACE_MS = 2 * 60 * 1000;
+
+/** The latest of Jira's timestamps, or null when there is none. */
+function latestJiraTime(times: ReadonlyArray<string | null>): string | null {
+  let latest: { readonly time: string; readonly ms: number } | null = null;
+  for (const time of times) {
+    if (time === null) continue;
+    const ms = Date.parse(time);
+    if (Number.isNaN(ms) || (latest !== null && ms <= latest.ms)) continue;
+    latest = { time, ms };
+  }
+  return latest?.time ?? null;
+}
+
+/**
  * Compares a watched issue with what the last read saw. Comments count when created after
- * `commentsThrough` by anyone but the account T3 Code reads Jira as. The first read after a
- * watch starts only learns the assignee, and the status category when the link had no snapshot
- * to start from, so starting a watch never wakes the agent by itself.
+ * `commentsThrough`, or on the first read after a watch starts, after a short grace before
+ * `startedAt`. Comments T3 Code posted, and comments by any account a configured identity
+ * comments as, never count. `commentsThrough` then moves only by Jira's own timestamps, so the
+ * two clocks are never compared again. The first read only learns the status category and the
+ * assignee, so starting a watch wakes the agent only for a comment that just came in.
  */
 export function evaluateJiraWatch(
   watch: ThreadJiraIssueWatch,
@@ -47,14 +68,21 @@ export function evaluateJiraWatch(
     readonly issue: Pick<JiraIssueSummary, "status" | "statusCategory" | "assignee" | "updated">;
     /** The issue's newest comments, in any order. */
     readonly comments: ReadonlyArray<JiraComment>;
-    readonly readerAccountId: string | null;
+    /** Accounts T3 Code's configured identities comment as. */
+    readonly ownAccountIds: ReadonlySet<string>;
+    /** Ids of the read comments that T3 Code posted, for a user or an approved proposal. */
+    readonly ownCommentIds: ReadonlySet<string>;
   },
 ): JiraWatchReport {
   const changes: Array<JiraWatchChange> = [];
   const firstRead = watch.updatedThrough === null;
   const { issue } = read;
 
-  if (watch.statusCategory !== null && watch.statusCategory !== issue.statusCategory) {
+  if (
+    !firstRead &&
+    watch.statusCategory !== null &&
+    watch.statusCategory !== issue.statusCategory
+  ) {
     changes.push({
       kind: "status",
       from: watch.statusCategory,
@@ -72,19 +100,29 @@ export function evaluateJiraWatch(
     });
   }
 
-  const through = Date.parse(watch.commentsThrough);
-  const unseen = read.comments
-    .filter((comment) => Date.parse(comment.created) > through)
+  const through = firstRead
+    ? Date.parse(watch.startedAt) - START_GRACE_MS
+    : Date.parse(watch.commentsThrough);
+  const fresh = read.comments
+    .filter(
+      (comment) =>
+        Date.parse(comment.created) > through &&
+        !read.ownCommentIds.has(comment.id) &&
+        (comment.author === null || !read.ownAccountIds.has(comment.author.accountId)),
+    )
     .toSorted((left, right) => Date.parse(left.created) - Date.parse(right.created));
-  const fresh = unseen.filter(
-    (comment) =>
-      read.readerAccountId === null || comment.author?.accountId !== read.readerAccountId,
-  );
   if (fresh.length > 0) changes.push({ kind: "comments", comments: fresh });
 
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "comments");
   const progress = changes.some((change) => change.kind !== "comments");
   const wakes = (progress ? 0 : watch.wakes) + (commentsOnly ? 1 : 0);
+  // Every comment read, counted or not, is behind this mark, and so is the issue's last edit.
+  const commentsThrough =
+    latestJiraTime([
+      ...read.comments.map((comment) => comment.created),
+      issue.updated,
+      firstRead ? null : watch.commentsThrough,
+    ]) ?? (firstRead ? DateTime.formatIso(DateTime.makeUnsafe(through)) : watch.commentsThrough);
   return {
     changes,
     next: {
@@ -92,8 +130,7 @@ export function evaluateJiraWatch(
       updatedThrough: issue.updated,
       statusCategory: issue.statusCategory,
       assigneeAccountId,
-      // The reader's own comments move it too, so they are not looked at again.
-      commentsThrough: unseen.at(-1)?.created ?? watch.commentsThrough,
+      commentsThrough,
       wakes,
     },
     exhausted: commentsOnly && wakes >= JIRA_WATCH_WAKE_LIMIT,

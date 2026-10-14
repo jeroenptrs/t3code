@@ -7,7 +7,7 @@ import { DiffWalkthrough } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { forkMigrationManifest, forkMigrationsTable, runForkMigrations } from "./ForkMigrations.ts";
-import { migrationEntries, migrationManifest, runMigrations } from "./Migrations.ts";
+import { migrationManifest, runMigrations } from "./Migrations.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 
 const decodeWalkthrough = Schema.decodeUnknownEffect(DiffWalkthrough);
@@ -89,6 +89,24 @@ const assertThreadJiraIssuesSchema = Effect.gen(function* () {
   );
 });
 
+const assertJiraRemoteLinksSchema = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const columns = yield* sql<{ readonly name: string; readonly pk: number }>`
+    PRAGMA table_info(fork_jira_remote_links)
+  `;
+  assert.deepStrictEqual(
+    columns.map(({ name, pk }) => [name, pk]),
+    [
+      ["site", 1],
+      ["issue_key", 2],
+      ["thread_id", 3],
+      ["global_id", 0],
+      ["title", 0],
+      ["written_at", 0],
+    ],
+  );
+});
+
 it.effect("server startup records upstream and fork migrations in separate ledgers", () =>
   Effect.gen(function* () {
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
@@ -97,6 +115,7 @@ it.effect("server startup records upstream and fork migrations in separate ledge
     yield* assertScheduledTaskAuditSchema;
     yield* assertDiffWalkthroughSchema;
     yield* assertThreadJiraIssuesSchema;
+    yield* assertJiraRemoteLinksSchema;
     assert.deepStrictEqual(yield* runForkMigrations(), []);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
@@ -115,12 +134,14 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [8, "JiraUserCredentials"],
       [9, "JiraProposals"],
       [10, "ProjectionThreadJiraIssueWatch"],
+      [11, "JiraRemoteLinks"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
     yield* assertScheduledTaskAuditSchema;
     yield* assertDiffWalkthroughSchema;
     yield* assertThreadJiraIssuesSchema;
+    yield* assertJiraRemoteLinksSchema;
   }).pipe(Effect.provide(memoryDatabase())),
 );
 
@@ -258,11 +279,10 @@ it.effect("still runs upstream's next migration after fork migrations were appli
     yield* runMigrations();
     yield* runForkMigrations();
 
-    const nextId = migrationEntries.length + 1;
+    const nextId = migrationManifest.length + 1;
+    // Applied migrations never rerun, so their bodies do not matter here.
     const nextUpstream = Migrator.fromRecord({
-      ...Object.fromEntries(
-        migrationEntries.map(([id, name, migration]) => [`${id}_${name}`, migration]),
-      ),
+      ...Object.fromEntries(migrationManifest.map(([id, name]) => [`${id}_${name}`, Effect.void])),
       [`${nextId}_HypotheticalUpstream`]: sql`CREATE TABLE hypothetical_upstream (id TEXT)`,
     });
     assert.deepStrictEqual(yield* Migrator.make({})({ loader: nextUpstream }), [
