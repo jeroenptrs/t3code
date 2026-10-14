@@ -176,8 +176,10 @@ An approval writes to Jira with the approver's own personal token, so Jira recor
 the change as theirs. Add yours in Settings → Account before approving. T3 Code never
 makes an approved change with a shared account. If an approval fails partway, for
 example after creating some of the issues, approving again writes only what is
-missing. A transition is checked again when you approve, and is refused if the
-issue no longer offers it.
+missing. An approval cut short by a server restart shows as failed, and the same
+applies. Story points and sprint are set right after an issue is created, so they
+work even when the project's create screen leaves them out. A transition is checked
+again when you approve, and is refused if the issue no longer offers it.
 
 An agent that should change Jira as itself uses the `jtk` CLI with its own
 credentials. Set `JIRA_*` environment variables on the provider instance's
