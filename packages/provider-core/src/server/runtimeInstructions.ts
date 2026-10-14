@@ -10,7 +10,9 @@ const JIRA_ISSUE_TOOL_GUIDANCE = [
   "When this thread's work is for a Jira issue (the user names a key such as ABC-123 or gives a browse URL), call link_jira_issue so T3 Code shows the issue with the thread. Linking an already-linked issue is safe.",
   "A branch whose name contains an issue key links that issue automatically.",
   "list_thread_jira_issues lists the issues linked to this thread.",
-  "These tools only record links in T3 Code. To change an issue (comment, transition, edit), use jtk, which acts as your own Jira identity when it is configured.",
+  "The linking tools only record links in T3 Code.",
+  "When the user wants issues created, a comment posted or an issue moved on their behalf, propose it with propose_jira_issues, propose_jira_comment or propose_jira_transition. The user reviews and approves it in T3 Code, and the change is made with their own Jira account. Do not also make the same change with jtk, and do not propose it again while it is pending.",
+  "Use jtk, which acts as your own Jira identity when it is configured, for reads and for changes the user asks you to make as yourself.",
 ];
 
 const JIRA_ISSUE_LINKING_INSTRUCTIONS = `<jira_issue_linking>

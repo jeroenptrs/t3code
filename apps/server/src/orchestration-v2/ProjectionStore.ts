@@ -945,6 +945,7 @@ type ShellThreadRow = {
   readonly pending_request_payload_json: string | null;
   readonly pending_secret_request_payload_json: string | null;
   readonly pending_link_request_payload_json: string | null;
+  readonly pending_jira_proposal_payload_json: string | null;
   readonly latest_user_message_at: string | null;
   readonly latest_user_authored_message_at: string | null;
   readonly has_actionable_proposed_plan: number;
@@ -1369,10 +1370,15 @@ function pendingRuntimeRequestSummary(
   };
 }
 
-function secretRequestAsPendingInput(
+function userCardAsPendingInput(
   item: OrchestrationV2TurnItem | null,
 ): OrchestrationV2PendingRuntimeRequestSummary | null {
-  if ((item?.type !== "secret_request" && item?.type !== "link_request") || item.nodeId === null)
+  if (
+    (item?.type !== "secret_request" &&
+      item?.type !== "link_request" &&
+      item?.type !== "jira_proposal") ||
+    item.nodeId === null
+  )
     return null;
   return {
     id: RuntimeRequestId.make(item.id),
@@ -1385,9 +1391,11 @@ function secretRequestAsPendingInput(
 /**
  * A secret card is answered while its agent waits in the run. A link card's
  * agent asked without waiting, so the card waits on the user after its run.
+ * A Jira proposal likewise stays approvable after its run.
  */
 const waitsOnUser = (item: OrchestrationV2TurnItem, liveRunIds: ReadonlySet<RunId>) =>
   item.type === "link_request" ||
+  item.type === "jira_proposal" ||
   (item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId));
 
 export function threadShellFromProjection(
@@ -1427,7 +1435,7 @@ export function threadShellFromProjection(
   );
   if (pendingRuntimeRequest === null || pendingRuntimeRequest.blocking === false) {
     pendingRuntimeRequest =
-      secretRequestAsPendingInput(
+      userCardAsPendingInput(
         projection.turnItems
           .filter((item) => item.status === "waiting" && waitsOnUser(item, liveRunIds))
           .toSorted(
@@ -5923,6 +5931,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS pending_link_request_payload_json,
               (
+                SELECT proposal.payload_json
+                -- Proposals outlive their run, so any waiting one counts; a partial index keeps
+                -- this off the thread's history.
+                FROM orchestration_v2_projection_turn_items proposal
+                WHERE proposal.thread_id = t.thread_id
+                  AND proposal.type = 'jira_proposal' AND proposal.status = 'waiting'
+                ORDER BY proposal.updated_at DESC, proposal.turn_item_id DESC
+                LIMIT 1
+              ) AS pending_jira_proposal_payload_json,
+              (
                 SELECT message.updated_at
                 FROM orchestration_v2_projection_messages message
                 WHERE message.thread_id = t.thread_id
@@ -6228,6 +6246,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE link.thread_id = t.thread_id
                   AND link.type = 'link_request' AND link.status = 'waiting'
               )
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_turn_items proposal
+                WHERE proposal.thread_id = t.thread_id
+                  AND proposal.type = 'jira_proposal' AND proposal.status = 'waiting'
+              )
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
             if (rows.length === 0) return [];
@@ -6399,6 +6422,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           row.pending_link_request_payload_json === null
             ? null
             : yield* decodeTurnItemPayload(row.pending_link_request_payload_json),
+          row.pending_jira_proposal_payload_json === null
+            ? null
+            : yield* decodeTurnItemPayload(row.pending_jira_proposal_payload_json),
         ].filter((item) => item !== null);
         let pendingRuntimeRequest =
           row.pending_request_payload_json !== null
@@ -6411,7 +6437,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           waitingCards.length > 0
         ) {
           pendingRuntimeRequest =
-            secretRequestAsPendingInput(
+            userCardAsPendingInput(
               waitingCards.toSorted(
                 (left, right) =>
                   DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
