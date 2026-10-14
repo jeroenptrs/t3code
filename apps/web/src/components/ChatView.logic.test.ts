@@ -39,6 +39,7 @@ import {
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
   getAntigravitySendBlockReason,
   resolveBackgroundDraftWorkspaceOptions,
+  resolveNewWorktreeBranchForSend,
   resolveComposerInteractionMode,
   restorePlanFollowUpComposer,
   resolveComposerProviderSelection,
@@ -1704,6 +1705,29 @@ describe("resolveBackgroundDraftWorkspaceOptions", () => {
       worktreePath: null,
       startFromOrigin: true,
     });
+  });
+});
+
+describe("resolveNewWorktreeBranchForSend", () => {
+  it("names the worktree only when the send creates one", () => {
+    expect(
+      resolveNewWorktreeBranchForSend({
+        baseBranchForWorktree: "main",
+        draftNewWorktreeBranch: " abc-1-fix ",
+      }),
+    ).toBe("abc-1-fix");
+    expect(
+      resolveNewWorktreeBranchForSend({
+        baseBranchForWorktree: null,
+        draftNewWorktreeBranch: "abc-1-fix",
+      }),
+    ).toBeNull();
+    expect(
+      resolveNewWorktreeBranchForSend({
+        baseBranchForWorktree: "main",
+        draftNewWorktreeBranch: undefined,
+      }),
+    ).toBeNull();
   });
 });
 
