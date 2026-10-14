@@ -182,7 +182,8 @@ export const layer: Layer.Layer<
               source,
               linked_at,
               linked_by_user_id,
-              snapshot_json
+              snapshot_json,
+              watch_json
             )
             SELECT
               t.thread_id,
@@ -191,7 +192,8 @@ export const layer: Layer.Layer<
               json_extract(link.value, '$.source'),
               json_extract(link.value, '$.linkedAt'),
               json_extract(link.value, '$.linkedByUserId'),
-              json_extract(link.value, '$.snapshot')
+              json_extract(link.value, '$.snapshot'),
+              json_extract(link.value, '$.watch')
             FROM orchestration_v2_projection_threads AS t
             JOIN json_each(t.payload_json, '$.jiraIssues') AS link
             WHERE t.deleted_at IS NULL
