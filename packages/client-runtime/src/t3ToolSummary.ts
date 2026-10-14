@@ -398,6 +398,19 @@ export function summarizeT3ToolCalls(
         `linked pull requests${selected.length === 1 ? "" : ` ${times}`}`,
       );
       break;
+    case "link-jira":
+      label = phrase("Linked", "link", quantity(selected.length, "Jira issue"));
+      break;
+    case "unlink-jira":
+      label = phrase("Unlinked", "unlink", quantity(selected.length, "Jira issue"));
+      break;
+    case "list-jira":
+      label = phrase(
+        "Checked",
+        "check",
+        `linked Jira issues${selected.length === 1 ? "" : ` ${times}`}`,
+      );
+      break;
     case "write-pr-guides": {
       // One call writes many guides, and reports a refusal per guide rather than failing.
       const outcomes = selected.flatMap((call) =>
