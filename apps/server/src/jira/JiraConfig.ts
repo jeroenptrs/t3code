@@ -15,7 +15,11 @@ export interface JiraServerIdentity {
   readonly token: Redacted.Redacted<string>;
   /** Present for `basic`. */
   readonly email?: string | undefined;
-  /** When present, requests go through `api.atlassian.com`; always present for `scoped-token`. */
+  /**
+   * When present, requests go through `api.atlassian.com`. Always present for `scoped-token`,
+   * never for a configured `basic` identity, and for a personal token only when the gateway is
+   * the route that accepted it.
+   */
   readonly cloudId?: string | undefined;
   /** Set for a portal user's personal token; `createdAt` is the stored credential's version. */
   readonly personal?: { readonly userId: AuthUserId; readonly createdAt: string } | undefined;
@@ -153,14 +157,15 @@ export const JiraConfig = optionalString("T3CODE_JIRA_IDENTITIES").pipe(
             ),
           );
         }
+        // A basic identity reads the site itself, where classic tokens work; the gateway refuses
+        // them, so a CLOUD_ID set next to an EMAIL is ignored.
         identities.push({
           name,
           site,
           token: identity.token!,
           ...(identity.email !== undefined
             ? { authMethod: "basic" as const, email: identity.email }
-            : { authMethod: "scoped-token" as const }),
-          ...(identity.cloudId === undefined ? {} : { cloudId: identity.cloudId }),
+            : { authMethod: "scoped-token" as const, cloudId: identity.cloudId! }),
         });
       }
       const readerName = reader ?? names[0]!;
