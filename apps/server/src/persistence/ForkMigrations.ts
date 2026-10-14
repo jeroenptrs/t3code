@@ -24,7 +24,8 @@
  *
  * Fork-owned tables: `auth_users`, `auth_user_access_changes` (001);
  * `fork_diff_walkthroughs` (005, documents rewritten by 006);
- * `fork_projection_thread_jira_issues` (007); `fork_jira_user_credentials` (008);
+ * `fork_projection_thread_jira_issues` (007, `watch_json` added by 010);
+ * `fork_jira_user_credentials` (008);
  * `fork_jira_proposals` (009).
  *
  * Fork indexes on upstream tables: `idx_fork_turn_items_waiting_jira_proposals` on
@@ -46,6 +47,7 @@ import ForkMigration0006 from "./ForkMigrations/006_DiffWalkthroughGuideShape.ts
 import ForkMigration0007 from "./ForkMigrations/007_ProjectionThreadJiraIssues.ts";
 import ForkMigration0008 from "./ForkMigrations/008_JiraUserCredentials.ts";
 import ForkMigration0009 from "./ForkMigrations/009_JiraProposals.ts";
+import ForkMigration0010 from "./ForkMigrations/010_ProjectionThreadJiraIssueWatch.ts";
 
 export const forkMigrationsTable = "fork_sql_migrations";
 
@@ -59,6 +61,7 @@ export const forkMigrationEntries = [
   [7, "ProjectionThreadJiraIssues", ForkMigration0007],
   [8, "JiraUserCredentials", ForkMigration0008],
   [9, "JiraProposals", ForkMigration0009],
+  [10, "ProjectionThreadJiraIssueWatch", ForkMigration0010],
 ] as const;
 
 export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);

@@ -80,7 +80,32 @@ interface HarnessOptions {
   readonly links?: ReadonlyArray<ThreadJiraIssueLink>;
   readonly config?: JiraConfig | undefined;
   readonly issuesByKeys?: JiraService.JiraService["Service"]["issuesByKeys"];
+  readonly subagent?: boolean;
 }
+
+const WATCH = {
+  startedAt: "2026-10-01T00:00:00.000Z",
+  updatedThrough: null,
+  statusCategory: null,
+  assigneeAccountId: null,
+  commentsThrough: "2026-10-01T00:00:00.000Z",
+  wakes: 0,
+};
+
+/** What the orchestrator does with a watch command, enough for the tool to read back. */
+const applyWatch = (
+  links: ReadonlyArray<ThreadJiraIssueLink>,
+  command: Extract<OrchestrationCommand, { type: "thread.jira-issue.watch" }>,
+): ReadonlyArray<ThreadJiraIssueLink> => {
+  const matches = (link: ThreadJiraIssueLink) =>
+    link.site === command.site && link.key === command.key && link.source !== "branch-dismissed";
+  if (!command.watching) {
+    return links.map((link) => (matches(link) ? { ...link, watch: undefined } : link));
+  }
+  return links.some(matches)
+    ? links.map((link) => (matches(link) ? { ...link, watch: link.watch ?? WATCH } : link))
+    : [...links, makeLink(command.key, { site: command.site, source: "agent", watch: WATCH })];
+};
 
 const makeHarness = Effect.fn("makeJiraIssuesToolkitHarness")(function* (
   options: HarnessOptions = {},
@@ -103,14 +128,31 @@ const makeHarness = Effect.fn("makeJiraIssuesToolkitHarness")(function* (
       settledOverride: null,
       settledAt: null,
       latestUserMessageAt: null,
+      ...(options.subagent
+        ? {
+            lineage: {
+              rootThreadId: ThreadId.make("thread-root"),
+              parentThreadId: ThreadId.make("thread-root"),
+              relationshipToParent: "subagent" as const,
+            },
+          }
+        : {}),
     }),
     jiraIssues: options.links ?? [],
   };
+  let current = thread;
   const layerDependencies = Layer.mergeAll(
     Layer.mock(Orchestrator.OrchestratorV2)({
-      getThreadShell: (id) => Effect.succeed(id === THREAD_ID ? thread : null),
+      getThreadShell: (id) => Effect.sync(() => (id === THREAD_ID ? current : null)),
       dispatch: (command) =>
         Ref.update(commands, (recorded) => [...recorded, command]).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              if (command.type === "thread.jira-issue.watch") {
+                current = { ...current, jiraIssues: applyWatch(current.jiraIssues, command) };
+              }
+            }),
+          ),
           Effect.as({ sequence: 1, storedEvents: [] }),
         ),
     }),
@@ -283,6 +325,78 @@ describe("Jira issue toolkit handlers", () => {
           },
         ],
       });
+    }),
+  );
+
+  it.effect("watches as the agent, linking the issue on the reader's site when needed", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      expect(yield* harness.call("watch_jira_issue", { key: "ABC-1" })).toEqual({
+        site: SITE,
+        key: "ABC-1",
+        watching: true,
+        wasWatching: false,
+      });
+      // Watching again changes nothing the agent can see.
+      expect(yield* harness.call("watch_jira_issue", { key: "ABC-1" })).toMatchObject({
+        watching: true,
+        wasWatching: true,
+      });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.jira-issue.watch", site: SITE, key: "ABC-1", watching: true },
+        { type: "thread.jira-issue.watch", watching: true, linkSource: "agent" },
+      ]);
+      expect((yield* Ref.get(harness.commands))[0]).toMatchObject({ linkSource: "agent" });
+      expect((yield* Ref.get(harness.commands))[0]).not.toHaveProperty("linkedByUserId");
+    }),
+  );
+
+  it.effect("watches and unwatches the site the thread already links the key on", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ links: [makeLink("ABC-2", { site: OTHER_SITE })] });
+      expect(yield* harness.call("watch_jira_issue", { key: "ABC-2" })).toMatchObject({
+        site: OTHER_SITE,
+        watching: true,
+      });
+      expect(yield* harness.call("unwatch_jira_issue", { key: "ABC-2" })).toEqual({
+        site: OTHER_SITE,
+        key: "ABC-2",
+        watching: false,
+        wasWatching: true,
+      });
+      // Unwatching what is not watched sends nothing.
+      expect(yield* harness.call("unwatch_jira_issue", { key: "ABC-2" })).toMatchObject({
+        watching: false,
+        wasWatching: false,
+      });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.jira-issue.watch", site: OTHER_SITE, watching: true },
+        { type: "thread.jira-issue.watch", site: OTHER_SITE, watching: false },
+      ]);
+    }),
+  );
+
+  it.effect("refuses to watch from a subagent or where T3 Code does not read Jira", () =>
+    Effect.gen(function* () {
+      const subagent = yield* makeHarness({ subagent: true });
+      expect(
+        yield* subagent.call("watch_jira_issue", { key: "ABC-3" }).pipe(Effect.flip),
+      ).toMatchObject({ _tag: "JiraIssueWatchFromSubagentError" });
+
+      const elsewhere = yield* makeHarness();
+      expect(
+        yield* elsewhere
+          .call("watch_jira_issue", { key: "ABC-3", site: "gamma.atlassian.net" })
+          .pipe(Effect.flip),
+      ).toMatchObject({ _tag: "JiraIssueWatchUnavailableError", site: "gamma.atlassian.net" });
+
+      const unconfigured = yield* makeHarness({ config: undefined });
+      expect(
+        yield* unconfigured.call("watch_jira_issue", { key: "ABC-3" }).pipe(Effect.flip),
+      ).toMatchObject({ _tag: "JiraIssueWatchUnavailableError", site: null });
+      for (const harness of [subagent, elsewhere, unconfigured]) {
+        expect(yield* Ref.get(harness.commands)).toEqual([]);
+      }
     }),
   );
 });
