@@ -4,13 +4,19 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
+import {
+  HttpClient,
+  type HttpClientError,
+  HttpClientRequest,
+  type HttpClientResponse,
+} from "effect/http";
 
 import type { JiraServerIdentity } from "./JiraConfig.ts";
 
 /**
- * Thin Jira Cloud REST v3 client. Reads only. Scoped tokens cannot call the Agile API, the
- * Development panel, Automation or Dashboards, so nothing here does.
+ * Thin Jira Cloud REST v3 client. Writes (create, comment, transition) only ever run for an
+ * approved proposal, as the approver. Scoped tokens cannot call the Agile API, the Development
+ * panel, Automation or Dashboards, so nothing here does.
  */
 
 const REQUEST_TIMEOUT = "15 seconds";
@@ -98,6 +104,25 @@ const RawField = Schema.Struct({
 });
 export type JiraRawField = typeof RawField.Type;
 
+const RawCreatedIssue = Schema.Struct({ id: Schema.String, key: Schema.String });
+export type JiraRawCreatedIssue = typeof RawCreatedIssue.Type;
+
+const RawCreatedComment = Schema.Struct({ id: Schema.String });
+
+const RawCreateMetaIssueType = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  untranslatedName: Schema.optional(Schema.String),
+  subtask: Schema.optional(Schema.Boolean),
+});
+export type JiraRawCreateMetaIssueType = typeof RawCreateMetaIssueType.Type;
+
+/** Jira documents `issueTypes`; some sites still answer with the older `values`. */
+const RawCreateMetaIssueTypes = Schema.Struct({
+  issueTypes: Schema.optional(Schema.Array(RawCreateMetaIssueType)),
+  values: Schema.optional(Schema.Array(RawCreateMetaIssueType)),
+});
+
 const RawErrorBody = Schema.Struct({
   errorMessages: Schema.optional(Schema.Array(Schema.String)),
   errors: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -116,6 +141,9 @@ const decodeRawFilterPage = Schema.decodeUnknownEffect(RawFilterPage);
 const decodeRawFilter = Schema.decodeUnknownEffect(RawFilter);
 const decodeRawFilters = Schema.decodeUnknownEffect(Schema.Array(RawFilter));
 const decodeRawFields = Schema.decodeUnknownEffect(Schema.Array(RawField));
+const decodeRawCreatedIssue = Schema.decodeUnknownEffect(RawCreatedIssue);
+const decodeRawCreatedComment = Schema.decodeUnknownEffect(RawCreatedComment);
+const decodeRawCreateMetaIssueTypes = Schema.decodeUnknownEffect(RawCreateMetaIssueTypes);
 
 export class JiraApi extends Context.Service<
   JiraApi,
@@ -175,6 +203,28 @@ export class JiraApi extends Context.Service<
     readonly getFields: (
       identity: JiraServerIdentity,
     ) => Effect.Effect<ReadonlyArray<JiraRawField>, JiraError>;
+    /** `GET /rest/api/3/issue/createmeta/{projectKey}/issuetypes`: what the identity may create. */
+    readonly createMetaIssueTypes: (
+      identity: JiraServerIdentity,
+      projectKey: string,
+    ) => Effect.Effect<ReadonlyArray<JiraRawCreateMetaIssueType>, JiraError>;
+    /** `POST /rest/api/3/issue`. `fields` is Jira's create body, custom field ids included. */
+    readonly createIssue: (
+      identity: JiraServerIdentity,
+      fields: Readonly<Record<string, unknown>>,
+    ) => Effect.Effect<JiraRawCreatedIssue, JiraError>;
+    /** `POST /rest/api/3/issue/{key}/comment` with an Atlassian Document Format body. */
+    readonly addComment: (
+      identity: JiraServerIdentity,
+      key: string,
+      body: unknown,
+    ) => Effect.Effect<{ readonly id: string }, JiraError>;
+    /** `POST /rest/api/3/issue/{key}/transitions`. */
+    readonly transitionIssue: (
+      identity: JiraServerIdentity,
+      key: string,
+      transitionId: string,
+    ) => Effect.Effect<void, JiraError>;
   }
 >()("t3/jira/JiraApi") {}
 
@@ -224,6 +274,7 @@ const jiraErrorText = (body: unknown) =>
 const statusError = (
   identity: JiraServerIdentity,
   response: HttpClientResponse.HttpClientResponse,
+  action: "read" | "change",
 ) =>
   Effect.gen(function* () {
     const body = yield* response.json.pipe(Effect.orElseSucceed(() => null));
@@ -245,7 +296,7 @@ const statusError = (
       case 403:
         return new JiraError({
           reason: "forbidden",
-          message: truncate(text || `Jira does not allow ${describe(identity)} to read this.`),
+          message: truncate(text || `Jira does not allow ${describe(identity)} to ${action} this.`),
         });
       case 404:
         return new JiraError({
@@ -281,10 +332,13 @@ const unavailable = (site: string) => ({
 const make = Effect.gen(function* () {
   const http = yield* HttpClient.HttpClient;
 
-  const request = <A>(
+  /** Sends a request and fails on a non-2xx answer; `then` reads the response it accepted. */
+  const send = <A>(
     identity: JiraServerIdentity,
     build: HttpClientRequest.HttpClientRequest,
-    decode: (body: unknown) => Effect.Effect<A, Schema.SchemaError>,
+    then: (
+      response: HttpClientResponse.HttpClientResponse,
+    ) => Effect.Effect<A, Schema.SchemaError | HttpClientError.HttpClientError>,
   ): Effect.Effect<A, JiraError> =>
     Effect.gen(function* () {
       const response = yield* http.execute(
@@ -296,12 +350,21 @@ const make = Effect.gen(function* () {
         ),
       );
       if (response.status < 200 || response.status >= 300) {
-        const error = yield* statusError(identity, response);
+        const error = yield* statusError(
+          identity,
+          response,
+          build.method === "GET" ? "read" : "change",
+        );
         return yield* error;
       }
-      const body = yield* response.json;
-      return yield* decode(body);
+      return yield* then(response);
     }).pipe(Effect.timeout(REQUEST_TIMEOUT), Effect.catchTags(unavailable(identity.site)));
+
+  const read = <A>(
+    identity: JiraServerIdentity,
+    build: HttpClientRequest.HttpClientRequest,
+    decode: (body: unknown) => Effect.Effect<A, Schema.SchemaError>,
+  ) => send(identity, build, (response) => Effect.flatMap(response.json, decode));
 
   const tenantInfo: JiraApi["Service"]["tenantInfo"] = (site) =>
     Effect.gen(function* () {
@@ -328,11 +391,11 @@ const make = Effect.gen(function* () {
   return JiraApi.of({
     tenantInfo,
     myself: (identity) =>
-      request(identity, HttpClientRequest.get("/rest/api/3/myself"), decodeRawUser).pipe(
+      read(identity, HttpClientRequest.get("/rest/api/3/myself"), decodeRawUser).pipe(
         Effect.withSpan("JiraApi.myself"),
       ),
     searchJql: (identity, input) =>
-      request(
+      read(
         identity,
         HttpClientRequest.post("/rest/api/3/search/jql").pipe(
           HttpClientRequest.bodyJsonUnsafe({
@@ -345,7 +408,7 @@ const make = Effect.gen(function* () {
         decodeRawSearchPage,
       ).pipe(Effect.withSpan("JiraApi.searchJql")),
     bulkFetch: (identity, input) =>
-      request(
+      read(
         identity,
         HttpClientRequest.post("/rest/api/3/issue/bulkfetch").pipe(
           HttpClientRequest.bodyJsonUnsafe({ issueIdsOrKeys: input.keys, fields: input.fields }),
@@ -356,7 +419,7 @@ const make = Effect.gen(function* () {
         Effect.withSpan("JiraApi.bulkFetch"),
       ),
     getIssue: (identity, key, options) =>
-      request(
+      read(
         identity,
         HttpClientRequest.get(`/rest/api/3/issue/${encodeURIComponent(key)}`).pipe(
           HttpClientRequest.setUrlParams({
@@ -367,7 +430,7 @@ const make = Effect.gen(function* () {
         decodeRawIssue,
       ).pipe(Effect.withSpan("JiraApi.getIssue")),
     getTransitions: (identity, key) =>
-      request(
+      read(
         identity,
         HttpClientRequest.get(`/rest/api/3/issue/${encodeURIComponent(key)}/transitions`),
         decodeRawTransitions,
@@ -376,7 +439,7 @@ const make = Effect.gen(function* () {
         Effect.withSpan("JiraApi.getTransitions"),
       ),
     getComments: (identity, key, options) =>
-      request(
+      read(
         identity,
         HttpClientRequest.get(`/rest/api/3/issue/${encodeURIComponent(key)}/comment`).pipe(
           HttpClientRequest.setUrlParams({
@@ -387,7 +450,7 @@ const make = Effect.gen(function* () {
         decodeRawComments,
       ).pipe(Effect.withSpan("JiraApi.getComments")),
     searchFilters: (identity, input) =>
-      request(
+      read(
         identity,
         HttpClientRequest.get("/rest/api/3/filter/search").pipe(
           HttpClientRequest.setUrlParams({
@@ -403,7 +466,7 @@ const make = Effect.gen(function* () {
         Effect.withSpan("JiraApi.searchFilters"),
       ),
     favouriteFilters: (identity) =>
-      request(
+      read(
         identity,
         HttpClientRequest.get("/rest/api/3/filter/favourite").pipe(
           HttpClientRequest.setUrlParams({ expand: FILTER_EXPAND }),
@@ -411,7 +474,7 @@ const make = Effect.gen(function* () {
         decodeRawFilters,
       ).pipe(Effect.withSpan("JiraApi.favouriteFilters")),
     getFilter: (identity, id) =>
-      request(
+      read(
         identity,
         HttpClientRequest.get(`/rest/api/3/filter/${encodeURIComponent(id)}`).pipe(
           HttpClientRequest.setUrlParams({ expand: FILTER_EXPAND }),
@@ -419,9 +482,45 @@ const make = Effect.gen(function* () {
         decodeRawFilter,
       ).pipe(Effect.withSpan("JiraApi.getFilter")),
     getFields: (identity) =>
-      request(identity, HttpClientRequest.get("/rest/api/3/field"), decodeRawFields).pipe(
+      read(identity, HttpClientRequest.get("/rest/api/3/field"), decodeRawFields).pipe(
         Effect.withSpan("JiraApi.getFields"),
       ),
+    createMetaIssueTypes: (identity, projectKey) =>
+      read(
+        identity,
+        HttpClientRequest.get(
+          `/rest/api/3/issue/createmeta/${encodeURIComponent(projectKey)}/issuetypes`,
+        ).pipe(HttpClientRequest.setUrlParams({ maxResults: "200" })),
+        decodeRawCreateMetaIssueTypes,
+      ).pipe(
+        Effect.map((page) => page.issueTypes ?? page.values ?? []),
+        Effect.withSpan("JiraApi.createMetaIssueTypes"),
+      ),
+    createIssue: (identity, fields) =>
+      read(
+        identity,
+        HttpClientRequest.post("/rest/api/3/issue").pipe(
+          HttpClientRequest.bodyJsonUnsafe({ fields }),
+        ),
+        decodeRawCreatedIssue,
+      ).pipe(Effect.withSpan("JiraApi.createIssue")),
+    addComment: (identity, key, body) =>
+      read(
+        identity,
+        HttpClientRequest.post(`/rest/api/3/issue/${encodeURIComponent(key)}/comment`).pipe(
+          HttpClientRequest.bodyJsonUnsafe({ body }),
+        ),
+        decodeRawCreatedComment,
+      ).pipe(Effect.withSpan("JiraApi.addComment")),
+    transitionIssue: (identity, key, transitionId) =>
+      // Jira answers 204 with no body.
+      send(
+        identity,
+        HttpClientRequest.post(`/rest/api/3/issue/${encodeURIComponent(key)}/transitions`).pipe(
+          HttpClientRequest.bodyJsonUnsafe({ transition: { id: transitionId } }),
+        ),
+        () => Effect.void,
+      ).pipe(Effect.withSpan("JiraApi.transitionIssue")),
   });
 });
 
