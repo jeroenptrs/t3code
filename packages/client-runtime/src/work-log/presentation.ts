@@ -197,18 +197,21 @@ function resolveT3McpToolPresentation(
   const { shortLabel } = (urlTarget?.definition ?? sourceControlClients.get(undefined))
     .changeRequest;
   const namedTarget =
-    actionKind === "link-jira" || actionKind === "unlink-jira"
+    actionKind === "link-jira" ||
+    actionKind === "unlink-jira" ||
+    definition.summaryAction === "watch-jira" ||
+    definition.summaryAction === "unwatch-jira"
       ? typeof input?.key === "string" && input.key.trim() !== ""
         ? input.key.trim().toUpperCase()
         : detail
       : actionKind !== undefined &&
-    actionKind !== "list-prs" &&
+          actionKind !== "list-prs" &&
           actionKind !== "list-jira" &&
-    typeof number === "number" &&
-    Number.isSafeInteger(number) &&
-    number > 0
-      ? `${shortLabel} #${number}`
-      : detail;
+          typeof number === "number" &&
+          Number.isSafeInteger(number) &&
+          number > 0
+        ? `${shortLabel} #${number}`
+        : detail;
   // A batch proposal names how many issues it carries.
   const draftCount =
     definition.summaryAction === "propose-jira-issues" && Array.isArray(input?.issues)
