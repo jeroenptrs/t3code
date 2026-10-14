@@ -61,7 +61,11 @@ const makeJira = () => {
     watchComments: (site, key) =>
       Effect.sync(() => {
         commentReads.push(`${site}/${key}`);
-        return { comments: comments.get(`${site}/${key}`) ?? [], readerAccountId: "acc-bot" };
+        return {
+          comments: comments.get(`${site}/${key}`) ?? [],
+          ownAccountIds: new Set(["acc-bot"]),
+          ownCommentIds: new Set<string>(),
+        };
       }),
     issuesByKeys: (site, keys) =>
       Effect.suspend(() => {
@@ -80,10 +84,16 @@ const makeJira = () => {
   return { issues, failingSites, calls, comments, commentReads, layer };
 };
 
-const layerTest = (jira: ReturnType<typeof makeJira>) =>
+/** `configured: false` runs the reactor as if Jira were not configured. */
+const layerTest = (jira: ReturnType<typeof makeJira>, options = { configured: true }) =>
   JiraIssueSyncReactor.layer.pipe(
     Layer.provide(jira.layer),
-    Layer.provide(Layer.succeed(JiraIdentities.JiraIdentities, JiraIdentities.make(jiraConfig))),
+    Layer.provide(
+      Layer.succeed(
+        JiraIdentities.JiraIdentities,
+        JiraIdentities.make(options.configured ? jiraConfig : undefined),
+      ),
+    ),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(layerOrchestration("jira-issue-sync")),
   );
@@ -200,13 +210,13 @@ it.effect("backs off a failing site without holding up the others", () => {
   }).pipe(Effect.provide(layerTest(jira)));
 });
 
-const watchIssue = (threadId: ThreadId, key: string) =>
+const watchIssue = (threadId: ThreadId, key: string, site = SITE) =>
   Effect.flatMap(Orchestrator.OrchestratorV2, (orchestrator) =>
     orchestrator.dispatch({
       type: "thread.jira-issue.watch",
       commandId: CommandId.make(`test:watch:${threadId}:${key}`),
       threadId,
-      site: SITE,
+      site,
       key,
       watching: true,
       linkSource: "agent",
@@ -298,4 +308,40 @@ it.effect("ends a watch on an issue the reader can no longer see, and tells the 
     assert.deepStrictEqual(yield* wakes(threadId), ["ABC-9: stopped watching, cannot see it"]);
     assert.deepStrictEqual(jira.commentReads, []);
   }).pipe(Effect.provide(layerTest(jira)));
+});
+
+it.effect("ends a watch on a site with no identity without waking the agent", () => {
+  const jira = makeJira();
+  jira.issues.set(`${SITE}/ABC-1`, { summary: "Ship it", statusCategory: "todo" });
+  return Effect.gen(function* () {
+    const reactor = yield* JiraIssueSyncReactor.JiraIssueSyncReactor;
+    const threadId = ThreadId.make("thread:watch-unread-site");
+    yield* createThread(threadId);
+    yield* watchIssue(threadId, "QQ-1", "gamma.atlassian.net");
+    yield* watchIssue(threadId, "ABC-1");
+    yield* reactor.sweep;
+    assert.isUndefined(yield* watchOf(threadId, "QQ-1"));
+    // The link stays, and a watch on a site that is read keeps going.
+    assert.deepStrictEqual(
+      (yield* threadLinks(threadId)).map((link) => link.key),
+      ["QQ-1", "ABC-1"],
+    );
+    assert.isDefined(yield* watchOf(threadId, "ABC-1"));
+    assert.deepStrictEqual(yield* wakes(threadId), []);
+    assert.isFalse(jira.calls.some((call) => call.site === "gamma.atlassian.net"));
+  }).pipe(Effect.provide(layerTest(jira)));
+});
+
+it.effect("ends every watch once Jira is no longer configured", () => {
+  const jira = makeJira();
+  return Effect.gen(function* () {
+    const reactor = yield* JiraIssueSyncReactor.JiraIssueSyncReactor;
+    const threadId = ThreadId.make("thread:watch-unconfigured");
+    yield* createThread(threadId);
+    yield* watchIssue(threadId, "ABC-1");
+    yield* reactor.sweep;
+    assert.isUndefined(yield* watchOf(threadId, "ABC-1"));
+    assert.deepStrictEqual(yield* wakes(threadId), []);
+    assert.deepStrictEqual(jira.calls, []);
+  }).pipe(Effect.provide(layerTest(jira, { configured: false })));
 });
