@@ -5,13 +5,15 @@ import {
   visibleThreadJiraIssues,
 } from "@t3tools/client-runtime/state/jira";
 import type { EnvironmentId, ThreadId, ThreadJiraIssueLink } from "@t3tools/contracts";
-import { ExternalLinkIcon, PlusIcon, UnlinkIcon } from "lucide-react";
+import { EyeIcon, EyeOffIcon, ExternalLinkIcon, PlusIcon, UnlinkIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { useJiraIssueLinking } from "~/hooks/useJiraIssueLinking";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useThreadShell } from "~/state/entities";
+import { threadEnvironment } from "~/state/threads";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import { openJiraIssueDialog } from "../jira/LinkJiraIssueDialog";
 import { JIRA_STATUS_CATEGORY_LABEL, JiraStatusDot } from "../jira/jiraPresentation";
@@ -34,6 +36,7 @@ export function ThreadJiraIssuesSection(props: {
   const shell = useThreadShell(threadRef);
   const linking = useJiraIssueLinking(props.environmentId);
   const openLink = useOpenLink(threadRef);
+  const watch = useAtomCommand(threadEnvironment.watchJiraIssue, { reportFailure: true });
   const [unlinkingKey, setUnlinkingKey] = useState<string | null>(null);
   const links = visibleThreadJiraIssues(shell?.source.jiraIssues);
   if (links.length === 0 && !linking.canLink) return null;
@@ -48,6 +51,11 @@ export function ThreadJiraIssuesSection(props: {
       setUnlinkingKey(null);
     }
   };
+  const setWatching = (link: ThreadJiraIssueLink, watching: boolean) =>
+    void watch({
+      environmentId: props.environmentId,
+      input: { threadId: props.threadId, site: link.site, key: link.key, watching },
+    });
   const openInJira = (link: ThreadJiraIssueLink) =>
     void openLink(jiraIssueUrl(link)).catch((error: unknown) => {
       toastManager.add({
@@ -103,6 +111,7 @@ export function ThreadJiraIssuesSection(props: {
           {links.map((link) => {
             const id = jiraIssueKeyOf(link);
             const category = link.snapshot?.statusCategory ?? null;
+            const watching = link.watch !== undefined;
             return (
               <li key={id} className="flex min-w-0 items-center gap-0.5">
                 <Tooltip>
@@ -153,6 +162,43 @@ export function ThreadJiraIssuesSection(props: {
                   />
                   <TooltipPopup>Open in Jira</TooltipPopup>
                 </Tooltip>
+                {watching || linking.canWatch ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <ThreadDetailsControl
+                          type="button"
+                          size="icon-xs"
+                          variant="ghost"
+                          part="icon"
+                          tone={watching ? "default" : "muted"}
+                          className="group/watch"
+                          aria-label={
+                            watching ? `Stop watching ${link.key}` : `Watch ${link.key} for changes`
+                          }
+                          onClick={() => setWatching(link, !watching)}
+                        />
+                      }
+                    >
+                      {watching ? (
+                        <>
+                          <EyeIcon aria-hidden className="size-3.5 group-hover/watch:hidden" />
+                          <EyeOffIcon
+                            aria-hidden
+                            className="hidden size-3.5 group-hover/watch:block"
+                          />
+                        </>
+                      ) : (
+                        <EyeIcon aria-hidden className="size-3.5" />
+                      )}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">
+                      {watching
+                        ? "Watching: the agent wakes on new comments, status and assignee changes. Click to stop."
+                        : "Watch for changes: wake the agent on new comments, status and assignee changes"}
+                    </TooltipPopup>
+                  </Tooltip>
+                ) : null}
                 {linking.canUnlink ? (
                   <Tooltip>
                     <TooltipTrigger
