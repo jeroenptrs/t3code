@@ -640,3 +640,189 @@ it.effect(
     );
   },
 );
+
+/** Jira for direct writes: Alice's token is accepted, and ABC-1 offers only transition 31. */
+const makeWritableJira = () =>
+  makeJira((path, body, authorization) => {
+    if (path === "/_edge/tenant_info") return { status: 200, body: { cloudId: "cloud-1" } };
+    if (authorization !== basic("alice") && authorization !== "Bearer secret-token") {
+      return { status: 401, body: null };
+    }
+    switch (path) {
+      case "/rest/api/3/myself":
+        return { status: 200, body: { accountId: "acc-alice", displayName: "alice" } };
+      case "/rest/api/3/field":
+        return { status: 200, body: FIELDS };
+      case "/rest/api/3/issue/ABC-1":
+        return { status: 200, body: issue("ABC-1") };
+      case "/rest/api/3/issue/ABC-1/comment":
+        return body === undefined
+          ? { status: 200, body: { comments: [], total: 0 } }
+          : {
+              status: 201,
+              body: {
+                id: "10001",
+                author: { accountId: "acc-alice", displayName: "alice" },
+                body: (body as { readonly body: unknown }).body,
+                created: "2026-10-14T09:00:00.000+0000",
+              },
+            };
+      case "/rest/api/3/issue/ABC-1/transitions":
+        return body === undefined
+          ? { status: 200, body: { transitions: [{ id: "31", name: "Done" }] } }
+          : { status: 200, body: null };
+      default:
+        return { status: 404, body: null };
+    }
+  });
+
+const writes = (requests: ReadonlyArray<Recorded>) =>
+  requests.filter((request) => request.method !== "GET");
+
+it.effect("refuses direct writes without the caller's own token, before asking Jira", () => {
+  const jira = makeWritableJira();
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      const service = yield* JiraService.JiraService;
+      const comment = { site: SITE, key: "ABC-1", body: "Looks good" };
+      const transition = { site: SITE, key: "ABC-1", transitionId: "31" };
+      for (const error of [
+        yield* service.addComment(ALICE, comment).pipe(Effect.flip),
+        yield* service.transitionIssue(ALICE, transition).pipe(Effect.flip),
+      ]) {
+        expect(error).toMatchObject({
+          reason: "personal-token-required",
+          message:
+            "Add your Jira token in Settings → Account to comment or move issues as yourself.",
+        });
+      }
+      expect((yield* service.addComment(undefined, comment).pipe(Effect.flip)).reason).toBe(
+        "forbidden",
+      );
+      expect(jira.requests).toEqual([]);
+    }),
+  );
+});
+
+it.effect("comments as the caller and has their next issue read ask Jira again", () => {
+  const jira = makeWritableJira();
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      yield* storeToken(ALICE, "alice");
+      const service = yield* JiraService.JiraService;
+      const issueReads = () =>
+        jira.requests.filter((request) => new URL(request.url).pathname.endsWith("/issue/ABC-1"))
+          .length;
+      const read = { site: SITE, key: "ABC-1" };
+      yield* service.issue(read, { actingUserId: ALICE });
+      yield* service.issue(read, { actingUserId: ALICE });
+      expect(issueReads()).toBe(1);
+
+      const comment = yield* service.addComment(ALICE, { ...read, body: "Looks **good**" });
+      expect(comment).toMatchObject({
+        id: "10001",
+        author: { accountId: "acc-alice" },
+        body: "Looks **good**",
+      });
+      const [posted] = writes(jira.requests);
+      expect(posted).toMatchObject({
+        url: "https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/issue/ABC-1/comment",
+        authorization: basic("alice"),
+        body: { body: { type: "doc", version: 1 } },
+      });
+      expect(writes(jira.requests)).toHaveLength(1);
+
+      yield* service.issue(read, { actingUserId: ALICE });
+      expect(issueReads()).toBe(2);
+    }),
+  );
+});
+
+it.effect("takes a transition as the caller only while the issue still offers it", () => {
+  const jira = makeWritableJira();
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      yield* storeToken(ALICE, "alice");
+      const service = yield* JiraService.JiraService;
+      const input = { site: SITE, key: "ABC-1" };
+
+      const gone = yield* service
+        .transitionIssue(ALICE, { ...input, transitionId: "41" })
+        .pipe(Effect.flip);
+      expect(gone).toMatchObject({
+        reason: "invalid",
+        message: "That transition is no longer available on ABC-1.",
+      });
+      expect(writes(jira.requests)).toEqual([]);
+
+      yield* service.transitionIssue(ALICE, { ...input, transitionId: "31" });
+      expect(writes(jira.requests)).toMatchObject([
+        {
+          url: "https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/issue/ABC-1/transitions",
+          authorization: basic("alice"),
+          body: { transition: { id: "31" } },
+        },
+      ]);
+      const reads = jira.requests.filter((request) => request.url.endsWith("/transitions"));
+      expect(reads.every((request) => request.authorization === basic("alice"))).toBe(true);
+    }),
+  );
+});
+
+it.effect("reads a watched issue's newest comments as the service identity, never cached", () => {
+  const jira = makeJira((path, _body, authorization) => {
+    // Alice's token only verifies; the watch must never read with it.
+    if (path === "/_edge/tenant_info") return { status: 200, body: { cloudId: "cloud-1" } };
+    if (authorization === basic("alice") && path === "/rest/api/3/myself") {
+      return { status: 200, body: { accountId: "acc-alice", displayName: "Alice" } };
+    }
+    if (authorization !== "Bearer secret-token") return { status: 401, body: null };
+    switch (path) {
+      case "/rest/api/3/myself":
+        return { status: 200, body: { accountId: "acc-bot", displayName: "Bot" } };
+      case "/rest/api/3/issue/ABC-1/comment":
+        return {
+          status: 200,
+          body: {
+            total: 1,
+            comments: [
+              {
+                id: "100",
+                author: { accountId: "acc-ada", displayName: "Ada" },
+                created: "2026-10-14T10:00:00.000+0000",
+              },
+            ],
+          },
+        };
+      default:
+        return { status: 404, body: null };
+    }
+  });
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      const service = yield* JiraService.JiraService;
+      yield* storeToken(ALICE, "alice");
+      const read = yield* service.watchComments(SITE, "ABC-1");
+      expect(read.readerAccountId).toBe("acc-bot");
+      expect(read.comments.map((comment) => [comment.id, comment.author?.accountId])).toEqual([
+        ["100", "acc-ada"],
+      ]);
+      yield* service.watchComments(SITE, "ABC-1");
+      const commentReads = jira.requests.filter((request) =>
+        new URL(request.url).pathname.endsWith("/issue/ABC-1/comment"),
+      );
+      expect(commentReads).toHaveLength(2);
+      expect(new Set(commentReads.map((request) => request.authorization))).toEqual(
+        new Set(["Bearer secret-token"]),
+      );
+    }),
+  );
+});
