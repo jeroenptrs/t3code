@@ -10,6 +10,22 @@ describe("buildRuntimeInstructions", () => {
     expect(instructions).toContain("call list_thread_pull_requests and link any PR");
   });
 
+  it("describes the Jira tools only when the credential grants the jira capability", () => {
+    const withJira = buildRuntimeInstructions({
+      harness: "Codex",
+      mcpCapabilities: new Set(["orchestration", "pull-requests", "jira"]),
+    });
+    expect(withJira).toContain("<jira_issue_linking>");
+    expect(withJira).toContain("call link_jira_issue");
+    expect(withJira).toContain("use jtk");
+
+    for (const mcpCapabilities of [undefined, new Set(["orchestration", "pull-requests"])]) {
+      const instructions = buildRuntimeInstructions({ harness: "Codex", mcpCapabilities });
+      expect(instructions).not.toContain("jira");
+      expect(instructions).toContain("<pull_request_linking>");
+    }
+  });
+
   it("keeps known model and effort metadata on one line", () => {
     expect(
       buildRuntimeInstructions({
