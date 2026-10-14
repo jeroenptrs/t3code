@@ -34,7 +34,6 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collaps
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Textarea } from "../ui/textarea";
-import { personalCredentialForSite } from "./jiraIssueList.logic";
 import {
   approvedJiraProposal,
   createdIssueForDraft,
@@ -44,8 +43,11 @@ import {
   jiraProposalApproveLabel,
   jiraProposalDecisionInput,
   jiraProposalDisplay,
+  jiraProposalEditsChanged,
   jiraProposalFailureMessage,
+  jiraProposalFingerprint,
   jiraProposalIssues,
+  jiraProposalNeedsToken,
   jiraProposalOutcome,
   jiraProposalTitle,
   jiraSprintIdFromOption,
@@ -197,16 +199,38 @@ function JiraProposalForm(props: {
     // The card shows the failure inline.
     reportFailure: false,
   });
-  const [edits, setEdits] = useState<JiraProposalEdits>(() => initialJiraProposalEdits(proposal));
+  // The form is seeded from the proposal, and draft positions in the edits only mean something
+  // for that proposal. When another client edits, retries or decides it, start over from the new
+  // one and say so if local edits were dropped.
+  const fingerprint = jiraProposalFingerprint(item);
+  const [form, setForm] = useState(() => {
+    const seed = initialJiraProposalEdits(proposal);
+    return { fingerprint, seed, edits: seed, discarded: false };
+  });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<{ message: string; needsToken: boolean } | null>(null);
   // Two clicks can both run before a re-render; this guard is synchronous.
   const inFlight = useRef(false);
+  if (form.fingerprint !== fingerprint) {
+    const seed = initialJiraProposalEdits(proposal);
+    setForm({
+      fingerprint,
+      seed,
+      edits: seed,
+      discarded: jiraProposalEditsChanged(form.seed, form.edits),
+    });
+    setError(null);
+  }
+  const { edits } = form;
+  const setEdits = (update: (current: JiraProposalEdits) => JiraProposalEdits) =>
+    setForm((current) => ({ ...current, edits: update(current.edits), discarded: false }));
 
   const approved = approvedJiraProposal(proposal, edits, item.result);
-  const hasToken =
-    capabilities !== null && personalCredentialForSite(capabilities, proposal.site) !== null;
-  const needsToken = (capabilities !== null && !hasToken) || error?.needsToken === true;
+  const needsToken = jiraProposalNeedsToken({
+    capabilities,
+    site: proposal.site,
+    serverRequiredToken: error?.needsToken === true,
+  });
   const canApprove =
     canOperate && capabilities?.configured === true && !needsToken && approved !== null;
 
@@ -306,7 +330,9 @@ function JiraProposalForm(props: {
           value={edits.body}
           disabled={submitting}
           aria-invalid={edits.body.trim().length === 0 || undefined}
-          onChange={(event) => setEdits({ kind: "comment", body: event.currentTarget.value })}
+          onChange={(event) =>
+            setEdits(() => ({ kind: "comment", body: event.currentTarget.value }))
+          }
         />
       ) : null}
 
@@ -317,8 +343,16 @@ function JiraProposalForm(props: {
           placeholder="Optional comment"
           value={edits.comment}
           disabled={submitting}
-          onChange={(event) => setEdits({ kind: "transition", comment: event.currentTarget.value })}
+          onChange={(event) =>
+            setEdits(() => ({ kind: "transition", comment: event.currentTarget.value }))
+          }
         />
+      ) : null}
+
+      {form.discarded ? (
+        <p role="status" className="text-xs text-muted-foreground">
+          This proposal changed elsewhere. Your edits were reset to the latest version.
+        </p>
       ) : null}
 
       {retry ? (

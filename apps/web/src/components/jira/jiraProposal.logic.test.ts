@@ -8,7 +8,10 @@ import {
   jiraIssueTypeOptions,
   jiraProposalApproveLabel,
   jiraProposalDisplay,
+  jiraProposalEditsChanged,
   jiraProposalFailureMessage,
+  jiraProposalFingerprint,
+  jiraProposalNeedsToken,
   jiraProposalOutcome,
   jiraSprintIdFromOption,
   jiraSprintOptions,
@@ -230,5 +233,87 @@ describe("jiraProposalFailureMessage", () => {
     expect(jiraProposalFailureMessage(new Error("socket closed"))).toBe(
       "Could not reach the server. Try again.",
     );
+  });
+});
+
+describe("jiraProposalFingerprint", () => {
+  const item = {
+    id: "item-1",
+    proposal: createIssues,
+    proposalStatus: "pending",
+    decidedAt: undefined,
+  } as const;
+
+  it("changes when the proposal, its status or its decision time changes", () => {
+    const same = jiraProposalFingerprint({ ...item });
+    expect(jiraProposalFingerprint({ ...item })).toBe(same);
+    expect(
+      jiraProposalFingerprint({
+        ...item,
+        proposal: { ...createIssues, issues: [draft("First"), draft("Third")] },
+      }),
+    ).not.toBe(same);
+    expect(jiraProposalFingerprint({ ...item, proposalStatus: "failed" })).not.toBe(same);
+    expect(jiraProposalFingerprint({ ...item, decidedAt: "2026-01-01T00:00:00.000Z" })).not.toBe(
+      same,
+    );
+  });
+});
+
+describe("jiraProposalEditsChanged", () => {
+  it("is true only once the user changed a field", () => {
+    const seed = draftEdits(createIssues);
+    expect(jiraProposalEditsChanged(seed, draftEdits(createIssues))).toBe(false);
+    expect(
+      jiraProposalEditsChanged(seed, {
+        kind: "create-issues",
+        drafts: seed.drafts.map((edit, index) =>
+          index === 0 ? { ...edit, summary: "Renamed" } : edit,
+        ),
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("jiraProposalNeedsToken", () => {
+  const credential = {
+    site: SITE,
+    account: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    lastVerifiedAt: null,
+    error: null,
+  };
+
+  it("follows capabilities once loaded, so a newly added token lifts a server refusal", () => {
+    expect(
+      jiraProposalNeedsToken({
+        capabilities: { personalCredential: credential },
+        site: SITE,
+        serverRequiredToken: true,
+      }),
+    ).toBe(false);
+    expect(
+      jiraProposalNeedsToken({
+        capabilities: { personalCredential: null },
+        site: SITE,
+        serverRequiredToken: false,
+      }),
+    ).toBe(true);
+    expect(
+      jiraProposalNeedsToken({
+        capabilities: { personalCredential: credential },
+        site: "other.atlassian.net",
+        serverRequiredToken: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("trusts the server's refusal only while capabilities are unknown", () => {
+    expect(
+      jiraProposalNeedsToken({ capabilities: null, site: SITE, serverRequiredToken: true }),
+    ).toBe(true);
+    expect(
+      jiraProposalNeedsToken({ capabilities: null, site: SITE, serverRequiredToken: false }),
+    ).toBe(false);
   });
 });
