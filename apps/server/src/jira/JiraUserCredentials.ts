@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -40,6 +41,7 @@ const decodeRows = Schema.decodeUnknownEffect(Schema.Array(CredentialRow));
 const StoredToken = Schema.fromJsonString(
   Schema.Struct({ email: Schema.String, token: Schema.String }),
 );
+type StoredToken = typeof StoredToken.Type;
 const decodeStoredToken = Schema.decodeUnknownEffect(StoredToken);
 const encodeStoredToken = Schema.encodeEffect(StoredToken);
 
@@ -62,7 +64,10 @@ export class JiraUserCredentials extends Context.Service<
     readonly clear: (userId: AuthUserId | undefined) => Effect.Effect<void, JiraError>;
     /** The stored public shape, without asking Jira; null when the user has no token. */
     readonly get: (userId: AuthUserId) => Effect.Effect<JiraPersonalCredential | null, JiraError>;
-    /** The identity to read `site` as for this user; undefined when they have no token for it. */
+    /**
+     * The identity to read `site` as for this user; undefined when they have no token for it.
+     * Fails when they have one whose secret is gone, rather than reading as the service identity.
+     */
     readonly identityFor: (
       userId: AuthUserId,
       site: string,
@@ -89,6 +94,9 @@ const noCredential = new JiraError({
   message: "You have no personal Jira token stored.",
 });
 
+/** Recorded on a credential row whose secret is gone, and reported when it is read. */
+const MISSING_TOKEN = "The stored token is missing; save it again in Settings → Account.";
+
 const storageFailed = (what: string) => () =>
   new JiraError({ reason: "unavailable", message: `Could not ${what} your personal Jira token.` });
 
@@ -113,7 +121,7 @@ const toPublic = (row: CredentialRow): JiraPersonalCredential => ({
 const toIdentity = (
   userId: AuthUserId,
   row: CredentialRow,
-  stored: { readonly email: string; readonly token: string },
+  stored: StoredToken,
 ): JiraServerIdentity => ({
   // Unique per user and per credential version, so read caches keyed by it are never shared.
   name: `user:${userId}:${row.createdAt}`,
@@ -196,141 +204,229 @@ const make = Effect.gen(function* () {
       return site;
     });
 
+  const writeLastError = (userId: AuthUserId, createdAt: string, message: string) =>
+    sql`
+      UPDATE fork_jira_user_credentials SET last_error = ${message}
+      WHERE user_id = ${userId} AND created_at = ${createdAt}
+    `.pipe(Effect.asVoid, Effect.mapError(storageFailed("update")));
+
+  /**
+   * Set, test, clear and rejection records for one user run one at a time, so a token is never
+   * stored next to another request's row and the resolved cache is never refilled mid-change.
+   */
+  const locks = new Map<AuthUserId, Semaphore.Semaphore>();
+  const exclusive =
+    (userId: AuthUserId) =>
+    <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E> => {
+      let lock = locks.get(userId);
+      if (lock === undefined) {
+        lock = Semaphore.makeUnsafe(1);
+        locks.set(userId, lock);
+      }
+      return lock.withPermit(effect);
+    };
+
+  /**
+   * Each user's row and secret as last read, so steady-state UI reads touch neither the database
+   * nor the secret store. Every change invalidates its user's entry; null caches "no credential".
+   */
+  type Resolved = { readonly row: CredentialRow; readonly stored: StoredToken | null } | null;
+  const resolved = new Map<AuthUserId, Resolved>();
+  const invalidate = (userId: AuthUserId) => Effect.sync(() => void resolved.delete(userId));
+
+  const resolve = (userId: AuthUserId): Effect.Effect<Resolved, JiraError> => {
+    const cached = resolved.get(userId);
+    if (cached !== undefined) return Effect.succeed(cached);
+    return exclusive(userId)(
+      Effect.gen(function* () {
+        const again = resolved.get(userId);
+        if (again !== undefined) return again;
+        const [row, stored] = yield* Effect.all([readRow(userId), readSecret(userId)]);
+        let entry: Resolved = row === null ? null : { row, stored };
+        if (row !== null && stored === null && row.lastError !== MISSING_TOKEN) {
+          yield* writeLastError(userId, row.createdAt, MISSING_TOKEN);
+          entry = { row: { ...row, lastError: MISSING_TOKEN }, stored };
+        }
+        resolved.set(userId, entry);
+        return entry;
+      }),
+    );
+  };
+
   const set: JiraUserCredentials["Service"]["set"] = Effect.fn("JiraUserCredentials.set")(
     function* (maybeUserId, input) {
       const userId = yield* requireUser(maybeUserId);
       const site = yield* resolveSite(input.site);
-      const cloudId = yield* api.tenantInfo(site);
-      const createdAt = yield* now;
-      const stored = { email: input.email, token: input.token };
-      const candidate = (cloudId: string | null): CredentialRow => ({
-        site,
-        cloudId,
-        accountId: null,
-        accountDisplayName: null,
-        accountAvatarUrl: null,
-        createdAt,
-        lastVerifiedAt: null,
-        lastError: null,
-      });
-      // User scoped tokens only work through the gateway, classic ones also on the site itself.
-      const verify = (row: CredentialRow) =>
-        api.myself(toIdentity(userId, row, stored)).pipe(Effect.map((user) => ({ row, user })));
-      const verified = yield* verify(candidate(cloudId)).pipe(
-        Effect.catchTags({
-          JiraError: (error) => (isRefusal(error) ? verify(candidate(null)) : Effect.fail(error)),
-        }),
-        Effect.catchTags({
-          JiraError: (error) =>
-            Effect.fail(
-              error.reason === "unauthorized"
-                ? new JiraError({
-                    reason: "unauthorized",
-                    message: `Jira at ${site} rejected this email and token.`,
-                  })
-                : error,
-            ),
-        }),
-      );
-      const account = toJiraUser(verified.user);
-      const row: CredentialRow = {
-        ...verified.row,
-        accountId: account?.accountId ?? null,
-        accountDisplayName: account?.displayName ?? null,
-        accountAvatarUrl: account?.avatarUrl ?? null,
-        lastVerifiedAt: createdAt,
-      };
+      return yield* exclusive(userId)(
+        Effect.gen(function* () {
+          // Without a cloud id only the site route is tried, which classic tokens still pass.
+          const cloudId = yield* api.tenantInfo(site).pipe(
+            Effect.catchTags({
+              JiraError: (error) =>
+                Effect.logWarning("could not read the Jira cloud id; trying the site only", {
+                  site,
+                  reason: error.reason,
+                }).pipe(Effect.as(null)),
+            }),
+          );
+          const createdAt = yield* now;
+          const stored = { email: input.email, token: input.token };
+          const candidate = (cloudId: string | null): CredentialRow => ({
+            site,
+            cloudId,
+            accountId: null,
+            accountDisplayName: null,
+            accountAvatarUrl: null,
+            createdAt,
+            lastVerifiedAt: null,
+            lastError: null,
+          });
+          // User scoped tokens only work through the gateway, classic ones also on the site
+          // itself. Only a 401 there means "not a gateway token"; a 403 is Jira's real answer.
+          const verify = (row: CredentialRow) =>
+            api.myself(toIdentity(userId, row, stored)).pipe(Effect.map((user) => ({ row, user })));
+          const onSite = verify(candidate(null));
+          const verified = yield* (
+            cloudId === null
+              ? onSite
+              : verify(candidate(cloudId)).pipe(
+                  Effect.catchTags({
+                    JiraError: (error) =>
+                      error.reason === "unauthorized" ? onSite : Effect.fail(error),
+                  }),
+                )
+          ).pipe(
+            Effect.catchTags({
+              JiraError: (error) =>
+                Effect.fail(
+                  error.reason === "unauthorized"
+                    ? new JiraError({
+                        reason: "unauthorized",
+                        message: `Jira at ${site} rejected this email and token.`,
+                      })
+                    : error,
+                ),
+            }),
+          );
+          const account = toJiraUser(verified.user);
+          const row: CredentialRow = {
+            ...verified.row,
+            accountId: account?.accountId ?? null,
+            accountDisplayName: account?.displayName ?? null,
+            accountAvatarUrl: account?.avatarUrl ?? null,
+            lastVerifiedAt: createdAt,
+          };
 
-      // Write the secret, then the row; a failed row write puts the previous secret back.
-      const name = secretName(userId);
-      const previous = yield* secrets.get(name).pipe(Effect.mapError(storageFailed("store")));
-      const bytes = new TextEncoder().encode(
-        yield* encodeStoredToken(stored).pipe(Effect.mapError(storageFailed("store"))),
-      );
-      yield* secrets.set(name, bytes).pipe(Effect.mapError(storageFailed("store")));
-      yield* writeRow(userId, row).pipe(
-        Effect.tapError(() =>
-          (Option.isSome(previous) ? secrets.set(name, previous.value) : secrets.remove(name)).pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("failed to roll back a personal Jira token", { cause }),
+          // Write the secret, then the row; a failed row write puts the previous secret back.
+          const name = secretName(userId);
+          const previous = yield* secrets.get(name).pipe(Effect.mapError(storageFailed("store")));
+          const bytes = new TextEncoder().encode(
+            yield* encodeStoredToken(stored).pipe(Effect.mapError(storageFailed("store"))),
+          );
+          yield* secrets.set(name, bytes).pipe(Effect.mapError(storageFailed("store")));
+          yield* writeRow(userId, row).pipe(
+            Effect.tapError(() =>
+              (Option.isSome(previous)
+                ? secrets.set(name, previous.value)
+                : secrets.remove(name)
+              ).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("failed to roll back a personal Jira token", { cause }),
+                ),
+              ),
             ),
-          ),
-        ),
-        Effect.mapError(storageFailed("store")),
+            Effect.mapError(storageFailed("store")),
+          );
+          return toPublic(row);
+        }).pipe(Effect.ensuring(invalidate(userId))),
       );
-      return toPublic(row);
     },
   );
 
   const test: JiraUserCredentials["Service"]["test"] = Effect.fn("JiraUserCredentials.test")(
     function* (maybeUserId) {
       const userId = yield* requireUser(maybeUserId);
-      const [row, stored] = yield* Effect.all([readRow(userId), readSecret(userId)]);
-      if (row === null || stored === null) return yield* noCredential;
-      const result = yield* api.myself(toIdentity(userId, row, stored)).pipe(
-        Effect.map((user) => ({ user, error: null })),
-        Effect.catchTags({
-          JiraError: (error) =>
-            isRefusal(error)
-              ? Effect.succeed({ user: null, error: error.message })
-              : Effect.fail(error),
-        }),
+      return yield* exclusive(userId)(
+        Effect.gen(function* () {
+          const [row, stored] = yield* Effect.all([readRow(userId), readSecret(userId)]);
+          if (row === null) return yield* noCredential;
+          if (stored === null) {
+            yield* writeLastError(userId, row.createdAt, MISSING_TOKEN);
+            return toPublic({ ...row, lastError: MISSING_TOKEN });
+          }
+          const result = yield* api.myself(toIdentity(userId, row, stored)).pipe(
+            Effect.map((user) => ({ user, error: null })),
+            Effect.catchTags({
+              JiraError: (error) =>
+                isRefusal(error)
+                  ? Effect.succeed({ user: null, error: error.message })
+                  : Effect.fail(error),
+            }),
+          );
+          const account = result.user === null ? null : toJiraUser(result.user);
+          const next: CredentialRow =
+            result.error === null
+              ? {
+                  ...row,
+                  accountId: account?.accountId ?? null,
+                  accountDisplayName: account?.displayName ?? null,
+                  accountAvatarUrl: account?.avatarUrl ?? null,
+                  lastVerifiedAt: yield* now,
+                  lastError: null,
+                }
+              : { ...row, lastError: result.error };
+          yield* sql`
+            UPDATE fork_jira_user_credentials
+            SET account_id = ${next.accountId},
+              account_display_name = ${next.accountDisplayName},
+              account_avatar_url = ${next.accountAvatarUrl},
+              last_verified_at = ${next.lastVerifiedAt},
+              last_error = ${next.lastError}
+            WHERE user_id = ${userId} AND created_at = ${row.createdAt}
+          `.pipe(Effect.mapError(storageFailed("update")));
+          return toPublic(next);
+        }).pipe(Effect.ensuring(invalidate(userId))),
       );
-      const account = result.user === null ? null : toJiraUser(result.user);
-      const next: CredentialRow =
-        result.error === null
-          ? {
-              ...row,
-              accountId: account?.accountId ?? null,
-              accountDisplayName: account?.displayName ?? null,
-              accountAvatarUrl: account?.avatarUrl ?? null,
-              lastVerifiedAt: yield* now,
-              lastError: null,
-            }
-          : { ...row, lastError: result.error };
-      yield* sql`
-        UPDATE fork_jira_user_credentials
-        SET account_id = ${next.accountId},
-          account_display_name = ${next.accountDisplayName},
-          account_avatar_url = ${next.accountAvatarUrl},
-          last_verified_at = ${next.lastVerifiedAt},
-          last_error = ${next.lastError}
-        WHERE user_id = ${userId} AND created_at = ${row.createdAt}
-      `.pipe(Effect.mapError(storageFailed("update")));
-      return toPublic(next);
     },
   );
 
   const clear: JiraUserCredentials["Service"]["clear"] = Effect.fn("JiraUserCredentials.clear")(
     function* (maybeUserId) {
       const userId = yield* requireUser(maybeUserId);
-      // The secret goes first: a row without its secret reads as no credential.
-      yield* secrets.remove(secretName(userId)).pipe(Effect.mapError(storageFailed("remove")));
-      yield* sql`DELETE FROM fork_jira_user_credentials WHERE user_id = ${userId}`.pipe(
-        Effect.mapError(storageFailed("remove")),
+      // The secret goes first: a row left without its secret reads as a broken credential, which
+      // the user can see and clear again, never as a working one.
+      yield* exclusive(userId)(
+        Effect.gen(function* () {
+          yield* secrets.remove(secretName(userId));
+          yield* sql`DELETE FROM fork_jira_user_credentials WHERE user_id = ${userId}`;
+        }).pipe(Effect.mapError(storageFailed("remove")), Effect.ensuring(invalidate(userId))),
       );
     },
   );
 
   const get: JiraUserCredentials["Service"]["get"] = (userId) =>
-    readRow(userId).pipe(Effect.map((row) => (row === null ? null : toPublic(row))));
+    resolve(userId).pipe(Effect.map((entry) => (entry === null ? null : toPublic(entry.row))));
 
   const identityFor: JiraUserCredentials["Service"]["identityFor"] = (userId, site) =>
     Effect.gen(function* () {
-      const row = yield* readRow(userId);
-      if (row === null || row.site !== normalizeJiraSite(site)) return undefined;
-      const stored = yield* readSecret(userId);
-      return stored === null ? undefined : toIdentity(userId, row, stored);
+      const entry = yield* resolve(userId);
+      if (entry === null || entry.row.site !== normalizeJiraSite(site)) return undefined;
+      if (entry.stored === null) {
+        return yield* new JiraError({ reason: "unauthorized", message: MISSING_TOKEN });
+      }
+      return toIdentity(userId, entry.row, entry.stored);
     });
 
-  const recordRejected: JiraUserCredentials["Service"]["recordRejected"] = (identity, message) =>
-    identity.personal === undefined
+  const recordRejected: JiraUserCredentials["Service"]["recordRejected"] = (identity, message) => {
+    const personal = identity.personal;
+    return personal === undefined
       ? Effect.void
-      : sql`
-          UPDATE fork_jira_user_credentials SET last_error = ${message}
-          WHERE user_id = ${identity.personal.userId}
-            AND created_at = ${identity.personal.createdAt}
-        `.pipe(Effect.asVoid, Effect.mapError(storageFailed("update")));
+      : exclusive(personal.userId)(
+          writeLastError(personal.userId, personal.createdAt, message).pipe(
+            Effect.ensuring(invalidate(personal.userId)),
+          ),
+        );
+  };
 
   return JiraUserCredentials.of({ set, test, clear, get, identityFor, recordRejected });
 });

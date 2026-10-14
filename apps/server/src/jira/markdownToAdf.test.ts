@@ -152,6 +152,27 @@ describe("markdownToAdf", () => {
     ]);
   });
 
+  it("lets only an ordered list starting at 1 interrupt a paragraph", () => {
+    expect(content("Shipped the fix in\n2024. Follow-up pending.")).toEqual([
+      paragraph(
+        text("Shipped the fix in"),
+        { type: "hardBreak" },
+        text("2024. Follow-up pending."),
+      ),
+    ]);
+    expect(content("Steps:\n1. build")).toEqual([
+      paragraph(text("Steps:")),
+      {
+        type: "orderedList",
+        content: [{ type: "listItem", content: [paragraph(text("build"))] }],
+      },
+    ]);
+    expect(content("1. a\n2. b")[0]).toMatchObject({
+      type: "orderedList",
+      content: [{ type: "listItem" }, { type: "listItem" }],
+    });
+  });
+
   it("keeps loose list items and continuation paragraphs in one item", () => {
     expect(content("- a\n\n  more\n\n- b")).toEqual([
       {
