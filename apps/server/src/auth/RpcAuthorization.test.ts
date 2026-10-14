@@ -175,6 +175,16 @@ describe("RPC authorization scopes", () => {
     ]);
   });
 
+  it("lets readers see a Jira proposal's choices and operators decide it", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.jiraCreateMeta)).toBe(AuthOrchestrationReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.jiraDecideProposal)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(clientRpcRequiredScopes(WS_METHODS.jiraDecideProposal, undefined)).toEqual([
+      AuthOrchestrationOperateScope,
+    ]);
+  });
+
   it("separates preview control from observation", () => {
     for (const method of [
       WS_METHODS.previewOpen,

@@ -578,70 +578,93 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("closes a secret request card's form when its run is recovered", () => {
-  const threadId = ThreadId.make("thread_secret_recovery");
-  const runId = RunId.make("run_secret_recovery");
-  let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
-    null;
-  const projection = {
-    thread: { id: threadId },
-    runtimeRequests: [],
-    providerSessions: [],
-    providerThreads: [],
-    providerTurns: [],
-    runs: [{ id: runId, status: "running", providerInstanceId: ProviderInstanceId.make("codex") }],
-    attempts: [],
-    nodes: [],
-    subagents: [],
-    messages: [],
-    turnItems: [
-      {
-        id: "turn-item:secret-request:recovery",
-        threadId,
-        runId,
-        nodeId: null,
-        type: "secret_request",
-        status: "waiting",
-        secretStatus: "pending",
-        label: "GitHub token",
-        reason: "Used as GH_TOKEN.",
-      },
-    ],
-  } as unknown as OrchestrationV2ThreadProjection;
-  const layer = ProviderRuntimeRecovery.layer.pipe(
-    Layer.provide(ServerSettings.layerTest()),
-    Layer.provide(
-      Layer.mergeAll(
-        Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getRecoveryThreadIds: () => Effect.succeed([threadId]),
-          getRuntimeRecoveryProjection: () => Effect.succeed(projection),
-        }),
-        Layer.mock(EventSink.EventSinkV2)({
-          commitCommand: (input) => {
-            committedInput = input;
-            return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
-          },
-        }),
-        IdAllocator.layer,
-        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
-          runRecoveryOnce: Effect.succeed(false),
-        }),
-        Layer.mock(EffectOutbox.EffectOutboxV2)({
-          listByCommandId: () => Effect.succeed([]),
-          reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
-        }),
+it.effect(
+  "closes a secret request card's form, but not a Jira proposal, when its run is recovered",
+  () => {
+    const threadId = ThreadId.make("thread_secret_recovery");
+    const runId = RunId.make("run_secret_recovery");
+    let committedInput: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0] | null =
+      null;
+    const projection = {
+      thread: { id: threadId },
+      runtimeRequests: [],
+      providerSessions: [],
+      providerThreads: [],
+      providerTurns: [],
+      runs: [
+        { id: runId, status: "running", providerInstanceId: ProviderInstanceId.make("codex") },
+      ],
+      attempts: [],
+      nodes: [],
+      subagents: [],
+      messages: [],
+      turnItems: [
+        {
+          id: "turn-item:secret-request:recovery",
+          threadId,
+          runId,
+          nodeId: null,
+          type: "secret_request",
+          status: "waiting",
+          secretStatus: "pending",
+          label: "GitHub token",
+          reason: "Used as GH_TOKEN.",
+        },
+        {
+          id: "turn-item:jira-proposal:recovery",
+          threadId,
+          runId,
+          nodeId: null,
+          type: "jira_proposal",
+          status: "waiting",
+          proposalStatus: "pending",
+          proposal: { kind: "comment", site: "acme.atlassian.net", key: "ABC-1", body: "Done." },
+        },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const layer = ProviderRuntimeRecovery.layer.pipe(
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId]),
+            getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            commitCommand: (input) => {
+              committedInput = input;
+              return Effect.succeed({ committed: true, cancelledEffectCount: 0 } as never);
+            },
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+            runRecoveryOnce: Effect.succeed(false),
+          }),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            listByCommandId: () => Effect.succeed([]),
+            reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          }),
+        ),
       ),
-    ),
-  );
+    );
 
-  return Effect.gen(function* () {
-    yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
-    const itemEvent = committedInput?.events.find((event) => event.type === "turn-item.updated");
-    const card = itemEvent?.type === "turn-item.updated" ? itemEvent.payload : null;
-    assert.equal(card?.status, "cancelled");
-    assert.equal(card?.type === "secret_request" ? card.secretStatus : null, "cancelled");
-  }).pipe(Effect.provide(layer));
-});
+    return Effect.gen(function* () {
+      yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
+      const itemEvent = committedInput?.events.find((event) => event.type === "turn-item.updated");
+      const card = itemEvent?.type === "turn-item.updated" ? itemEvent.payload : null;
+      assert.equal(card?.status, "cancelled");
+      assert.equal(card?.type === "secret_request" ? card.secretStatus : null, "cancelled");
+      // A proposal waits for its user, not its run, and stays approvable after the restart.
+      assert.isFalse(
+        committedInput?.events.some(
+          (event) =>
+            event.type === "turn-item.updated" &&
+            event.payload.id === "turn-item:jira-proposal:recovery",
+        ) ?? true,
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect.each(["queued", "preparing"] as const)("recovers $0 work after restart", (status) => {
   const threadId = ThreadId.make("thread_queued_restart");
