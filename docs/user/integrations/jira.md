@@ -183,3 +183,46 @@ An agent that should change Jira as itself uses the `jtk` CLI with its own
 credentials. Set `JIRA_*` environment variables on the provider instance's
 environment in provider settings. Those credentials are separate from the ones
 above, so the agent's write access does not depend on the reader identity.
+
+## Start a thread from Jira
+
+A Jira Automation rule can start a thread when someone adds a label such as `t3` to
+an issue. T3 Code receives the request through a webhook scheduled task, so Jira has
+to reach your server. Atlassian's cloud can't see a private address, so use a public
+URL: a [T3 Connect](../remote-access.md) tunnel or a server deployed with
+`T3CODE_PUBLIC_URL`.
+
+1. In **Settings → Scheduled tasks**, create a task with the **On webhook** schedule
+   and copy its URL. See [Webhook automations](../project-settings.md#webhook-automations).
+   Anyone with the URL can start runs, so keep it private. Jira's "Send web request"
+   action can't sign requests, so the signature check doesn't apply here.
+2. Write the prompt with placeholders for the request body:
+
+   ```text
+   Work on Jira issue {{body.issue.key}}: {{body.issue.summary}} ({{body.issue.url}}).
+   Requested by {{body.actor}} in Jira. Link the issue to this thread with
+   link_jira_issue, then plan the change and start on it.
+   ```
+
+3. In Jira, open **Project settings → Automation** and create a rule. Use the
+   trigger **Field value changed** on Labels, or **Issue updated**, and add a
+   condition that Labels contains `t3`.
+4. Add the action **Send web request**. Paste the T3 Code URL, choose `POST`, set the
+   body to **Custom data**, add the header `Content-Type: application/json`, and use
+   this body:
+
+   ```json
+   {
+     "issue": {
+       "key": "{{issue.key}}",
+       "summary": "{{issue.summary.jsonEncode}}",
+       "url": "{{issue.url}}"
+     },
+     "actor": "{{initiator.displayName.jsonEncode}}"
+   }
+   ```
+
+`jsonEncode` escapes quotes in the summary and name so the body stays valid JSON.
+The agent links the issue with `link_jira_issue`, or the thread links itself when
+its branch name contains the key. To start exactly one thread per label, add an
+**Edit issue** action to the rule that removes the label afterwards.
