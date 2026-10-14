@@ -101,7 +101,10 @@ const RawErrorBody = Schema.Struct({
   errorMessages: Schema.optional(Schema.Array(Schema.String)),
   errors: Schema.optional(Schema.Record(Schema.String, Schema.String)),
 });
+const RawTenantInfo = Schema.Struct({ cloudId: Schema.String });
+
 const decodeErrorBody = Schema.decodeUnknownOption(RawErrorBody);
+const decodeRawTenantInfo = Schema.decodeUnknownEffect(RawTenantInfo);
 const decodeRawUser = Schema.decodeUnknownEffect(RawUser);
 const decodeRawSearchPage = Schema.decodeUnknownEffect(RawSearchPage);
 const decodeRawBulkFetch = Schema.decodeUnknownEffect(RawBulkFetch);
@@ -116,6 +119,8 @@ const decodeRawFields = Schema.decodeUnknownEffect(Schema.Array(RawField));
 export class JiraApi extends Context.Service<
   JiraApi,
   {
+    /** Unauthenticated `GET https://<site>/_edge/tenant_info`: the site's cloud id. */
+    readonly tenantInfo: (site: string) => Effect.Effect<string, JiraError>;
     readonly myself: (identity: JiraServerIdentity) => Effect.Effect<JiraRawUser, JiraError>;
     /** `POST /rest/api/3/search/jql`, the enhanced search; `/search` is deprecated. */
     readonly searchJql: (
@@ -174,16 +179,23 @@ export class JiraApi extends Context.Service<
 
 const FILTER_EXPAND = "jql,owner,favourite,viewUrl";
 
-/** Scoped tokens only work through the API gateway; basic auth talks to the site itself. */
+/**
+ * Scoped tokens only work through the API gateway, so any identity with a cloud id goes through
+ * it, whatever its auth method. Without one, requests go to the site itself.
+ */
 const baseUrl = (identity: JiraServerIdentity) =>
-  identity.authMethod === "scoped-token"
-    ? `https://api.atlassian.com/ex/jira/${encodeURIComponent(identity.cloudId ?? "")}`
-    : `https://${identity.site}`;
+  identity.cloudId === undefined
+    ? `https://${identity.site}`
+    : `https://api.atlassian.com/ex/jira/${encodeURIComponent(identity.cloudId)}`;
 
 const authorize = (identity: JiraServerIdentity) =>
   identity.authMethod === "scoped-token"
     ? HttpClientRequest.bearerToken(identity.token)
     : HttpClientRequest.basicAuth(identity.email ?? "", identity.token);
+
+/** How error messages name the identity; a personal one is never named by its internal name. */
+const describe = (identity: JiraServerIdentity) =>
+  identity.personal === undefined ? `identity ${identity.name}` : "your personal Jira token";
 
 const truncate = (text: string) =>
   text.length > MAX_ERROR_MESSAGE_LENGTH ? `${text.slice(0, MAX_ERROR_MESSAGE_LENGTH - 1)}…` : text;
@@ -215,19 +227,20 @@ const statusError = (
       case 401:
         return new JiraError({
           reason: "unauthorized",
-          message: `Jira rejected the credentials of identity ${identity.name}.`,
+          message:
+            identity.personal === undefined
+              ? `Jira rejected the credentials of identity ${identity.name}.`
+              : "Jira rejected your personal Jira token.",
         });
       case 403:
         return new JiraError({
           reason: "forbidden",
-          message: truncate(
-            text || `Identity ${identity.name} is not allowed to read this from Jira.`,
-          ),
+          message: truncate(text || `Jira does not allow ${describe(identity)} to read this.`),
         });
       case 404:
         return new JiraError({
           reason: "not-found",
-          message: truncate(text || `Not found, or not visible to identity ${identity.name}.`),
+          message: truncate(text || `Not found, or not visible to ${describe(identity)}.`),
         });
       default:
         return new JiraError({
@@ -236,6 +249,24 @@ const statusError = (
         });
     }
   });
+
+const unavailable = (site: string) => ({
+  HttpClientError: () =>
+    Effect.fail(
+      new JiraError({ reason: "unavailable", message: `Could not reach Jira at ${site}.` }),
+    ),
+  SchemaError: () =>
+    Effect.fail(
+      new JiraError({
+        reason: "unavailable",
+        message: `Jira at ${site} returned an unexpected response.`,
+      }),
+    ),
+  TimeoutError: () =>
+    Effect.fail(
+      new JiraError({ reason: "unavailable", message: `Jira at ${site} did not answer in time.` }),
+    ),
+});
 
 const make = Effect.gen(function* () {
   const http = yield* HttpClient.HttpClient;
@@ -259,34 +290,31 @@ const make = Effect.gen(function* () {
       }
       const body = yield* response.json;
       return yield* decode(body);
+    }).pipe(Effect.timeout(REQUEST_TIMEOUT), Effect.catchTags(unavailable(identity.site)));
+
+  const tenantInfo: JiraApi["Service"]["tenantInfo"] = (site) =>
+    Effect.gen(function* () {
+      const response = yield* http.execute(
+        HttpClientRequest.get(`https://${site}/_edge/tenant_info`).pipe(
+          HttpClientRequest.acceptJson,
+        ),
+      );
+      if (response.status < 200 || response.status >= 300) {
+        return yield* new JiraError({
+          reason: response.status === 404 ? "not-found" : "unavailable",
+          message: `${site} did not report a Jira Cloud id (HTTP ${response.status}).`,
+        });
+      }
+      const info = yield* decodeRawTenantInfo(yield* response.json);
+      return info.cloudId;
     }).pipe(
       Effect.timeout(REQUEST_TIMEOUT),
-      Effect.catchTags({
-        HttpClientError: () =>
-          Effect.fail(
-            new JiraError({
-              reason: "unavailable",
-              message: `Could not reach Jira at ${identity.site}.`,
-            }),
-          ),
-        SchemaError: () =>
-          Effect.fail(
-            new JiraError({
-              reason: "unavailable",
-              message: `Jira at ${identity.site} returned an unexpected response.`,
-            }),
-          ),
-        TimeoutError: () =>
-          Effect.fail(
-            new JiraError({
-              reason: "unavailable",
-              message: `Jira at ${identity.site} did not answer in time.`,
-            }),
-          ),
-      }),
+      Effect.catchTags(unavailable(site)),
+      Effect.withSpan("JiraApi.tenantInfo"),
     );
 
   return JiraApi.of({
+    tenantInfo,
     myself: (identity) =>
       request(identity, HttpClientRequest.get("/rest/api/3/myself"), decodeRawUser).pipe(
         Effect.withSpan("JiraApi.myself"),
