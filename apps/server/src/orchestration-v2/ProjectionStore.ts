@@ -1132,6 +1132,7 @@ type ShellThreadRow = {
   readonly blocking_failure_payload_json: string | null;
   readonly pending_request_payload_json: string | null;
   readonly pending_secret_request_payload_json: string | null;
+  readonly pending_jira_proposal_payload_json: string | null;
   readonly latest_user_message_at: string | null;
   readonly latest_user_authored_message_at: string | null;
   readonly has_actionable_proposed_plan: number;
@@ -1557,16 +1558,31 @@ function pendingRuntimeRequestSummary(
   };
 }
 
-function secretRequestAsPendingInput(
+function userCardAsPendingInput(
   item: OrchestrationV2TurnItem | null,
 ): OrchestrationV2PendingRuntimeRequestSummary | null {
-  if (item?.type !== "secret_request" || item.nodeId === null) return null;
+  if ((item?.type !== "secret_request" && item?.type !== "jira_proposal") || item.nodeId === null)
+    return null;
   return {
     id: RuntimeRequestId.make(item.id),
     kind: "user_input",
     createdAt: item.startedAt ?? item.updatedAt,
     blocking: true,
   };
+}
+
+function latestWaitingItem(
+  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  matches: (item: OrchestrationV2TurnItem) => boolean,
+): OrchestrationV2TurnItem | null {
+  return (
+    items
+      .filter((item) => item.status === "waiting" && matches(item))
+      .toSorted(
+        (left, right) =>
+          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+      )[0] ?? null
+  );
 }
 
 export function threadShellFromProjection(
@@ -1606,20 +1622,17 @@ export function threadShellFromProjection(
   );
   if (pendingRuntimeRequest === null || pendingRuntimeRequest.blocking === false) {
     pendingRuntimeRequest =
-      secretRequestAsPendingInput(
-        projection.turnItems
-          .filter(
+      userCardAsPendingInput(
+        latestWaitingItem(
+          projection.turnItems,
             (item) =>
-              item.type === "secret_request" &&
-              item.status === "waiting" &&
-              item.runId !== null &&
-              liveRunIds.has(item.runId),
-          )
-          .toSorted(
-            (left, right) =>
-              DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-          )[0] ?? null,
-      ) ?? pendingRuntimeRequest;
+            item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId),
+        ),
+      ) ??
+      userCardAsPendingInput(
+        latestWaitingItem(projection.turnItems, (item) => item.type === "jira_proposal"),
+      ) ??
+      pendingRuntimeRequest;
   }
   const userMessages = projection.messages
     .filter((message) => message.role === "user" && idleCompactionOf(message) === undefined)
@@ -5971,6 +5984,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS pending_secret_request_payload_json,
               (
+                SELECT proposal.payload_json
+                -- Proposals outlive their run, so any waiting one counts; a partial index keeps
+                -- this off the thread's history.
+                FROM orchestration_v2_projection_turn_items proposal
+                WHERE proposal.thread_id = t.thread_id
+                  AND proposal.type = 'jira_proposal' AND proposal.status = 'waiting'
+                ORDER BY proposal.updated_at DESC, proposal.turn_item_id DESC
+                LIMIT 1
+              ) AS pending_jira_proposal_payload_json,
+              (
                 SELECT message.updated_at
                 FROM orchestration_v2_projection_messages message
                 WHERE message.thread_id = t.thread_id
@@ -6270,6 +6293,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT 1 FROM orchestration_v2_projection_runtime_requests request
                 WHERE request.thread_id = t.thread_id AND request.status = 'pending'
               )
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_turn_items proposal
+                WHERE proposal.thread_id = t.thread_id
+                  AND proposal.type = 'jira_proposal' AND proposal.status = 'waiting'
+              )
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
             if (rows.length === 0) return [];
@@ -6414,14 +6442,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 yield* decodeRuntimeRequestPayload(row.pending_request_payload_json),
               )
             : null;
-        if (
-          (pendingRuntimeRequest === null || pendingRuntimeRequest.blocking === false) &&
-          row.pending_secret_request_payload_json !== null
-        ) {
+        if (pendingRuntimeRequest === null || pendingRuntimeRequest.blocking === false) {
           pendingRuntimeRequest =
-            secretRequestAsPendingInput(
+            (row.pending_secret_request_payload_json === null
+              ? null
+              : userCardAsPendingInput(
               yield* decodeTurnItemPayload(row.pending_secret_request_payload_json),
-            ) ?? pendingRuntimeRequest;
+                )) ??
+            (row.pending_jira_proposal_payload_json === null
+              ? null
+              : userCardAsPendingInput(
+                  yield* decodeTurnItemPayload(row.pending_jira_proposal_payload_json),
+                )) ??
+            pendingRuntimeRequest;
         }
         let terminalFailureItem =
           row.terminal_failure_payload_json === null
