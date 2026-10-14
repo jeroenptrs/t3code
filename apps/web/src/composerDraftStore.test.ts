@@ -1788,6 +1788,28 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(useComposerDraftStore.getState().getDraftThread(draftId)?.startFromOrigin).toBe(false);
   });
 
+  it("keeps the new worktree's branch name only while the draft can still start a new worktree", () => {
+    const store = useComposerDraftStore.getState();
+    const read = () => useComposerDraftStore.getState().getDraftThread(draftId);
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      branch: "main",
+      envMode: "worktree",
+      newWorktreeBranch: "abc-1-fix",
+    });
+    expect(read()?.newWorktreeBranch).toBe("abc-1-fix");
+
+    store.setDraftThreadContext(draftId, { branch: "develop", startFromOrigin: true });
+    expect(read()?.newWorktreeBranch).toBe("abc-1-fix");
+
+    store.setDraftThreadContext(draftId, { envMode: "local" });
+    expect(read()?.newWorktreeBranch).toBeNull();
+
+    store.setDraftThreadContext(draftId, { envMode: "worktree", newWorktreeBranch: "abc-1-fix" });
+    store.setDraftThreadContext(draftId, { worktreePath: "/tmp/existing" });
+    expect(read()?.newWorktreeBranch).toBeNull();
+  });
+
   it("preserves existing branch and worktree when setProjectDraftThreadId receives undefined", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, {
