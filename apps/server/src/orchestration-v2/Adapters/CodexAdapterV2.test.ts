@@ -519,6 +519,26 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
+  it.effect("describes the Jira tools when the T3 credential grants the jira capability", () =>
+    Effect.gen(function* () {
+      const runtimeContext = (mcpCapabilities: ReadonlySet<string>) =>
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-jira-instructions",
+          codexInput: [{ type: "text", text: "work on ABC-123" }],
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          hasT3Mcp: true,
+          mcpCapabilities,
+        }).pipe(Effect.map((params) => params.additionalContext?.t3_code_runtime?.value ?? ""));
+
+      assert.include(
+        yield* runtimeContext(new Set(["orchestration", "jira"])),
+        "<jira_issue_linking>",
+      );
+      assert.notInclude(yield* runtimeContext(new Set(["orchestration"])), "<jira_issue_linking>");
+    }),
+  );
+
   it.effect("omits default-mode collaboration settings without the T3 MCP server", () =>
     Effect.gen(function* () {
       const params = yield* CodexAdapterV2.buildCodexTurnStartParams({

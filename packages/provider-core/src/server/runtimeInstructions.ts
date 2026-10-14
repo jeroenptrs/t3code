@@ -3,14 +3,33 @@ When the t3-code MCP server exposes link_pull_request, you must use it to regist
 </pull_request_linking>`;
 
 /**
+ * Fork-only. One line per Jira tool family, so a later tool adds its own line. The server grants
+ * the "jira" MCP capability only when Jira is configured on it.
+ */
+const JIRA_ISSUE_TOOL_GUIDANCE = [
+  "When this thread's work is for a Jira issue (the user names a key such as ABC-123 or gives a browse URL), call link_jira_issue so T3 Code shows the issue with the thread. Linking an already-linked issue is safe.",
+  "A branch whose name contains an issue key links that issue automatically.",
+  "list_thread_jira_issues lists the issues linked to this thread.",
+  "These tools only record links in T3 Code. To change an issue (comment, transition, edit), use jtk, which acts as your own Jira identity when it is configured.",
+];
+
+const JIRA_ISSUE_LINKING_INSTRUCTIONS = `<jira_issue_linking>
+${JIRA_ISSUE_TOOL_GUIDANCE.map((line) => `- ${line}`).join("\n")}
+</jira_issue_linking>`;
+
+/**
  * Shared runtime context; omit model and effort when the harness manages them dynamically.
  * `modelName` is the display name users see in the model picker; `model` is the slug.
+ * `mcpCapabilities` are those of the thread's T3 MCP credential, passed only when the t3-code
+ * MCP server is attached to the turn: blocks about capability-gated tools are left out without
+ * them, since describing tools the agent does not have is worse than saying nothing.
  */
 export function buildRuntimeInstructions(runtime: {
   readonly harness: string;
   readonly model?: string | undefined;
   readonly modelName?: string | undefined;
   readonly reasoningEffort?: string | undefined;
+  readonly mcpCapabilities?: ReadonlySet<string> | undefined;
 }): string {
   const harness = toSingleLine(runtime.harness);
   const model = toSingleLine(runtime.model ?? "");
@@ -20,7 +39,8 @@ export function buildRuntimeInstructions(runtime: {
     modelName && modelName !== model ? `${modelName} (model slug: ${model})` : model;
   const modelInfo = model && model !== "auto" && model !== "default" ? `, as ${modelLabel}` : "";
   const effortInfo = effort ? ` with ${effort} reasoning effort` : "";
-  return `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images and videos in your response using Markdown with absolute file paths.</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
+  const jira = runtime.mcpCapabilities?.has("jira") ? `\n\n${JIRA_ISSUE_LINKING_INSTRUCTIONS}` : "";
+  return `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images and videos in your response using Markdown with absolute file paths.</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}${jira}`;
 }
 
 function toSingleLine(value: string): string {
