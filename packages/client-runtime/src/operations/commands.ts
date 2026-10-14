@@ -852,6 +852,18 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
           watching: false,
         });
       }
+      // Fork-only. Jira issue watches hold a thread the same way.
+      for (const link of projection.thread.jiraIssues ?? []) {
+        if (link.watch === undefined || link.source === "branch-dismissed") continue;
+        result = yield* dispatch({
+          type: "thread.jira-issue.watch",
+          commandId: yield* allocateCommandId(result.sequence === 0 ? input : {}),
+          threadId: input.threadId,
+          site: link.site,
+          key: link.key,
+          watching: false,
+        });
+      }
       return result;
     }
   }
