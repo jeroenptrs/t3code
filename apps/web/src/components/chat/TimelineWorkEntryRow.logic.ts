@@ -19,6 +19,11 @@ export function toolGroupSummaryIconName(
     case "watch-pr":
     case "unwatch-pr":
       return "pull-request";
+    case "jira":
+    case "link-jira":
+    case "unlink-jira":
+    case "list-jira":
+      return "jira";
     case "read":
       return "eye";
     case "edit":
