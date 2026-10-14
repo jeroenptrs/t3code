@@ -81,8 +81,14 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
             cause: forkableSourceRunStatusError(input.sourceRun),
           });
         }
+        const { jiraIssues } = input.sourceProjection.thread;
         const targetThread: OrchestrationV2AppThread = {
           ...input.sourceProjection.thread,
+          // Fork-only. The fork keeps the source's Jira links but not its watches, which belong
+          // to the source's agent; a watch copied here would wake the fork too.
+          ...(jiraIssues === undefined
+            ? {}
+            : { jiraIssues: jiraIssues.map(({ watch: _watch, ...link }) => link) }),
           createdBy: input.createdBy,
           creationSource: input.creationSource,
           // A fork is a new thread; whoever started the source did not start it.

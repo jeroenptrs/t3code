@@ -504,7 +504,7 @@ it.effect("watching links the issue first, records progress, and stops", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("starts from the link's snapshot and refuses an issue the thread does not link", () =>
+it.effect("starts without a status baseline and refuses an issue the thread does not link", () =>
   Effect.gen(function* () {
     const threadId = ThreadId.make("thread:jira-watch-refused");
     yield* createThread(threadId);
@@ -515,7 +515,8 @@ it.effect("starts from the link's snapshot and refuses an issue the thread does 
     yield* link(threadId, "ABC-11", "branch");
     yield* sync(threadId, "ABC-11");
     yield* watch(threadId, "ABC-11", true);
-    assert.equal((yield* watchOf(threadId, "ABC-11"))?.statusCategory, snapshot.statusCategory);
+    // The snapshot may predate the watch, so the first read sets the status baseline.
+    assert.isNull((yield* watchOf(threadId, "ABC-11"))?.statusCategory);
 
     // Unlinking ends the watch; an unlinked issue is watched only by linking it again.
     yield* unlink(threadId, "ABC-11");
