@@ -88,9 +88,12 @@ function makeSourceRun(status: OrchestrationV2Run["status"]): OrchestrationV2Run
   };
 }
 
-function makeSourceProjection(sourceRun: OrchestrationV2Run): OrchestrationV2ThreadProjection {
+function makeSourceProjection(
+  sourceRun: OrchestrationV2Run,
+  thread: OrchestrationV2AppThread = makeSourceThread(),
+): OrchestrationV2ThreadProjection {
   return {
-    thread: makeSourceThread(),
+    thread,
     runs: [sourceRun],
     attempts: [],
     nodes: [],
@@ -370,5 +373,37 @@ it.effect("marks only requested forks as side chats and inherits parent permissi
       { sideChat: true },
     ).pipe(Effect.flip);
     assert.equal(fromDelegated.cause, "A subagent cannot start a side chat.");
+  }),
+);
+
+it.effect("keeps the source's Jira links on a fork but not their watches", () =>
+  Effect.gen(function* () {
+    const link = {
+      site: "acme.atlassian.net",
+      key: "ABC-1",
+      source: "agent" as const,
+      linkedAt: "2026-07-24T09:01:00.000Z",
+      snapshot: null,
+    };
+    const watch = {
+      startedAt: "2026-07-24T09:02:00.000Z",
+      updatedThrough: null,
+      statusCategory: null,
+      assigneeAccountId: null,
+      commentsThrough: "2026-07-24T09:02:00.000Z",
+      wakes: 0,
+    };
+    const sourceRun = makeSourceRun("completed");
+    const result = yield* planFork(
+      sourceRun,
+      makeSourceProjection(sourceRun, {
+        ...makeSourceThread(),
+        jiraIssues: [
+          { ...link, watch },
+          { ...link, key: "ABC-2" },
+        ],
+      }),
+    );
+    assert.deepEqual(result.targetThread.jiraIssues, [link, { ...link, key: "ABC-2" }]);
   }),
 );
