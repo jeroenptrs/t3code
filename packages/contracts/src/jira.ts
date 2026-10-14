@@ -305,6 +305,25 @@ export const ThreadJiraIssueSnapshot = Schema.Struct({
 });
 export type ThreadJiraIssueSnapshot = typeof ThreadJiraIssueSnapshot.Type;
 
+/**
+ * The server watching a linked issue for the thread's agent: a new comment, a status category
+ * change or an assignee change wakes the agent. The fields are what the last read saw, so the
+ * next read can tell what changed. Starting a watch reads nothing; changes count from then.
+ */
+export const ThreadJiraIssueWatch = Schema.Struct({
+  startedAt: IsoDateTime,
+  /** The issue's `updated` at the last read; the sweep reads detail only when it moves. */
+  updatedThrough: Schema.NullOr(IsoDateTime),
+  /** Null until the first read after the watch started. */
+  statusCategory: Schema.NullOr(JiraStatusCategory),
+  assigneeAccountId: Schema.NullOr(Schema.String),
+  /** Comments created at or before this are already known. */
+  commentsThrough: IsoDateTime,
+  /** Consecutive wakes for comments alone; a status or assignee change resets it. */
+  wakes: NonNegativeInt,
+});
+export type ThreadJiraIssueWatch = typeof ThreadJiraIssueWatch.Type;
+
 export const ThreadJiraIssueLink = Schema.Struct({
   ...JiraIssueKey.fields,
   source: ThreadJiraIssueLinkSource,
@@ -313,6 +332,8 @@ export const ThreadJiraIssueLink = Schema.Struct({
   linkedByUserId: Schema.optional(AuthUserId),
   /** Null until the sync sweep first reads the issue. */
   snapshot: Schema.NullOr(ThreadJiraIssueSnapshot),
+  /** Present while the server watches the issue for this thread's agent. */
+  watch: Schema.optional(ThreadJiraIssueWatch),
 });
 export type ThreadJiraIssueLink = typeof ThreadJiraIssueLink.Type;
 
@@ -441,3 +462,17 @@ export const JiraCreateMeta = Schema.Struct({
   sprints: Schema.Array(JiraSprint),
 });
 export type JiraCreateMeta = typeof JiraCreateMeta.Type;
+
+/** Post a comment as the caller, with their personal token. */
+export const JiraAddCommentInput = Schema.Struct({
+  ...JiraIssueKey.fields,
+  body: JiraMarkdown.check(Schema.isMinLength(1)),
+});
+export type JiraAddCommentInput = typeof JiraAddCommentInput.Type;
+
+/** Take a transition as the caller, with their personal token, if the issue still offers it. */
+export const JiraTransitionIssueInput = Schema.Struct({
+  ...JiraIssueKey.fields,
+  transitionId: TrimmedNonEmptyString.check(Schema.isMaxLength(40)),
+});
+export type JiraTransitionIssueInput = typeof JiraTransitionIssueInput.Type;
