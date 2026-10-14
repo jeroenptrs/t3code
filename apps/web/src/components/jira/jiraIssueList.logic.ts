@@ -4,9 +4,12 @@
  */
 import type {
   BranchNamingOptions,
+  JiraCapabilities,
+  JiraPersonalCredential,
   JiraFilterView,
   JiraIssueSummary,
   JiraSearchResult,
+  JiraSprintState,
   JiraStatusCategory,
 } from "@t3tools/contracts";
 import { formatGeneratedBranchName } from "@t3tools/shared/git";
@@ -62,15 +65,39 @@ export function sortJiraFilterViews(
   );
 }
 
-export type JiraIssueFacetKey = "assignee" | "priority" | "issueType";
+/**
+ * The caller's personal token, only when reads of `site` go out as them. The server uses it on the
+ * credential's own site and reads every other site as the reader.
+ */
+export function personalCredentialForSite(
+  capabilities: Pick<JiraCapabilities, "personalCredential">,
+  site: string | null | undefined,
+): JiraPersonalCredential | null {
+  const credential = capabilities.personalCredential;
+  return credential !== null && site != null && credential.site.toLowerCase() === site.toLowerCase()
+    ? credential
+    : null;
+}
 
-/** The value an issue without an assignee, priority or type carries; no real one is empty. */
+export type JiraIssueFacetKey = "assignee" | "priority" | "issueType" | "sprint" | "status";
+
+const FACET_KEYS: ReadonlyArray<JiraIssueFacetKey> = [
+  "assignee",
+  "priority",
+  "issueType",
+  "sprint",
+  "status",
+];
+
+/** The value an issue without an assignee, priority, type or sprint carries; no real one is empty. */
 export const JIRA_FACET_NONE = "";
 
 const NONE_LABEL: Record<JiraIssueFacetKey, string> = {
   assignee: "Unassigned",
   priority: "No priority",
   issueType: "No type",
+  sprint: "No sprint",
+  status: "No status",
 };
 
 export interface JiraIssueFacetOption {
@@ -87,51 +114,101 @@ export const EMPTY_JIRA_FACET_SELECTION: JiraIssueFacetSelection = {
   assignee: [],
   priority: [],
   issueType: [],
+  sprint: [],
+  status: [],
 };
 
-function facetEntry(
-  issue: JiraIssueSummary,
-  key: JiraIssueFacetKey,
-): { value: string; label: string; avatarUrl: string | null } {
+const SPRINT_STATE_RANK: Record<JiraSprintState, number> = { active: 0, future: 1, closed: 2 };
+
+interface FacetEntry {
+  readonly value: string;
+  readonly label: string;
+  readonly avatarUrl: string | null;
+  /** Where a value sorts among its kind, for facets that run in a fixed order instead of by count. */
+  readonly rank?: number;
+}
+
+/** What an issue offers a facet. Only sprint can offer several: an issue may sit in more than one. */
+function facetEntries(issue: JiraIssueSummary, key: JiraIssueFacetKey): ReadonlyArray<FacetEntry> {
   switch (key) {
     case "assignee":
-      return issue.assignee === null
-        ? { value: JIRA_FACET_NONE, label: NONE_LABEL.assignee, avatarUrl: null }
-        : {
-            value: issue.assignee.accountId,
-            label: issue.assignee.displayName,
-            avatarUrl: issue.assignee.avatarUrl,
-          };
+      return [
+        issue.assignee === null
+          ? { value: JIRA_FACET_NONE, label: NONE_LABEL.assignee, avatarUrl: null }
+          : {
+              value: issue.assignee.accountId,
+              label: issue.assignee.displayName,
+              avatarUrl: issue.assignee.avatarUrl,
+            },
+      ];
     case "priority":
-      return {
-        value: issue.priority ?? JIRA_FACET_NONE,
-        label: issue.priority ?? NONE_LABEL.priority,
-        avatarUrl: null,
-      };
+      return [
+        {
+          value: issue.priority ?? JIRA_FACET_NONE,
+          label: issue.priority ?? NONE_LABEL.priority,
+          avatarUrl: null,
+        },
+      ];
     case "issueType":
-      return {
-        value: issue.issueType ?? JIRA_FACET_NONE,
-        label: issue.issueType ?? NONE_LABEL.issueType,
-        avatarUrl: null,
-      };
+      return [
+        {
+          value: issue.issueType ?? JIRA_FACET_NONE,
+          label: issue.issueType ?? NONE_LABEL.issueType,
+          avatarUrl: null,
+        },
+      ];
+    case "sprint":
+      return issue.sprints.length === 0
+        ? [{ value: JIRA_FACET_NONE, label: NONE_LABEL.sprint, avatarUrl: null }]
+        : issue.sprints.map((sprint) => ({
+            value: String(sprint.id),
+            label: sprint.name,
+            avatarUrl: null,
+            rank: SPRINT_STATE_RANK[sprint.state],
+          }));
+    case "status":
+      return [
+        {
+          value: issue.status,
+          label: issue.status,
+          avatarUrl: null,
+          rank: JIRA_STATUS_CATEGORY_ORDER.indexOf(issue.statusCategory),
+        },
+      ];
   }
 }
 
+function compareByName(left: string, right: string): number {
+  return left.localeCompare(right, undefined, { sensitivity: "base" });
+}
+
 /**
- * The choices each facet offers over the loaded rows, most common first and "none" last. A value
- * still selected but no longer among the rows stays listed with a zero count, so it can be cleared.
+ * The choices each facet offers over the loaded rows, most common first and "none" last; sprints
+ * run active, future, closed, then by name, and statuses by category then name. A value still selected but no longer among the rows
+ * stays listed with a zero count, so it can be cleared.
  */
 export function collectJiraIssueFacets(
   issues: ReadonlyArray<JiraIssueSummary>,
   selection: JiraIssueFacetSelection = EMPTY_JIRA_FACET_SELECTION,
 ): JiraIssueFacets {
   const collect = (key: JiraIssueFacetKey): ReadonlyArray<JiraIssueFacetOption> => {
-    const byValue = new Map<string, { label: string; avatarUrl: string | null; count: number }>();
+    const byValue = new Map<
+      string,
+      { label: string; avatarUrl: string | null; count: number; rank?: number }
+    >();
     for (const issue of issues) {
-      const entry = facetEntry(issue, key);
-      const current = byValue.get(entry.value);
-      if (current) current.count += 1;
-      else byValue.set(entry.value, { label: entry.label, avatarUrl: entry.avatarUrl, count: 1 });
+      for (const entry of facetEntries(issue, key)) {
+        const current = byValue.get(entry.value);
+        if (current) current.count += 1;
+        else {
+          byValue.set(entry.value, {
+            label: entry.label,
+            avatarUrl: entry.avatarUrl,
+            count: 1,
+            ...(entry.rank === undefined ? {} : { rank: entry.rank }),
+          });
+        }
+      }
     }
     for (const value of selection[key]) {
       if (!byValue.has(value)) {
@@ -144,32 +221,46 @@ export function collectJiraIssueFacets(
     }
     return [...byValue.entries()]
       .map(([value, entry]) => ({ value, ...entry }))
-      .toSorted(
-        (left, right) =>
-          Number(left.value === JIRA_FACET_NONE) - Number(right.value === JIRA_FACET_NONE) ||
-          right.count - left.count ||
-          left.label.localeCompare(right.label, undefined, { sensitivity: "base" }),
-      );
+      .toSorted((left, right) => {
+        const none =
+          Number(left.value === JIRA_FACET_NONE) - Number(right.value === JIRA_FACET_NONE);
+        if (none !== 0) return none;
+        if (key === "sprint" || key === "status") {
+          return (
+            (left.rank ?? Infinity) - (right.rank ?? Infinity) ||
+            compareByName(left.label, right.label)
+          );
+        }
+        return right.count - left.count || compareByName(left.label, right.label);
+      })
+      .map(({ value, label, count, avatarUrl }) => ({ value, label, count, avatarUrl }));
   };
   return {
     assignee: collect("assignee"),
     priority: collect("priority"),
     issueType: collect("issueType"),
+    sprint: collect("sprint"),
+    status: collect("status"),
   };
 }
 
-/** Values within a facet are alternatives; facets narrow each other. An empty facet is off. */
+/**
+ * Values within a facet are alternatives (an issue in several sprints matches any of them); facets
+ * narrow each other. An empty facet is off.
+ */
 export function matchesJiraIssueFacets(
   issue: JiraIssueSummary,
   selection: JiraIssueFacetSelection,
 ): boolean {
-  return (["assignee", "priority", "issueType"] as const).every(
-    (key) => selection[key].length === 0 || selection[key].includes(facetEntry(issue, key).value),
+  return FACET_KEYS.every(
+    (key) =>
+      selection[key].length === 0 ||
+      facetEntries(issue, key).some((entry) => selection[key].includes(entry.value)),
   );
 }
 
 export function countJiraFacetSelection(selection: JiraIssueFacetSelection): number {
-  return selection.assignee.length + selection.priority.length + selection.issueType.length;
+  return FACET_KEYS.reduce((total, key) => total + selection[key].length, 0);
 }
 
 /**
@@ -201,10 +292,9 @@ export function availableBranchName(name: string, takenBranchNames: ReadonlySet<
 
 /**
  * The composer text for a thread started from an issue: `KEY: summary`, the description, the
- * browse URL, then the proposed branch. The draft carries the branch for a new worktree on its
- * own; the line in the text is the hint for a thread that runs in the project checkout, where
- * nothing else names the branch, and where the user can edit it and the server's branch naming
- * reads it.
+ * browse URL, then the proposed branch. A new worktree's branch rides on the draft itself (shown
+ * and clearable in the branch toolbar); the last line is only a hint for a thread that runs in the
+ * project checkout, where nothing else names the branch. It does not create or switch anything.
  */
 export function jiraIssueThreadPrompt(
   issue: Pick<JiraIssueSummary, "key" | "summary" | "url"> & {
@@ -217,7 +307,7 @@ export function jiraIssueThreadPrompt(
     `${issue.key}: ${issue.summary}`,
     ...(description.length > 0 ? [description] : []),
     issue.url,
-    ...(branch === null ? [] : [`Branch: \`${branch}\``]),
+    ...(branch === null ? [] : [`Suggested branch if this thread runs locally: \`${branch}\``]),
   ].join("\n\n");
 }
 
