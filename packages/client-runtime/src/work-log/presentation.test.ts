@@ -265,3 +265,53 @@ describe("Jira issue tool presentation", () => {
   });
 });
 
+describe("Jira proposal tool presentation", () => {
+  const proposal = (tool: string, args: unknown): WorkLogPresentationEntry => ({
+    id: tool,
+    createdAt: "2026-10-14T00:00:00.000Z",
+    label: `T3-code · ${tool}`,
+    tone: "tool",
+    itemType: "dynamic_tool",
+    toolLifecycleStatus: "completed",
+    toolSource: { key: "t3-code", name: "T3 Code", kind: "integration" },
+    toolData: { server: "t3-code", tool, arguments: args },
+  });
+  const drafts = (count: number) => ({
+    issues: Array.from({ length: count }, (_, index) => ({ summary: `Draft ${index}` })),
+  });
+
+  it("counts the drafts a proposal carries", () => {
+    expect(
+      resolveWorkEntryToolPresentation(proposal("propose_jira_issues", drafts(3))),
+    ).toMatchObject({ displayName: "Proposed 3 Jira issues", icon: "jira" });
+    expect(
+      resolveWorkEntryToolPresentation(proposal("propose_jira_issues", drafts(1)))?.displayName,
+    ).toBe("Proposed a Jira issue");
+    expect(
+      resolveWorkEntryToolPresentation({ label: "mcp__t3-code__propose_jira_issues" })?.displayName,
+    ).toBe("Proposing Jira issues");
+    expect(
+      resolveWorkEntryToolPresentation(
+        proposal("propose_jira_comment", { key: "ABC-1", body: "Done" }),
+      ),
+    ).toMatchObject({ displayName: "Proposed a Jira comment", icon: "jira" });
+    expect(
+      resolveWorkEntryToolPresentation(proposal("propose_jira_transition", { key: "ABC-1" }))
+        ?.displayName,
+    ).toBe("Proposed a Jira transition");
+  });
+
+  it("summarizes proposals by what they ask for", () => {
+    const issues = proposal("propose_jira_issues", drafts(2));
+    const comment = proposal("propose_jira_comment", { key: "ABC-1", body: "Done" });
+    const transition = proposal("propose_jira_transition", { key: "ABC-1" });
+    expect(summarizeToolGroup([issues, { ...issues, toolData: undefined }]).summary).toBe(
+      "Proposed 3 Jira issues",
+    );
+    expect(summarizeToolGroup([comment, transition]).summary).toBe(
+      "Proposed 1 Jira comment and proposed 1 Jira transition",
+    );
+    expect(toolGroupSummaryKind([issues, comment, transition])).toBe("jira");
+  });
+});
+
