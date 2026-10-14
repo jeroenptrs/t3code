@@ -1,7 +1,8 @@
 /**
- * Fork-only Jira read side. Every read goes through the server's reader identity; thread shells
- * carry only each linked issue's key, summary and status category, so lists render from those and
- * the detail query runs only where an issue is actually opened.
+ * Fork-only Jira client state. Reads go through the server's reader identity, or the caller's
+ * personal token on its site; thread shells carry only each linked issue's key, summary and status
+ * category, so lists render from those and the detail query runs only where an issue is actually
+ * opened. A client writes to Jira only by approving an agent's proposal.
  */
 import {
   JIRA_ISSUE_KEY_PATTERN,
@@ -89,6 +90,13 @@ export function createJiraEnvironmentAtoms<R, E>(
         issueSkips.take(input) ? { ...input, refresh: true } : input,
       ).pipe(Effect.catchTags({ EnvironmentAuthorizationError: Effect.die })),
   });
+  const refreshIssue = (
+    registry: AtomRegistry.AtomRegistry,
+    target: Parameters<typeof issue>[0],
+  ) => {
+    issueSkips.mark(target.input);
+    registry.refresh(issue(target));
+  };
   return {
     capabilities: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:jira:capabilities",
@@ -118,10 +126,36 @@ export function createJiraEnvironmentAtoms<R, E>(
     },
     issue,
     /** Re-reads an issue past the server's cache, for an explicit refresh. */
-    refreshIssue: (registry: AtomRegistry.AtomRegistry, target: Parameters<typeof issue>[0]) => {
-      issueSkips.mark(target.input);
-      registry.refresh(issue(target));
-    },
+    refreshIssue,
+    /** Issue types and sprints a proposal card offers for drafts in one project. */
+    createMeta: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:jira:create-meta",
+      tag: WS_METHODS.jiraCreateMeta,
+      staleTimeMs: 5 * 60_000,
+      refreshTrigger,
+    }),
+    /**
+     * Approves or rejects a proposal. Approval waits for the Jira write, so one decision per
+     * proposal is in flight; the issues it touched are re-read where they are shown.
+     */
+    decideProposal: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:jira:decide-proposal",
+      tag: WS_METHODS.jiraDecideProposal,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.proposalId]),
+      },
+      onSuccess: ({ environmentId }, registry, decision) =>
+        Effect.sync(() => {
+          for (const touched of decision.result?.issues ?? []) {
+            refreshIssue(registry, {
+              environmentId,
+              input: { site: touched.site, key: touched.key },
+            });
+          }
+        }),
+    }),
     /**
      * The caller's own token. Setting or clearing re-reads capabilities and every cached read,
      * because reads now go out as a different identity; testing re-reads capabilities only.
