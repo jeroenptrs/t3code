@@ -164,8 +164,20 @@ in its message.
 
 ## Agents that write to Jira
 
-T3 Code's own connection is read-only. An agent that should comment on or transition
-issues uses the `jtk` CLI with its own credentials. Set `JIRA_*` environment
-variables on the provider instance's environment in provider settings. Those
-credentials are separate from the ones above, so the agent's write access does not
-depend on the reader identity.
+An agent can propose creating issues, posting a comment, or moving an issue to
+another status. The proposal appears as a card in the thread, and the thread shows
+as waiting for you. You can edit the proposal, then approve or reject it. Nothing is
+written until someone approves, whatever the thread's access mode, and the card
+stays open after the agent's turn ends or the thread is stopped.
+
+An approval writes to Jira with the approver's own personal token, so Jira records
+the change as theirs. Add yours in Settings → Account before approving. T3 Code never
+makes an approved change with a shared account. If an approval fails partway, for
+example after creating some of the issues, approving again writes only what is
+missing. A transition is checked again when you approve, and is refused if the
+issue no longer offers it.
+
+An agent that should change Jira as itself uses the `jtk` CLI with its own
+credentials. Set `JIRA_*` environment variables on the provider instance's
+environment in provider settings. Those credentials are separate from the ones
+above, so the agent's write access does not depend on the reader identity.
