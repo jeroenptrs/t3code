@@ -3,6 +3,8 @@ import {
   JiraError,
   type AuthUserId,
   type JiraCapabilities,
+  type JiraCreateMeta,
+  type JiraCreateMetaInput,
   type JiraFilterInput,
   type JiraFiltersInput,
   type JiraFiltersResult,
@@ -15,6 +17,7 @@ import {
   type JiraLinkedThread,
   type JiraSearchInput,
   type JiraSearchResult,
+  type JiraSprint,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -55,6 +58,8 @@ const BULK_FETCH_CHUNK = 100;
 const COMMENT_LIMIT = 50;
 const FILTER_SEARCH_LIMIT = 50;
 const DETAIL_FIELDS = ["description", "reporter", "created"];
+/** Issues read to find a project's open sprints; scoped tokens cannot list sprints directly. */
+const SPRINT_SEARCH_LIMIT = 100;
 
 export class JiraService extends Context.Service<
   JiraService,
@@ -94,6 +99,16 @@ export class JiraService extends Context.Service<
     readonly pullRequestsForIssue: (
       input: JiraIssueKey,
     ) => Effect.Effect<ReadonlyArray<JiraLinkedPullRequest>, JiraError>;
+    /**
+     * What a proposal card offers when editing a draft in one project: the issue types the
+     * caller may create, and the active and future sprints found on the project's issues.
+     */
+    readonly createMeta: (
+      input: JiraCreateMetaInput,
+      options?: JiraRequestOptions,
+    ) => Effect.Effect<JiraCreateMeta, JiraError>;
+    /** The site's sprint and story point field ids as `identity` sees them. */
+    readonly fieldIds: (identity: JiraServerIdentity) => Effect.Effect<JiraFieldIds, JiraError>;
   }
 >()("t3/jira/JiraService") {}
 
@@ -406,6 +421,56 @@ const make = Effect.gen(function* () {
     return chunks.flat();
   });
 
+  const createMeta: JiraService["Service"]["createMeta"] = Effect.fn("JiraService.createMeta")(
+    function* (input, options) {
+      yield* annotateActingUser(options);
+      const identity = yield* readIdentity(input.site, options);
+      return yield* cache
+        .get(
+          "createMeta",
+          cacheKey(identity, input.projectKey),
+          Effect.gen(function* () {
+            const ids = yield* fieldIds(identity);
+            const [issueTypes, sprints] = yield* Effect.all(
+              [
+                api.createMetaIssueTypes(identity, input.projectKey),
+                ids.sprint === null
+                  ? Effect.succeed([])
+                  : api
+                      .searchJql(identity, {
+                        jql: `project = "${input.projectKey}" AND (sprint in openSprints() OR sprint in futureSprints())`,
+                        fields: [ids.sprint],
+                        maxResults: SPRINT_SEARCH_LIMIT,
+                      })
+                      .pipe(
+                        Effect.map((page) =>
+                          (page.issues ?? []).flatMap(
+                            (issue) =>
+                              toIssueSummary(issue, { site: identity.site, fieldIds: ids }).sprints,
+                          ),
+                        ),
+                      ),
+              ],
+              { concurrency: "unbounded" },
+            );
+            const openSprints = new Map<number, JiraSprint>();
+            for (const sprint of sprints) {
+              if (sprint.state !== "closed") openSprints.set(sprint.id, sprint);
+            }
+            return {
+              issueTypes: issueTypes.map((type) => ({
+                id: type.id,
+                name: type.untranslatedName ?? type.name,
+                subtask: type.subtask ?? false,
+              })),
+              sprints: [...openSprints.values()],
+            };
+          }),
+        )
+        .pipe(asIdentity(identity));
+    },
+  );
+
   return JiraService.of({
     capabilities,
     filters,
@@ -415,6 +480,8 @@ const make = Effect.gen(function* () {
     issuesByKeys,
     linkedThreads,
     pullRequestsForIssue,
+    createMeta,
+    fieldIds,
   });
 });
 

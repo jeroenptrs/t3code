@@ -1,6 +1,11 @@
 import {
   IsoDateTime,
+  JiraCommentProposal,
+  JiraError,
+  JiraIssueDraft,
   JiraIssueKeyString,
+  JiraProposalResult,
+  JiraProposalStatus,
   JiraStatusCategory,
   OrchestratorMcpFailure,
   ThreadId,
@@ -11,6 +16,10 @@ import * as Schema from "effect/Schema";
 import * as Tool from "effect/ai/Tool";
 import * as Toolkit from "effect/ai/Toolkit";
 
+import {
+  JiraProposalRecordError,
+  JiraProposalRunInactiveError,
+} from "../../../jira/JiraProposals.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -22,7 +31,7 @@ const dependencies = [
 ];
 
 const RECORD_ONLY =
-  "This only records the link in T3 Code. Change the issue itself (comment, transition, edit) with jtk, which acts as your own Jira identity.";
+  "This only records the link in T3 Code. To change the issue on the user's behalf, propose it with propose_jira_comment or propose_jira_transition; change it with jtk only when the user wants you to act as your own Jira identity.";
 
 export const JiraIssueTargetInput = Schema.Struct({
   key: JiraIssueKeyString.annotate({ description: "Issue key, for example ABC-123." }),
@@ -208,8 +217,142 @@ const ListThreadJiraIssuesTool = Tool.make("list_thread_jira_issues", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const PROPOSAL_RULES =
+  "The user reviews it in T3 Code, may edit it, and approves or rejects it; it is never applied automatically. Once approved, the user's own Jira account makes the change, not yours. Do not also make the same change with jtk. When the result is still pending the card stays open for the user, so do not propose it again; tell the user it is waiting for them.";
+
+const ProposalSite = Schema.optional(
+  TrimmedNonEmptyString.annotate({
+    description:
+      "Jira site host, for example acme.atlassian.net. Defaults to the site T3 Code reads Jira from.",
+  }),
+);
+
+const ProposalWait = {
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60 * 60 * 1_000 })),
+  ).annotate({
+    description:
+      "How long to wait for the user's decision. Default 10 minutes. The card stays open after it.",
+  }),
+  clientRequestId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))).annotate({
+    description:
+      "Reuse when retrying a call that lost its result, so the user sees one card and its outcome is returned again.",
+  }),
+};
+
+const IssueDraftInput = Schema.Struct({
+  projectKey: JiraIssueDraft.fields.projectKey.annotate({ description: "Project key, e.g. ABC." }),
+  issueType: JiraIssueDraft.fields.issueType.annotate({
+    description: "Issue type name as the project names it, e.g. Story, Task, Bug or Sub-task.",
+  }),
+  summary: JiraIssueDraft.fields.summary,
+  description: Schema.optional(JiraIssueDraft.fields.description).annotate({
+    description: "Markdown.",
+  }),
+  parentKey: Schema.optional(JiraIssueDraft.fields.parentKey).annotate({
+    description: "Epic or parent issue key; Jira requires one for a sub-task.",
+  }),
+  labels: Schema.optional(JiraIssueDraft.fields.labels),
+  storyPoints: Schema.optional(JiraIssueDraft.fields.storyPoints),
+  sprintId: Schema.optional(JiraIssueDraft.fields.sprintId).annotate({
+    description: "Numeric sprint id.",
+  }),
+  assigneeAccountId: Schema.optional(JiraIssueDraft.fields.assigneeAccountId).annotate({
+    description: "Jira account id of the assignee.",
+  }),
+});
+
+const ProposeJiraIssuesInput = Schema.Struct({
+  site: ProposalSite,
+  issues: Schema.Array(IssueDraftInput).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
+  ...ProposalWait,
+});
+
+const ProposeJiraCommentInput = Schema.Struct({
+  key: JiraIssueKeyString.annotate({ description: "Issue key, for example ABC-123." }),
+  site: ProposalSite,
+  body: JiraCommentProposal.fields.body.annotate({ description: "The comment, in Markdown." }),
+  ...ProposalWait,
+});
+
+const ProposeJiraTransitionInput = Schema.Struct({
+  key: JiraIssueKeyString.annotate({ description: "Issue key, for example ABC-123." }),
+  site: ProposalSite,
+  transition: TrimmedNonEmptyString.check(Schema.isMaxLength(255)).annotate({
+    description:
+      "The transition's name or id, or the name of the status it leads to, e.g. 'In Review'. An unknown one fails with the issue's available transitions.",
+  }),
+  comment: Schema.optional(Schema.NullOr(JiraCommentProposal.fields.body)).annotate({
+    description: "Markdown comment posted after the transition.",
+  }),
+  ...ProposalWait,
+});
+
+export const JiraProposalToolResult = Schema.Struct({
+  proposalId: Schema.String,
+  status: JiraProposalStatus.annotate({
+    description:
+      "pending: waiting for the user, the card stays open. approved: the user approved it and it is being written. applied: done. rejected: the user declined. failed: error says why; the user may approve it again.",
+  }),
+  issues: Schema.optional(JiraProposalResult.fields.issues).annotate({
+    description: "Issues written: the created ones, or the issue commented on or moved.",
+  }),
+  error: Schema.optional(Schema.String),
+});
+export type JiraProposalToolResult = typeof JiraProposalToolResult.Type;
+
+const JiraProposalToolError = Schema.Union([
+  OrchestratorMcpFailure,
+  JiraError,
+  JiraProposalRunInactiveError,
+  JiraProposalRecordError,
+]);
+
+const proposalTool = <Name extends string, Parameters extends Schema.Top>(
+  name: Name,
+  title: string,
+  description: string,
+  parameters: Parameters,
+) =>
+  Tool.make(name, {
+    description: `${description} ${PROPOSAL_RULES}`,
+    parameters,
+    success: JiraProposalToolResult,
+    failure: JiraProposalToolError,
+    dependencies,
+  })
+    .annotate(Tool.Title, title)
+    .annotate(Tool.Readonly, false)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, true);
+
+const ProposeJiraIssuesTool = proposalTool(
+  "propose_jira_issues",
+  "Propose Jira issues",
+  "Propose creating Jira issues for the user, shown as a card in this thread, and wait for their decision. Use it when the user wants issues created on their behalf.",
+  ProposeJiraIssuesInput,
+);
+
+const ProposeJiraCommentTool = proposalTool(
+  "propose_jira_comment",
+  "Propose a Jira comment",
+  "Propose posting a comment on a Jira issue for the user, shown as a card in this thread, and wait for their decision. Use it when the user wants a comment posted on their behalf.",
+  ProposeJiraCommentInput,
+);
+
+const ProposeJiraTransitionTool = proposalTool(
+  "propose_jira_transition",
+  "Propose moving a Jira issue",
+  "Propose moving a Jira issue through its workflow (a transition), optionally with a comment, for the user, shown as a card in this thread, and wait for their decision. Use it when the user wants an issue moved on their behalf.",
+  ProposeJiraTransitionInput,
+);
+
 export const JiraIssuesToolkit = Toolkit.make(
   LinkJiraIssueTool,
   UnlinkJiraIssueTool,
   ListThreadJiraIssuesTool,
+  ProposeJiraIssuesTool,
+  ProposeJiraCommentTool,
+  ProposeJiraTransitionTool,
 );
