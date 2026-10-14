@@ -53,13 +53,13 @@ function snapshotCurrent(
  * Keeps the summary and status category on every thread's Jira links current. A sweep every two
  * minutes reads the visible links of active threads in one query, asks Jira once per site for
  * all of their keys, and records only the snapshots that changed. A new link is read right away.
- * Issues the reader cannot see keep their old snapshot, or none. Does nothing while Jira is
- * unconfigured.
+ * Issues the reader cannot see keep their old snapshot, or none.
  *
  * The same read drives watches. A watched issue whose `updated` moved has its newest comments
  * read, once per issue however many threads watch it, and each watch records what it saw and
- * wakes its agent on a change. A watched issue the reader no longer sees ends its watches.
- * Everything is read as the site's service identity.
+ * wakes its agent on a change. A watched issue the reader no longer sees ends its watches, and
+ * so does a watch on a site with no identity, which is never read. Everything is read as the
+ * site's service identity. Without Jira configured, one pass at start ends any watches left.
  */
 export class JiraIssueSyncReactor extends Context.Service<
   JiraIssueSyncReactor,
@@ -254,12 +254,19 @@ const make = Effect.gen(function* () {
     const rows = yield* listActiveThreadJiraIssueLinks().pipe(
       Effect.provideService(SqlClient.SqlClient, sql),
     );
+    const relevant =
+      wanted === null ? rows : rows.filter((row) => wanted.has(linkId(row.site, row.key)));
+    // Nothing reads a site without an identity, so its watches would keep the thread working.
+    yield* Effect.forEach(
+      relevant,
+      (row) =>
+        row.watch !== null && !configuredSites.has(row.site)
+          ? recordWatch(row, row.watch, null)
+          : Effect.void,
+      { discard: true },
+    );
     const bySite = Map.groupBy(
-      rows.filter(
-        (row) =>
-          configuredSites.has(row.site) &&
-          (wanted === null || wanted.has(linkId(row.site, row.key))),
-      ),
+      relevant.filter((row) => configuredSites.has(row.site)),
       (row) => row.site,
     );
     if (wanted === null) {
@@ -283,9 +290,9 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  const sweep: JiraIssueSyncReactor["Service"]["sweep"] = identities.configured
-    ? worker.enqueue("all").pipe(Effect.andThen(worker.drain))
-    : Effect.void;
+  const sweep: JiraIssueSyncReactor["Service"]["sweep"] = worker
+    .enqueue("all")
+    .pipe(Effect.andThen(worker.drain));
 
   const processEvent = (event: OrchestrationV2DomainEvent) => {
     if (event.type !== "thread.jira-issues-synced") return Effect.void;
@@ -302,7 +309,8 @@ const make = Effect.gen(function* () {
 
   const start: JiraIssueSyncReactor["Service"]["start"] = Effect.fn("JiraIssueSyncReactor.start")(
     function* () {
-      if (!identities.configured) return;
+      // Configuration is fixed for the process, so one pass ends what an earlier one left.
+      if (!identities.configured) return yield* forkParked(sweep);
       yield* forkParked(
         Stream.runForEach(orchestrator.streamDomainEvents, processEvent).pipe(
           Effect.catchCauseIf(
