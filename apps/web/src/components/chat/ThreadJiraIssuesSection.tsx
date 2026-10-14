@@ -112,6 +112,7 @@ export function ThreadJiraIssuesSection(props: {
             const id = jiraIssueKeyOf(link);
             const category = link.snapshot?.statusCategory ?? null;
             const watching = link.watch !== undefined;
+            const watchControl = linking.watchControl(link.site, watching);
             return (
               <li key={id} className="flex min-w-0 items-center gap-0.5">
                 <Tooltip>
@@ -162,7 +163,25 @@ export function ThreadJiraIssuesSection(props: {
                   />
                   <TooltipPopup>Open in Jira</TooltipPopup>
                 </Tooltip>
-                {watching || linking.canWatch ? (
+                {watchControl === "indicator" ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          role="img"
+                          tabIndex={0}
+                          aria-label={`Watching ${link.key}`}
+                          className="flex size-6 shrink-0 items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                        />
+                      }
+                    >
+                      <EyeIcon aria-hidden className="size-3.5" />
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">
+                      Watching: the agent wakes on new comments, status and assignee changes
+                    </TooltipPopup>
+                  </Tooltip>
+                ) : watchControl !== "none" ? (
                   <Tooltip>
                     <TooltipTrigger
                       render={
