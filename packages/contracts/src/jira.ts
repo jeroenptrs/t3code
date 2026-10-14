@@ -188,6 +188,34 @@ export const JiraFilterView = Schema.Struct({
 export type JiraFilterView = typeof JiraFilterView.Type;
 
 /**
+ * A portal user's own Jira token as clients may see it: never the token or the email. While one
+ * is stored, that user's UI reads go out as them instead of the reader identity, and writes they
+ * approve use it. Background work and agents never use it.
+ */
+export const JiraPersonalCredential = Schema.Struct({
+  site: TrimmedNonEmptyString,
+  /** The Jira account the token belongs to; null when it has never verified. */
+  account: Schema.NullOr(JiraUser),
+  createdAt: IsoDateTime,
+  lastVerifiedAt: Schema.NullOr(IsoDateTime),
+  /** Why Jira refused the token the last time it was used; null when it worked. */
+  error: Schema.NullOr(Schema.String),
+});
+export type JiraPersonalCredential = typeof JiraPersonalCredential.Type;
+
+/**
+ * Store or replace the caller's personal token. Personal tokens always authenticate as email plus
+ * token, which covers both a scoped and a classic Atlassian API token.
+ */
+export const JiraPersonalTokenSetInput = Schema.Struct({
+  /** One of the server's configured sites; defaults to the reader's. */
+  site: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
+  email: TrimmedNonEmptyString.check(Schema.isMaxLength(320)),
+  token: TrimmedNonEmptyString.check(Schema.isMaxLength(2000)),
+});
+export type JiraPersonalTokenSetInput = typeof JiraPersonalTokenSetInput.Type;
+
+/**
  * What the server can do with Jira, as data the UI gates on. `configured` false means no identity
  * is set up and every Jira surface should explain how to configure one instead.
  */
@@ -199,6 +227,13 @@ export const JiraCapabilities = Schema.Struct({
   viewer: Schema.NullOr(JiraUser),
   /** Why the reader cannot read right now, such as a rejected token; null when it can. */
   readerError: Schema.NullOr(Schema.String),
+  /**
+   * The caller may store a personal token: Jira is configured and the session belongs to a portal
+   * user signed in through Entra.
+   */
+  personalTokens: Schema.Boolean,
+  /** The caller's stored personal token; null when they have none. */
+  personalCredential: Schema.NullOr(JiraPersonalCredential),
 });
 export type JiraCapabilities = typeof JiraCapabilities.Type;
 
