@@ -213,6 +213,12 @@ export class JiraApi extends Context.Service<
       identity: JiraServerIdentity,
       fields: Readonly<Record<string, unknown>>,
     ) => Effect.Effect<JiraRawCreatedIssue, JiraError>;
+    /** `PUT /rest/api/3/issue/{key}`, setting `fields`, custom field ids included. */
+    readonly editIssue: (
+      identity: JiraServerIdentity,
+      key: string,
+      fields: Readonly<Record<string, unknown>>,
+    ) => Effect.Effect<void, JiraError>;
     /** `POST /rest/api/3/issue/{key}/comment` with an Atlassian Document Format body. */
     readonly addComment: (
       identity: JiraServerIdentity,
@@ -504,6 +510,15 @@ const make = Effect.gen(function* () {
         ),
         decodeRawCreatedIssue,
       ).pipe(Effect.withSpan("JiraApi.createIssue")),
+    editIssue: (identity, key, fields) =>
+      // Jira answers 204 with no body.
+      send(
+        identity,
+        HttpClientRequest.put(`/rest/api/3/issue/${encodeURIComponent(key)}`).pipe(
+          HttpClientRequest.bodyJsonUnsafe({ fields }),
+        ),
+        () => Effect.void,
+      ).pipe(Effect.withSpan("JiraApi.editIssue")),
     addComment: (identity, key, body) =>
       read(
         identity,
