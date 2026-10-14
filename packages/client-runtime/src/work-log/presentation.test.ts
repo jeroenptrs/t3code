@@ -1094,6 +1094,51 @@ describe("Jira proposal tool presentation", () => {
   });
 });
 
+describe("Jira watch tool presentation", () => {
+  const watchCall = (
+    tool: string,
+    status: "inProgress" | "completed" | "failed",
+    args: unknown = { key: "abc-1" },
+  ): WorkLogPresentationEntry => ({
+    id: `${tool}-${status}`,
+    createdAt: "2026-10-14T00:00:00.000Z",
+    label: `T3-code · ${tool}`,
+    tone: "tool",
+    itemType: "dynamic_tool",
+    toolLifecycleStatus: status,
+    toolSource: { key: "t3-code", name: "T3 Code", kind: "integration" },
+    toolData: { server: "t3-code", tool, arguments: args },
+  });
+
+  it("names the issue and the jira icon", () => {
+    expect(
+      resolveWorkEntryToolPresentation(watchCall("watch_jira_issue", "completed")),
+    ).toMatchObject({ displayName: "Watched ABC-1", icon: "jira" });
+    expect(
+      resolveWorkEntryToolPresentation(watchCall("unwatch_jira_issue", "completed")),
+    ).toMatchObject({ displayName: "Stopped watching ABC-1", icon: "jira" });
+    expect(
+      resolveWorkEntryToolPresentation(watchCall("watch_jira_issue", "inProgress"))?.displayName,
+    ).toBe("Watching ABC-1");
+    expect(
+      resolveWorkEntryToolPresentation(watchCall("watch_jira_issue", "failed"))?.displayName,
+    ).toBe("Failed to watch ABC-1");
+    expect(
+      resolveWorkEntryToolPresentation(watchCall("watch_jira_issue", "completed", {}))?.displayName,
+    ).toBe("Watched a Jira issue");
+  });
+
+  it("summarizes watches by count", () => {
+    const watch = watchCall("watch_jira_issue", "completed");
+    const unwatch = watchCall("unwatch_jira_issue", "completed");
+    expect(summarizeToolGroup([watch, { ...watch, id: "second" }]).summary).toBe(
+      "Watched 2 Jira issues",
+    );
+    expect(summarizeToolGroup([unwatch]).summary).toBe("Stopped watching 1 Jira issue");
+    expect(toolGroupSummaryKind([watch, unwatch])).toBe("jira");
+  });
+});
+
 describe("device group summaries", () => {
   const deviceEntry = (tool: string): WorkLogPresentationEntry => ({
     id: tool,
