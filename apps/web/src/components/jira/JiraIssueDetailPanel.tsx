@@ -1,8 +1,14 @@
 /**
- * A Jira issue beside a thread, read lazily through the environment's reader identity. Read only:
- * transitions, comments and assignment stay in Jira for now.
+ * A Jira issue beside a thread, read lazily through the environment's reader identity, or the
+ * signed-in user's own token on their site. A user with a token for the issue's site can also
+ * comment and move the issue as themselves; assignment stays in Jira for now.
  */
+import { useAtomValue } from "@effect/atom-react";
 import { jiraIssueUrl } from "@t3tools/client-runtime/state/jira";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
   JiraIssueDetail,
@@ -11,8 +17,8 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ExternalLinkIcon } from "lucide-react";
-import type { MouseEvent, ReactNode } from "react";
+import { ChevronDownIcon, ExternalLinkIcon } from "lucide-react";
+import { useRef, useState, type MouseEvent, type ReactNode } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
@@ -20,6 +26,7 @@ import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { jiraEnvironment, jiraFailureReason, useJiraCapabilities } from "~/state/jira";
 import { useEnvironmentQuery } from "~/state/query";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import ChatMarkdown from "../ChatMarkdown";
@@ -27,10 +34,14 @@ import { JiraIcon } from "../Icons";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { RefreshIcon } from "../ui/refresh-icon";
+import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { personalCredentialForSite } from "./jiraIssueList.logic";
-import { JiraConfigurationSteps, JiraStatusBadge } from "./jiraPresentation";
+import { jiraCommentToPost, jiraIssueWriteAccess } from "./jiraIssueWrite.logic";
+import { jiraProposalFailureMessage } from "./jiraProposal.logic";
+import { JiraConfigurationSteps, JiraStatusBadge, JiraStatusDot } from "./jiraPresentation";
 
 /** Opens Jira where the "Open links in" setting says, for anchors that point at it. */
 function useOpenJiraLink(threadRef: ScopedThreadRef) {
@@ -197,6 +208,9 @@ function JiraIssueDetailContent(props: {
 }) {
   const { detail, environmentId, threadRef } = props;
   const openJira = useOpenJiraLink(threadRef);
+  const capabilities = useJiraCapabilities(environmentId);
+  const canOperate = useAtomValue(jiraEnvironment.addComment.permissionAtom(environmentId));
+  const writeAccess = jiraIssueWriteAccess({ capabilities, canOperate, site: detail.site });
   const hiddenComments = detail.commentCount - detail.comments.length;
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -230,6 +244,9 @@ function JiraIssueDetailContent(props: {
           ) : null}
           {detail.priority ? (
             <span className="text-muted-foreground text-xs">· {detail.priority} priority</span>
+          ) : null}
+          {writeAccess === "enabled" && detail.transitions.length > 0 ? (
+            <JiraTransitionMenu environmentId={environmentId} detail={detail} />
           ) : null}
         </div>
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs">
@@ -339,8 +356,174 @@ function JiraIssueDetailContent(props: {
             ))}
           </ol>
         )}
+        {writeAccess === "enabled" ? (
+          <JiraCommentComposer environmentId={environmentId} detail={detail} />
+        ) : writeAccess === "needs-token" ? (
+          <p className="text-muted-foreground text-xs">
+            Commenting and moving issues as yourself needs your Jira token in{" "}
+            <Link to="/settings/account" className="underline">
+              Settings → Account
+            </Link>
+            .
+          </p>
+        ) : null}
       </DetailSection>
     </div>
+  );
+}
+
+type JiraWriteFailure = { readonly message: string; readonly needsToken: boolean };
+
+function jiraWriteFailure(failure: unknown): JiraWriteFailure {
+  return {
+    message: jiraProposalFailureMessage(failure),
+    needsToken: jiraFailureReason(failure) === "personal-token-required",
+  };
+}
+
+/** The server's refusal, or where to add the token it asked for. */
+function JiraWriteError(props: { failure: JiraWriteFailure; site: string }) {
+  return (
+    <p role="alert" className="text-destructive text-xs">
+      {props.failure.needsToken ? (
+        <>
+          Add your Jira token for {props.site} in{" "}
+          <Link to="/settings/account" className="underline">
+            Settings → Account
+          </Link>{" "}
+          first.
+        </>
+      ) : (
+        props.failure.message
+      )}
+    </p>
+  );
+}
+
+/** Posts markdown as the signed-in user. The draft stays until Jira accepts it. */
+function JiraCommentComposer(props: { environmentId: EnvironmentId; detail: JiraIssueDetail }) {
+  const { environmentId, detail } = props;
+  const addComment = useAtomCommand(jiraEnvironment.addComment, {
+    label: "add Jira comment",
+    // The composer shows the failure inline.
+    reportFailure: false,
+  });
+  const [draft, setDraft] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [failure, setFailure] = useState<JiraWriteFailure | null>(null);
+  // Two submits can both run before a re-render; this guard is synchronous.
+  const inFlight = useRef(false);
+  const body = jiraCommentToPost(draft);
+
+  const post = async () => {
+    if (body === null || inFlight.current) return;
+    inFlight.current = true;
+    setPosting(true);
+    setFailure(null);
+    const result = await addComment({
+      environmentId,
+      input: { site: detail.site, key: detail.key, body },
+    }).finally(() => {
+      inFlight.current = false;
+      setPosting(false);
+    });
+    if (result._tag === "Success") setDraft("");
+    else if (!isAtomCommandInterrupted(result)) {
+      setFailure(jiraWriteFailure(squashAtomCommandFailure(result)));
+    }
+  };
+
+  return (
+    <form
+      className="flex flex-col gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void post();
+      }}
+    >
+      <Textarea
+        size="sm"
+        aria-label="Add a comment"
+        placeholder="Add a comment (markdown)"
+        value={draft}
+        disabled={posting}
+        onChange={(event) => setDraft(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            event.preventDefault();
+            void post();
+          }
+        }}
+      />
+      <div className="flex min-w-0 items-center justify-end gap-2">
+        <div className="min-w-0 flex-1">
+          {failure !== null ? <JiraWriteError failure={failure} site={detail.site} /> : null}
+        </div>
+        <Button type="submit" size="sm" disabled={posting || body === null}>
+          {posting ? "Posting…" : "Post"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/** Lists the transitions Jira offers the user on this issue; picking one moves it. */
+function JiraTransitionMenu(props: { environmentId: EnvironmentId; detail: JiraIssueDetail }) {
+  const { environmentId, detail } = props;
+  const transition = useAtomCommand(jiraEnvironment.transitionIssue, {
+    label: "move Jira issue",
+    reportFailure: false,
+  });
+  const [moving, setMoving] = useState(false);
+  const [failure, setFailure] = useState<JiraWriteFailure | null>(null);
+  const inFlight = useRef(false);
+
+  const move = async (transitionId: string) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setMoving(true);
+    setFailure(null);
+    const result = await transition({
+      environmentId,
+      input: { site: detail.site, key: detail.key, transitionId },
+    }).finally(() => {
+      inFlight.current = false;
+      setMoving(false);
+    });
+    if (result._tag !== "Success" && !isAtomCommandInterrupted(result)) {
+      setFailure(jiraWriteFailure(squashAtomCommandFailure(result)));
+    }
+  };
+
+  return (
+    <>
+      <span className="flex-1" />
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button size="xs" variant="outline" disabled={moving} aria-busy={moving}>
+              {moving ? "Moving…" : "Move to…"}
+              <ChevronDownIcon aria-hidden className="size-3.5" />
+            </Button>
+          }
+        />
+        <MenuPopup align="end">
+          {detail.transitions.map((option) => (
+            <MenuItem key={option.id} onClick={() => void move(option.id)}>
+              <JiraStatusDot category={option.toStatusCategory} />
+              {option.name === option.toStatus
+                ? option.name
+                : `${option.name} → ${option.toStatus}`}
+            </MenuItem>
+          ))}
+        </MenuPopup>
+      </Menu>
+      {failure !== null ? (
+        <div className="basis-full">
+          <JiraWriteError failure={failure} site={detail.site} />
+        </div>
+      ) : null}
+    </>
   );
 }
 
