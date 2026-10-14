@@ -2055,6 +2055,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 `Muse returned an unsupported compaction status: ${result.status}`,
               );
           } else {
+            const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const result = yield* request(
               "turn/start",
               {
@@ -2065,6 +2066,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                       harness: "Muse Code",
                       model: session.model ?? undefined,
                       reasoningEffort: effort,
+                      mcpCapabilities: mcpSession?.capabilities,
                     }),
                   },
                   ...parts,
