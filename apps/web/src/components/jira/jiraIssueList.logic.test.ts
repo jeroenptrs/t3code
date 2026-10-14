@@ -6,9 +6,11 @@ import {
   JIRA_FACET_NONE,
   availableBranchName,
   collectJiraIssueFacets,
+  countJiraFacetSelection,
   groupJiraIssuesByStatusCategory,
   jiraIssueThreadPrompt,
   matchesJiraIssueFacets,
+  personalCredentialForSite,
   mergeJiraSearchPages,
   proposeJiraIssueBranchName,
   readJiraIssuesViewId,
@@ -145,6 +147,114 @@ describe("facets", () => {
   });
 });
 
+describe("personalCredentialForSite", () => {
+  const credential = {
+    site: "acme.atlassian.net",
+    account: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    lastVerifiedAt: null,
+    error: null,
+  };
+  it("is in use only on the credential's own site", () => {
+    expect(
+      personalCredentialForSite({ personalCredential: credential }, "acme.atlassian.net"),
+    ).toBe(credential);
+    expect(
+      personalCredentialForSite({ personalCredential: credential }, "other.atlassian.net"),
+    ).toBe(null);
+    expect(personalCredentialForSite({ personalCredential: credential }, null)).toBe(null);
+    expect(personalCredentialForSite({ personalCredential: null }, "acme.atlassian.net")).toBe(
+      null,
+    );
+  });
+});
+
+describe("status facet", () => {
+  const issues = [
+    issue("T-1", { status: "Done", statusCategory: "done" }),
+    issue("T-2", { status: "In Review", statusCategory: "in-progress" }),
+    issue("T-3", { status: "To Do", statusCategory: "todo" }),
+    issue("T-4", { status: "Backlog", statusCategory: "todo" }),
+    issue("T-5", { status: "In Review", statusCategory: "in-progress" }),
+  ];
+
+  it("orders statuses by category, then name, with counts", () => {
+    expect(
+      collectJiraIssueFacets(issues).status.map((option) => [option.label, option.count]),
+    ).toEqual([
+      ["Backlog", 1],
+      ["To Do", 1],
+      ["In Review", 2],
+      ["Done", 1],
+    ]);
+  });
+
+  it("matches the selected status names", () => {
+    const keys = (values: string[]) =>
+      issues
+        .filter((entry) =>
+          matchesJiraIssueFacets(entry, { ...EMPTY_JIRA_FACET_SELECTION, status: values }),
+        )
+        .map((entry) => entry.key);
+    expect(keys(["In Review", "Done"])).toEqual(["T-1", "T-2", "T-5"]);
+  });
+});
+
+describe("sprint facet", () => {
+  const sprint = (id: number, name: string, state: "active" | "future" | "closed") => ({
+    id,
+    name,
+    state,
+  });
+  const issues = [
+    issue("S-1", { sprints: [sprint(1, "Sprint 1", "closed"), sprint(2, "Sprint 2", "active")] }),
+    issue("S-2", { sprints: [sprint(3, "Alpha", "future")] }),
+    issue("S-3", { sprints: [sprint(2, "Sprint 2", "active")] }),
+    issue("S-4", { sprints: [sprint(4, "Beta", "future")] }),
+    issue("S-5"),
+  ];
+
+  it("lists active, future, then closed sprints by name, with no sprint last", () => {
+    const options = collectJiraIssueFacets(issues).sprint;
+    expect(options.map((option) => [option.label, option.count])).toEqual([
+      ["Sprint 2", 2],
+      ["Alpha", 1],
+      ["Beta", 1],
+      ["Sprint 1", 1],
+      ["No sprint", 1],
+    ]);
+    expect(options[0]?.value).toBe("2");
+  });
+
+  it("offers no 'No sprint' value when every issue has a sprint", () => {
+    expect(collectJiraIssueFacets(issues.slice(0, 4)).sprint.map((option) => option.label)).toEqual(
+      ["Sprint 2", "Alpha", "Beta", "Sprint 1"],
+    );
+  });
+
+  it("matches an issue when any of its sprints is selected", () => {
+    const keys = (values: string[]) =>
+      issues
+        .filter((entry) =>
+          matchesJiraIssueFacets(entry, { ...EMPTY_JIRA_FACET_SELECTION, sprint: values }),
+        )
+        .map((entry) => entry.key);
+    expect(keys(["1"])).toEqual(["S-1"]);
+    expect(keys(["2"])).toEqual(["S-1", "S-3"]);
+    expect(keys(["3", JIRA_FACET_NONE])).toEqual(["S-2", "S-5"]);
+  });
+
+  it("counts selected sprint values", () => {
+    expect(
+      countJiraFacetSelection({
+        ...EMPTY_JIRA_FACET_SELECTION,
+        sprint: ["1", "2"],
+        priority: ["High"],
+      }),
+    ).toBe(3);
+  });
+});
+
 describe("proposeJiraIssueBranchName", () => {
   const target = { key: "ABC-123", summary: "Fix the login: redirect loop!" };
 
@@ -210,7 +320,7 @@ describe("jiraIssueThreadPrompt", () => {
         "",
         "https://acme.atlassian.net/browse/ABC-123",
         "",
-        "Branch: `abc-123-fix-login`",
+        "Suggested branch if this thread runs locally: `abc-123-fix-login`",
       ].join("\n"),
     );
   });
