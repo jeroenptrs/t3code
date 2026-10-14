@@ -25,6 +25,7 @@ import type { JiraServerIdentity } from "./JiraConfig.ts";
 import * as JiraApi from "./JiraApi.ts";
 import * as JiraIdentities from "./JiraIdentities.ts";
 import * as JiraReadCache from "./JiraReadCache.ts";
+import * as JiraUserCredentials from "./JiraUserCredentials.ts";
 import {
   resolveFieldIds,
   summaryFields,
@@ -39,11 +40,13 @@ import {
 } from "./issueMapping.ts";
 import { listJiraIssueLinkedThreads, listJiraIssuePullRequests } from "./localLinks.ts";
 
-/**
- * Who a request is for. Reads always run as the reader identity; the portal user is carried so
- * that future writes, which land as the service account, can be attributed.
- */
+/** Who a UI request is for. */
 export interface JiraRequestOptions {
+  /**
+   * The signed-in portal user making a UI read. When they stored a personal token for the site,
+   * the read goes out as them; otherwise as the configured service identity. Only the WebSocket
+   * handlers pass it: background workers and agents always read as the service identities.
+   */
   readonly actingUserId?: AuthUserId | undefined;
 }
 
@@ -77,11 +80,13 @@ export class JiraService extends Context.Service<
       input: JiraIssueInput,
       options?: JiraRequestOptions,
     ) => Effect.Effect<JiraIssueDetail, JiraError>;
-    /** Rows for many keys on one site; issues the identity cannot see are absent. */
+    /**
+     * Rows for many keys on one site; issues the identity cannot see are absent. They feed state
+     * every user shares, so this always reads as the service identity.
+     */
     readonly issuesByKeys: (
       site: string,
       keys: ReadonlyArray<string>,
-      options?: JiraRequestOptions,
     ) => Effect.Effect<ReadonlyArray<JiraIssueSummary>, JiraError>;
     readonly linkedThreads: (
       input: JiraIssueKey,
@@ -106,7 +111,49 @@ const make = Effect.gen(function* () {
   const identities = yield* JiraIdentities.JiraIdentities;
   const api = yield* JiraApi.JiraApi;
   const cache = yield* JiraReadCache.JiraReadCache;
+  const credentials = yield* JiraUserCredentials.JiraUserCredentials;
   const sql = yield* SqlClient.SqlClient;
+
+  /**
+   * The identity a UI read of `site` (the reader's when absent) runs as: the acting user's
+   * personal token when they stored one for that site, else the service identity.
+   */
+  const readIdentity = (site: string | undefined, options: JiraRequestOptions | undefined) =>
+    Effect.gen(function* () {
+      const service = yield* site === undefined ? identities.reader : identities.forSite(site);
+      if (options?.actingUserId === undefined) return service;
+      const personal = yield* credentials.identityFor(options.actingUserId, service.site);
+      return personal ?? service;
+    });
+
+  /**
+   * A personal token Jira rejects is recorded and reported; the read never falls back to the
+   * service identity, which would show the user what their own account cannot see.
+   */
+  const asIdentity =
+    (identity: JiraServerIdentity) =>
+    <A>(effect: Effect.Effect<A, JiraError>): Effect.Effect<A, JiraError> =>
+      identity.personal === undefined
+        ? effect
+        : effect.pipe(
+            Effect.catchTags({
+              JiraError: (error) =>
+                error.reason !== "unauthorized"
+                  ? Effect.fail(error)
+                  : credentials.recordRejected(identity, error.message).pipe(
+                      Effect.ignore,
+                      Effect.andThen(
+                        Effect.fail(
+                          new JiraError({
+                            reason: "unauthorized",
+                            message:
+                              "Jira rejected your personal Jira token. Update or remove it in Settings → Account.",
+                          }),
+                        ),
+                      ),
+                    ),
+            }),
+          );
 
   const cacheKey = (identity: JiraServerIdentity, ...parts: ReadonlyArray<unknown>) =>
     JSON.stringify([identity.name, ...parts]);
@@ -161,6 +208,8 @@ const make = Effect.gen(function* () {
         reader: null,
         viewer: null,
         readerError: null,
+        personalTokens: false,
+        personalCredential: null,
       };
     }
     const reader = identities.list.find((identity) => identity.reader) ?? null;
@@ -171,42 +220,63 @@ const make = Effect.gen(function* () {
         JiraError: (error) => Effect.succeed({ viewer: null, readerError: error.message }),
       }),
     );
-    return { configured: true, identities: identities.list, reader, ...viewer };
+    const userId = options?.actingUserId;
+    const personalCredential =
+      userId === undefined
+        ? null
+        : yield* credentials.get(userId).pipe(
+            Effect.catchTags({
+              JiraError: (error) =>
+                Effect.logWarning("could not read a personal Jira token", {
+                  message: error.message,
+                }).pipe(Effect.as(null)),
+            }),
+          );
+    return {
+      configured: true,
+      identities: identities.list,
+      reader,
+      ...viewer,
+      personalTokens: userId !== undefined,
+      personalCredential,
+    };
   });
 
   const filters: JiraService["Service"]["filters"] = Effect.fn("JiraService.filters")(
     function* (input, options) {
       yield* annotateActingUser(options);
-      const reader = yield* identities.reader;
-      const found = yield* cache.get(
-        "filters",
-        cacheKey(reader, input.query ?? null),
-        Effect.gen(function* () {
-          if (input.query !== undefined) {
-            return yield* api.searchFilters(reader, {
-              filterName: input.query,
-              maxResults: FILTER_SEARCH_LIMIT,
-            });
-          }
-          const accountId = toJiraUser(yield* myself(reader))?.accountId;
-          const [favourites, own] = yield* Effect.all(
-            [
-              api.favouriteFilters(reader),
-              accountId === undefined
-                ? Effect.succeed([])
-                : api.searchFilters(reader, { accountId, maxResults: FILTER_SEARCH_LIMIT }),
-            ],
-            { concurrency: "unbounded" },
-          );
-          return [...favourites, ...own];
-        }).pipe(
-          Effect.map((raw) =>
-            [...new Map(raw.map((filter) => [filter.id, filter])).values()].map((filter) =>
-              toFilterView(filter, reader.site),
+      const reader = yield* readIdentity(undefined, options);
+      const found = yield* cache
+        .get(
+          "filters",
+          cacheKey(reader, input.query ?? null),
+          Effect.gen(function* () {
+            if (input.query !== undefined) {
+              return yield* api.searchFilters(reader, {
+                filterName: input.query,
+                maxResults: FILTER_SEARCH_LIMIT,
+              });
+            }
+            const accountId = toJiraUser(yield* myself(reader))?.accountId;
+            const [favourites, own] = yield* Effect.all(
+              [
+                api.favouriteFilters(reader),
+                accountId === undefined
+                  ? Effect.succeed([])
+                  : api.searchFilters(reader, { accountId, maxResults: FILTER_SEARCH_LIMIT }),
+              ],
+              { concurrency: "unbounded" },
+            );
+            return [...favourites, ...own];
+          }).pipe(
+            Effect.map((raw) =>
+              [...new Map(raw.map((filter) => [filter.id, filter])).values()].map((filter) =>
+                toFilterView(filter, reader.site),
+              ),
             ),
           ),
-        ),
-      );
+        )
+        .pipe(asIdentity(reader));
       return { filters: found };
     },
   );
@@ -214,7 +284,8 @@ const make = Effect.gen(function* () {
   const filter: JiraService["Service"]["filter"] = Effect.fn("JiraService.filter")(
     function* (input, options) {
       yield* annotateActingUser(options);
-      return yield* filterById(yield* identities.reader, input.id);
+      const identity = yield* readIdentity(undefined, options);
+      return yield* filterById(identity, input.id).pipe(asIdentity(identity));
     },
   );
 
@@ -227,11 +298,11 @@ const make = Effect.gen(function* () {
           message: "Search needs exactly one of a filter id or JQL.",
         });
       }
-      const reader = yield* identities.reader;
+      const reader = yield* readIdentity(undefined, options);
       const savedFilter =
         input.filterId === undefined
           ? null
-          : yield* filterById(reader, input.filterId, input.refresh);
+          : yield* filterById(reader, input.filterId, input.refresh).pipe(asIdentity(reader));
       const jql = savedFilter?.jql ?? input.jql ?? "";
       if (jql.trim().length === 0) {
         return yield* new JiraError({ reason: "invalid", message: "The filter has no JQL." });
@@ -244,7 +315,7 @@ const make = Effect.gen(function* () {
           ...(input.nextPageToken === undefined ? {} : { nextPageToken: input.nextPageToken }),
         },
         input.refresh,
-      );
+      ).pipe(asIdentity(reader));
       return { ...page, filter: savedFilter };
     },
   );
@@ -258,44 +329,46 @@ const make = Effect.gen(function* () {
   const issue: JiraService["Service"]["issue"] = Effect.fn("JiraService.issue")(
     function* (input, options) {
       yield* annotateActingUser(options);
-      const identity = yield* identities.forSite(input.site);
+      const identity = yield* readIdentity(input.site, options);
       // Jira's part is cached as one entry, converted once; local links are always fresh.
-      const remote = yield* cache.get(
-        "issue",
-        cacheKey(identity, input.key),
-        Effect.gen(function* () {
-          const ids = yield* fieldIds(identity);
-          const [raw, comments, transitions] = yield* Effect.all(
-            [
-              api.getIssue(identity, input.key, {
-                fields: [...summaryFields(ids), ...DETAIL_FIELDS],
-              }),
-              api.getComments(identity, input.key, {
-                maxResults: COMMENT_LIMIT,
-                orderBy: "-created",
-              }),
-              api.getTransitions(identity, input.key),
-            ],
-            { concurrency: "unbounded" },
-          );
-          const fields = raw.fields ?? {};
-          const latest = (comments.comments ?? []).flatMap((comment) => {
-            const mapped = toComment(comment);
-            return mapped === null ? [] : [mapped];
-          });
-          return {
-            ...toIssueSummary(raw, { site: identity.site, fieldIds: ids }),
-            reporter: toJiraUser(fields.reporter),
-            created: toIsoDateTime(fields.created),
-            description: toDescription(raw),
-            // Fetched newest first so the cap keeps the latest; shown oldest first.
-            comments: latest.toReversed(),
-            commentCount: Math.max(comments.total ?? latest.length, latest.length),
-            transitions: transitions.map(toTransition),
-          };
-        }),
-        { refresh: input.refresh },
-      );
+      const remote = yield* cache
+        .get(
+          "issue",
+          cacheKey(identity, input.key),
+          Effect.gen(function* () {
+            const ids = yield* fieldIds(identity);
+            const [raw, comments, transitions] = yield* Effect.all(
+              [
+                api.getIssue(identity, input.key, {
+                  fields: [...summaryFields(ids), ...DETAIL_FIELDS],
+                }),
+                api.getComments(identity, input.key, {
+                  maxResults: COMMENT_LIMIT,
+                  orderBy: "-created",
+                }),
+                api.getTransitions(identity, input.key),
+              ],
+              { concurrency: "unbounded" },
+            );
+            const fields = raw.fields ?? {};
+            const latest = (comments.comments ?? []).flatMap((comment) => {
+              const mapped = toComment(comment);
+              return mapped === null ? [] : [mapped];
+            });
+            return {
+              ...toIssueSummary(raw, { site: identity.site, fieldIds: ids }),
+              reporter: toJiraUser(fields.reporter),
+              created: toIsoDateTime(fields.created),
+              description: toDescription(raw),
+              // Fetched newest first so the cap keeps the latest; shown oldest first.
+              comments: latest.toReversed(),
+              commentCount: Math.max(comments.total ?? latest.length, latest.length),
+              transitions: transitions.map(toTransition),
+            };
+          }),
+          { refresh: input.refresh },
+        )
+        .pipe(asIdentity(identity));
       const key = { site: identity.site, key: input.key };
       const [threads, pullRequests] = yield* Effect.all(
         [linkedThreads(key), pullRequestsForIssue(key)],
@@ -307,8 +380,7 @@ const make = Effect.gen(function* () {
 
   const issuesByKeys: JiraService["Service"]["issuesByKeys"] = Effect.fn(
     "JiraService.issuesByKeys",
-  )(function* (site, keys, options) {
-    yield* annotateActingUser(options);
+  )(function* (site, keys) {
     const valid = [...new Set(keys.filter((key) => JIRA_ISSUE_KEY_PATTERN.test(key)))].toSorted();
     if (valid.length === 0) return [];
     const identity = yield* identities.forSite(site);
