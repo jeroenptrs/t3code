@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -811,7 +812,7 @@ it.effect("reads a watched issue's newest comments as the service identity, neve
       const service = yield* JiraService.JiraService;
       yield* storeToken(ALICE, "alice");
       const read = yield* service.watchComments(SITE, "ABC-1");
-      expect(read.readerAccountId).toBe("acc-bot");
+      expect([...read.ownAccountIds]).toEqual(["acc-bot"]);
       expect(read.comments.map((comment) => [comment.id, comment.author?.accountId])).toEqual([
         ["100", "acc-ada"],
       ]);
@@ -823,6 +824,74 @@ it.effect("reads a watched issue's newest comments as the service identity, neve
       expect(new Set(commentReads.map((request) => request.authorization))).toEqual(
         new Set(["Bearer secret-token"]),
       );
+    }),
+  );
+});
+
+it.effect("tells a watch which comments T3 Code posted and which accounts are its own", () => {
+  const agentConfig: JiraConfig = {
+    reader: "bot",
+    identities: [
+      ...config.identities,
+      {
+        name: "agent",
+        site: SITE,
+        authMethod: "scoped-token",
+        token: Redacted.make("agent-token"),
+        cloudId: "cloud-1",
+      },
+    ],
+  };
+  const comment = (id: string, accountId: string) => ({
+    id,
+    author: { accountId, displayName: accountId },
+    created: "2026-10-14T10:00:00.000+0000",
+  });
+  const jira = makeJira((path, body, authorization) => {
+    if (path === "/_edge/tenant_info") return { status: 200, body: { cloudId: "cloud-1" } };
+    if (path === "/rest/api/3/myself") {
+      const accountId =
+        authorization === "Bearer secret-token"
+          ? "acc-bot"
+          : authorization === "Bearer agent-token"
+            ? "acc-agent"
+            : authorization === basic("alice")
+              ? "acc-alice"
+              : null;
+      return accountId === null
+        ? { status: 401, body: null }
+        : { status: 200, body: { accountId, displayName: accountId } };
+    }
+    if (path !== "/rest/api/3/issue/ABC-1/comment") return { status: 404, body: null };
+    if (body !== undefined) return { status: 201, body: comment("10001", "acc-alice") };
+    return {
+      status: 200,
+      body: {
+        comments: [
+          comment("10003", "acc-ada"),
+          comment("10002", "acc-agent"),
+          comment("10001", "acc-alice"),
+        ],
+      },
+    };
+  });
+  return run(
+    agentConfig,
+    jira.client,
+    Effect.gen(function* () {
+      yield* storeToken(ALICE, "alice");
+      const service = yield* JiraService.JiraService;
+      yield* service.addComment(ALICE, { site: SITE, key: "ABC-1", body: "On it" });
+      // An approved proposal's comment, posted elsewhere, is recorded the same way.
+      yield* service.recordPostedComment(SITE, "ABC-1", "10003");
+
+      const read = yield* service.watchComments(SITE, "ABC-1");
+      expect([...read.ownAccountIds].toSorted()).toEqual(["acc-agent", "acc-bot"]);
+      expect([...read.ownCommentIds].toSorted()).toEqual(["10001", "10003"]);
+
+      // Remembered for a few hours, which covers a watch's next read.
+      yield* TestClock.adjust("5 hours");
+      expect([...(yield* service.watchComments(SITE, "ABC-1")).ownCommentIds]).toEqual([]);
     }),
   );
 });
