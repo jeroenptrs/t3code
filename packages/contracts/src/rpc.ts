@@ -135,6 +135,8 @@ import {
   JiraFiltersResult,
   JiraIssueDetail,
   JiraIssueInput,
+  JiraPersonalCredential,
+  JiraPersonalTokenSetInput,
   JiraSearchInput,
   JiraSearchResult,
 } from "./jira.ts";
@@ -621,6 +623,10 @@ export const WS_METHODS = {
   jiraFilter: "jira.filter",
   jiraSearch: "jira.search",
   jiraIssue: "jira.issue",
+  // The caller's own Jira token, stored server-side for a signed-in portal user
+  jiraSetPersonalToken: "jira.setPersonalToken",
+  jiraTestPersonalToken: "jira.testPersonalToken",
+  jiraClearPersonalToken: "jira.clearPersonalToken",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1301,6 +1307,25 @@ const WsJiraSearchRpc = Rpc.make(WS_METHODS.jiraSearch, {
 const WsJiraIssueRpc = Rpc.make(WS_METHODS.jiraIssue, {
   payload: JiraIssueInput,
   success: JiraIssueDetail,
+  error: JiraRpcError,
+});
+
+/** Verifies the token against Jira before storing it; a rejected token is never stored. */
+const WsJiraSetPersonalTokenRpc = Rpc.make(WS_METHODS.jiraSetPersonalToken, {
+  payload: JiraPersonalTokenSetInput,
+  success: JiraPersonalCredential,
+  error: JiraRpcError,
+});
+
+/** Checks the stored token against Jira again and records the outcome. */
+const WsJiraTestPersonalTokenRpc = Rpc.make(WS_METHODS.jiraTestPersonalToken, {
+  payload: Schema.Struct({}),
+  success: JiraPersonalCredential,
+  error: JiraRpcError,
+});
+
+const WsJiraClearPersonalTokenRpc = Rpc.make(WS_METHODS.jiraClearPersonalToken, {
+  payload: Schema.Struct({}),
   error: JiraRpcError,
 });
 
@@ -2204,6 +2229,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsJiraFilterRpc,
   WsJiraSearchRpc,
   WsJiraIssueRpc,
+  WsJiraSetPersonalTokenRpc,
+  WsJiraTestPersonalTokenRpc,
+  WsJiraClearPersonalTokenRpc,
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
