@@ -56,6 +56,7 @@ import * as JiraIssueSyncReactor from "./jira/JiraIssueSyncReactor.ts";
 import * as JiraProposals from "./jira/JiraProposals.ts";
 import * as JiraIdentities from "./jira/JiraIdentities.ts";
 import * as JiraReadCache from "./jira/JiraReadCache.ts";
+import * as JiraRemoteLinkReactor from "./jira/JiraRemoteLinkReactor.ts";
 import * as JiraService from "./jira/JiraService.ts";
 import * as JiraUserCredentials from "./jira/JiraUserCredentials.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -405,16 +406,24 @@ const layerJiraService = JiraProposals.layer.pipe(
   Layer.provideMerge(JiraIdentities.layer),
 );
 
-// Fork-only: links the issue a thread's branch names, keeps linked issues' snapshots current, and
-// fails Jira approvals the previous process left mid-write so they can be approved again.
+// Fork-only: links the issue a thread's branch names, keeps linked issues' snapshots current, puts
+// a link to the thread on each linked issue, and fails Jira approvals the previous process left
+// mid-write so they can be approved again.
 const layerJiraWorkers = Layer.effectDiscard(
   Effect.gen(function* () {
     yield* (yield* JiraBranchLinkService.JiraBranchLinkService).start();
     yield* (yield* JiraIssueSyncReactor.JiraIssueSyncReactor).start();
+    yield* (yield* JiraRemoteLinkReactor.JiraRemoteLinkReactor).start();
     yield* ServerActivation.forkParked((yield* JiraProposals.JiraProposals).recoverInterrupted);
   }),
 ).pipe(
-  Layer.provide(Layer.mergeAll(JiraBranchLinkService.layer, JiraIssueSyncReactor.layer)),
+  Layer.provide(
+    Layer.mergeAll(
+      JiraBranchLinkService.layer,
+      JiraIssueSyncReactor.layer,
+      JiraRemoteLinkReactor.layer,
+    ),
+  ),
   Layer.provide(layerJiraService),
 );
 

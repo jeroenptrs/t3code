@@ -153,6 +153,9 @@ export const RPC_REQUIRED_SCOPES = {
   // A proposal card's edit choices are a read as the caller; deciding one writes to Jira as them.
   [WS_METHODS.jiraCreateMeta]: AuthOrchestrationReadScope,
   [WS_METHODS.jiraDecideProposal]: AuthOrchestrationOperateScope,
+  // Commenting on or moving an issue writes to Jira as the caller, like approving a proposal.
+  [WS_METHODS.jiraAddComment]: AuthOrchestrationOperateScope,
+  [WS_METHODS.jiraTransitionIssue]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
