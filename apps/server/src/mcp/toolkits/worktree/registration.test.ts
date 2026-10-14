@@ -35,6 +35,7 @@ import * as PreviewManager from "../../../preview/Manager.ts";
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as JiraIdentities from "../../../jira/JiraIdentities.ts";
+import * as JiraProposals from "../../../jira/JiraProposals.ts";
 import * as JiraService from "../../../jira/JiraService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
@@ -57,6 +58,7 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(ProjectService.ProjectService)({}),
   Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
   Layer.mock(JiraService.JiraService)({}),
+  Layer.mock(JiraProposals.JiraProposals)({}),
   Layer.succeed(JiraIdentities.JiraIdentities, JiraIdentities.make(undefined)),
   ServerSettings.layerTest({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),

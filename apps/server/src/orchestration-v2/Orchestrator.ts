@@ -28,6 +28,8 @@ import {
   OrchestrationV2Command,
   type OrchestrationV2InternalCommand,
   type OrchestrationV2ServerCommand,
+  type JiraProposal,
+  type JiraProposalStatus,
   type ThreadJiraIssueLink,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
@@ -550,6 +552,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.created.record":
       return command.parentThreadId;
     case "secret_request.record":
+    case "jira_proposal.record":
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
@@ -570,6 +573,43 @@ function pendingThreadTitleGenerationEffect(
     threadId,
     request: { type: "thread-title.generate", kind },
   };
+}
+
+/**
+ * How a Jira proposal may move. A failed approval keeps what it wrote and may be approved again
+ * or rejected; applied and rejected are final.
+ */
+const JIRA_PROPOSAL_TRANSITIONS: Record<
+  JiraProposalStatus | "new",
+  ReadonlyArray<JiraProposalStatus>
+> = {
+  new: ["pending"],
+  pending: ["approved", "rejected"],
+  approved: ["applied", "failed"],
+  failed: ["approved", "rejected"],
+  applied: [],
+  rejected: [],
+};
+
+const JIRA_PROPOSAL_ITEM_STATUS = {
+  pending: "waiting",
+  approved: "running",
+  applied: "completed",
+  rejected: "cancelled",
+  failed: "failed",
+} as const satisfies Record<JiraProposalStatus, OrchestrationV2TurnItem["status"]>;
+
+function jiraProposalTitle(proposal: JiraProposal): string {
+  switch (proposal.kind) {
+    case "create-issues":
+      return proposal.issues.length === 1
+        ? `Create Jira issue: ${proposal.issues[0]!.summary}`
+        : `Create ${proposal.issues.length} Jira issues`;
+    case "comment":
+      return `Comment on ${proposal.key}`;
+    case "transition":
+      return `Move ${proposal.key}: ${proposal.transitionName}`;
+  }
 }
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
@@ -7490,6 +7530,96 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  /**
+   * Records or updates the card for Jira writes an agent proposed. Unlike a secret request the
+   * card outlives its run, so it is recorded on a run that has ended too. The proposal service
+   * moves it through `JIRA_PROPOSAL_TRANSITIONS`; repeating the current status changes nothing.
+   */
+  const dispatchJiraProposalRecord = Effect.fn("orchestrationV2.dispatch.jiraProposalRecord")(
+    function* (
+      command: Extract<OrchestrationV2InternalCommand, { readonly type: "jira_proposal.record" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const projectionError = (cause: unknown) =>
+        new OrchestratorProjectionError({ threadId: command.threadId, cause });
+      const projection = yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs", "attempts", "providerTurns"])
+        .pipe(Effect.mapError(projectionError));
+      // Looked up whatever its type, so a record can never overwrite another kind of item.
+      const existing = yield* projectionStore
+        .getTurnItem({ threadId: command.threadId, itemId: command.turnItemId })
+        .pipe(Effect.mapError(projectionError));
+      const refuse = (cause: string) =>
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause,
+        });
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (run === undefined || run.rootNodeId !== command.nodeId) {
+        return yield* refuse(`Node ${command.nodeId} is not the root of run ${command.runId}.`);
+      }
+      if (existing !== null && existing.type !== "jira_proposal") {
+        return yield* refuse(`Turn item ${command.turnItemId} is not a Jira proposal.`);
+      }
+      if (existing !== null && existing.runId !== command.runId) {
+        return yield* refuse(`Jira proposal ${command.turnItemId} belongs to another run.`);
+      }
+      const from = existing?.proposalStatus ?? null;
+      const unchanged = existing !== null && from === command.proposalStatus;
+      if (
+        !unchanged &&
+        !JIRA_PROPOSAL_TRANSITIONS[from ?? "new"].includes(command.proposalStatus)
+      ) {
+        return yield* refuse(
+          `Jira proposal ${command.turnItemId} is ${from ?? "not recorded"}; it cannot become ${command.proposalStatus}.`,
+        );
+      }
+      const now = yield* DateTime.now;
+      const settled = command.proposalStatus !== "pending" && command.proposalStatus !== "approved";
+      const turnItem: OrchestrationV2TurnItem = unchanged
+        ? existing
+        : {
+            id: command.turnItemId,
+            threadId: command.threadId,
+            runId: command.runId,
+            nodeId: command.nodeId,
+            providerThreadId: existing?.providerThreadId ?? run.providerThreadId,
+            providerTurnId:
+              existing?.providerTurnId ?? providerTurnForRun(projection, run)?.id ?? null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: existing?.ordinal ?? (yield* nextTurnItemOrdinal(projection)),
+            status: JIRA_PROPOSAL_ITEM_STATUS[command.proposalStatus],
+            title: jiraProposalTitle(command.proposal),
+            startedAt: existing?.startedAt ?? now,
+            completedAt: settled ? now : null,
+            updatedAt: now,
+            type: "jira_proposal",
+            proposal: command.proposal,
+            proposalStatus: command.proposalStatus,
+            ...(command.decidedByUserId === undefined
+              ? {}
+              : { decidedByUserId: command.decidedByUserId }),
+            ...(command.decidedAt === undefined ? {} : { decidedAt: command.decidedAt }),
+            ...(command.result === undefined ? {} : { result: command.result }),
+            ...(command.error === undefined ? {} : { error: command.error }),
+          };
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId: command.runId,
+        nodeId: command.nodeId,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: turnItem,
+      });
+    },
+  );
+
   const dispatchRuntimeRequestRespond = (
     command: Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -10469,7 +10599,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : parentProjection.runs.find((candidate) => candidate.id === task.runId);
       const parentNode = parentProjection.nodes.find((candidate) => candidate.id === task.id);
       const parentTurnItem = parentProjection.turnItems.find(
-        (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
+        (candidate): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }> =>
+          candidate.type === "subagent" && candidate.subagentId === task.id,
       );
       const updatedTask: OrchestrationV2Subagent = {
         ...task,
@@ -11304,6 +11435,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "secret_request.record":
         yield* dispatchSecretRequestRecord(command, events);
+        break;
+      case "jira_proposal.record":
+        yield* dispatchJiraProposalRecord(command, events);
         break;
       default:
         return yield* dispatchUnsupported(command);

@@ -52,6 +52,7 @@ import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.
 import * as JiraApi from "./jira/JiraApi.ts";
 import * as JiraBranchLinkService from "./jira/JiraBranchLinkService.ts";
 import * as JiraIssueSyncReactor from "./jira/JiraIssueSyncReactor.ts";
+import * as JiraProposals from "./jira/JiraProposals.ts";
 import * as JiraIdentities from "./jira/JiraIdentities.ts";
 import * as JiraReadCache from "./jira/JiraReadCache.ts";
 import * as JiraService from "./jira/JiraService.ts";
@@ -365,10 +366,12 @@ const layerDiffWalkthroughService = DiffWalkthroughService.layer.pipe(
 
 // Fork-only Jira reads; a no-op until T3CODE_JIRA_IDENTITIES is set. The identities are exposed
 // too, for the MCP tools and the background workers that only need the reader's site, and so are
-// personal tokens, for the WebSocket handlers that manage them.
-const layerJiraService = JiraService.layer.pipe(
+// personal tokens, for the WebSocket handlers that manage them. Proposals are one instance for
+// both transports: agents propose over MCP, users decide over the WebSocket.
+const layerJiraService = JiraProposals.layer.pipe(
+  Layer.provideMerge(JiraService.layer),
   Layer.provideMerge(JiraUserCredentials.layer),
-  Layer.provide(JiraApi.layer),
+  Layer.provideMerge(JiraApi.layer),
   Layer.provide(JiraReadCache.layer),
   Layer.provideMerge(JiraIdentities.layer),
 );

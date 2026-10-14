@@ -1247,6 +1247,19 @@ it.effect("does not continue a run waiting on a secret the restart closed", () =
   }),
 );
 
+it("does not continue a run waiting on a Jira proposal the user has not decided", () => {
+  const proposal = (proposalStatus: string) =>
+    ({ type: "jira_proposal", runId, proposalStatus }) as never;
+  assert.isUndefined(
+    restartContinuationRun({ ...makeProjection(), turnItems: [proposal("pending")] }, now),
+  );
+  // Once decided, the proposal no longer holds the run.
+  assert.equal(
+    restartContinuationRun({ ...makeProjection(), turnItems: [proposal("applied")] }, now)?.id,
+    runId,
+  );
+});
+
 it.effect.each(["completed", "failed", "interrupted"] as const)(
   "does not continue when the provider turn %s before the app run settled",
   (status) =>
