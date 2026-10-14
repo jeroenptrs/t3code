@@ -65,6 +65,7 @@ import {
   unsnoozeThread,
   updateThreadMetadata,
   visitThread,
+  watchThreadJiraIssue,
   watchThreadPullRequest,
 } from "../operations/commands.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
@@ -293,6 +294,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     unlinkJiraIssue: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unlink-jira-issue",
       execute: unlinkThreadJiraIssue,
+      scheduler,
+      concurrency,
+    }),
+    watchJiraIssue: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:watch-jira-issue",
+      execute: watchThreadJiraIssue,
       scheduler,
       concurrency,
     }),

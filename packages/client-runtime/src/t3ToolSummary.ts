@@ -827,6 +827,40 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "watch-jira": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Watched {count} Jira issue} other {Watched {count} Jira issues}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to watch {count} Jira issue} other {Tried to watch {count} Jira issues}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "unwatch-jira": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Stopped watching {count} Jira issue} other {Stopped watching {count} Jira issues}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to stop watching {count} Jira issue} other {Tried to stop watching {count} Jira issues}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "list-issues": {
       const count = selected.length;
       label = done
