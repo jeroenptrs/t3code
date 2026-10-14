@@ -99,6 +99,8 @@ import {
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   WS_METHODS,
+  WsCoreRpcGroup,
+  WsJiraRpcGroup,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -237,6 +239,7 @@ import * as DiffWalkthroughRunService from "./diffWalkthrough/DiffWalkthroughRun
 import * as DiffWalkthroughService from "./diffWalkthrough/DiffWalkthroughService.ts";
 import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.ts";
 import * as JiraService from "./jira/JiraService.ts";
+import * as JiraUserCredentials from "./jira/JiraUserCredentials.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -550,6 +553,9 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+// Handlers are typed and provided per part; see WsJiraRpcGroup.
+const ServerWsCoreRpcGroup = WsCoreRpcGroup.middleware(RpcInstrumentation);
+const ServerWsJiraRpcGroup = WsJiraRpcGroup.middleware(RpcInstrumentation);
 // Replaying each intervening event costs a shell refetch; past this gap a
 // single O(active-threads) snapshot is cheaper and bounded.
 const SHELL_RESUME_MAX_GAP = 1_000;
@@ -1205,7 +1211,7 @@ const layerWsRpc = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
-  ServerWsRpcGroup.toLayer(
+  ServerWsCoreRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
@@ -1245,8 +1251,6 @@ const layerWsRpc = (
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const diffWalkthroughWriter = yield* DiffWalkthroughWriter.DiffWalkthroughWriter;
       const diffWalkthroughRuns = yield* DiffWalkthroughRunService.DiffWalkthroughRunService;
-      const jira = yield* JiraService.JiraService;
-      const jiraRequest = { actingUserId: currentSession.userId };
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
@@ -1845,7 +1849,7 @@ const layerWsRpc = (
         return result;
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const handlers = ServerWsCoreRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -2580,11 +2584,6 @@ const layerWsRpc = (
             .write(input.walkthrough)
             .pipe(Effect.map(({ walkthrough }) => ({ walkthrough }))),
         [WS_METHODS.diffWalkthroughGenerate]: (input) => diffWalkthroughRuns.generate(input.target),
-        [WS_METHODS.jiraCapabilities]: () => jira.capabilities(jiraRequest),
-        [WS_METHODS.jiraFilters]: (input) => jira.filters(input, jiraRequest),
-        [WS_METHODS.jiraFilter]: (input) => jira.filter(input, jiraRequest),
-        [WS_METHODS.jiraSearch]: (input) => jira.search(input, jiraRequest),
-        [WS_METHODS.jiraIssue]: (input) => jira.issue(input, jiraRequest),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           Effect.andThen(
             input.cwd === undefined ? Effect.void : ensureReadable(input.cwd),
@@ -3202,6 +3201,25 @@ const layerWsRpc = (
     }),
   );
 
+const layerWsJiraRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
+  ServerWsJiraRpcGroup.toLayer(
+    Effect.gen(function* () {
+      const jira = yield* JiraService.JiraService;
+      const credentials = yield* JiraUserCredentials.JiraUserCredentials;
+      const request = { actingUserId: currentSession.userId };
+      return ServerWsJiraRpcGroup.of({
+        [WS_METHODS.jiraCapabilities]: () => jira.capabilities(request),
+        [WS_METHODS.jiraFilters]: (input) => jira.filters(input, request),
+        [WS_METHODS.jiraFilter]: (input) => jira.filter(input, request),
+        [WS_METHODS.jiraSearch]: (input) => jira.search(input, request),
+        [WS_METHODS.jiraIssue]: (input) => jira.issue(input, request),
+        [WS_METHODS.jiraSetPersonalToken]: (input) => credentials.set(currentSession.userId, input),
+        [WS_METHODS.jiraTestPersonalToken]: () => credentials.test(currentSession.userId),
+        [WS_METHODS.jiraClearPersonalToken]: () => credentials.clear(currentSession.userId),
+      });
+    }),
+  );
+
 // RpcServer's default sends a socket-level Defect frame instead, and the client
 // ends every pending request on the socket with it.
 export const WS_RPC_SERVER_OPTIONS = {
@@ -3220,6 +3238,7 @@ export const layer = Layer.unwrap(
     const diffWalkthroughWriter = yield* DiffWalkthroughWriter.DiffWalkthroughWriter;
     const diffWalkthroughRuns = yield* DiffWalkthroughRunService.DiffWalkthroughRunService;
     const jira = yield* JiraService.JiraService;
+    const jiraCredentials = yield* JiraUserCredentials.JiraUserCredentials;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3292,6 +3311,7 @@ export const layer = Layer.unwrap(
               previewAutomationBroker,
               serverBrowser,
             ).pipe(
+              Layer.merge(layerWsJiraRpc(session)),
               Layer.provideMerge(RpcSerialization.layerJson),
               // Request fibers run in the handlers' context, so this reporter sees
               // their defects, not the rest of the server's.
@@ -3326,6 +3346,9 @@ export const layer = Layer.unwrap(
               ),
               // Shared, so every client reads through the same Jira caches.
               Layer.provide(Layer.succeed(JiraService.JiraService, jira)),
+              Layer.provide(
+                Layer.succeed(JiraUserCredentials.JiraUserCredentials, jiraCredentials),
+              ),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
