@@ -149,12 +149,22 @@ the branch is set. When a branch contains several keys, the first one counts. On
 unlink an issue, the branch does not link it again.
 
 When Jira is configured, agents in a thread are told about T3 Code's link tools
-`link_jira_issue`, `unlink_jira_issue`, and `list_thread_jira_issues`, and can use
-them to manage links.
+`link_jira_issue`, `unlink_jira_issue`, `list_thread_jira_issues`, `watch_jira_issue`
+and `unwatch_jira_issue`, and can use them to manage links and watches.
 
 Linked issues refresh their summary and status every few minutes. An issue's detail
 lists pull requests whose branch or title contains its key. Only pull requests
 linked to threads in T3 Code are considered.
+
+Ask the agent to watch or follow an issue and it calls `watch_jira_issue`. The
+server then checks the issue every two minutes, as the reader identity, and wakes the
+agent when someone else comments, the issue moves to another status category, or its
+assignee changes. Comments by the reader's own account do not wake it. To watch an
+issue yourself, use the eye on its row in the thread's details. A watched thread
+counts as working between wakes, like one watching a pull request. Watching ends
+when the agent calls `unwatch_jira_issue`, when you unlink the issue or press Stop,
+when the thread settles or is archived, when the reader can no longer see the issue,
+or after 10 wakes in a row that bring only comments. Subagents cannot watch issues.
 
 Choosing "Start thread from issue" on the Issues page fills a new thread's message
 with the issue. When the thread starts in a new worktree, the worktree's branch is
