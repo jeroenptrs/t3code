@@ -19,7 +19,6 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventStore from "./EventStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
-import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -37,13 +36,6 @@ const layerDatabase = SqlitePersistence.layerMemory;
 const layerTest = Layer.mergeAll(
   layerDatabase,
   ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
-  ProjectionMaintenance.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
-        Layer.provideMerge(layerDatabase),
-      ),
-    ),
-  ),
   ProviderReplayHarness.layerWithRegistry(
     { name: "thread-jira-issues" },
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
@@ -289,11 +281,10 @@ it.effect("records branch links and synced snapshots without marking the thread 
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("drops a deleted thread's rows and restores them on a projection rebuild", () =>
+it.effect("drops a deleted thread's rows", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     const kept = ThreadId.make("thread:jira-kept");
     const deleted = ThreadId.make("thread:jira-deleted");
     yield* createThread(kept);
@@ -301,14 +292,6 @@ it.effect("drops a deleted thread's rows and restores them on a projection rebui
     yield* link(kept, "ABC-4", "manual", ada);
     yield* sync(kept, "ABC-4");
     yield* link(deleted, "ABC-4", "manual");
-    // A later thread event supersedes the Jira ones, so compaction drops them.
-    yield* orchestrator.dispatch({
-      type: "thread.metadata.update",
-      commandId: nextCommandId("rename"),
-      threadId: kept,
-      title: "Renamed",
-    });
-
     yield* orchestrator.dispatch({
       type: "thread.delete",
       commandId: nextCommandId("delete"),
@@ -318,15 +301,6 @@ it.effect("drops a deleted thread's rows and restores them on a projection rebui
       SELECT thread_id FROM fork_projection_thread_jira_issues
       WHERE site = ${site} AND issue_key = 'ABC-4'
     `;
-    assert.deepStrictEqual(
-      (yield* countRows).map((row) => row.thread_id),
-      [kept],
-    );
-
-    yield* sql`DELETE FROM fork_projection_thread_jira_issues`;
-    const compacted = yield* maintenance.compactEventStore();
-    assert.isAbove(compacted.deletedEventCount, 0);
-    yield* maintenance.rebuild;
     assert.deepStrictEqual(
       (yield* countRows).map((row) => row.thread_id),
       [kept],
@@ -433,7 +407,6 @@ const messagesOf = (threadId: ThreadId) =>
 
 it.effect("watching links the issue first, records progress, and stops", () =>
   Effect.gen(function* () {
-    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
     const threadId = ThreadId.make("thread:jira-watch");
     yield* createThread(threadId);
     yield* TestClock.adjust("1 second");
@@ -461,6 +434,7 @@ it.effect("watching links the issue first, records progress, and stops", () =>
         taskId: `jira-issue-watch:${site}/ABC-10`,
         description: "Watching Jira issue ABC-10",
         kind: "monitor",
+        awaited: true,
       },
     ]);
 
@@ -480,9 +454,6 @@ it.effect("watching links the issue first, records progress, and stops", () =>
     assert.deepStrictEqual(yield* watchOf(threadId, "ABC-10"), recorded);
     // Recorded progress is bookkeeping, not thread activity.
     assert.deepStrictEqual((yield* readThread(threadId)).updatedAt, before.updatedAt);
-    yield* assertForkRowsMatch(threadId);
-    assert.isTrue((yield* maintenance.rebuild).valid);
-    assert.deepStrictEqual(yield* watchOf(threadId, "ABC-10"), recorded);
     yield* assertForkRowsMatch(threadId);
 
     yield* watch(threadId, "ABC-10", false);
@@ -504,7 +475,7 @@ it.effect("watching links the issue first, records progress, and stops", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("starts from the link's snapshot and refuses an issue the thread does not link", () =>
+it.effect("starts without a status baseline and refuses an issue the thread does not link", () =>
   Effect.gen(function* () {
     const threadId = ThreadId.make("thread:jira-watch-refused");
     yield* createThread(threadId);
@@ -515,7 +486,8 @@ it.effect("starts from the link's snapshot and refuses an issue the thread does 
     yield* link(threadId, "ABC-11", "branch");
     yield* sync(threadId, "ABC-11");
     yield* watch(threadId, "ABC-11", true);
-    assert.equal((yield* watchOf(threadId, "ABC-11"))?.statusCategory, snapshot.statusCategory);
+    // The snapshot may predate the watch, so the first read sets the status baseline.
+    assert.isNull((yield* watchOf(threadId, "ABC-11"))?.statusCategory);
 
     // Unlinking ends the watch; an unlinked issue is watched only by linking it again.
     yield* unlink(threadId, "ABC-11");

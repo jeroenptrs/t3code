@@ -22,8 +22,10 @@ import {
   type JiraSprint,
   type JiraTransitionIssueInput,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -64,6 +66,12 @@ const COMMENT_LIMIT = 50;
 /** Comments a watch reads per changed issue; more since the last read are left to jtk. */
 const WATCH_COMMENT_LIMIT = 20;
 const FILTER_SEARCH_LIMIT = 50;
+/**
+ * How long, and how many, comments T3 Code posted are remembered so a watch does not count them.
+ * A watch reads a changed issue within minutes, so a few hours covers a slow or paused sweep.
+ */
+const POSTED_COMMENT_TTL = Duration.hours(4);
+const POSTED_COMMENT_CAPACITY = 2000;
 const DETAIL_FIELDS = ["description", "reporter", "created"];
 /** Issues read to find a project's open sprints; scoped tokens cannot list sprints directly. */
 const SPRINT_SEARCH_LIMIT = 100;
@@ -111,9 +119,10 @@ export class JiraService extends Context.Service<
       keys: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyArray<JiraIssueSummary>, JiraError>;
     /**
-     * What a watch reads once an issue's `updated` moved: its newest comments, newest first, and
-     * the account the service identity reads as, whose own comments never wake an agent. Always
-     * the service identity and never cached, like `issuesByKeys`.
+     * What a watch reads once an issue's `updated` moved: its newest comments, newest first; the
+     * accounts every configured service identity comments as, agents' included; and which of
+     * the comments T3 Code posted itself. Neither kind ever wakes an agent. Always the service
+     * identity and never cached, like `issuesByKeys`.
      */
     readonly watchComments: (
       site: string,
@@ -121,10 +130,20 @@ export class JiraService extends Context.Service<
     ) => Effect.Effect<
       {
         readonly comments: ReadonlyArray<JiraComment>;
-        readonly readerAccountId: string | null;
+        readonly ownAccountIds: ReadonlySet<string>;
+        readonly ownCommentIds: ReadonlySet<string>;
       },
       JiraError
     >;
+    /**
+     * Remembers a comment T3 Code posted outside `addComment`, such as an approved proposal's,
+     * so a watch on the issue does not wake its agent for it.
+     */
+    readonly recordPostedComment: (
+      site: string,
+      key: string,
+      commentId: string,
+    ) => Effect.Effect<void>;
     readonly linkedThreads: (
       input: JiraIssueKey,
     ) => Effect.Effect<ReadonlyArray<JiraLinkedThread>, JiraError>;
@@ -230,6 +249,57 @@ const make = Effect.gen(function* () {
 
   const myself = (identity: JiraServerIdentity) =>
     cache.get("myself", cacheKey(identity), api.myself(identity));
+
+  // In insertion order, which with one TTL is also expiry order.
+  const postedComments = new Map<string, number>();
+  const postedCommentId = (site: string, key: string, commentId: string) =>
+    `${site.toLowerCase()}\u0000${key.toUpperCase()}\u0000${commentId}`;
+
+  const recordPostedComment: JiraService["Service"]["recordPostedComment"] = (
+    site,
+    key,
+    commentId,
+  ) =>
+    Effect.map(Clock.currentTimeMillis, (nowMs) => {
+      for (const [id, expiresAtMs] of postedComments) {
+        if (expiresAtMs > nowMs && postedComments.size < POSTED_COMMENT_CAPACITY) break;
+        postedComments.delete(id);
+      }
+      const id = postedCommentId(site, key, commentId);
+      postedComments.delete(id);
+      postedComments.set(id, nowMs + Duration.toMillis(POSTED_COMMENT_TTL));
+    });
+
+  /**
+   * The accounts the service identities comment as. One that Jira refuses is left out, so its
+   * comments may wake an agent, unless it is the identity the watch reads as, whose read fails.
+   */
+  const serviceAccountIds = (reading: JiraServerIdentity) =>
+    Effect.forEach(
+      identities.services,
+      (service) => {
+        const accountId = myself(service).pipe(
+          Effect.map((user) => toJiraUser(user)?.accountId ?? null),
+        );
+        return service.name === reading.name
+          ? accountId
+          : accountId.pipe(
+              Effect.catchTags({
+                JiraError: (error) =>
+                  Effect.logWarning("Could not read a Jira identity's account for watches", {
+                    identity: service.name,
+                    reason: error.reason,
+                  }).pipe(Effect.as(null)),
+              }),
+            );
+      },
+      { concurrency: "unbounded" },
+    ).pipe(
+      Effect.map(
+        (accountIds) =>
+          new Set(accountIds.filter((accountId): accountId is string => accountId !== null)),
+      ),
+    );
 
   const filterById = (identity: JiraServerIdentity, id: string, refresh?: boolean) =>
     cache.get(
@@ -473,20 +543,27 @@ const make = Effect.gen(function* () {
     "JiraService.watchComments",
   )(function* (site, key) {
     const identity = yield* identities.forSite(site);
-    const [raw, self] = yield* Effect.all(
+    const [raw, ownAccountIds] = yield* Effect.all(
       [
         api.getComments(identity, key, { maxResults: WATCH_COMMENT_LIMIT, orderBy: "-created" }),
-        myself(identity),
+        serviceAccountIds(identity),
       ],
       { concurrency: "unbounded" },
     );
-    return {
-      comments: (raw.comments ?? []).flatMap((comment) => {
-        const mapped = toComment(comment);
-        return mapped === null ? [] : [mapped];
-      }),
-      readerAccountId: toJiraUser(self)?.accountId ?? null,
-    };
+    const comments = (raw.comments ?? []).flatMap((comment) => {
+      const mapped = toComment(comment);
+      return mapped === null ? [] : [mapped];
+    });
+    const nowMs = yield* Clock.currentTimeMillis;
+    const ownCommentIds = new Set(
+      comments
+        .filter(
+          (comment) =>
+            (postedComments.get(postedCommentId(identity.site, key, comment.id)) ?? 0) > nowMs,
+        )
+        .map((comment) => comment.id),
+    );
+    return { comments, ownAccountIds, ownCommentIds };
   });
 
   const createMeta: JiraService["Service"]["createMeta"] = Effect.fn("JiraService.createMeta")(
@@ -555,6 +632,7 @@ const make = Effect.gen(function* () {
       const raw = yield* api
         .addComment(identity, input.key, markdownToAdf(input.body))
         .pipe(asIdentity(identity));
+      yield* recordPostedComment(identity.site, input.key, raw.id);
       yield* cache.invalidate("issue", cacheKey(identity, input.key));
       // Jira answers with the whole comment; a reply missing its date still shows what was sent.
       return (
@@ -596,6 +674,7 @@ const make = Effect.gen(function* () {
     issue,
     issuesByKeys,
     watchComments,
+    recordPostedComment,
     linkedThreads,
     pullRequestsForIssue,
     createMeta,
