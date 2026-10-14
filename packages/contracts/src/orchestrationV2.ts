@@ -62,6 +62,7 @@ import {
   ThreadJiraIssueLink,
   ThreadJiraIssueLinkSource,
   ThreadJiraIssueSnapshot,
+  ThreadJiraIssueWatch,
 } from "./jira.ts";
 import {
   ProviderApprovalDecision,
@@ -2776,6 +2777,19 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     ...JiraIssueKey.fields,
   }),
+  /**
+   * Fork-only. Start or stop the server watching a Jira issue for this thread's agent. Starting
+   * links the issue first, with `linkSource`, when the thread has not linked it.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.jira-issue.watch"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    ...JiraIssueKey.fields,
+    watching: Schema.Boolean,
+    linkSource: Schema.optional(Schema.Literals(["manual", "agent"])),
+    linkedByUserId: Schema.optional(AuthUserId),
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.unlink"),
     commandId: CommandId,
@@ -3091,6 +3105,26 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     ...JiraIssueKey.fields,
     snapshot: ThreadJiraIssueSnapshot,
+  }),
+  /**
+   * Fork-only. Records what a Jira issue watch saw, and wakes the agent in the same transaction
+   * when `wake` is set; rejected like the pull request watch sync below once the watch ended.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.jira-issue-watch.sync"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    ...JiraIssueKey.fields,
+    startedAt: IsoDateTime,
+    /** The watch to record, or null to end it. */
+    watch: Schema.NullOr(ThreadJiraIssueWatch),
+    wake: Schema.optional(
+      Schema.Struct({
+        messageId: MessageId,
+        text: Schema.String,
+        notification: OrchestrationV2Notification,
+      }),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
