@@ -701,6 +701,7 @@ function runBrowserAccessScenario(input: {
             : {
                 jiraIdentitiesLayer: Layer.mock(JiraIdentities.JiraIdentities)({
                   configured: input.jiraConfigured,
+                  list: [],
                 }),
               }),
           serverSettingsLayer: ServerSettings.layerTest({
