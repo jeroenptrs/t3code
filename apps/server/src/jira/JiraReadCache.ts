@@ -16,6 +16,7 @@ const JIRA_READ_TTL = {
   filter: Duration.minutes(5),
   fields: Duration.hours(1),
   myself: Duration.minutes(5),
+  createMeta: Duration.seconds(60),
 } as const;
 export type JiraReadKind = keyof typeof JIRA_READ_TTL;
 

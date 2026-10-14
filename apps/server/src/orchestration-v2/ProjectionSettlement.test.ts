@@ -457,8 +457,22 @@ it.effect(
         [threadId],
       );
       assert.isTrue(queries.every(([query]) => !query.includes("COUNT(")));
-      const pendingQuery = queries.find(([query]) =>
-        query.includes("FROM orchestration_v2_projection_turn_items"),
+      const pendingQuery = queries.find(
+        ([query]) =>
+          query.includes("FROM orchestration_v2_projection_turn_items") &&
+          !query.includes("'jira_proposal'"),
+      );
+      // Fork: candidates skip threads with a waiting Jira proposal, through its partial index.
+      const proposalQuery = queries.find(([query]) => query.includes("'jira_proposal'"));
+      assert.isDefined(proposalQuery);
+      const proposalPlan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${proposalQuery![0]}`,
+        proposalQuery![1],
+      );
+      assert.isTrue(
+        proposalPlan.some((row) =>
+          row.detail.includes("idx_fork_turn_items_waiting_jira_proposals"),
+        ),
       );
       assert.isDefined(pendingQuery);
       const metadata = yield* store.getThread(threadId);
