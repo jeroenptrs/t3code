@@ -14,6 +14,7 @@ import { useJiraCapabilities } from "~/state/jira";
 import { useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { jiraWatchControl } from "./jiraWatchControl";
 
 /**
  * Jira linking for one environment. Linking needs Jira configured there, since the dialog checks
@@ -48,8 +49,17 @@ export function useJiraIssueLinking(environmentId: EnvironmentId | null) {
       defaultSite: capabilities?.reader?.site ?? null,
       canLink: configured && canOperate,
       canUnlink: canOperate,
-      /** Starting a watch needs the same Jira read the sweep makes; stopping one never does. */
-      canWatch: configured && canOperate,
+      /**
+       * The watch control for one issue. Starting needs a server identity for its site, the same
+       * read the sweep makes; stopping one never does.
+       */
+      watchControl: (site: string, watching: boolean) =>
+        jiraWatchControl({
+          site,
+          watching,
+          canOperate,
+          identities: capabilities?.identities ?? [],
+        }),
       changeLink,
     };
   }, [canOperate, capabilities, link, unlink]);
