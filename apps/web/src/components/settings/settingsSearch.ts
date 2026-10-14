@@ -26,6 +26,7 @@ export type SettingsPath =
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
+  | "/settings/account"
   | "/settings/users"
   | "/settings/archived";
 
@@ -85,6 +86,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
+  "/settings/account": "Account",
   "/settings/users": "Users",
   "/settings/archived": "Archive",
 };
@@ -1033,6 +1035,8 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
+  // The signed-in user's own settings live on the primary environment; there is no scope to pick.
+  "/settings/account": null,
   // Portal users live on the primary environment; there is no scope to pick.
   "/settings/users": null,
   "/settings/scheduled-tasks": null,
