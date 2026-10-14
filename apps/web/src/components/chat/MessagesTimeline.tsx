@@ -117,6 +117,7 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
+import { JiraIcon } from "../Icons";
 import { T3Wordmark } from "../T3Wordmark";
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
@@ -3923,6 +3924,11 @@ function toolGroupSummaryIconName(
     case "watch-pr":
     case "unwatch-pr":
       return "pull-request";
+    case "jira":
+    case "link-jira":
+    case "unlink-jira":
+    case "list-jira":
+      return "jira";
     case "read":
       return "eye";
     case "edit":
@@ -4833,6 +4839,7 @@ type WorkEntryIconName =
   | "eye"
   | "globe"
   | "hammer"
+  | "jira"
   | "message-circle"
   | "search"
   | "square-pen"
@@ -5043,6 +5050,8 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
       return <GlobeIcon className={className} aria-hidden />;
     case "hammer":
       return <HammerIcon className={className} aria-hidden />;
+    case "jira":
+      return <JiraIcon className={className} />;
     case "search":
       return <SearchIcon className={className} aria-hidden />;
     case "message-circle":
