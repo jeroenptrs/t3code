@@ -1,4 +1,4 @@
-import type { JiraAuthMethod } from "@t3tools/contracts";
+import type { AuthUserId, JiraAuthMethod } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -15,8 +15,10 @@ export interface JiraServerIdentity {
   readonly token: Redacted.Redacted<string>;
   /** Present for `basic`. */
   readonly email?: string | undefined;
-  /** Present for `scoped-token`, which reaches the site through `api.atlassian.com`. */
+  /** When present, requests go through `api.atlassian.com`; always present for `scoped-token`. */
   readonly cloudId?: string | undefined;
+  /** Set for a portal user's personal token; `createdAt` is the stored credential's version. */
+  readonly personal?: { readonly userId: AuthUserId; readonly createdAt: string } | undefined;
 }
 
 export interface JiraConfig {
