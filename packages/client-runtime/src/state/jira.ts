@@ -6,17 +6,18 @@
 import {
   JIRA_ISSUE_KEY_PATTERN,
   WS_METHODS,
+  type EnvironmentId,
   type JiraCapabilities,
   type JiraIssueKey,
   type ThreadJiraIssueLink,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { AsyncResult, type Atom, type AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { request } from "../rpc/client.ts";
-import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 /**
  * The inputs whose next request skips the server's read cache. Only an explicit refresh marks
@@ -34,13 +35,24 @@ function createJiraCacheSkips() {
 }
 
 /**
- * Query atoms per environment. Capabilities change only when the server's configuration does, so
- * they are kept for five minutes; an issue is re-read after thirty seconds when it is shown again.
- * Nothing here polls.
+ * Query atoms per environment. Capabilities change only when the server's configuration or the
+ * caller's personal token does, so they are kept for five minutes; an issue is re-read after
+ * thirty seconds when it is shown again. Nothing here polls.
  */
 export function createJiraEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
+  // Every read depends on who Jira is read as, which a personal token changes. Bumping this
+  // re-reads whatever is mounted and marks the rest stale, so no read outlives the identity.
+  const readerEpoch = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make(0).pipe(Atom.withLabel("environment-data:jira:reader-epoch")),
+  );
+  const refreshTrigger = ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
+    readerEpoch(environmentId);
+  const readerChanged = (
+    { environmentId }: { readonly environmentId: EnvironmentId },
+    registry: AtomRegistry.AtomRegistry,
+  ) => Effect.sync(() => registry.update(readerEpoch(environmentId), (epoch) => epoch + 1));
   // Search and issue reads are cached briefly on the server; the refreshes below skip that cache.
   // They need no client grant, so the permission guard cannot refuse them.
   const searchSkips = createJiraCacheSkips();
@@ -48,6 +60,7 @@ export function createJiraEnvironmentAtoms<R, E>(
     label: "environment-data:jira:search",
     tag: WS_METHODS.jiraSearch,
     staleTimeMs: 30_000,
+    refreshTrigger,
     execute: (input) =>
       request(
         WS_METHODS.jiraSearch,
@@ -59,6 +72,7 @@ export function createJiraEnvironmentAtoms<R, E>(
     label: "environment-data:jira:issue",
     tag: WS_METHODS.jiraIssue,
     staleTimeMs: 30_000,
+    refreshTrigger,
     execute: (input) =>
       request(
         WS_METHODS.jiraIssue,
@@ -70,17 +84,20 @@ export function createJiraEnvironmentAtoms<R, E>(
       label: "environment-data:jira:capabilities",
       tag: WS_METHODS.jiraCapabilities,
       staleTimeMs: 5 * 60_000,
+      refreshTrigger,
     }),
     /** The reader's favourite and own filters, or those matching a name. */
     filters: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:jira:filters",
       tag: WS_METHODS.jiraFilters,
       staleTimeMs: 60_000,
+      refreshTrigger,
     }),
     filter: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:jira:filter",
       tag: WS_METHODS.jiraFilter,
       staleTimeMs: 60_000,
+      refreshTrigger,
     }),
     /** One page of a filter or ad-hoc JQL; pages are keyed by their `nextPageToken`. */
     search,
@@ -95,6 +112,25 @@ export function createJiraEnvironmentAtoms<R, E>(
       issueSkips.mark(target.input);
       registry.refresh(issue(target));
     },
+    /**
+     * The caller's own token. Each success re-reads capabilities and every cached read, because
+     * reads now go out as a different identity.
+     */
+    setPersonalToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:jira:set-personal-token",
+      tag: WS_METHODS.jiraSetPersonalToken,
+      onSuccess: (target, registry) => readerChanged(target, registry),
+    }),
+    testPersonalToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:jira:test-personal-token",
+      tag: WS_METHODS.jiraTestPersonalToken,
+      onSuccess: (target, registry) => readerChanged(target, registry),
+    }),
+    clearPersonalToken: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:jira:clear-personal-token",
+      tag: WS_METHODS.jiraClearPersonalToken,
+      onSuccess: (target, registry) => readerChanged(target, registry),
+    }),
   };
 }
 
@@ -104,6 +140,8 @@ export const JIRA_NOT_CONFIGURED: JiraCapabilities = {
   reader: null,
   viewer: null,
   readerError: null,
+  personalTokens: false,
+  personalCredential: null,
 };
 
 /**

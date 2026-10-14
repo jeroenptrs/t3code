@@ -31,6 +31,7 @@ import {
   ShieldCheckIcon,
   SmartphoneIcon,
   WrenchIcon,
+  UserRoundIcon,
   UsersRoundIcon,
   XIcon,
 } from "lucide-react";
@@ -62,6 +63,7 @@ import {
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { handleSettingsSectionKeyDown } from "./settingsSectionNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
+import { useCanOpenAccountSettings } from "./useCanOpenAccountSettings";
 import { useCanReadPortalUsers } from "./useCanReadPortalUsers";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
@@ -112,6 +114,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/maintenance": WrenchIcon,
   "/settings/labs": FlaskConicalIcon,
   "/settings/about": InfoIcon,
+  "/settings/account": UserRoundIcon,
   "/settings/users": UsersRoundIcon,
   "/settings/archived": ArchiveIcon,
 };
@@ -140,10 +143,16 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentHash = useLocation({ select: (location) => location.hash });
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
   const canReadUsers = useCanReadPortalUsers();
+  const canOpenAccount = useCanOpenAccountSettings();
+  // Empty groups hide.
   const navGroups = SETTINGS_NAV_GROUPS.map((group) => ({
     ...group,
-    paths: group.paths.filter((to) => to !== "/settings/users" || canReadUsers),
-  }));
+    paths: group.paths.filter(
+      (to) =>
+        (to !== "/settings/account" || canOpenAccount) &&
+        (to !== "/settings/users" || canReadUsers),
+    ),
+  })).filter((group) => group.paths.length > 0);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   // Below md the nav is an icon rail; searching expands it over the page.
