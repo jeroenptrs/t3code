@@ -3,6 +3,7 @@ import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
   resolveBackgroundDraftWorkspaceOptions,
+  resolveNewWorktreeBranchForSend,
   resolveDraftHeroState,
   shouldDockDraftHeroForSubmission,
   resolveVisibleWorktreeSetup,
@@ -10004,6 +10005,10 @@ export default function ChatView(props: ChatViewProps) {
 
     let backgroundDraftOpened = false;
     let turnStartSucceeded = false;
+    const newWorktreeBranchForSend = resolveNewWorktreeBranchForSend({
+      baseBranchForWorktree,
+      draftNewWorktreeBranch: isLocalDraftThread ? draftThread?.newWorktreeBranch : null,
+    });
     if (failure === null && turnAttachmentsResult._tag === "Success") {
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
@@ -10027,6 +10032,7 @@ export default function ChatView(props: ChatViewProps) {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
+                      ...(newWorktreeBranchForSend ? { branch: newWorktreeBranchForSend } : {}),
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
                     },
                     runSetupScript: true,
