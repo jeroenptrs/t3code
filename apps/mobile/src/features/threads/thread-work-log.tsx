@@ -120,7 +120,8 @@ type WorkContentIcon =
   | "computer"
   | "device"
   | "t3-code"
-  | "pull-request";
+  | "pull-request"
+  | "jira";
 
 function WorkLogIcon(props: {
   readonly icon: WorkContentIcon;
@@ -129,7 +130,8 @@ function WorkLogIcon(props: {
   readonly highlighted?: boolean;
 }) {
   const colorClassName = props.highlighted ? "accent-foreground" : props.colorClassName;
-  if (props.icon === "t3-code") {
+  // The fork does not ship mobile Jira UI; its tools show as any other T3 tool.
+  if (props.icon === "t3-code" || props.icon === "jira") {
     return (
       <T3Wordmark height={10} {...(colorClassName ? { colorClassName } : { color: props.color })} />
     );
@@ -1296,7 +1298,7 @@ export function ThreadWorkGroupToggle(props: {
   readonly iconSubtleColor: import("react-native").ColorValue;
   readonly summary: string;
   readonly summaryKind: ToolGroupSummaryKind;
-  readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request" | "brain";
+  readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request" | "jira" | "brain";
   readonly themeAppearance: "light" | "dark";
   readonly toolSurface?: import("@t3tools/contracts").ToolActivitySurface;
   readonly toolIcon?: ToolActivityIcon;
@@ -1665,6 +1667,10 @@ function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
     case "dynamic-tool":
     case "update":
     case "mixed":
+    case "jira":
+    case "link-jira":
+    case "unlink-jira":
+    case "list-jira":
       return { ios: "hammer", android: "construction" };
   }
 }
