@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 
 import { normalizeJiraSite } from "../../../jira/JiraConfig.ts";
 import * as JiraIdentities from "../../../jira/JiraIdentities.ts";
+import * as JiraProposals from "../../../jira/JiraProposals.ts";
 import * as JiraService from "../../../jira/JiraService.ts";
 import { browseUrl } from "../../../jira/issueMapping.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
@@ -24,6 +25,7 @@ import {
   JiraSiteInvalidError,
   JiraThreadNotFoundError,
   JiraThreadRequiredError,
+  type JiraProposalToolResult,
   type ListThreadJiraIssuesResult,
 } from "./tools.ts";
 
@@ -53,8 +55,19 @@ function listThreadJiraIssues(
   };
 }
 
+/** What a propose tool reports from the proposal's outcome. */
+const proposalResult = (outcome: JiraProposals.JiraProposalOutcome): JiraProposalToolResult => ({
+  proposalId: outcome.proposalId,
+  status: outcome.status,
+  ...(outcome.result === null || outcome.result.issues.length === 0
+    ? {}
+    : { issues: outcome.result.issues }),
+  ...(outcome.error === null ? {} : { error: outcome.error }),
+});
+
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
+  const proposals = yield* JiraProposals.JiraProposals;
   const jira = yield* JiraService.JiraService;
   const identities = yield* JiraIdentities.JiraIdentities;
   const crypto = yield* Crypto.Crypto;
@@ -110,6 +123,34 @@ const make = Effect.gen(function* () {
       }),
       Effect.catchTags({
         JiraError: (error) => Effect.succeed({ issue: null, note: error.message }),
+      }),
+    );
+
+  /**
+   * A propose tool: records the card in the calling thread's live run and waits for the user.
+   * Nothing here can approve one; only a signed-in user deciding it from a client does.
+   */
+  const proposes = <
+    P extends {
+      readonly timeoutMs?: number | undefined;
+      readonly clientRequestId?: string | undefined;
+    },
+  >(
+    tool: string,
+    request: (params: P) => JiraProposals.JiraProposalRequest,
+  ) =>
+    McpToolAccess.actsAsCaller((params: P) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const caller = yield* McpInvocationContext.requireThreadScope(scope, tool);
+        const outcome = yield* proposals.propose({
+          threadId: caller.thread.threadId,
+          providerInstanceId: caller.thread.providerInstanceId,
+          request: request(params),
+          clientRequestId: params.clientRequestId,
+          timeoutMs: params.timeoutMs,
+        });
+        return proposalResult(outcome);
       }),
     );
 
@@ -186,6 +227,24 @@ const make = Effect.gen(function* () {
         Effect.map(listThreadJiraIssues),
       ),
     ),
+    propose_jira_issues: proposes("propose_jira_issues", (input) => ({
+      kind: "create-issues",
+      site: input.site,
+      issues: input.issues,
+    })),
+    propose_jira_comment: proposes("propose_jira_comment", (input) => ({
+      kind: "comment",
+      site: input.site,
+      key: input.key,
+      body: input.body,
+    })),
+    propose_jira_transition: proposes("propose_jira_transition", (input) => ({
+      kind: "transition",
+      site: input.site,
+      key: input.key,
+      transition: input.transition,
+      comment: input.comment,
+    })),
   } satisfies McpToolAccess.Handlers<typeof JiraIssuesToolkit.tools>;
 });
 
