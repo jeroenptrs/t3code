@@ -296,7 +296,7 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
-  it.effect("Stop with no run left ends the thread's pull request watches", () =>
+  it.effect("Stop with no run left ends the thread's pull request and Jira issue watches", () =>
     Effect.gen(function* () {
       const link = {
         host: "github.com",
@@ -327,6 +327,30 @@ describe("V2 environment commands", () => {
             { ...link, number: 8 },
             { ...link, number: 9, source: "stack-dismissed", watch },
           ],
+          jiraIssues: [
+            {
+              site: "acme.atlassian.net",
+              key: "ABC-1",
+              source: "agent",
+              linkedAt: "2026-10-05T00:00:00.000Z",
+              snapshot: null,
+              watch: {
+                startedAt: "2026-10-05T00:00:00.000Z",
+                updatedThrough: null,
+                statusCategory: null,
+                assigneeAccountId: null,
+                commentsThrough: "2026-10-05T00:00:00.000Z",
+                wakes: 0,
+              },
+            },
+            {
+              site: "acme.atlassian.net",
+              key: "ABC-2",
+              source: "manual",
+              linkedAt: "2026-10-05T00:00:00.000Z",
+              snapshot: null,
+            },
+          ],
         },
       };
       const commands: OrchestrationV2Command[] = [];
@@ -344,6 +368,14 @@ describe("V2 environment commands", () => {
           host: "github.com",
           repository: "pingdotgg/t3code",
           number: 7,
+          watching: false,
+        },
+        {
+          type: "thread.jira-issue.watch",
+          commandId: expect.any(String),
+          threadId: v2ThreadId,
+          site: "acme.atlassian.net",
+          key: "ABC-1",
           watching: false,
         },
       ]);
