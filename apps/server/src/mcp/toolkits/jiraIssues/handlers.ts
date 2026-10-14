@@ -21,6 +21,9 @@ import {
   JiraIssueListFailedError,
   JiraIssuesToolkit,
   JiraIssueUnlinkFailedError,
+  JiraIssueWatchFailedError,
+  JiraIssueWatchFromSubagentError,
+  JiraIssueWatchUnavailableError,
   JiraNotConfiguredError,
   JiraSiteInvalidError,
   JiraThreadNotFoundError,
@@ -32,7 +35,8 @@ import {
 type ThreadFailure =
   | typeof JiraIssueLinkFailedError
   | typeof JiraIssueUnlinkFailedError
-  | typeof JiraIssueListFailedError;
+  | typeof JiraIssueListFailedError
+  | typeof JiraIssueWatchFailedError;
 
 const visibleLinks = (thread: Pick<OrchestrationV2ThreadShell, "jiraIssues">) =>
   (thread.jiraIssues ?? []).filter((link) => link.source !== "branch-dismissed");
@@ -72,6 +76,7 @@ const make = Effect.gen(function* () {
   const identities = yield* JiraIdentities.JiraIdentities;
   const crypto = yield* Crypto.Crypto;
   const readerSite = identities.list.find((identity) => identity.reader)?.site ?? null;
+  const readSites = new Set(identities.list.map((identity) => identity.site));
 
   const commandId = (tag: string, threadId: ThreadId) =>
     crypto.randomUUIDv4().pipe(
@@ -105,7 +110,12 @@ const make = Effect.gen(function* () {
   };
 
   const dispatchFailure =
-    (Failure: typeof JiraIssueLinkFailedError | typeof JiraIssueUnlinkFailedError) =>
+    (
+      Failure:
+        | typeof JiraIssueLinkFailedError
+        | typeof JiraIssueUnlinkFailedError
+        | typeof JiraIssueWatchFailedError,
+    ) =>
     <E>(cause: Cause.Cause<E>) =>
       Cause.hasInterruptsOnly(cause)
         ? Effect.failCause(cause as Cause.Cause<never>)
@@ -153,6 +163,58 @@ const make = Effect.gen(function* () {
         return proposalResult(outcome);
       }),
     );
+
+  /**
+   * Starts or stops a watch. Without a site, a link the thread already has wins, the reader's
+   * first; a new watch otherwise goes on the reader's site. Starting links the issue as the
+   * agent when the thread does not link it, and the result is the state the thread holds after.
+   */
+  const setWatching = Effect.fn("JiraIssuesToolkit.setWatching")(function* (
+    input: {
+      readonly key: string;
+      readonly site?: string | undefined;
+      readonly threadId?: ThreadId | undefined;
+    },
+    watching: boolean,
+  ) {
+    const thread = yield* requireThread(JiraIssueWatchFailedError, input.threadId);
+    const site = yield* explicitSite(input.site);
+    const linked = visibleLinks(thread).filter(
+      (link) => link.key === input.key && (site === null || link.site === site),
+    );
+    const before = linked.find((link) => link.site === readerSite) ?? linked[0];
+    const target = site ?? before?.site ?? readerSite;
+    if (!watching && before?.watch === undefined) {
+      return { site: target, key: input.key, watching: false, wasWatching: false };
+    }
+    if (watching && thread.lineage.relationshipToParent === "subagent") {
+      return yield* new JiraIssueWatchFromSubagentError();
+    }
+    // The sweep reads only sites with an identity, so a watch anywhere else would never wake.
+    if (target === null || (watching && !readSites.has(target))) {
+      return yield* new JiraIssueWatchUnavailableError({ site: target });
+    }
+    yield* engine
+      .dispatch({
+        type: "thread.jira-issue.watch",
+        commandId: yield* commandId("mcp-jira-watch", thread.id),
+        threadId: thread.id,
+        site: target,
+        key: input.key,
+        watching,
+        ...(watching ? { linkSource: "agent" as const } : {}),
+      })
+      .pipe(Effect.catchCause(dispatchFailure(JiraIssueWatchFailedError)));
+    const after = yield* requireThread(JiraIssueWatchFailedError, thread.id);
+    return {
+      site: target,
+      key: input.key,
+      watching: visibleLinks(after).some(
+        (link) => link.site === target && link.key === input.key && link.watch !== undefined,
+      ),
+      wasWatching: before?.watch !== undefined,
+    };
+  });
 
   /** A tool that changes `threadId`, or the caller's own thread when it is omitted. */
   const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
@@ -222,6 +284,8 @@ const make = Effect.gen(function* () {
         return { site: target.site, key: target.key, wasLinked: true };
       }),
     ),
+    watch_jira_issue: writesThread((input) => setWatching(input, true)),
+    unwatch_jira_issue: writesThread((input) => setWatching(input, false)),
     list_thread_jira_issues: McpToolAccess.reads((input) =>
       requireThread(JiraIssueListFailedError, input.threadId).pipe(
         Effect.map(listThreadJiraIssues),

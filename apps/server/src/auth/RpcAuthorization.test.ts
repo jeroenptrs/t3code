@@ -86,6 +86,13 @@ describe("RPC authorization scopes", () => {
     ]);
   });
 
+  it("lets only operators comment on or move a Jira issue", () => {
+    for (const method of [WS_METHODS.jiraAddComment, WS_METHODS.jiraTransitionIssue]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+      expect(clientRpcRequiredScopes(method, undefined)).toEqual([AuthOrchestrationOperateScope]);
+    }
+  });
+
   it("separates passive terminal observation from operations that can change a shell", () => {
     for (const method of [WS_METHODS.terminalObserve, WS_METHODS.subscribeTerminalMetadata]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);
