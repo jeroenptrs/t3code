@@ -114,6 +114,9 @@ export type ToolGroupAction =
   | "list-prs"
   | "watch-pr"
   | "unwatch-pr"
+  | "link-jira"
+  | "unlink-jira"
+  | "list-jira"
   | "read"
   | "edit"
   | "command"
@@ -127,6 +130,7 @@ export type ToolGroupAction =
 
 export type ToolGroupSummaryKind =
   | "pull-request"
+  | "jira"
   | ToolGroupAction
   | "dynamic-tool"
   | "reasoning"
@@ -195,7 +199,10 @@ function resolveT3McpToolPresentation(
     definition.summaryAction === "unlink-pr" ||
     definition.summaryAction === "list-prs" ||
     definition.summaryAction === "watch-pr" ||
-    definition.summaryAction === "unwatch-pr"
+    definition.summaryAction === "unwatch-pr" ||
+    definition.summaryAction === "link-jira" ||
+    definition.summaryAction === "unlink-jira" ||
+    definition.summaryAction === "list-jira"
       ? definition.summaryAction
       : undefined;
   const payload = asRecord(data);
@@ -206,9 +213,16 @@ function resolveT3McpToolPresentation(
   const number = urlTarget?.link.number ?? input?.number;
   const { shortLabel } = (urlTarget?.definition ?? sourceControlClients.get(undefined))
     .changeRequest;
+  const jiraKey =
+    (actionKind === "link-jira" || actionKind === "unlink-jira") &&
+    typeof input?.key === "string" &&
+    input.key.trim() !== ""
+      ? input.key.trim().toUpperCase()
+      : null;
   const pullRequestNumber =
     actionKind !== undefined &&
     actionKind !== "list-prs" &&
+    actionKind !== "list-jira" &&
     typeof number === "number" &&
     Number.isSafeInteger(number) &&
     number > 0
@@ -231,15 +245,17 @@ function resolveT3McpToolPresentation(
               ? `Stopped ${running.toLowerCase()}`
               : running;
   const displayName =
-    sentence === undefined
-      ? `${fallbackVerb} ${pullRequestNumber === null ? detail : `${shortLabel} #${pullRequestNumber}`}`
-      : pullRequestNumber !== null && sentence.changeRequest !== undefined
-        ? resolve(sentence.changeRequest, {
-            status: statusKey,
-            changeRequest: shortLabel,
-            number: String(pullRequestNumber),
-          })
-        : resolve(sentence.detail, { status: statusKey });
+    jiraKey !== null
+      ? `${fallbackVerb} ${jiraKey}`
+      : sentence === undefined
+        ? `${fallbackVerb} ${pullRequestNumber === null ? detail : `${shortLabel} #${pullRequestNumber}`}`
+        : pullRequestNumber !== null && sentence.changeRequest !== undefined
+          ? resolve(sentence.changeRequest, {
+              status: statusKey,
+              changeRequest: shortLabel,
+              number: String(pullRequestNumber),
+            })
+          : resolve(sentence.detail, { status: statusKey });
   return {
     displayName,
     icon: definition.icon,
@@ -543,6 +559,26 @@ function toolGroupActionLabel(
           { count },
         ),
       );
+    case "link-jira":
+      return resolve(
+        msg("{count, plural, one {Linked {count} Jira issue} other {Linked {count} Jira issues}}", {
+          count,
+        }),
+      );
+    case "unlink-jira":
+      return resolve(
+        msg(
+          "{count, plural, one {Unlinked {count} Jira issue} other {Unlinked {count} Jira issues}}",
+          { count },
+        ),
+      );
+    case "list-jira":
+      return resolve(
+        msg(
+          "{count, plural, =1 {Checked linked Jira issues} other {Checked linked Jira issues {count} times}}",
+          { count },
+        ),
+      );
     case "read":
       return resolve(
         msg("{count, plural, one {Read {count} file} other {Read {count} files}}", { count }),
@@ -784,6 +820,11 @@ export function toolGroupSummaryKind(
     entries.every((entry) => resolveWorkEntryToolPresentation(entry)?.icon === "pull-request")
   )
     return "pull-request";
+  if (
+    entries.length > 0 &&
+    entries.every((entry) => resolveWorkEntryToolPresentation(entry)?.icon === "jira")
+  )
+    return "jira";
   const actions = new Set(entries.map(toolGroupAction));
   if (actions.size !== 1) return "mixed";
   const action = actions.values().next().value!;

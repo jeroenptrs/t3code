@@ -75,6 +75,9 @@ export type T3McpToolSummaryAction =
   | "link-issue"
   | "unlink-issue"
   | "list-thread-issues"
+  | "link-jira"
+  | "unlink-jira"
+  | "list-jira"
   | "diff-walkthrough-write"
   | "diff-walkthrough-read"
   | "thread-diff-read"
@@ -87,7 +90,7 @@ export type T3McpToolSummaryAction =
 export interface T3McpToolDefinition {
   readonly displayName: string;
   readonly labels: readonly [action: string, running: string, completed: string, detail: string];
-  readonly icon: "t3-code" | "browser" | "device" | "pull-request";
+  readonly icon: "t3-code" | "browser" | "device" | "pull-request" | "jira";
   readonly summaryAction: T3McpToolSummaryAction;
 }
 
@@ -166,6 +169,18 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   link_issue: tool(["Link", "Linking", "Linked", "an issue"], "link-issue"),
   unlink_issue: tool(["Unlink", "Unlinking", "Unlinked", "an issue"], "unlink-issue"),
   list_thread_issues: tool(["Check", "Checking", "Checked", "linked issues"], "list-thread-issues"),
+  // Fork-only Jira link tools; later Jira tools add one entry each here.
+  link_jira_issue: tool(["Link", "Linking", "Linked", "a Jira issue"], "link-jira", "jira"),
+  unlink_jira_issue: tool(
+    ["Unlink", "Unlinking", "Unlinked", "a Jira issue"],
+    "unlink-jira",
+    "jira",
+  ),
+  list_thread_jira_issues: tool(
+    ["Check", "Checking", "Checked", "linked Jira issues"],
+    "list-jira",
+    "jira",
+  ),
   write_diff_walkthrough: tool(
     ["Write", "Writing", "Wrote", "a diff walkthrough"],
     "diff-walkthrough-write",
