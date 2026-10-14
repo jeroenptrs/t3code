@@ -13,7 +13,15 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m as resolveMessage } from "../i18n/messages";
-import { FolderGit2Icon, FolderGitIcon, FolderIcon, PlusIcon, ScaleIcon } from "lucide-react";
+import {
+  FolderGit2Icon,
+  FolderGitIcon,
+  FolderIcon,
+  GitBranchIcon,
+  PlusIcon,
+  ScaleIcon,
+  XIcon,
+} from "lucide-react";
 import {
   type Ref,
   type MouseEvent as ReactMouseEvent,
@@ -170,6 +178,47 @@ interface RunContextSelectorProps {
   onUsePreviousWorktree: () => void;
   addTargets: readonly AddProjectTarget[];
   onAddToMachine: (environmentId: EnvironmentId) => void;
+}
+
+/**
+ * The name a first send gives the new worktree's branch, as a draft carries it (start from a Jira
+ * issue sets one). Clicking clears it, and the server names the branch as usual.
+ */
+function NewWorktreeBranchControl({
+  displayMode,
+  name,
+  onClear,
+}: {
+  displayMode: "toolbar" | "panel";
+  name: string;
+  onClear: () => void;
+}) {
+  const content = (
+    <>
+      <GitBranchIcon aria-hidden className="size-3 shrink-0 opacity-70" />
+      <ComposerContextLabel displayMode={displayMode}>
+        <MiddleTruncate value={`New branch: ${name}`} className="w-full" />
+      </ComposerContextLabel>
+      <XIcon aria-hidden className="size-3 shrink-0 opacity-50" />
+    </>
+  );
+  const label = `Clear new branch name ${name}`;
+  return displayMode === "panel" ? (
+    <ThreadDetailsControl aria-label={label} title={label} onClick={onClear}>
+      {content}
+    </ThreadDetailsControl>
+  ) : (
+    <ComposerControl
+      size="xs"
+      className="min-w-0 max-w-full"
+      aria-label={label}
+      title={label}
+      onClick={onClear}
+      data-composer-context-control
+    >
+      {content}
+    </ComposerControl>
+  );
 }
 
 const RunContextSelector = memo(function RunContextSelector({
@@ -680,6 +729,18 @@ export const BranchToolbar = memo(function BranchToolbar({
     });
   };
 
+  const draftNewWorktreeBranch = useComposerDraftStore(
+    (store) =>
+      (draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef))
+        ?.newWorktreeBranch ?? null,
+  );
+  const newWorktreeBranch =
+    !isServerThread && !envLocked && effectiveEnvMode === "worktree" && activeWorktreePath === null
+      ? draftNewWorktreeBranch
+      : null;
+  const clearNewWorktreeBranch = () =>
+    setDraftThreadContext(draftId ?? threadRef, { newWorktreeBranch: null });
+
   useImperativeHandle(
     ref,
     () => ({
@@ -742,6 +803,13 @@ export const BranchToolbar = memo(function BranchToolbar({
             onUsePreviousWorktree={onUsePreviousWorktree}
             addTargets={addTargets}
             onAddToMachine={onAddToMachine}
+          />
+        ) : null}
+        {panelSection !== "workspace" && newWorktreeBranch ? (
+          <NewWorktreeBranchControl
+            displayMode="panel"
+            name={newWorktreeBranch}
+            onClear={clearNewWorktreeBranch}
           />
         ) : null}
         {panelSection !== "workspace" ? (
@@ -836,6 +904,14 @@ export const BranchToolbar = memo(function BranchToolbar({
             />
           ) : null}
         </div>
+      ) : null}
+
+      {showGitControls && newWorktreeBranch ? (
+        <NewWorktreeBranchControl
+          displayMode="toolbar"
+          name={newWorktreeBranch}
+          onClear={clearNewWorktreeBranch}
+        />
       ) : null}
 
       {showGitControls ? (
