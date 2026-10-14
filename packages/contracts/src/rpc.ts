@@ -129,7 +129,9 @@ import {
   DiffWalkthroughPutResult,
 } from "./diffWalkthrough.ts";
 import {
+  JiraAddCommentInput,
   JiraCapabilities,
+  JiraComment,
   JiraCreateMeta,
   JiraCreateMetaInput,
   JiraError,
@@ -145,6 +147,7 @@ import {
   JiraProposalDecisionResult,
   JiraSearchInput,
   JiraSearchResult,
+  JiraTransitionIssueInput,
 } from "./jira.ts";
 import {
   WorktreeSetupCancelInput,
@@ -645,6 +648,9 @@ export const WS_METHODS = {
   // Proposals: agent-proposed Jira writes a user approves, performed with their personal token
   jiraCreateMeta: "jira.createMeta",
   jiraDecideProposal: "jira.decideProposal",
+  // Direct changes a signed-in user makes as themselves from an issue's detail
+  jiraAddComment: "jira.addComment",
+  jiraTransitionIssue: "jira.transitionIssue",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1405,6 +1411,19 @@ const WsJiraCreateMetaRpc = Rpc.make(WS_METHODS.jiraCreateMeta, {
 const WsJiraDecideProposalRpc = Rpc.make(WS_METHODS.jiraDecideProposal, {
   payload: JiraProposalDecisionInput,
   success: JiraProposalDecisionResult,
+  error: JiraRpcError,
+});
+
+/** Needs the caller's personal token for the issue's site; never a service account. */
+const WsJiraAddCommentRpc = Rpc.make(WS_METHODS.jiraAddComment, {
+  payload: JiraAddCommentInput,
+  success: JiraComment,
+  error: JiraRpcError,
+});
+
+/** Needs the caller's personal token; refused when the issue no longer offers the transition. */
+const WsJiraTransitionIssueRpc = Rpc.make(WS_METHODS.jiraTransitionIssue, {
+  payload: JiraTransitionIssueInput,
   error: JiraRpcError,
 });
 
@@ -2251,6 +2270,8 @@ export const WsJiraRpcGroup = RpcGroup.make(
   WsJiraClearPersonalTokenRpc,
   WsJiraCreateMetaRpc,
   WsJiraDecideProposalRpc,
+  WsJiraAddCommentRpc,
+  WsJiraTransitionIssueRpc,
 ).middleware(RpcScopeAuthorization);
 
 /** Every RPC except those in `WsJiraRpcGroup`. */
