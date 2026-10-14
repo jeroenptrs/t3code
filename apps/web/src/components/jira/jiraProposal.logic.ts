@@ -1,6 +1,7 @@
 import { jiraIssueUrl } from "@t3tools/client-runtime/state/jira";
 import {
   JIRA_ISSUE_KEY_PATTERN,
+  type JiraCapabilities,
   type JiraCreateMeta,
   type JiraIssueDraft,
   type JiraProposal,
@@ -9,6 +10,8 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+
+import { personalCredentialForSite } from "./jiraIssueList.logic";
 
 export type JiraProposalItem = Extract<OrchestrationV2TurnItem, { readonly type: "jira_proposal" }>;
 type JiraProposalIssue = JiraProposalResult["issues"][number];
@@ -152,6 +155,41 @@ export function initialJiraProposalEdits(proposal: JiraProposal): JiraProposalEd
     case "transition":
       return { kind: "transition", comment: proposal.comment ?? "" };
   }
+}
+
+/**
+ * Identifies the proposal the form was seeded from. A different value means the item changed under
+ * the form (another client edited, decided or retried it), so edits keyed to the old draft
+ * positions no longer apply.
+ */
+export function jiraProposalFingerprint(
+  item: Pick<JiraProposalItem, "proposal" | "proposalStatus" | "decidedAt"> & {
+    readonly id: string;
+  },
+): string {
+  return JSON.stringify([item.id, item.proposalStatus, item.decidedAt ?? null, item.proposal]);
+}
+
+/** Whether the form holds changes the user made, as opposed to the values it was seeded with. */
+export function jiraProposalEditsChanged(
+  seed: JiraProposalEdits,
+  current: JiraProposalEdits,
+): boolean {
+  return JSON.stringify(seed) !== JSON.stringify(current);
+}
+
+/**
+ * Approve needs the caller's own Jira token for the proposal's site. Capabilities are the source
+ * of truth, so a token added later (in another window) lifts the block. The server's refusal
+ * only stands in while capabilities have not loaded.
+ */
+export function jiraProposalNeedsToken(input: {
+  readonly capabilities: Pick<JiraCapabilities, "personalCredential"> | null;
+  readonly site: string;
+  readonly serverRequiredToken: boolean;
+}): boolean {
+  if (input.capabilities === null) return input.serverRequiredToken;
+  return personalCredentialForSite(input.capabilities, input.site) === null;
 }
 
 export type JiraDraftField = "summary" | "issueType" | "storyPoints" | "parentKey";
