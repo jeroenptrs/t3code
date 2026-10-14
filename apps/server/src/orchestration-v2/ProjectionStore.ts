@@ -1479,6 +1479,10 @@ export function threadShellFromProjection(
     runs.filter(isActivityRunForShell).toSorted((left, right) => right.ordinal - left.ordinal)[0] ??
     null;
   const liveRunIds = new Set(runs.filter(isActivityRunForShell).map((run) => run.id));
+  // A rolled-back run's Jira proposal is hidden with its turn and waits on no one.
+  const rolledBackRunIds = new Set<string | null>(
+    projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
+  );
   let pendingRuntimeRequest = pendingRuntimeRequestSummary(
     projection.runtimeRequests
       .filter((request) => request.status === "pending")
@@ -1502,7 +1506,8 @@ export function threadShellFromProjection(
           .filter(
             (item) =>
               item.status === "waiting" &&
-              waitsOnUser(item, liveRunIds, latestUserAuthoredMessageAt),
+              waitsOnUser(item, liveRunIds, latestUserAuthoredMessageAt) &&
+              !(item.type === "jira_proposal" && rolledBackRunIds.has(item.runId)),
           )
           .toSorted(
             (left, right) =>
@@ -6122,11 +6127,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ) AS pending_link_request_payload_json,
               (
                 SELECT proposal.payload_json
-                -- Proposals outlive their run, so any waiting one counts; a partial index keeps
-                -- this off the thread's history.
+                -- Proposals outlive their run, so any waiting one counts unless its run was
+                -- rolled back, which hides it; a partial index keeps this off the thread's history.
                 FROM orchestration_v2_projection_turn_items proposal
                 WHERE proposal.thread_id = t.thread_id
                   AND proposal.type = 'jira_proposal' AND proposal.status = 'waiting'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs proposal_run
+                    WHERE proposal_run.run_id = proposal.run_id
+                      AND proposal_run.status = 'rolled_back'
+                  )
                 ORDER BY proposal.updated_at DESC, proposal.turn_item_id DESC
                 LIMIT 1
               ) AS pending_jira_proposal_payload_json,
@@ -6442,6 +6452,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT 1 FROM orchestration_v2_projection_turn_items proposal
                 WHERE proposal.thread_id = t.thread_id
                   AND proposal.type = 'jira_proposal' AND proposal.status = 'waiting'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs proposal_run
+                    WHERE proposal_run.run_id = proposal.run_id
+                      AND proposal_run.status = 'rolled_back'
+                  )
               )
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
