@@ -29,6 +29,7 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { toastManager } from "../ui/toast";
+import { personalCredentialForSite } from "./jiraIssueList.logic";
 import { JiraConfigurationSteps, JiraStatusBadge } from "./jiraPresentation";
 
 /** Opens Jira where the "Open links in" setting says, for anchors that point at it. */
@@ -131,13 +132,14 @@ export function JiraIssueDetailPanel(props: {
   }
   if (query.data === null) {
     const reason = jiraFailureReason(query.failure);
+    const usesPersonalToken = personalCredentialForSite(capabilities, issue.site) !== null;
     return (
       <JiraIssueUnavailable
         title={
           reason === "not-found"
             ? `${issue.key} is not available`
             : reason === "unauthorized" || reason === "forbidden"
-              ? capabilities.personalCredential === null
+              ? !usesPersonalToken
                 ? "Jira refused the reader"
                 : "Jira refused your token"
               : `Could not load ${issue.key}`
@@ -146,7 +148,7 @@ export function JiraIssueDetailPanel(props: {
           reason === "not-found"
             ? `The issue does not exist on ${issue.site}, or the server's reader identity cannot see it.`
             : reason === "unauthorized" || reason === "forbidden"
-              ? capabilities.personalCredential === null
+              ? !usesPersonalToken
                 ? `Jira refused the server's reader identity${capabilities.reader ? ` (${capabilities.reader.name})` : ""}. Check its token and project permissions.`
                 : "Check your token and project permissions in Settings → Account."
               : (query.error ?? "The request failed.")
