@@ -112,7 +112,12 @@ const toSprints = (value: unknown): Array<JiraSprint> =>
     return [{ id: sprint.id, name: sprint.name, state: state as JiraSprint["state"] }];
   });
 
-const nameOf = (value: unknown) => (isRecord(value) ? stringOrNull(value.name) : null);
+/**
+ * Jira translates status and issue type names into the reading account's language, and keeps the
+ * name the admin gave it as `untranslatedName` on the objects that have one.
+ */
+const nameOf = (value: unknown) =>
+  isRecord(value) ? (stringOrNull(value.untranslatedName) ?? stringOrNull(value.name)) : null;
 
 /** The issue's page on its site. */
 export const browseUrl = (site: string, key: string) => `https://${site}/browse/${key}`;
@@ -131,7 +136,7 @@ export const toIssueSummary = (
     key: issue.key,
     url: browseUrl(context.site, issue.key),
     summary: typeof fields.summary === "string" ? fields.summary : "",
-    status: typeof status.name === "string" ? status.name : "",
+    status: nameOf(status) ?? "",
     statusCategory: toStatusCategory(
       isRecord(status.statusCategory) ? status.statusCategory.key : undefined,
     ),
@@ -168,7 +173,7 @@ export const toComment = (comment: JiraRawComment): JiraComment | null => {
 export const toTransition = (transition: JiraRawTransition): JiraTransition => ({
   id: transition.id,
   name: transition.name,
-  toStatus: transition.to?.name ?? transition.name,
+  toStatus: transition.to?.untranslatedName ?? transition.to?.name ?? transition.name,
   toStatusCategory: toStatusCategory(transition.to?.statusCategory?.key),
 });
 
