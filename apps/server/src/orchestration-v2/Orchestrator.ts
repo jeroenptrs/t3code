@@ -82,6 +82,7 @@ import {
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -8534,7 +8535,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   /**
    * Records or updates the card for Jira writes an agent proposed. Unlike a secret request the
    * card outlives its run, so it is recorded on a run that has ended too. The proposal service
-   * moves it through `JIRA_PROPOSAL_TRANSITIONS`; repeating the current status changes nothing.
+   * moves it through `JIRA_PROPOSAL_TRANSITIONS`; repeating the current status changes only the
+   * details that differ.
    */
   const dispatchJiraProposalRecord = Effect.fn("orchestrationV2.dispatch.jiraProposalRecord")(
     function* (
@@ -8567,18 +8569,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* refuse(`Jira proposal ${command.turnItemId} belongs to another run.`);
       }
       const from = existing?.proposalStatus ?? null;
-      const unchanged = existing !== null && from === command.proposalStatus;
+      const sameStatus = existing !== null && from === command.proposalStatus;
       if (
-        !unchanged &&
+        !sameStatus &&
         !JIRA_PROPOSAL_TRANSITIONS[from ?? "new"].includes(command.proposalStatus)
       ) {
         return yield* refuse(
           `Jira proposal ${command.turnItemId} is ${from ?? "not recorded"}; it cannot become ${command.proposalStatus}.`,
         );
       }
+      // Repeating the status with the same details changes nothing; another approval of the same
+      // status, such as a retry taking over an interrupted one, records its own details.
+      const replay =
+        sameStatus &&
+        Equal.equals(
+          {
+            proposal: existing.proposal,
+            decidedByUserId: existing.decidedByUserId,
+            decidedAt: existing.decidedAt,
+            result: existing.result,
+            error: existing.error,
+          },
+          {
+            proposal: command.proposal,
+            decidedByUserId: command.decidedByUserId,
+            decidedAt: command.decidedAt,
+            result: command.result,
+            error: command.error,
+          },
+        );
       const now = yield* DateTime.now;
       const settled = command.proposalStatus !== "pending" && command.proposalStatus !== "approved";
-      const turnItem: OrchestrationV2TurnItem = unchanged
+      const turnItem: OrchestrationV2TurnItem = replay
         ? existing
         : {
             id: command.turnItemId,
@@ -8594,7 +8616,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             status: JIRA_PROPOSAL_ITEM_STATUS[command.proposalStatus],
             title: jiraProposalTitle(command.proposal),
             startedAt: existing?.startedAt ?? now,
-            completedAt: settled ? now : null,
+            completedAt: settled ? (sameStatus ? existing.completedAt : now) : null,
             updatedAt: now,
             type: "jira_proposal",
             proposal: command.proposal,
