@@ -992,6 +992,7 @@ type ShellThreadRow = {
   readonly blocking_failure_payload_json: string | null;
   readonly pending_request_payload_json: string | null;
   readonly pending_secret_request_payload_json: string | null;
+  readonly pending_jira_proposal_payload_json: string | null;
   readonly latest_user_message_at: string | null;
   readonly latest_user_authored_message_at: string | null;
   readonly has_actionable_proposed_plan: number;
@@ -1383,14 +1384,16 @@ function buildVisibleTurnItems(input: {
 
 /**
  * An agent waiting on a secret is waiting on the user just like a question,
- * so the shell reports it as pending user input. Secret requests have no
- * runtime request of their own; this stands one in for the shell summary
- * only, keyed by the card's turn item.
+ * so the shell reports it as pending user input. So is a Jira proposal, which
+ * waits for its approval even after its run ended. Neither has a runtime
+ * request of its own; this stands one in for the shell summary only, keyed by
+ * the card's turn item.
  */
-function secretRequestAsPendingInput(
+function userCardAsPendingInput(
   item: OrchestrationV2TurnItem | null,
 ): OrchestrationV2ThreadProjection["runtimeRequests"][number] | null {
-  if (item?.type !== "secret_request" || item.nodeId === null) return null;
+  if ((item?.type !== "secret_request" && item?.type !== "jira_proposal") || item.nodeId === null)
+    return null;
   return {
     id: RuntimeRequestId.make(item.id),
     nodeId: item.nodeId,
@@ -1402,6 +1405,20 @@ function secretRequestAsPendingInput(
     createdAt: item.startedAt ?? item.updatedAt,
     resolvedAt: null,
   };
+}
+
+function latestWaitingItem(
+  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  matches: (item: OrchestrationV2TurnItem) => boolean,
+): OrchestrationV2TurnItem | null {
+  return (
+    items
+      .filter((item) => item.status === "waiting" && matches(item))
+      .toSorted(
+        (left, right) =>
+          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+      )[0] ?? null
+  );
 }
 
 export function threadShellFromProjection(
@@ -1436,19 +1453,15 @@ export function threadShellFromProjection(
         (left, right) =>
           DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
       )[0] ??
-    secretRequestAsPendingInput(
-      projection.turnItems
-        .filter(
-          (item) =>
-            item.type === "secret_request" &&
-            item.status === "waiting" &&
-            item.runId !== null &&
-            liveRunIds.has(item.runId),
-        )
-        .toSorted(
-          (left, right) =>
-            DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-        )[0] ?? null,
+    userCardAsPendingInput(
+      latestWaitingItem(
+        projection.turnItems,
+        (item) =>
+          item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId),
+      ),
+    ) ??
+    userCardAsPendingInput(
+      latestWaitingItem(projection.turnItems, (item) => item.type === "jira_proposal"),
     );
   const userMessages = projection.messages
     .filter((message) => message.role === "user")
@@ -5327,6 +5340,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS pending_secret_request_payload_json,
               (
+                SELECT proposal.payload_json
+                -- Proposals outlive their run, so any waiting one counts; a partial index keeps
+                -- this off the thread's history.
+                FROM orchestration_v2_projection_turn_items proposal
+                WHERE proposal.thread_id = t.thread_id
+                  AND proposal.type = 'jira_proposal' AND proposal.status = 'waiting'
+                ORDER BY proposal.updated_at DESC, proposal.turn_item_id DESC
+                LIMIT 1
+              ) AS pending_jira_proposal_payload_json,
+              (
                 SELECT message.updated_at
                 FROM orchestration_v2_projection_messages message
                 WHERE message.thread_id = t.thread_id
@@ -5591,6 +5614,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT 1 FROM orchestration_v2_projection_runtime_requests request
                 WHERE request.thread_id = t.thread_id AND request.status = 'pending'
               )
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_turn_items proposal
+                WHERE proposal.thread_id = t.thread_id
+                  AND proposal.type = 'jira_proposal' AND proposal.status = 'waiting'
+              )
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
             if (rows.length === 0) return [];
@@ -5708,10 +5736,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           row.pending_request_payload_json !== null
             ? yield* decodeRuntimeRequestPayload(row.pending_request_payload_json)
             : row.pending_secret_request_payload_json !== null
-              ? secretRequestAsPendingInput(
+              ? userCardAsPendingInput(
                   yield* decodeTurnItemPayload(row.pending_secret_request_payload_json),
                 )
-              : null;
+              : row.pending_jira_proposal_payload_json !== null
+                ? userCardAsPendingInput(
+                    yield* decodeTurnItemPayload(row.pending_jira_proposal_payload_json),
+                  )
+                : null;
         let terminalFailureItem =
           row.terminal_failure_payload_json === null
             ? null
