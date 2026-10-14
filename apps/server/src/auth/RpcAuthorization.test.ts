@@ -75,6 +75,16 @@ describe("RPC authorization scopes", () => {
     ]);
   });
 
+  it("lets readers see a Jira proposal's choices and operators decide it", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.jiraCreateMeta)).toBe(AuthOrchestrationReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.jiraDecideProposal)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(clientRpcRequiredScopes(WS_METHODS.jiraDecideProposal, undefined)).toEqual([
+      AuthOrchestrationOperateScope,
+    ]);
+  });
+
   it("separates passive terminal observation from operations that can change a shell", () => {
     for (const method of [WS_METHODS.terminalObserve, WS_METHODS.subscribeTerminalMetadata]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);

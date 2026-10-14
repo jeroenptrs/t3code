@@ -64,6 +64,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.diffWalkthroughPut]: AuthOrchestrationOperateScope,
   // Like writing a guide, a background walkthrough runs a model on this environment's providers.
   [WS_METHODS.diffWalkthroughGenerate]: AuthOrchestrationOperateScope,
+  // Approving writes to Jira as the caller; a reader may look at a proposal but not decide it.
+  [WS_METHODS.jiraDecideProposal]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
