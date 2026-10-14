@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   EMPTY_JIRA_FACET_SELECTION,
   JIRA_FACET_NONE,
+  availableBranchName,
   collectJiraIssueFacets,
   groupJiraIssuesByStatusCategory,
   jiraIssueThreadPrompt,
@@ -174,6 +175,16 @@ describe("proposeJiraIssueBranchName", () => {
     expect(
       proposeJiraIssueBranchName({ key: "ABC-123", summary: "Bump react/dom to 19" }, naming),
     ).toBe("feature/abc-123-bump-react-dom-to-19");
+  });
+});
+
+describe("availableBranchName", () => {
+  it("keeps a free name and numbers one a local branch already has", () => {
+    expect(availableBranchName("abc-1-fix", new Set(["main"]))).toBe("abc-1-fix");
+    expect(availableBranchName("abc-1-fix", new Set(["abc-1-fix"]))).toBe("abc-1-fix-2");
+    expect(availableBranchName("abc-1-fix", new Set(["abc-1-fix", "abc-1-fix-2"]))).toBe(
+      "abc-1-fix-3",
+    );
   });
 });
 
