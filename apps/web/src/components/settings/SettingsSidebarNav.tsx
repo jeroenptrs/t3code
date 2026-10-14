@@ -22,6 +22,7 @@ import {
   PaletteIcon,
   SearchIcon,
   Settings2Icon,
+  UserRoundIcon,
   UsersRoundIcon,
   XIcon,
 } from "lucide-react";
@@ -49,6 +50,7 @@ import {
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
+import { useCanOpenAccountSettings } from "./useCanOpenAccountSettings";
 import { useCanReadPortalUsers } from "./useCanReadPortalUsers";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
@@ -90,6 +92,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/storage": HardDriveIcon,
   "/settings/connections": Link2Icon,
   "/settings/beta": FlaskConicalIcon,
+  "/settings/account": UserRoundIcon,
   "/settings/users": UsersRoundIcon,
   "/settings/archived": ArchiveIcon,
 };
@@ -117,9 +120,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const canReadUsers = useCanReadPortalUsers();
+  const canOpenAccount = useCanOpenAccountSettings();
   const navItems = SETTINGS_NAV_ITEMS.filter(
     (item) =>
       (item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch)) &&
+      (item.to !== "/settings/account" || canOpenAccount) &&
       (item.to !== "/settings/users" || canReadUsers),
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
