@@ -1208,3 +1208,18 @@ export const unlinkThreadJiraIssue = Effect.fn("EnvironmentCommands.unlinkThread
     });
   },
 );
+/** Starts or stops the server watching a linked issue for the thread's agent. */
+export type WatchThreadJiraIssueInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.jira-issue.watch" }>,
+  "type" | "commandId" | "linkedByUserId"
+> &
+  CommandMetadata;
+export const watchThreadJiraIssue = Effect.fn("EnvironmentCommands.watchThreadJiraIssue")(
+  function* (input: WatchThreadJiraIssueInput) {
+    return yield* dispatch({
+      ...input,
+      type: "thread.jira-issue.watch",
+      commandId: yield* allocateCommandId(input),
+    });
+  },
+);
