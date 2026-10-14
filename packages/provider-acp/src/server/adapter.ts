@@ -6370,6 +6370,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             text: buildRuntimeInstructions({
               harness: flavor.runtimeHarness ?? driver,
               model: turnInput.modelSelection.model,
+              mcpCapabilities: instructionState.hasT3Mcp
+                ? (yield* mcpSessions.read(turnInput.threadId))?.capabilities
+                : undefined,
             }),
           });
           return { prompt, instructionState: text === messageText ? undefined : instructionState };
