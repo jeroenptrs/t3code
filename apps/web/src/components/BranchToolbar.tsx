@@ -9,7 +9,9 @@ import {
   FolderGit2Icon,
   FolderGitIcon,
   FolderIcon,
+  GitBranchIcon,
   ScaleIcon,
+  XIcon,
 } from "lucide-react";
 import {
   type Ref,
@@ -155,6 +157,47 @@ interface RunContextSelectorProps {
   previousWorktreeLabel: string | null;
   previousWorktreeBranch: string | null;
   onUsePreviousWorktree: () => void;
+}
+
+/**
+ * The name a first send gives the new worktree's branch, as a draft carries it (start from a Jira
+ * issue sets one). Clicking clears it, and the server names the branch as usual.
+ */
+function NewWorktreeBranchControl({
+  displayMode,
+  name,
+  onClear,
+}: {
+  displayMode: "toolbar" | "panel";
+  name: string;
+  onClear: () => void;
+}) {
+  const content = (
+    <>
+      <GitBranchIcon aria-hidden className="size-3 shrink-0 opacity-70" />
+      <ComposerContextLabel displayMode={displayMode}>
+        <MiddleTruncate value={`New branch: ${name}`} className="w-full" />
+      </ComposerContextLabel>
+      <XIcon aria-hidden className="size-3 shrink-0 opacity-50" />
+    </>
+  );
+  const label = `Clear new branch name ${name}`;
+  return displayMode === "panel" ? (
+    <ThreadDetailsControl aria-label={label} title={label} onClick={onClear}>
+      {content}
+    </ThreadDetailsControl>
+  ) : (
+    <ComposerControl
+      size="xs"
+      className="min-w-0 max-w-full"
+      aria-label={label}
+      title={label}
+      onClick={onClear}
+      data-composer-context-control
+    >
+      {content}
+    </ComposerControl>
+  );
 }
 
 const RunContextSelector = memo(function RunContextSelector({
@@ -626,6 +669,17 @@ export const BranchToolbar = memo(function BranchToolbar({
     });
   };
 
+  const newWorktreeBranch =
+    draftThread !== null &&
+    serverThread === null &&
+    !envLocked &&
+    effectiveEnvMode === "worktree" &&
+    activeWorktreePath === null
+      ? draftThread.newWorktreeBranch
+      : null;
+  const clearNewWorktreeBranch = () =>
+    setDraftThreadContext(draftId ?? threadRef, { newWorktreeBranch: null });
+
   useImperativeHandle(
     ref,
     () => ({
@@ -682,6 +736,13 @@ export const BranchToolbar = memo(function BranchToolbar({
             previousWorktreeLabel={previousWorktreeLabel}
             previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
             onUsePreviousWorktree={onUsePreviousWorktree}
+          />
+        ) : null}
+        {panelSection !== "workspace" && newWorktreeBranch ? (
+          <NewWorktreeBranchControl
+            displayMode="panel"
+            name={newWorktreeBranch}
+            onClear={clearNewWorktreeBranch}
           />
         ) : null}
         {panelSection !== "workspace" ? (
@@ -787,6 +848,14 @@ export const BranchToolbar = memo(function BranchToolbar({
           data-composer-context-control
           data-chat-resting-composer-controls-host="true"
           className="flex min-w-0 flex-1 items-center justify-start overflow-x-clip overflow-y-visible"
+        />
+      ) : null}
+
+      {showGitControls && newWorktreeBranch ? (
+        <NewWorktreeBranchControl
+          displayMode="toolbar"
+          name={newWorktreeBranch}
+          onClear={clearNewWorktreeBranch}
         />
       ) : null}
 
