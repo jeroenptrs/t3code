@@ -67,6 +67,9 @@ import {
 } from "./threadPullRequest.ts";
 import {
   JiraIssueKey,
+  JiraProposal,
+  JiraProposalResult,
+  JiraProposalStatus,
   ThreadJiraIssueLink,
   ThreadJiraIssueLinkSource,
   ThreadJiraIssueSnapshot,
@@ -1552,6 +1555,23 @@ const OrchestrationV2LinkRequestFields = {
   failure: Schema.optional(Schema.String),
 } as const;
 
+/**
+ * Jira writes an agent proposed, waiting for a user to approve them. Unlike a secret request a
+ * proposal outlives its run: it stays answerable after the turn ends. `proposal` is what the agent
+ * proposed, replaced by what the approver approved once they edit and approve it.
+ */
+const OrchestrationV2JiraProposalFields = {
+  type: Schema.Literal("jira_proposal"),
+  proposal: JiraProposal,
+  proposalStatus: JiraProposalStatus,
+  /** Portal user who approved or rejected it. */
+  decidedByUserId: Schema.optional(AuthUserId),
+  decidedAt: Schema.optional(IsoDateTime),
+  result: Schema.optional(JiraProposalResult),
+  /** Why the last approval failed; what it wrote before failing is in `result`. */
+  error: Schema.optional(Schema.String),
+} as const;
+
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1744,6 +1764,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     ...OrchestrationV2LinkRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    ...OrchestrationV2JiraProposalFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2573,6 +2597,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     ...OrchestrationV2LinkRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    ...OrchestrationV2JiraProposalFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -3519,6 +3547,24 @@ const OrchestrationV2InternalCommand = Schema.Union([
         notification: OrchestrationV2Notification,
       }),
     ),
+  }),
+  /**
+   * Records or updates a Jira proposal. Internal so no client can mark one approved or applied;
+   * the server's proposal service decides and performs the write.
+   */
+  Schema.Struct({
+    type: Schema.Literal("jira_proposal.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    turnItemId: TurnItemId,
+    proposal: OrchestrationV2JiraProposalFields.proposal,
+    proposalStatus: OrchestrationV2JiraProposalFields.proposalStatus,
+    decidedByUserId: OrchestrationV2JiraProposalFields.decidedByUserId,
+    decidedAt: OrchestrationV2JiraProposalFields.decidedAt,
+    result: OrchestrationV2JiraProposalFields.result,
+    error: OrchestrationV2JiraProposalFields.error,
   }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
