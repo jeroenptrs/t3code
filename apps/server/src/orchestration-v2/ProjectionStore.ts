@@ -68,6 +68,7 @@ import {
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   orchestrationV2RunWorkStartedAt,
   ThreadJiraIssueSnapshot as ThreadJiraIssueSnapshotSchema,
+  ThreadJiraIssueWatch as ThreadJiraIssueWatchSchema,
   RunId,
   MessageId,
   RuntimeRequestId,
@@ -1096,6 +1097,7 @@ const encodeRunPayload = Schema.encodeEffect(Schema.fromJsonString(Orchestration
 const encodeJiraIssueSnapshot = Schema.encodeEffect(
   Schema.fromJsonString(ThreadJiraIssueSnapshotSchema),
 );
+const encodeJiraIssueWatch = Schema.encodeEffect(Schema.fromJsonString(ThreadJiraIssueWatchSchema));
 const encodeRestartCancelledBackgroundWork = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2RunJsonSchema.fields.restartCancelledBackgroundWork),
 );
@@ -1596,9 +1598,9 @@ export function threadShellFromProjection(
       projection.turnItems
         .filter(
           (item) =>
-              item.status === "waiting" &&
-              waitsOnUser(item, liveRunIds, latestUserAuthoredMessageAt) &&
-              !(item.type === "jira_proposal" && rolledBackRunIds.has(item.runId)),
+            item.status === "waiting" &&
+            waitsOnUser(item, liveRunIds, latestUserAuthoredMessageAt) &&
+            !(item.type === "jira_proposal" && rolledBackRunIds.has(item.runId)),
         )
         .toSorted(
           (left, right) =>
@@ -1622,6 +1624,7 @@ export function threadShellFromProjection(
     activeProviderThreadId: projection.thread.activeProviderThreadId,
     runs,
     pullRequests: projection.thread.pullRequests,
+    jiraIssues: projection.thread.jiraIssues,
   });
   // createdByUser is named from auth_users, so only the SQL shell reads carry it.
   return {
@@ -2037,7 +2040,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               source,
               linked_at,
               linked_by_user_id,
-              snapshot_json
+              snapshot_json,
+              watch_json
             )
             VALUES (
               ${threadId},
@@ -2046,7 +2050,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ${link.source},
               ${link.linkedAt},
               ${link.linkedByUserId ?? null},
-              ${link.snapshot === null ? null : yield* encodeJiraIssueSnapshot(link.snapshot)}
+              ${link.snapshot === null ? null : yield* encodeJiraIssueSnapshot(link.snapshot)},
+              ${link.watch === undefined ? null : yield* encodeJiraIssueWatch(link.watch)}
             )
           `;
         }
@@ -2138,13 +2143,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 deleted_at = excluded.deleted_at,
                 payload_json = excluded.payload_json
             `;
-            // Only Jira events change the links; a fork starts with its source's links. Compaction
-            // can drop a superseded Jira event, so a rebuild repopulates the table from payloads.
+              // Only Jira events change the links, and archiving or settling ends their watches; a
+              // fork starts with its source's links. Compaction can drop a superseded Jira event, so
+              // a rebuild repopulates the table from payloads.
               const jiraIssues = event.payload.jiraIssues ?? [];
               if (
                 event.type === "thread.jira-issues-synced" ||
                 event.type === "thread.deleted" ||
-              (event.type === "thread.created" && jiraIssues.length > 0)
+                ((event.type === "thread.created" ||
+                  event.type === "thread.archived" ||
+                  event.type === "thread.settled") &&
+                  jiraIssues.length > 0)
               ) {
                 yield* replaceForkThreadJiraIssues(
                   event.payload.id,
@@ -6752,6 +6761,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     activeProviderThreadId: thread.activeProviderThreadId,
                     hasActiveRun: false,
                     pullRequests: thread.pullRequests,
+                    jiraIssues: thread.jiraIssues,
                   }),
                 } satisfies ProjectionSettlementCandidate;
               }),
@@ -6965,6 +6975,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             activeProviderThreadId: thread.activeProviderThreadId,
             hasActiveRun: row.active_run_id !== null,
             pullRequests: thread.pullRequests,
+            jiraIssues: thread.jiraIssues,
           }),
         ];
         return {
