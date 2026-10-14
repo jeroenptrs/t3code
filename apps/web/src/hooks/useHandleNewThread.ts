@@ -48,6 +48,7 @@ interface NewThreadWorkspaceOptions {
   worktreePath?: string | null;
   envMode?: DraftThreadEnvMode;
   startFromOrigin?: boolean;
+  newWorktreeBranch?: string | null;
 }
 
 function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undefined) {
@@ -56,6 +57,9 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
     ...(options?.worktreePath !== undefined ? { worktreePath: options.worktreePath } : {}),
     ...(options?.envMode !== undefined ? { envMode: options.envMode } : {}),
     ...(options?.startFromOrigin !== undefined ? { startFromOrigin: options.startFromOrigin } : {}),
+    ...(options?.newWorktreeBranch !== undefined
+      ? { newWorktreeBranch: options.newWorktreeBranch }
+      : {}),
   };
 }
 
@@ -74,6 +78,7 @@ export function useNewThreadHandler() {
       worktreePath?: string | null;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      newWorktreeBranch?: string | null;
       replace?: boolean;
     },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
@@ -174,6 +179,7 @@ export function useNewThreadHandler() {
     const hasWorktreePathOption = options?.worktreePath !== undefined;
     const hasEnvModeOption = options?.envMode !== undefined;
     const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
+    const hasNewWorktreeBranchOption = options?.newWorktreeBranch !== undefined;
     const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
     const storedDraftThreadRef = storedDraftThread
       ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
@@ -204,7 +210,11 @@ export function useNewThreadHandler() {
           currentRouteTarget?.kind === "draft" &&
           currentRouteTarget.draftId === emptyStoredDraftThread.draftId;
         const hasExplicitWorkspaceOption =
-          hasBranchOption || hasWorktreePathOption || hasEnvModeOption || hasStartFromOriginOption;
+          hasBranchOption ||
+          hasWorktreePathOption ||
+          hasEnvModeOption ||
+          hasStartFromOriginOption ||
+          hasNewWorktreeBranchOption;
         let workspaceContext: NewThreadWorkspaceOptions | null = null;
         if (hasExplicitWorkspaceOption) {
           workspaceContext = pickExplicitWorkspaceOptions(options);
@@ -238,6 +248,7 @@ export function useNewThreadHandler() {
           workspaceContext = {
             branch: null,
             worktreePath: null,
+            newWorktreeBranch: null,
             envMode: defaultEnvMode,
             startFromOrigin: resolveNewDraftStartFromOrigin({
               envMode: defaultEnvMode,
@@ -311,7 +322,8 @@ export function useNewThreadHandler() {
         hasBranchOption ||
         hasWorktreePathOption ||
         hasEnvModeOption ||
-        hasStartFromOriginOption
+        hasStartFromOriginOption ||
+        hasNewWorktreeBranchOption
       ) {
         setDraftThreadContext(currentRouteTarget.draftId, pickExplicitWorkspaceOptions(options));
       }
@@ -365,6 +377,7 @@ export function useNewThreadHandler() {
         createdAt,
         branch: options?.branch ?? null,
         worktreePath: options?.worktreePath ?? null,
+        newWorktreeBranch: options?.newWorktreeBranch ?? null,
         envMode: initialEnvMode,
         startFromOrigin:
           options?.startFromOrigin ??
