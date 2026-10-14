@@ -49,6 +49,7 @@ const RawTransition = Schema.Struct({
   to: Schema.optional(
     Schema.Struct({
       name: Schema.optional(Schema.String),
+      untranslatedName: Schema.optional(Schema.String),
       statusCategory: Schema.optional(Schema.Struct({ key: Schema.optional(Schema.String) })),
     }),
   ),
@@ -180,13 +181,22 @@ export class JiraApi extends Context.Service<
 const FILTER_EXPAND = "jql,owner,favourite,viewUrl";
 
 /**
- * Scoped tokens only work through the API gateway, so any identity with a cloud id goes through
- * it, whatever its auth method. Without one, requests go to the site itself.
+ * Identities with a cloud id go through the API gateway, where scoped tokens work; the others go
+ * to the site itself. See `JiraServerIdentity.cloudId` for which identities carry one.
  */
 const baseUrl = (identity: JiraServerIdentity) =>
   identity.cloudId === undefined
     ? `https://${identity.site}`
     : `https://api.atlassian.com/ex/jira/${encodeURIComponent(identity.cloudId)}`;
+
+/**
+ * Jira translates status, issue type and priority names into the reading account's profile
+ * language; these headers ask for English whatever that profile says.
+ */
+const englishNames = HttpClientRequest.setHeaders({
+  "Accept-Language": "en",
+  "X-Force-Accept-Language": "true",
+});
 
 const authorize = (identity: JiraServerIdentity) =>
   identity.authMethod === "scoped-token"
@@ -281,6 +291,7 @@ const make = Effect.gen(function* () {
         build.pipe(
           HttpClientRequest.prependUrl(baseUrl(identity)),
           HttpClientRequest.acceptJson,
+          englishNames,
           authorize(identity),
         ),
       );
@@ -297,6 +308,7 @@ const make = Effect.gen(function* () {
       const response = yield* http.execute(
         HttpClientRequest.get(`https://${site}/_edge/tenant_info`).pipe(
           HttpClientRequest.acceptJson,
+          englishNames,
         ),
       );
       if (response.status < 200 || response.status >= 300) {
