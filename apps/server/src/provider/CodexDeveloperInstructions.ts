@@ -182,6 +182,7 @@ export interface CodexRuntimeInfo {
   readonly model: string;
   readonly modelName?: string | undefined;
   readonly reasoningEffort?: string | undefined;
+  readonly mcpCapabilities?: ReadonlySet<string> | undefined;
 }
 
 export function buildCodexDeveloperInstructions(interactionMode: ProviderInteractionMode): string {

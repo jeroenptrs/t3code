@@ -106,6 +106,9 @@ export type ToolGroupAction =
   | "list-prs"
   | "watch-pr"
   | "unwatch-pr"
+  | "link-jira"
+  | "unlink-jira"
+  | "list-jira"
   | "read"
   | "edit"
   | "command"
@@ -119,6 +122,7 @@ export type ToolGroupAction =
 
 export type ToolGroupSummaryKind =
   | "pull-request"
+  | "jira"
   | ToolGroupAction
   | "dynamic-tool"
   | "reasoning"
@@ -178,7 +182,10 @@ function resolveT3McpToolPresentation(
     definition.summaryAction === "unlink-pr" ||
     definition.summaryAction === "list-prs" ||
     definition.summaryAction === "watch-pr" ||
-    definition.summaryAction === "unwatch-pr"
+    definition.summaryAction === "unwatch-pr" ||
+    definition.summaryAction === "link-jira" ||
+    definition.summaryAction === "unlink-jira" ||
+    definition.summaryAction === "list-jira"
       ? definition.summaryAction
       : undefined;
   const payload = asRecord(data);
@@ -190,8 +197,13 @@ function resolveT3McpToolPresentation(
   const { shortLabel } = (urlTarget?.definition ?? sourceControlClients.get(undefined))
     .changeRequest;
   const target =
-    actionKind !== undefined &&
+    actionKind === "link-jira" || actionKind === "unlink-jira"
+      ? typeof input?.key === "string" && input.key.trim() !== ""
+        ? input.key.trim().toUpperCase()
+        : detail
+      : actionKind !== undefined &&
     actionKind !== "list-prs" &&
+          actionKind !== "list-jira" &&
     typeof number === "number" &&
     Number.isSafeInteger(number) &&
     number > 0
@@ -434,6 +446,14 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
       return count === 1
         ? "Checked linked pull requests"
         : `Checked linked pull requests ${count} times`;
+    case "link-jira":
+      return `Linked ${count} ${count === 1 ? "Jira issue" : "Jira issues"}`;
+    case "unlink-jira":
+      return `Unlinked ${count} ${count === 1 ? "Jira issue" : "Jira issues"}`;
+    case "list-jira":
+      return count === 1
+        ? "Checked linked Jira issues"
+        : `Checked linked Jira issues ${count} times`;
     case "read":
       return `Read ${count} ${count === 1 ? "file" : "files"}`;
     case "edit":
@@ -621,6 +641,11 @@ export function toolGroupSummaryKind(
     entries.every((entry) => resolveWorkEntryToolPresentation(entry)?.icon === "pull-request")
   )
     return "pull-request";
+  if (
+    entries.length > 0 &&
+    entries.every((entry) => resolveWorkEntryToolPresentation(entry)?.icon === "jira")
+  )
+    return "jira";
   const actions = new Set(entries.map(toolGroupAction));
   if (actions.size !== 1) return "mixed";
   const action = actions.values().next().value!;
