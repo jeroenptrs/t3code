@@ -54,6 +54,8 @@ export class JiraReadCache extends Context.Service<
       lookup: Effect.Effect<A, JiraError>,
       options?: { readonly refresh?: boolean | undefined },
     ) => Effect.Effect<A, JiraError>;
+    /** Drops a stored read, so the next `get` of it asks Jira; used after a write changes it. */
+    readonly invalidate: (kind: JiraReadKind, key: string) => Effect.Effect<void>;
   }
 >()("t3/jira/JiraReadCache") {}
 
@@ -75,6 +77,8 @@ export const make = Effect.gen(function* () {
         options?.refresh ? Cache.refresh(cache, read) : Cache.get(cache, read)
       ) as Effect.Effect<A, JiraError>;
     },
+    // Equality ignores the lookup, so a placeholder names the stored read.
+    invalidate: (kind, key) => Cache.invalidate(cache, new Read(kind, key, Effect.void)),
   });
 });
 
