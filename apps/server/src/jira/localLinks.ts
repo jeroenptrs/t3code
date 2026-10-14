@@ -4,6 +4,7 @@ import {
   PullRequestState,
   ThreadId,
   ThreadJiraIssueSnapshot,
+  ThreadJiraIssueWatch,
   type JiraIssueKey,
   type JiraLinkedPullRequest,
 } from "@t3tools/contracts";
@@ -31,6 +32,17 @@ const decodeActiveLinks = Schema.decodeUnknownEffect(
       site: Schema.String,
       key: Schema.String,
       snapshot: Schema.NullOr(Schema.fromJsonString(ThreadJiraIssueSnapshot)),
+      watch: Schema.NullOr(Schema.fromJsonString(ThreadJiraIssueWatch)),
+    }),
+  ),
+);
+const decodeRemoteLinkRows = Schema.decodeUnknownEffect(
+  Schema.Array(
+    Schema.Struct({
+      threadId: ThreadId,
+      title: Schema.String,
+      site: Schema.String,
+      key: Schema.String,
     }),
   ),
 );
@@ -86,13 +98,13 @@ export const listThreadBranchesForJira = Effect.fn("listThreadBranchesForJira")(
   Effect.mapError(localReadFailed("thread branches")),
 );
 
-/** Visible links on threads that are neither archived nor deleted, with their stored snapshot. */
+/** Visible links on threads that are neither archived nor deleted, with their snapshot and watch. */
 export const listActiveThreadJiraIssueLinks = Effect.fn("listActiveThreadJiraIssueLinks")(
   function* () {
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* sql`
       SELECT link.thread_id AS "threadId", link.site, link.issue_key AS key,
-        link.snapshot_json AS snapshot
+        link.snapshot_json AS snapshot, link.watch_json AS watch
       FROM fork_projection_thread_jira_issues AS link
       JOIN orchestration_v2_projection_threads AS t ON t.thread_id = link.thread_id
       WHERE link.source != 'branch-dismissed'
@@ -100,6 +112,23 @@ export const listActiveThreadJiraIssueLinks = Effect.fn("listActiveThreadJiraIss
         AND t.archived_at IS NULL
     `;
     return yield* decodeActiveLinks(rows);
+  },
+  Effect.mapError(localReadFailed("linked Jira issues")),
+);
+
+/** Visible links on threads that are neither archived nor deleted, with the thread's title. */
+export const listActiveThreadJiraRemoteLinks = Effect.fn("listActiveThreadJiraRemoteLinks")(
+  function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql`
+      SELECT link.thread_id AS "threadId", t.title, link.site, link.issue_key AS key
+      FROM fork_projection_thread_jira_issues AS link
+      JOIN orchestration_v2_projection_threads AS t ON t.thread_id = link.thread_id
+      WHERE link.source != 'branch-dismissed'
+        AND t.deleted_at IS NULL
+        AND t.archived_at IS NULL
+    `;
+    return yield* decodeRemoteLinkRows(rows);
   },
   Effect.mapError(localReadFailed("linked Jira issues")),
 );
