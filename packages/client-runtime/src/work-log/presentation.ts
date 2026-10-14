@@ -192,7 +192,7 @@ function resolveT3McpToolPresentation(
     asRecord(payload?.arguments) ?? asRecord(payload?.input) ?? asRecord(payload?.rawInput);
   const urlTarget = typeof input?.url === "string" ? parseChangeRequestUrl(input.url) : null;
   const number = urlTarget?.number ?? input?.number;
-  const target =
+  const namedTarget =
     actionKind === "link-jira" || actionKind === "unlink-jira"
       ? typeof input?.key === "string" && input.key.trim() !== ""
         ? input.key.trim().toUpperCase()
@@ -205,6 +205,17 @@ function resolveT3McpToolPresentation(
     number > 0
       ? `PR #${number}`
       : detail;
+  // A batch proposal names how many issues it carries.
+  const draftCount =
+    definition.summaryAction === "propose-jira-issues" && Array.isArray(input?.issues)
+      ? input.issues.length
+      : 0;
+  const target =
+    draftCount === 0
+      ? namedTarget
+      : draftCount === 1
+        ? "a Jira issue"
+        : `${draftCount} Jira issues`;
   return {
     displayName: `${verb} ${target}`,
     icon: definition.icon,
@@ -659,6 +670,9 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "attachment-discard":
     case "attachment-send":
     case "diff-walkthrough-write":
+    case "propose-jira-issues":
+    case "propose-jira-comment":
+    case "propose-jira-transition":
       return 0;
     case "other":
     case "update":

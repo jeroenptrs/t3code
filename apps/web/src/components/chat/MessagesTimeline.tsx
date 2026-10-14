@@ -295,6 +295,7 @@ import {
   type HandoffTimelineRun,
 } from "./V2LifecycleRow";
 import { SecretRequestCard } from "./SecretRequestCard";
+import { JiraProposalCard } from "../jira/JiraProposalCard";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
 
@@ -2991,6 +2992,16 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
     return (
       <SecretRequestCard
         environmentId={ctx.activeThreadEnvironmentId}
+        item={item}
+        visibility={visibility}
+      />
+    );
+  }
+  if (item.type === "jira_proposal") {
+    return (
+      <JiraProposalCard
+        environmentId={ctx.activeThreadEnvironmentId}
+        threadRef={ctx.threadRef}
         item={item}
         visibility={visibility}
       />
