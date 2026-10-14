@@ -420,7 +420,7 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
 });
 
 it.effect(
-  "recovery closes a secret card but leaves link and feedback cards and an unread steer open",
+  "recovery closes a secret card but leaves link, feedback, Jira proposal and unread steer cards open",
   () => {
     const threadId = ThreadId.make("thread_secret_recovery");
     const runId = RunId.make("run_secret_recovery");
@@ -488,6 +488,16 @@ it.effect(
           inputIntent: "steer",
           messageId: "message:steer:recovery",
         },
+        {
+          id: "turn-item:jira-proposal:recovery",
+          threadId,
+          runId,
+          nodeId: null,
+          type: "jira_proposal",
+          status: "waiting",
+          proposalStatus: "pending",
+          proposal: { kind: "comment", site: "acme.atlassian.net", key: "ABC-1", body: "Done." },
+        },
       ],
     } as unknown as OrchestrationV2ThreadProjection;
     const layer = ProviderRuntimeRecovery.layer.pipe(
@@ -534,6 +544,11 @@ it.effect(
             card.type === "user_message",
         ),
         [],
+      );
+      // A proposal waits for its user, not its run, and stays approvable after the restart.
+      assert.equal(
+        cards.some((card) => card.type === "jira_proposal"),
+        false,
       );
     }).pipe(Effect.provide(layer));
   },
