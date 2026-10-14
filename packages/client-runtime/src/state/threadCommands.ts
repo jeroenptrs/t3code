@@ -51,6 +51,7 @@ import {
   type UnlinkThreadJiraIssueInput,
   type UnlinkThreadPullRequestInput,
   type UnpinThreadInput,
+  type WatchThreadJiraIssueInput,
   type WatchThreadPullRequestInput,
   type UnsettleThreadInput,
   type UnsnoozeThreadInput,
@@ -93,6 +94,7 @@ import {
   unsnoozeThread,
   updateThreadMetadata,
   visitThread,
+  watchThreadJiraIssue,
   watchThreadPullRequest,
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -142,6 +144,7 @@ export type {
   UnsnoozeThreadInput,
   UpdateThreadMetadataInput,
   VisitThreadInput,
+  WatchThreadJiraIssueInput,
   WatchThreadPullRequestInput,
 } from "../operations/commands.ts";
 
@@ -312,6 +315,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     unlinkJiraIssue: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unlink-jira-issue",
       execute: (input: UnlinkThreadJiraIssueInput) => unlinkThreadJiraIssue(input),
+      scheduler,
+      concurrency,
+    }),
+    watchJiraIssue: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:watch-jira-issue",
+      execute: (input: WatchThreadJiraIssueInput) => watchThreadJiraIssue(input),
       scheduler,
       concurrency,
     }),
