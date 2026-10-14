@@ -3,6 +3,7 @@ import { type ToolActivityIcon } from "@t3tools/contracts";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { getProjectFaviconCacheKey } from "@t3tools/shared/projectFavicon";
 import { use, useState } from "react";
+import { JiraIcon } from "../Icons";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   BotIcon,
@@ -46,6 +47,7 @@ export type WorkEntryIconName =
   | "eye"
   | "globe"
   | "hammer"
+  | "jira"
   | "message-circle"
   | "search"
   | "square-pen"
@@ -258,6 +260,8 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
       return <GlobeIcon className={className} aria-hidden />;
     case "hammer":
       return <HammerIcon className={className} aria-hidden />;
+    case "jira":
+      return <JiraIcon className={className} />;
     case "search":
       return <SearchIcon className={className} aria-hidden />;
     case "message-circle":

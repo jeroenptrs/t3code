@@ -44,6 +44,7 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as JiraIdentities from "../jira/JiraIdentities.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
   CodexProviderCapabilitiesV2,
@@ -651,6 +652,7 @@ function layerTest(input: {
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
+  readonly jiraIdentitiesLayer?: Layer.Layer<JiraIdentities.JiraIdentities>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -744,6 +746,7 @@ function layerTest(input: {
           input.installationGateLayer ?? ProviderInstallationGate.layer,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.jiraIdentitiesLayer === undefined ? [] : [input.jiraIdentitiesLayer]),
         ),
       ),
     ),
@@ -816,6 +819,7 @@ function runBrowserAccessScenario(input: {
   readonly createThread?: boolean;
   readonly projectExists?: boolean;
   readonly delegatedBy?: ThreadId;
+  readonly jiraConfigured?: boolean;
 }) {
   return Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -865,6 +869,13 @@ function runBrowserAccessScenario(input: {
           idleTimeoutMs: 1_000,
           mcpConfigs,
           projectServiceLayer: layerProjectService,
+          ...(input.jiraConfigured === undefined
+            ? {}
+            : {
+                jiraIdentitiesLayer: Layer.mock(JiraIdentities.JiraIdentities)({
+                  configured: input.jiraConfigured,
+                }),
+              }),
           serverSettingsLayer: ServerSettings.layerTest({
             enableAgentBrowserAccess: input.enableAgentBrowserAccess,
             projectSettingsOverrides: {
@@ -5503,6 +5514,18 @@ it.effect(
         );
       }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("ProviderSessionManagerV2 grants the jira capability only when Jira is configured", () =>
+  Effect.gen(function* () {
+    const scenario = { enableAgentBrowserAccess: true, projectOverride: true };
+    const configured = yield* runBrowserAccessScenario({ ...scenario, jiraConfigured: true });
+    assert.isTrue(configured?.capabilities?.has("jira"));
+    const unconfigured = yield* runBrowserAccessScenario({ ...scenario, jiraConfigured: false });
+    assert.isFalse(unconfigured?.capabilities?.has("jira"));
+    const absent = yield* runBrowserAccessScenario(scenario);
+    assert.isFalse(absent?.capabilities?.has("jira"));
+  }),
 );
 
 it.effect(

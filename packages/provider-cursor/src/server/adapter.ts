@@ -2436,6 +2436,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           hasDeviceTools: boolean,
           delivered: { readonly orchestration: boolean; readonly device: boolean },
           interrupted: string | undefined,
+          mcpCapabilities: ReadonlySet<string> | undefined,
         ) {
           const rawText = turnInput.message.text;
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
@@ -2495,7 +2496,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
-          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model })}`;
+          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model, mcpCapabilities })}`;
           return {
             message: images.length === 0 ? text : ({ text, images } satisfies SDKUserMessage),
             prompt: userText,
@@ -2538,6 +2539,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               hasDeviceTools,
               delivered,
               interrupted?.agent === agent.nativeThreadId ? interrupted.text : undefined,
+              mcpSession?.capabilities,
             );
             const compacted = prompt === undefined;
             const pendingUpdates: Array<InteractionUpdate> = [];
