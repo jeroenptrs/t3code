@@ -15,7 +15,7 @@ import type {
   JiraStatusCategory,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { ChevronDownIcon, CodeIcon, ExternalLinkIcon, TriangleAlertIcon } from "lucide-react";
 import { useCallback, useEffect, useEffectEvent, useMemo, useState } from "react";
 
@@ -502,10 +502,22 @@ function JiraIssuesList({
   const jqlError =
     view?.kind === "jql" && failureReason === "invalid" ? (firstPage.error ?? null) : null;
   const refused = failureReason === "unauthorized" || failureReason === "forbidden";
+  const personalCredential = capabilities.personalCredential;
 
   return (
     <>
-      {capabilities.readerError !== null ? (
+      {personalCredential?.error != null ? (
+        <Alert variant="error">
+          <TriangleAlertIcon aria-hidden />
+          <AlertTitle>Jira rejected your token</AlertTitle>
+          <AlertDescription>{personalCredential.error}</AlertDescription>
+          <AlertAction>
+            <Button size="xs" variant="outline" render={<Link to="/settings/account" />}>
+              Open Account settings
+            </Button>
+          </AlertAction>
+        </Alert>
+      ) : personalCredential === null && capabilities.readerError !== null ? (
         <Alert variant="error">
           <TriangleAlertIcon aria-hidden />
           <AlertTitle>Jira cannot read as {capabilities.reader?.name ?? "the reader"}</AlertTitle>
@@ -640,14 +652,18 @@ function JiraIssuesList({
             <TriangleAlertIcon aria-hidden />
             <AlertTitle>
               {refused
-                ? "Jira refused the reader"
+                ? personalCredential === null
+                  ? "Jira refused the reader"
+                  : "Jira refused your token"
                 : failureReason === "not-found"
                   ? "This filter is not available"
                   : "Could not load issues"}
             </AlertTitle>
             <AlertDescription>
               {refused
-                ? `Jira refused the server's reader identity${capabilities.reader ? ` (${capabilities.reader.name})` : ""}. Check its token and project permissions.`
+                ? personalCredential === null
+                  ? `Jira refused the server's reader identity${capabilities.reader ? ` (${capabilities.reader.name})` : ""}. Check its token and project permissions.`
+                  : "Check your token and project permissions in Settings → Account."
                 : failureReason === "not-found"
                   ? "It was deleted, or the reader identity cannot see it. Choose another view."
                   : firstPage.error}
