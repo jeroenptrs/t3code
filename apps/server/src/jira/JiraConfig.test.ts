@@ -68,6 +68,20 @@ it.effect("an email makes an identity basic auth, and needs no cloud id", () =>
   }),
 );
 
+it.effect("a basic identity reads the site itself even when a cloud id is set", () =>
+  Effect.gen(function* () {
+    const config = yield* loadOrFail({
+      T3CODE_JIRA_IDENTITIES: "me",
+      T3CODE_JIRA_ME_SITE: "acme.atlassian.net",
+      T3CODE_JIRA_ME_TOKEN: "classic",
+      T3CODE_JIRA_ME_EMAIL: "me@acme.test",
+      T3CODE_JIRA_ME_CLOUD_ID: "cloud-1",
+    });
+    expect(config.identities[0]).toMatchObject({ authMethod: "basic", email: "me@acme.test" });
+    expect(config.identities[0]?.cloudId).toBeUndefined();
+  }),
+);
+
 it.effect("an explicit reader is honored among several identities", () =>
   Effect.gen(function* () {
     const config = yield* loadOrFail({
