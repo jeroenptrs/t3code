@@ -2,7 +2,8 @@
  * Fork-only Jira client state. Reads go through the server's reader identity, or the caller's
  * personal token on its site; thread shells carry only each linked issue's key, summary and status
  * category, so lists render from those and the detail query runs only where an issue is actually
- * opened. A client writes to Jira only by approving an agent's proposal.
+ * opened. A client writes to Jira as the signed-in user, with their personal token: by approving an
+ * agent's proposal, or by commenting and moving an issue directly.
  */
 import {
   JIRA_ISSUE_KEY_PATTERN,
@@ -155,6 +156,37 @@ export function createJiraEnvironmentAtoms<R, E>(
             });
           }
         }),
+    }),
+    /**
+     * A comment as the caller, with their personal token. One write per issue is in flight; the
+     * issue is re-read so the comment appears with its server-side author and time.
+     */
+    addComment: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:jira:add-comment",
+      tag: WS_METHODS.jiraAddComment,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.site.toLowerCase(), input.key.toUpperCase()]),
+      },
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() =>
+          refreshIssue(registry, { environmentId, input: { site: input.site, key: input.key } }),
+        ),
+    }),
+    /** Moves an issue to a status as the caller; the issue is re-read for its new status. */
+    transitionIssue: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:jira:transition-issue",
+      tag: WS_METHODS.jiraTransitionIssue,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.site.toLowerCase(), input.key.toUpperCase()]),
+      },
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() =>
+          refreshIssue(registry, { environmentId, input: { site: input.site, key: input.key } }),
+        ),
     }),
     /**
      * The caller's own token. Setting or clearing re-reads capabilities and every cached read,
