@@ -197,7 +197,10 @@ function resolveT3McpToolPresentation(
   const { shortLabel } = (urlTarget?.definition ?? sourceControlClients.get(undefined))
     .changeRequest;
   const namedTarget =
-    actionKind === "link-jira" || actionKind === "unlink-jira"
+    actionKind === "link-jira" ||
+    actionKind === "unlink-jira" ||
+    definition.summaryAction === "watch-jira" ||
+    definition.summaryAction === "unwatch-jira"
       ? typeof input?.key === "string" && input.key.trim() !== ""
         ? input.key.trim().toUpperCase()
         : detail
