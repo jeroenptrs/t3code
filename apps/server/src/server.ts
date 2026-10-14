@@ -55,6 +55,7 @@ import * as JiraIssueSyncReactor from "./jira/JiraIssueSyncReactor.ts";
 import * as JiraIdentities from "./jira/JiraIdentities.ts";
 import * as JiraReadCache from "./jira/JiraReadCache.ts";
 import * as JiraService from "./jira/JiraService.ts";
+import * as JiraUserCredentials from "./jira/JiraUserCredentials.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ProviderEventIngestor from "./orchestration-v2/ProviderEventIngestor.ts";
@@ -361,8 +362,10 @@ const layerDiffWalkthroughService = DiffWalkthroughService.layer.pipe(
 );
 
 // Fork-only Jira reads; a no-op until T3CODE_JIRA_IDENTITIES is set. The identities are exposed
-// too, for the MCP tools and the background workers that only need the reader's site.
+// too, for the MCP tools and the background workers that only need the reader's site, and so are
+// personal tokens, for the WebSocket handlers that manage them.
 const layerJiraService = JiraService.layer.pipe(
+  Layer.provideMerge(JiraUserCredentials.layer),
   Layer.provide(JiraApi.layer),
   Layer.provide(JiraReadCache.layer),
   Layer.provideMerge(JiraIdentities.layer),
@@ -529,6 +532,8 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
 
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   Layer.provide(layerScheduledTaskWebhookOrigin),
+  // Fork-only: provider sessions get the "jira" MCP capability when Jira is configured.
+  Layer.provide(JiraIdentities.layer),
   Layer.provide(ProviderEventIngestor.layerAnalytics),
   Layer.provide(layerCheckpointStore),
   Layer.provide(layerGitWorkflow),
