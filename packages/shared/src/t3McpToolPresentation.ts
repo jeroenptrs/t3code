@@ -64,6 +64,8 @@ export type T3McpToolSummaryAction =
   | "link-jira"
   | "unlink-jira"
   | "list-jira"
+  | "watch-jira"
+  | "unwatch-jira"
   | "propose-jira-issues"
   | "propose-jira-comment"
   | "propose-jira-transition"
@@ -140,6 +142,12 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   list_thread_jira_issues: tool(
     ["Check", "Checking", "Checked", "linked Jira issues"],
     "list-jira",
+    "jira",
+  ),
+  watch_jira_issue: tool(["Watch", "Watching", "Watched", "a Jira issue"], "watch-jira", "jira"),
+  unwatch_jira_issue: tool(
+    ["Stop watching", "Stopping watching", "Stopped watching", "a Jira issue"],
+    "unwatch-jira",
     "jira",
   ),
   propose_jira_issues: tool(
