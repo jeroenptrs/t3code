@@ -15,6 +15,7 @@ import {
   snapshotComposerSend,
   withMessageContext,
   makeThreadErrorSetter,
+  resolveNewWorktreeBranchForSend,
 } from "../ChatView.logic";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
@@ -1325,6 +1326,10 @@ export function useComposerSend(input: ComposerSendInput) {
 
     let backgroundDraftOpened = false;
     let turnStartSucceeded = false;
+    const newWorktreeBranchForSend = resolveNewWorktreeBranchForSend({
+      baseBranchForWorktree,
+      draftNewWorktreeBranch: isLocalDraftThread ? draftThread?.newWorktreeBranch : null,
+    });
     if (failure === null && turnAttachmentsResult._tag === "Success") {
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
@@ -1348,6 +1353,7 @@ export function useComposerSend(input: ComposerSendInput) {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
+                      ...(newWorktreeBranchForSend ? { branch: newWorktreeBranchForSend } : {}),
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
                     },
                     runSetupScript: true,
