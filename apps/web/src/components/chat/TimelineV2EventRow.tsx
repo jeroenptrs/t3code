@@ -19,6 +19,7 @@ import {
   V2LifecycleRow,
 } from "./V2LifecycleRow";
 import { SecretRequestCard } from "./SecretRequestCard";
+import { JiraProposalCard } from "../jira/JiraProposalCard";
 import { TimelineRowCtx, type TimelineRow } from "./timelineRowContext";
 import { v2EventPresentation, subagentGroupTiming } from "./TimelineV2EventRow.logic";
 
@@ -32,6 +33,16 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
     return (
       <SecretRequestCard
         environmentId={ctx.activeThreadEnvironmentId}
+        item={item}
+        visibility={visibility}
+      />
+    );
+  }
+  if (item.type === "jira_proposal") {
+    return (
+      <JiraProposalCard
+        environmentId={ctx.activeThreadEnvironmentId}
+        threadRef={ctx.threadRef}
         item={item}
         visibility={visibility}
       />
