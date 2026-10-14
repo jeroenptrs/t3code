@@ -1462,6 +1462,8 @@ export function makeClaudeQueryOptions(input: {
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   /** The thread's T3 MCP session holds the `device` capability. */
   readonly deviceToolsAvailable?: boolean;
+  /** The T3 MCP credential's capabilities; gates tool-specific runtime instructions. */
+  readonly mcpCapabilities?: ReadonlySet<string>;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -1578,7 +1580,10 @@ export function makeClaudeQueryOptions(input: {
       type: "preset" as const,
       preset: "claude_code" as const,
       append: [
-        buildRuntimeInstructions({ harness: "Claude Code" }) +
+        buildRuntimeInstructions({
+          harness: "Claude Code",
+          mcpCapabilities: input.mcpServers === undefined ? undefined : input.mcpCapabilities,
+        }) +
           (input.mcpServers === undefined
             ? ""
             : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
@@ -9939,6 +9944,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { mcpServers: mcpOverrides.mcpServers }),
             deviceToolsAvailable: mcpSession?.capabilities?.has("device") === true,
+            ...(mcpSession?.capabilities === undefined
+              ? {}
+              : { mcpCapabilities: mcpSession.capabilities }),
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
               ? {}

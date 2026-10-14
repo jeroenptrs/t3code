@@ -5,6 +5,8 @@ import * as DateTime from "effect/DateTime";
 
 import {
   resolveWorkEntryToolPresentation,
+  summarizeToolGroup,
+  toolGroupAction,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
@@ -189,3 +191,62 @@ describe("resolveWorkEntryToolPresentation", () => {
     ).toBeNull();
   });
 });
+
+describe("Jira issue tool presentation", () => {
+  it.each([
+    "mcp__t3-code__link_jira_issue",
+    "T3-code · link_jira_issue",
+    "t3-code.link_jira_issue",
+    "link_jira_issue",
+  ])("recognizes the linking tool: %s", (label) => {
+    const entry: WorkLogPresentationEntry = {
+      id: "link",
+      createdAt: "2026-10-14T00:00:00.000Z",
+      label,
+      tone: "tool",
+      toolLifecycleStatus: "completed",
+    };
+    expect(resolveWorkEntryToolPresentation(entry)).toMatchObject({
+      displayName: "Linked a Jira issue",
+      icon: "jira",
+    });
+    expect(toolGroupAction(entry)).toBe("link-jira");
+  });
+
+  it.each([
+    ["inProgress", "Linking ABC-123"],
+    ["completed", "Linked ABC-123"],
+    ["failed", "Failed to link ABC-123"],
+  ] as const)("names the issue key while %s", (toolLifecycleStatus, displayName) => {
+    expect(
+      resolveWorkEntryToolPresentation({
+        label: "MCP tool call",
+        toolLifecycleStatus,
+        toolData: { server: "t3-code", tool: "link_jira_issue", arguments: { key: "ABC-123" } },
+      })?.displayName,
+    ).toBe(displayName);
+  });
+
+  it("summarizes Jira link work under its own kind", () => {
+    const link: WorkLogPresentationEntry = {
+      id: "link",
+      createdAt: "2026-10-14T00:00:00.000Z",
+      label: "T3-code · link_jira_issue",
+      tone: "tool",
+      itemType: "dynamic_tool",
+      toolLifecycleStatus: "completed",
+      toolSource: { key: "t3-code", name: "T3 Code", kind: "integration" },
+    };
+    const list: WorkLogPresentationEntry = { ...link, label: "T3-code · list_thread_jira_issues" };
+    expect(summarizeToolGroup([link, link, list]).summary).toBe(
+      "Linked 2 Jira issues and checked linked Jira issues",
+    );
+    expect(summarizeToolGroup([{ ...link, label: "T3-code · unlink_jira_issue" }]).summary).toBe(
+      "Unlinked 1 Jira issue",
+    );
+    expect(toolGroupSummaryKind([link, link, list])).toBe("jira");
+    expect(summarizeToolGroup([list, list]).summary).toBe("Checked linked Jira issues 2 times");
+    expect(resolveWorkEntryToolPresentation({ label: "mcp__jira__link_jira_issue" })).toBeNull();
+  });
+});
+
