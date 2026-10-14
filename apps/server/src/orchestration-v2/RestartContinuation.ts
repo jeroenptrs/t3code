@@ -69,19 +69,18 @@ function restartContinuationBlocked(
           turn.id === request.providerTurnId)),
   );
   if (waitingRequest) return true;
+  // A pending Jira proposal does not hold the run. The agent needs no answer to go on, its wait
+  // may have long ended, and the card stays open for the user; an agent that proposes the same
+  // change again after the restart finds the same card.
   return projection.turnItems.some(
     (item) =>
-      // The agent may be waiting on a proposal's outcome; the card outlives the restart.
-      (item.type === "jira_proposal" &&
-        item.runId === source.id &&
-        item.proposalStatus === "pending") ||
-      (item.type === "secret_request" &&
+      item.type === "secret_request" &&
       item.runId === source.id &&
       (item.secretStatus === "pending" ||
         (item.secretStatus === "cancelled" &&
           item.completedAt !== null &&
           source.completedAt !== null &&
-            DateTime.Equivalence(item.completedAt, source.completedAt)))),
+          DateTime.Equivalence(item.completedAt, source.completedAt))),
   );
 }
 
@@ -193,7 +192,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const projection = yield* threads.getThreadRecords(
       input.threadId,
       ["messages", "runs", "providerTurns", "attempts", "runtimeRequests", "turnItems"],
-      { messageIds: [messageId], turnItemTypes: ["secret_request", "jira_proposal"] },
+      { messageIds: [messageId], turnItemTypes: ["secret_request"] },
     );
     if (
       !resolveProjectSettings(enabled, projection.thread.projectId).settings
