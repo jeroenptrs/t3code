@@ -4,9 +4,9 @@ T3 Code reads your Jira Cloud site so you can see issues next to your threads. Y
 can browse issues by saved filter, open an issue, link it to a thread, and start a
 thread from it.
 
-This version is read-only. T3 Code never changes an issue, whether it reads with the
-server's identity or with your own token. Agents that should update Jira use their
-own credentials, described in [Agents that write to Jira](#agents-that-write-to-jira).
+T3 Code only changes Jira when you approve a change an agent proposed, and then it
+writes as you, with your own token. Everything else is read-only. See
+[Agents that write to Jira](#agents-that-write-to-jira).
 
 ## What you can do
 
@@ -16,6 +16,7 @@ own credentials, described in [Agents that write to Jira](#agents-that-write-to-
   that mention the issue.
 - Link an issue to a thread.
 - Start a new thread from an issue.
+- Approve issues, comments, and transitions that an agent proposes.
 
 ## Set up the connection
 
@@ -93,8 +94,9 @@ dedicated service account if you want to limit what the team can see.
 
 When the server uses organisation sign-in, each signed-in user can store a personal
 Jira token instead. While it is stored, your Issues page and issue details read Jira
-as you, so you see what your own Jira account can see. Everyone without a token
-still reads as the reader identity.
+as you, so you see what your own Jira account can see, and changes you approve are
+made as you. Everyone without a token still reads as the reader identity and cannot
+approve changes.
 
 Agents never receive your token. Background work, such as linking branches and
 refreshing linked issues, always uses the server's identities.
