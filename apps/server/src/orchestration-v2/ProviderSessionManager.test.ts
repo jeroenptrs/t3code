@@ -689,6 +689,7 @@ function runBrowserAccessScenario(input: {
                 jiraIdentitiesLayer: Layer.mock(JiraIdentities.JiraIdentities)({
                   configured: input.jiraConfigured,
                   list: [],
+                  services: [],
                 }),
               }),
           serverSettingsLayer: ServerSettings.layerTest({
