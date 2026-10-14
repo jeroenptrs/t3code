@@ -2841,6 +2841,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             readonly runtime: string | undefined;
           },
           interrupted: string | undefined,
+          mcpCapabilities: ReadonlySet<string> | undefined,
         ) {
           const rawText = turnInput.message.text;
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
@@ -2906,6 +2907,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             harness: "Cursor",
             model: turnInput.modelSelection.model,
             runtimePolicy: turnInput.runtimePolicy,
+            mcpCapabilities,
           });
           // Resend only on a new/compacted/rewound conversation or when the model changes.
           const sendRuntimeInstructions = delivered.runtime !== runtimeInstructions;
@@ -3003,6 +3005,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                       hasDeviceTools,
                       delivered,
                       dropped?.text,
+                      mcpSession?.capabilities,
                     );
             const compacted = resume === undefined && prompt === undefined;
             const pendingUpdates: Array<InteractionUpdate> = [];

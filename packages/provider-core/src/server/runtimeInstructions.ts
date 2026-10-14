@@ -6,6 +6,21 @@ Link each PR you create, take over, or push to: link_pull_request, or link_pull_
 If available, call link_issue for each issue you take on or file, even via CLI; skip issues you only read.
 </pull_request_linking>`;
 
+/**
+ * Fork-only. One line per Jira tool family, so a later tool adds its own line. The server grants
+ * the "jira" MCP capability only when Jira is configured on it.
+ */
+const JIRA_ISSUE_TOOL_GUIDANCE = [
+  "When this thread's work is for a Jira issue (the user names a key such as ABC-123 or gives a browse URL), call link_jira_issue so T3 Code shows the issue with the thread. Linking an already-linked issue is safe.",
+  "A branch whose name contains an issue key links that issue automatically.",
+  "list_thread_jira_issues lists the issues linked to this thread.",
+  "These tools only record links in T3 Code. To change an issue (comment, transition, edit), use jtk, which acts as your own Jira identity when it is configured.",
+];
+
+const JIRA_ISSUE_LINKING_INSTRUCTIONS = `<jira_issue_linking>
+${JIRA_ISSUE_TOOL_GUIDANCE.map((line) => `- ${line}`).join("\n")}
+</jira_issue_linking>`;
+
 /** Omit model and effort when the harness manages them dynamically. */
 export function buildRuntimeInstructions(runtime: {
   readonly harness: string;
@@ -16,6 +31,7 @@ export function buildRuntimeInstructions(runtime: {
   readonly pullRequestLinking?: boolean;
   /** Adds the folder list of a multi-folder thread. */
   readonly runtimePolicy?: Pick<ProviderAdapterV2RuntimePolicy, "cwd" | "workspace"> | undefined;
+  readonly mcpCapabilities?: ReadonlySet<string> | undefined;
 }): string {
   const harness = toSingleLine(runtime.harness);
   const model = toSingleLine(runtime.model ?? "");
@@ -31,6 +47,7 @@ export function buildRuntimeInstructions(runtime: {
   return [
     runtimeInfo,
     ...(runtime.pullRequestLinking === false ? [] : [PULL_REQUEST_LINKING_INSTRUCTIONS]),
+    ...(runtime.mcpCapabilities?.has("jira") ? [JIRA_ISSUE_LINKING_INSTRUCTIONS] : []),
     ...(workspace === "" ? [] : [workspace]),
   ].join("\n\n");
 }

@@ -2184,6 +2184,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               turnInput.runtimePolicy.workspace?.extraRoots ?? [],
               (root) => museCanonicalPath(root).pipe(Effect.flatMap(museWorkspaceRoot)),
             );
+            const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const result = yield* request(
               "turn/start",
               {
@@ -2195,6 +2196,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                       model: session.model ?? undefined,
                       reasoningEffort: effort,
                       runtimePolicy: turnInput.runtimePolicy,
+                      mcpCapabilities: mcpSession?.capabilities,
                     }),
                   },
                   ...parts,
