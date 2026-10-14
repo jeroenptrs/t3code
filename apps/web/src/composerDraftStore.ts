@@ -316,6 +316,9 @@ const PersistedDraftThreadState = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
   startFromOrigin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  newWorktreeBranch: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -407,6 +410,11 @@ export interface DraftSessionState {
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
   startFromOrigin: boolean;
+  /**
+   * The name the new worktree's own branch gets, when the thread starts in a new worktree.
+   * `branch` stays the base. Null lets the server name it.
+   */
+  newWorktreeBranch: string | null;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -452,6 +460,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      newWorktreeBranch?: string | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -468,6 +477,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      newWorktreeBranch?: string | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -483,6 +493,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      newWorktreeBranch?: string | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -1398,6 +1409,33 @@ function toProjectDraftSession(
   };
 }
 
+/**
+ * The new-worktree branch name a draft keeps after an update. A name asked for wins. Otherwise
+ * the existing one carries, except where it could no longer apply: another project, a switch to
+ * the project checkout, or an attached existing worktree. Switching back to a new worktree then
+ * starts unnamed instead of resurrecting a stale name.
+ */
+export function resolveNewWorktreeBranch(input: {
+  requested: string | null | undefined;
+  existing: string | null;
+  projectChanged: boolean;
+  requestedEnvMode: DraftThreadEnvMode | undefined;
+  requestedWorktreePath: string | null | undefined;
+}): string | null {
+  if (input.requested !== undefined) {
+    const trimmed = input.requested?.trim() ?? "";
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (
+    input.projectChanged ||
+    input.requestedEnvMode === "local" ||
+    (input.requestedWorktreePath ?? null) !== null
+  ) {
+    return null;
+  }
+  return input.existing;
+}
+
 function createDraftThreadState(
   projectRef: ScopedProjectRef,
   threadId: ThreadId,
@@ -1410,6 +1448,7 @@ function createDraftThreadState(
     createdAt?: string;
     envMode?: DraftThreadEnvMode;
     startFromOrigin?: boolean;
+    newWorktreeBranch?: string | null;
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
     environmentSelection?: "auto" | "manual";
@@ -1439,6 +1478,13 @@ function createDraftThreadState(
     options?.startFromOrigin === undefined
       ? (existingThread?.startFromOrigin ?? false)
       : options.startFromOrigin;
+  const nextNewWorktreeBranch = resolveNewWorktreeBranch({
+    requested: options?.newWorktreeBranch,
+    existing: existingThread?.newWorktreeBranch ?? null,
+    projectChanged,
+    requestedEnvMode: options?.envMode,
+    requestedWorktreePath: options?.worktreePath,
+  });
   const environmentSelection =
     options?.environmentSelection ?? existingThread?.environmentSelection;
   return {
@@ -1465,6 +1511,7 @@ function createDraftThreadState(
     envMode:
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
     startFromOrigin: nextStartFromOrigin,
+    newWorktreeBranch: nextNewWorktreeBranch,
     promotedTo: null,
   };
 }
@@ -1499,6 +1546,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
     left.startFromOrigin === right.startFromOrigin &&
+    left.newWorktreeBranch === right.newWorktreeBranch &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1599,6 +1647,11 @@ function normalizePersistedDraftThreads(
       const branch = candidateDraftThread.branch;
       const worktreePath = candidateDraftThread.worktreePath;
       const startFromOrigin = candidateDraftThread.startFromOrigin === true;
+      const newWorktreeBranch =
+        typeof candidateDraftThread.newWorktreeBranch === "string" &&
+        candidateDraftThread.newWorktreeBranch.length > 0
+          ? candidateDraftThread.newWorktreeBranch
+          : null;
       const normalizedWorktreePath = typeof worktreePath === "string" ? worktreePath : null;
       const promotedToCandidate = candidateDraftThread.promotedTo;
       const promotedToRecord =
@@ -1647,6 +1700,7 @@ function normalizePersistedDraftThreads(
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
         startFromOrigin,
+        newWorktreeBranch,
         ...(candidateDraftThread.environmentSelection === "manual" ||
         candidateDraftThread.environmentSelection === "auto"
           ? { environmentSelection: candidateDraftThread.environmentSelection }
@@ -1709,6 +1763,7 @@ function normalizePersistedDraftThreads(
           worktreePath: null,
           envMode: "local",
           startFromOrigin: false,
+          newWorktreeBranch: null,
           promotedTo: null,
         };
       } else if (
@@ -2386,6 +2441,7 @@ function toHydratedDraftThreadState(
     worktreePath: persistedDraftThread.worktreePath,
     envMode: persistedDraftThread.envMode,
     startFromOrigin: persistedDraftThread.startFromOrigin,
+    newWorktreeBranch: persistedDraftThread.newWorktreeBranch,
     ...(persistedDraftThread.environmentSelection
       ? { environmentSelection: persistedDraftThread.environmentSelection }
       : {}),
@@ -2653,6 +2709,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               options.startFromOrigin === undefined
                 ? existing.startFromOrigin
                 : options.startFromOrigin;
+            const nextNewWorktreeBranch = resolveNewWorktreeBranch({
+              requested: options.newWorktreeBranch,
+              existing: existing.newWorktreeBranch,
+              projectChanged,
+              requestedEnvMode: options.envMode,
+              requestedWorktreePath: options.worktreePath,
+            });
             const environmentSelection =
               options.environmentSelection ??
               (options.branch != null || options.worktreePath != null
@@ -2681,6 +2744,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               envMode:
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
               startFromOrigin: nextStartFromOrigin,
+              newWorktreeBranch: nextNewWorktreeBranch,
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -2696,6 +2760,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.worktreePath === existing.worktreePath &&
               nextDraftThread.envMode === existing.envMode &&
               nextDraftThread.startFromOrigin === existing.startFromOrigin &&
+              nextDraftThread.newWorktreeBranch === existing.newWorktreeBranch &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
               return state;
