@@ -154,6 +154,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.jiraSetPersonalToken]: AuthOrchestrationReadScope,
   [WS_METHODS.jiraTestPersonalToken]: AuthOrchestrationReadScope,
   [WS_METHODS.jiraClearPersonalToken]: AuthOrchestrationReadScope,
+  // A proposal card's edit choices are a read as the caller; deciding one writes to Jira as them.
+  [WS_METHODS.jiraCreateMeta]: AuthOrchestrationReadScope,
+  [WS_METHODS.jiraDecideProposal]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
