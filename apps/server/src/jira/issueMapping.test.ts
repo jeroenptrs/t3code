@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { resolveFieldIds, toIssueSummary } from "./issueMapping.ts";
+import { resolveFieldIds, toIssueSummary, toTransition } from "./issueMapping.ts";
 
 const fieldIds = { sprint: "customfield_10020", storyPoints: "customfield_10016" };
 
@@ -81,6 +81,36 @@ describe("toIssueSummary", () => {
     expect(bare.storyPoints).toBeNull();
     expect(bare.updated).toBeNull();
     expect(summary("done", { customfield_10016: "3" }).storyPoints).toBeNull();
+  });
+
+  it("prefers the untranslated status and issue type names over the profile language's", () => {
+    const summary = toIssueSummary(
+      {
+        id: "1",
+        key: "ABC-1",
+        fields: {
+          status: {
+            name: "待办",
+            untranslatedName: "To Do",
+            statusCategory: { key: "new" },
+          },
+          issuetype: { name: "缺陷", untranslatedName: "Bug" },
+        },
+      },
+      { site: "acme.atlassian.net", fieldIds },
+    );
+    expect([summary.status, summary.issueType]).toEqual(["To Do", "Bug"]);
+
+    const untranslated = toIssueSummary(
+      { id: "1", key: "ABC-1", fields: { status: { name: "待办" }, issuetype: { name: "任务" } } },
+      { site: "acme.atlassian.net", fieldIds },
+    );
+    expect([untranslated.status, untranslated.issueType]).toEqual(["待办", "任务"]);
+
+    expect(
+      toTransition({ id: "11", name: "Start", to: { name: "进行中", untranslatedName: "Doing" } })
+        .toStatus,
+    ).toBe("Doing");
   });
 
   it("ignores sprint and story point values when the site has no such fields", () => {
