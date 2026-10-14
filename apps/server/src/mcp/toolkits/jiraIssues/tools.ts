@@ -110,6 +110,35 @@ export class JiraIssueListFailedError extends Schema.TaggedError<JiraIssueListFa
   }
 }
 
+export class JiraIssueWatchFailedError extends Schema.TaggedError<JiraIssueWatchFailedError>()(
+  "JiraIssueWatchFailedError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not change whether the Jira issue is watched.";
+  }
+}
+
+export class JiraIssueWatchFromSubagentError extends Schema.TaggedError<JiraIssueWatchFromSubagentError>()(
+  "JiraIssueWatchFromSubagentError",
+  {},
+) {
+  override get message(): string {
+    return "This thread is a subagent, so it cannot watch Jira issues. Its parent thread owns the issue: finish your task and report back instead.";
+  }
+}
+
+export class JiraIssueWatchUnavailableError extends Schema.TaggedError<JiraIssueWatchUnavailableError>()(
+  "JiraIssueWatchUnavailableError",
+  { site: Schema.NullOr(Schema.String) },
+) {
+  override get message(): string {
+    return this.site === null
+      ? "Jira is not configured on this server, so T3 Code cannot watch Jira issues."
+      : `T3 Code does not read Jira on ${this.site}, so it cannot watch issues there.`;
+  }
+}
+
 export const JiraIssueToolError = Schema.Union([
   OrchestratorMcpFailure,
   JiraNotConfiguredError,
@@ -119,6 +148,9 @@ export const JiraIssueToolError = Schema.Union([
   JiraIssueLinkFailedError,
   JiraIssueUnlinkFailedError,
   JiraIssueListFailedError,
+  JiraIssueWatchFailedError,
+  JiraIssueWatchFromSubagentError,
+  JiraIssueWatchUnavailableError,
 ]);
 
 const JiraIssueIdentity = {
@@ -155,6 +187,18 @@ export const UnlinkJiraIssueResult = Schema.Struct({
   }),
 });
 export type UnlinkJiraIssueResult = typeof UnlinkJiraIssueResult.Type;
+
+export const WatchJiraIssueResult = Schema.Struct({
+  site: Schema.NullOr(Schema.String).annotate({
+    description: "Null when no site was given, Jira is not configured and nothing was watched.",
+  }),
+  key: Schema.String,
+  watching: Schema.Boolean.annotate({ description: "Whether T3 Code watches it now." }),
+  wasWatching: Schema.Boolean.annotate({
+    description: "Whether T3 Code watched it for this thread before the call.",
+  }),
+});
+export type WatchJiraIssueResult = typeof WatchJiraIssueResult.Type;
 
 export const ThreadJiraIssueEntry = Schema.Struct({
   ...JiraIssueIdentity,
@@ -213,6 +257,34 @@ const ListThreadJiraIssuesTool = Tool.make("list_thread_jira_issues", {
 })
   .annotate(Tool.Title, "List thread Jira issues")
   .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+const WatchJiraIssueTool = Tool.make("watch_jira_issue", {
+  description:
+    "Have T3 Code watch a Jira issue for this thread, linking it first if needed. T3 Code checks it every two minutes and wakes you with a message when someone else comments on it, its status moves to another category (To Do, In Progress, Done), or its assignee changes. Use this to follow an issue instead of polling, sleeping, or running a watcher. Only changes after this call wake you, so read the issue with jtk and handle what is already there first, then end your turn. While T3 Code watches, the thread stays in the user's Working list, not their inbox. When you hand the work back to the user, call unwatch_jira_issue first so the thread returns to their inbox. Watching ends when the thread settles or is archived, when the user stops this thread, when the issue is unlinked or T3 Code can no longer see it, after 10 wakes in a row that bring only comments, or when you call unwatch_jira_issue. Unsettle the thread before starting a new watch. A subagent cannot watch: its parent thread owns the issue.",
+  parameters: JiraIssueTargetInput,
+  success: WatchJiraIssueResult,
+  failure: JiraIssueToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Watch Jira issue")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+const UnwatchJiraIssueTool = Tool.make("unwatch_jira_issue", {
+  description:
+    "Stop T3 Code from watching a Jira issue for this thread. The issue stays linked. Unwatching an issue that is not watched succeeds with wasWatching=false.",
+  parameters: JiraIssueTargetInput,
+  success: WatchJiraIssueResult,
+  failure: JiraIssueToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Stop watching Jira issue")
+  .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
@@ -352,6 +424,8 @@ export const JiraIssuesToolkit = Toolkit.make(
   LinkJiraIssueTool,
   UnlinkJiraIssueTool,
   ListThreadJiraIssuesTool,
+  WatchJiraIssueTool,
+  UnwatchJiraIssueTool,
   ProposeJiraIssuesTool,
   ProposeJiraCommentTool,
   ProposeJiraTransitionTool,

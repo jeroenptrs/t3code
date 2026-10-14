@@ -445,4 +445,43 @@ describe("derivePendingBackgroundWork kinds", () => {
       ).toEqual([]);
     });
   });
+
+  describe("Jira issue watches", () => {
+    const watch = {
+      startedAt: "2026-10-05T00:00:00.000Z",
+      updatedThrough: null,
+      statusCategory: null,
+      assigneeAccountId: null,
+      commentsThrough: "2026-10-05T00:00:00.000Z",
+      wakes: 0,
+    };
+    const jiraIssues = [
+      { site: "acme.atlassian.net", key: "ABC-1", source: "agent" as const, watch },
+      { site: "acme.atlassian.net", key: "ABC-2", source: "manual" as const },
+      { site: "acme.atlassian.net", key: "ABC-3", source: "branch-dismissed" as const, watch },
+    ];
+
+    it("keeps a settled or never-run thread waiting on each visible watch", () => {
+      for (const latestRun of [
+        { id: "run-1" as never, ordinal: 1, status: "completed" as const },
+        null,
+      ]) {
+        const tasks = derivePendingBackgroundWork({
+          latestRun,
+          providerThreads: [],
+          turnItems: [],
+          jiraIssues,
+        });
+        expect(tasks).toEqual([
+          {
+            taskId: "jira-issue-watch:acme.atlassian.net/ABC-1",
+            description: "Watching Jira issue ABC-1",
+            kind: "monitor",
+            awaited: true,
+          },
+        ]);
+        expect(backgroundWorkHoldsCompletion(tasks)).toBe(true);
+      }
+    });
+  });
 });

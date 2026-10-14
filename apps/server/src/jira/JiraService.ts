@@ -2,7 +2,9 @@ import {
   JIRA_ISSUE_KEY_PATTERN,
   JiraError,
   type AuthUserId,
+  type JiraAddCommentInput,
   type JiraCapabilities,
+  type JiraComment,
   type JiraCreateMeta,
   type JiraCreateMetaInput,
   type JiraFilterInput,
@@ -18,8 +20,10 @@ import {
   type JiraSearchInput,
   type JiraSearchResult,
   type JiraSprint,
+  type JiraTransitionIssueInput,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -42,6 +46,7 @@ import {
   type JiraFieldIds,
 } from "./issueMapping.ts";
 import { listJiraIssueLinkedThreads, listJiraIssuePullRequests } from "./localLinks.ts";
+import { markdownToAdf } from "./markdownToAdf.ts";
 
 /** Who a UI request is for. */
 export interface JiraRequestOptions {
@@ -56,10 +61,22 @@ export interface JiraRequestOptions {
 const DEFAULT_SEARCH_PAGE_SIZE = 100;
 const BULK_FETCH_CHUNK = 100;
 const COMMENT_LIMIT = 50;
+/** Comments a watch reads per changed issue; more since the last read are left to jtk. */
+const WATCH_COMMENT_LIMIT = 20;
 const FILTER_SEARCH_LIMIT = 50;
 const DETAIL_FIELDS = ["description", "reporter", "created"];
 /** Issues read to find a project's open sprints; scoped tokens cannot list sprints directly. */
 const SPRINT_SEARCH_LIMIT = 100;
+
+const signInRequired = new JiraError({
+  reason: "forbidden",
+  message: "Sign in to T3 Code with your organisation account to comment or move Jira issues.",
+});
+
+const personalTokenRequired = new JiraError({
+  reason: "personal-token-required",
+  message: "Add your Jira token in Settings → Account to comment or move issues as yourself.",
+});
 
 export class JiraService extends Context.Service<
   JiraService,
@@ -93,6 +110,21 @@ export class JiraService extends Context.Service<
       site: string,
       keys: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyArray<JiraIssueSummary>, JiraError>;
+    /**
+     * What a watch reads once an issue's `updated` moved: its newest comments, newest first, and
+     * the account the service identity reads as, whose own comments never wake an agent. Always
+     * the service identity and never cached, like `issuesByKeys`.
+     */
+    readonly watchComments: (
+      site: string,
+      key: string,
+    ) => Effect.Effect<
+      {
+        readonly comments: ReadonlyArray<JiraComment>;
+        readonly readerAccountId: string | null;
+      },
+      JiraError
+    >;
     readonly linkedThreads: (
       input: JiraIssueKey,
     ) => Effect.Effect<ReadonlyArray<JiraLinkedThread>, JiraError>;
@@ -109,6 +141,22 @@ export class JiraService extends Context.Service<
     ) => Effect.Effect<JiraCreateMeta, JiraError>;
     /** The site's sprint and story point field ids as `identity` sees them. */
     readonly fieldIds: (identity: JiraServerIdentity) => Effect.Effect<JiraFieldIds, JiraError>;
+    /**
+     * Posts a comment as the caller's personal token for the issue's site, never a service
+     * identity. Their next issue read asks Jira again.
+     */
+    readonly addComment: (
+      userId: AuthUserId | undefined,
+      input: JiraAddCommentInput,
+    ) => Effect.Effect<JiraComment, JiraError>;
+    /**
+     * Takes a transition as the caller's personal token, if the issue still offers it to them.
+     * Their next issue read asks Jira again.
+     */
+    readonly transitionIssue: (
+      userId: AuthUserId | undefined,
+      input: JiraTransitionIssueInput,
+    ) => Effect.Effect<void, JiraError>;
   }
 >()("t3/jira/JiraService") {}
 
@@ -421,6 +469,26 @@ const make = Effect.gen(function* () {
     return chunks.flat();
   });
 
+  const watchComments: JiraService["Service"]["watchComments"] = Effect.fn(
+    "JiraService.watchComments",
+  )(function* (site, key) {
+    const identity = yield* identities.forSite(site);
+    const [raw, self] = yield* Effect.all(
+      [
+        api.getComments(identity, key, { maxResults: WATCH_COMMENT_LIMIT, orderBy: "-created" }),
+        myself(identity),
+      ],
+      { concurrency: "unbounded" },
+    );
+    return {
+      comments: (raw.comments ?? []).flatMap((comment) => {
+        const mapped = toComment(comment);
+        return mapped === null ? [] : [mapped];
+      }),
+      readerAccountId: toJiraUser(self)?.accountId ?? null,
+    };
+  });
+
   const createMeta: JiraService["Service"]["createMeta"] = Effect.fn("JiraService.createMeta")(
     function* (input, options) {
       yield* annotateActingUser(options);
@@ -471,6 +539,55 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /** The caller's personal identity for `site`; a direct write never goes out as anyone else. */
+  const writeIdentity = (userId: AuthUserId | undefined, site: string) =>
+    Effect.gen(function* () {
+      if (userId === undefined) return yield* signInRequired;
+      yield* Effect.annotateCurrentSpan("jira.actingUserId", userId);
+      const personal = yield* credentials.identityFor(userId, site);
+      if (personal === undefined) return yield* personalTokenRequired;
+      return personal;
+    });
+
+  const addComment: JiraService["Service"]["addComment"] = Effect.fn("JiraService.addComment")(
+    function* (userId, input) {
+      const identity = yield* writeIdentity(userId, input.site);
+      const raw = yield* api
+        .addComment(identity, input.key, markdownToAdf(input.body))
+        .pipe(asIdentity(identity));
+      yield* cache.invalidate("issue", cacheKey(identity, input.key));
+      // Jira answers with the whole comment; a reply missing its date still shows what was sent.
+      return (
+        toComment(raw) ?? {
+          id: raw.id,
+          author: null,
+          body: input.body,
+          created: DateTime.formatIso(yield* DateTime.now),
+          updated: null,
+        }
+      );
+    },
+  );
+
+  const transitionIssue: JiraService["Service"]["transitionIssue"] = Effect.fn(
+    "JiraService.transitionIssue",
+  )(function* (userId, input) {
+    const identity = yield* writeIdentity(userId, input.site);
+    yield* Effect.gen(function* () {
+      const offered = yield* api.getTransitions(identity, input.key);
+      if (!offered.some((transition) => transition.id === input.transitionId)) {
+        // The caller saw it on an earlier read; let their next read show what is offered now.
+        yield* cache.invalidate("issue", cacheKey(identity, input.key));
+        return yield* new JiraError({
+          reason: "invalid",
+          message: `That transition is no longer available on ${input.key}.`,
+        });
+      }
+      yield* api.transitionIssue(identity, input.key, input.transitionId);
+    }).pipe(asIdentity(identity));
+    yield* cache.invalidate("issue", cacheKey(identity, input.key));
+  });
+
   return JiraService.of({
     capabilities,
     filters,
@@ -478,10 +595,13 @@ const make = Effect.gen(function* () {
     search,
     issue,
     issuesByKeys,
+    watchComments,
     linkedThreads,
     pullRequestsForIssue,
     createMeta,
     fieldIds,
+    addComment,
+    transitionIssue,
   });
 });
 
