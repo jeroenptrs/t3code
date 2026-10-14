@@ -631,8 +631,8 @@ export function visibleScheduledTasks(
 
 /**
  * Records the session's portal user on commands that carry one: the creator of a thread it
- * creates and who linked a Jira issue. The server owns these audit fields, so a value the client
- * sent is replaced.
+ * creates and who linked a Jira issue, also by watching it. The server owns these audit fields,
+ * so a value the client sent is replaced.
  */
 export function withSessionUserAttribution(
   command: OrchestrationV2Command,
@@ -642,7 +642,7 @@ export function withSessionUserAttribution(
     const { createdByUserId: _clientValue, ...rest } = command;
     return userId === null ? rest : { ...rest, createdByUserId: userId };
   }
-  if (command.type === "thread.jira-issue.link") {
+  if (command.type === "thread.jira-issue.link" || command.type === "thread.jira-issue.watch") {
     const { linkedByUserId: _clientValue, ...rest } = command;
     return userId === null ? rest : { ...rest, linkedByUserId: userId };
   }
@@ -3223,6 +3223,9 @@ const layerWsJiraRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
           Effect.annotateCurrentSpan("orchestration_v2.thread_id", input.threadId).pipe(
             Effect.andThen(proposals.decide(currentSession.userId, input)),
           ),
+        [WS_METHODS.jiraAddComment]: (input) => jira.addComment(currentSession.userId, input),
+        [WS_METHODS.jiraTransitionIssue]: (input) =>
+          jira.transitionIssue(currentSession.userId, input),
       });
     }),
   );
