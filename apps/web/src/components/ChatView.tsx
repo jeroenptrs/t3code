@@ -3749,6 +3749,7 @@ export default function ChatView(props: ChatViewProps) {
         activeProviderThreadId: serverProjection.thread.activeProviderThreadId,
         runs: serverProjection.runs,
         pullRequests: serverProjection.thread.pullRequests,
+        jiraIssues: serverProjection.thread.jiraIssues,
       }),
     ];
   }, [serverProjection]);

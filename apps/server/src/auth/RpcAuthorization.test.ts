@@ -185,6 +185,13 @@ describe("RPC authorization scopes", () => {
     ]);
   });
 
+  it("lets only operators comment on or move a Jira issue", () => {
+    for (const method of [WS_METHODS.jiraAddComment, WS_METHODS.jiraTransitionIssue]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+      expect(clientRpcRequiredScopes(method, undefined)).toEqual([AuthOrchestrationOperateScope]);
+    }
+  });
+
   it("separates preview control from observation", () => {
     for (const method of [
       WS_METHODS.previewOpen,
