@@ -4,6 +4,7 @@ import type {
   OrchestrationV2Run,
   OrchestrationV2TurnItem,
   ThreadId,
+  ThreadJiraIssueLink,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
@@ -114,6 +115,11 @@ type PendingBackgroundWorkRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "sta
 type PendingBackgroundWorkPullRequest = Pick<
   ThreadPullRequestLink,
   "host" | "repository" | "number" | "url" | "source" | "watch"
+>;
+
+type PendingBackgroundWorkJiraIssue = Pick<
+  ThreadJiraIssueLink,
+  "site" | "key" | "source" | "watch"
 >;
 
 type PendingBackgroundWorkProviderThread = Pick<
@@ -240,6 +246,7 @@ export function derivePendingBackgroundWork(input: {
    */
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
   readonly pullRequests?: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined;
+  readonly jiraIssues?: ReadonlyArray<PendingBackgroundWorkJiraIssue> | undefined;
 }): ReadonlyArray<PendingBackgroundWorkTask> {
   const hasActiveRun =
     input.hasActiveRun ??
@@ -251,7 +258,7 @@ export function derivePendingBackgroundWork(input: {
     return [];
   }
   if (input.latestRun == null) {
-    return pullRequestWatchTasks(input.pullRequests);
+    return [...pullRequestWatchTasks(input.pullRequests), ...jiraIssueWatchTasks(input.jiraIssues)];
   }
   if (!isLatestRunSettledForBackgroundWait(input.latestRun)) {
     return [];
@@ -291,6 +298,7 @@ export function derivePendingBackgroundWork(input: {
   }
 
   for (const task of pullRequestWatchTasks(input.pullRequests)) byTaskId.set(task.taskId, task);
+  for (const task of jiraIssueWatchTasks(input.jiraIssues)) byTaskId.set(task.taskId, task);
 
   return Array.from(byTaskId.values());
 }
@@ -305,6 +313,23 @@ function pullRequestWatchTasks(
           {
             taskId: `pull-request-watch:${threadPullRequestKeyOf(link)}`,
             description: `Watching pull request #${link.number}`,
+            kind: "monitor" as const,
+          },
+        ],
+  );
+}
+
+/** Fork-only. One monitor per watched Jira issue, like a pull request watch. */
+function jiraIssueWatchTasks(
+  jiraIssues: ReadonlyArray<PendingBackgroundWorkJiraIssue> | undefined,
+): Array<PendingBackgroundWorkTask> {
+  return (jiraIssues ?? []).flatMap((link) =>
+    link.watch === undefined || link.source === "branch-dismissed"
+      ? []
+      : [
+          {
+            taskId: `jira-issue-watch:${link.site}/${link.key}`,
+            description: `Watching Jira issue ${link.key}`,
             kind: "monitor" as const,
           },
         ],

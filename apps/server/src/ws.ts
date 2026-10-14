@@ -631,18 +631,18 @@ export function visibleScheduledTasks(
 
 /**
  * Records the session's portal user on commands that carry one: the creator of a thread it
- * creates and who linked a Jira issue. The server owns these audit fields, so a value the client
- * sent is replaced.
+ * creates and who linked a Jira issue, also by watching it. The server owns these audit fields,
+ * so a value the client sent is replaced.
  */
 export function withSessionUserAttribution(
   command: OrchestrationV2Command,
   userId: AuthUserId | null,
 ): OrchestrationV2Command {
   if (command.type === "thread.create") {
-  const { createdByUserId: _clientValue, ...rest } = command;
-  return userId === null ? rest : { ...rest, createdByUserId: userId };
+    const { createdByUserId: _clientValue, ...rest } = command;
+    return userId === null ? rest : { ...rest, createdByUserId: userId };
   }
-  if (command.type === "thread.jira-issue.link") {
+  if (command.type === "thread.jira-issue.link" || command.type === "thread.jira-issue.watch") {
     const { linkedByUserId: _clientValue, ...rest } = command;
     return userId === null ? rest : { ...rest, linkedByUserId: userId };
   }
@@ -1891,11 +1891,11 @@ export const layerWsRpc = (
                     ? threadLaunch.retryPreparation(command)
                     : ThreadMessageIntake.dispatchCommand(
                         withSessionUserAttribution(
-                        ThreadManagementService.withCreationProvenance(command, {
-                          createdBy: "user",
-                          creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
-                        }),
+                          ThreadManagementService.withCreationProvenance(command, {
+                            createdBy: "user",
+                            creationSource:
+                              "creationSource" in command ? command.creationSource : "web",
+                          }),
                           currentSession.userId ?? null,
                         ),
                       )
@@ -2621,7 +2621,7 @@ export const layerWsRpc = (
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           Effect.andThen(
             input.cwd === undefined ? Effect.void : ensureReadable(input.cwd),
-          sourceControlRepositories.lookupRepository(input),
+            sourceControlRepositories.lookupRepository(input),
           ),
         [WS_METHODS.sourceControlCloneRepository]: (input) =>
           sourceControlRepositories.cloneRepository(input),
@@ -2689,48 +2689,48 @@ export const layerWsRpc = (
         [WS_METHODS.projectsSearchEntries]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd),
-          workspaceEntries.search(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectSearchEntriesError({
-                  cwd: input.cwd,
-                  queryLength: input.query.length,
-                  limit: input.limit,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
+            workspaceEntries.search(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectSearchEntriesError({
+                    cwd: input.cwd,
+                    queryLength: input.query.length,
+                    limit: input.limit,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsSearchContents]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd),
-          workspaceEntries.searchContents(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectSearchContentsError({
-                  cwd: input.cwd,
-                  queryLength: input.query.length,
-                  limit: input.limit,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
+            workspaceEntries.searchContents(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectSearchContentsError({
+                    cwd: input.cwd,
+                    queryLength: input.query.length,
+                    limit: input.limit,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsListEntries]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd, path.resolve(input.cwd, input.directoryPath ?? "")),
-          workspaceEntries.list(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectListEntriesError({
-                  ...input,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
+            workspaceEntries.list(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectListEntriesError({
+                    ...input,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsListIgnoredFiles]: (input) =>
           Effect.andThen(
@@ -2749,16 +2749,16 @@ export const layerWsRpc = (
         [WS_METHODS.projectsReadFile]: (input) =>
           Effect.andThen(
             ensureReadable(path.resolve(input.cwd, input.relativePath)),
-          workspaceFileSystem.readFile(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectReadFileError({
-                  ...input,
-                  ...projectFileFailureContext(cause),
-                  cause,
-                }),
+            workspaceFileSystem.readFile(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectReadFileError({
+                    ...input,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           workspaceFileSystem.writeFile(input).pipe(
@@ -3272,6 +3272,9 @@ const layerWsJiraRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
           Effect.annotateCurrentSpan("orchestration_v2.thread_id", input.threadId).pipe(
             Effect.andThen(proposals.decide(currentSession.userId, input)),
           ),
+        [WS_METHODS.jiraAddComment]: (input) => jira.addComment(currentSession.userId, input),
+        [WS_METHODS.jiraTransitionIssue]: (input) =>
+          jira.transitionIssue(currentSession.userId, input),
       });
     }),
   );
