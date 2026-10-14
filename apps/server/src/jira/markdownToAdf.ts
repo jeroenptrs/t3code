@@ -480,15 +480,26 @@ function isTableStart(lines: ReadonlyArray<string>, at: number): boolean {
 
 const isListMarker = (line: string) => BULLET.test(line) || ORDERED.test(line);
 
-/** Whether `lines[at]` begins a block, which ends a running paragraph. */
-const startsBlock = (lines: ReadonlyArray<string>, at: number) => {
+/**
+ * Whether a list marker may interrupt a paragraph. As in CommonMark, an ordered one only when it
+ * starts at 1, so a wrapped line such as "2024. Follow-up" stays part of the sentence.
+ */
+const interruptsParagraph = (line: string) =>
+  BULLET.test(line) || Number(ORDERED.exec(line)?.[2]) === 1;
+
+/**
+ * Whether `lines[at]` begins a block, which ends a running paragraph. `anyList` lets every list
+ * marker do so, for paragraphs inside list items: adfToMarkdown writes a nested list that starts
+ * past 1 directly under the item's text.
+ */
+const startsBlock = (lines: ReadonlyArray<string>, at: number, anyList = false) => {
   const line = lines[at] ?? "";
   return (
     matchFence(line) !== null ||
     HEADING.test(line) ||
     RULE.test(line) ||
     QUOTE.test(line) ||
-    isListMarker(line) ||
+    (anyList ? isListMarker(line) : interruptsParagraph(line)) ||
     isTableStart(lines, at)
   );
 };
@@ -563,7 +574,7 @@ function parseList(lines: ReadonlyArray<string>, start: number): { block: AdfBlo
       }
       if (indentOf(next) >= offset) {
         itemLines.push(stripIndent(next, offset));
-      } else if (!isBlank(lines[j - 1]) && !startsBlock(lines, j)) {
+      } else if (!isBlank(lines[j - 1]) && !startsBlock(lines, j, true)) {
         itemLines.push(next.trim()); // lazy paragraph continuation
       } else {
         break;
@@ -571,7 +582,7 @@ function parseList(lines: ReadonlyArray<string>, start: number): { block: AdfBlo
       j++;
     }
 
-    const children = toContainerBlocks(parseBlocks(itemLines));
+    const children = toContainerBlocks(parseBlocks(itemLines, true));
     // ADF list items open with a paragraph.
     const body = children[0]?.type === "paragraph" ? children : [paragraph([]), ...children];
     items.push({ type: "listItem", content: body });
@@ -598,7 +609,7 @@ function parseList(lines: ReadonlyArray<string>, start: number): { block: AdfBlo
   return { block, next: i };
 }
 
-function parseBlocks(lines: ReadonlyArray<string>): AdfBlock[] {
+function parseBlocks(lines: ReadonlyArray<string>, inListItem = false): AdfBlock[] {
   const blocks: AdfBlock[] = [];
   let i = 0;
 
@@ -698,7 +709,7 @@ function parseBlocks(lines: ReadonlyArray<string>): AdfBlock[] {
     }
 
     const text = [line];
-    for (i++; i < lines.length && !isBlank(lines[i]) && !startsBlock(lines, i); i++) {
+    for (i++; i < lines.length && !isBlank(lines[i]) && !startsBlock(lines, i, inListItem); i++) {
       text.push(lines[i] ?? "");
     }
     const content = parseInline(text.map((row) => row.trim()).join("\n"));
