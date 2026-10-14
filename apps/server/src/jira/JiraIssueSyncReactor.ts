@@ -1,7 +1,10 @@
 import {
   CommandId,
+  MessageId,
+  ThreadJiraIssueWatch,
   type JiraIssueSummary,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2Notification,
   type ThreadJiraIssueSnapshot,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -13,6 +16,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
@@ -21,6 +25,8 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as JiraIdentities from "./JiraIdentities.ts";
 import * as JiraService from "./JiraService.ts";
+import { browseUrl } from "./issueMapping.ts";
+import { evaluateJiraWatch, jiraWatchLostMessage, jiraWatchMessage } from "./jiraWatch.ts";
 import { listActiveThreadJiraIssueLinks } from "./localLinks.ts";
 
 const SYNC_INTERVAL = Duration.minutes(2);
@@ -30,6 +36,7 @@ const MAX_BACKOFF_INTERVALS = 16;
 type LinkRow = Effect.Success<ReturnType<typeof listActiveThreadJiraIssueLinks>>[number];
 
 const linkId = (site: string, key: string) => `${site}\u0000${key}`;
+const watchesEqual = Schema.toEquivalence(ThreadJiraIssueWatch);
 
 function snapshotCurrent(
   snapshot: ThreadJiraIssueSnapshot | null,
@@ -48,6 +55,11 @@ function snapshotCurrent(
  * all of their keys, and records only the snapshots that changed. A new link is read right away.
  * Issues the reader cannot see keep their old snapshot, or none. Does nothing while Jira is
  * unconfigured.
+ *
+ * The same read drives watches. A watched issue whose `updated` moved has its newest comments
+ * read, once per issue however many threads watch it, and each watch records what it saw and
+ * wakes its agent on a change. A watched issue the reader no longer sees ends its watches.
+ * Everything is read as the site's service identity.
  */
 export class JiraIssueSyncReactor extends Context.Service<
   JiraIssueSyncReactor,
@@ -95,6 +107,104 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * Records what a watch saw, waking the agent when `wake` is set. The orchestrator applies it
+   * only while the same watch is on, so a stop or restart that lands during the read wins.
+   */
+  const recordWatch = (
+    row: LinkRow,
+    watch: ThreadJiraIssueWatch,
+    next: ThreadJiraIssueWatch | null,
+    wake?: { readonly text: string; readonly notification: OrchestrationV2Notification },
+  ) =>
+    Effect.gen(function* () {
+      const uuid = yield* crypto.randomUUIDv4();
+      yield* orchestrator.dispatch({
+        type: "thread.jira-issue-watch.sync",
+        commandId: CommandId.make(`server:jira-watch:${row.threadId}:${uuid}`),
+        threadId: row.threadId,
+        site: row.site,
+        key: row.key,
+        startedAt: watch.startedAt,
+        watch: next,
+        ...(wake === undefined
+          ? {}
+          : { wake: { ...wake, messageId: MessageId.make(`message:jira-watch:${uuid}`) } }),
+      });
+    }).pipe(
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.logWarning("Jira issue watch update skipped", {
+            threadId: row.threadId,
+            key: row.key,
+            cause: Cause.pretty(cause),
+          }),
+      ),
+    );
+
+  const syncWatches = Effect.fn("JiraIssueSyncReactor.syncWatches")(function* (
+    site: string,
+    rows: ReadonlyArray<LinkRow>,
+    byKey: ReadonlyMap<string, JiraIssueSummary>,
+  ) {
+    const comments = new Map<
+      string,
+      Effect.Success<ReturnType<JiraService.JiraService["Service"]["watchComments"]>> | null
+    >();
+    for (const row of rows) {
+      const watch = row.watch;
+      if (watch === null) continue;
+      const issue = byKey.get(row.key);
+      if (issue === undefined) {
+        yield* recordWatch(
+          row,
+          watch,
+          null,
+          jiraWatchLostMessage({ key: row.key, url: browseUrl(site, row.key) }),
+        );
+        continue;
+      }
+      // A status or assignee change and a new comment all move `updated`.
+      if (
+        watch.updatedThrough !== null &&
+        issue.updated !== null &&
+        Date.parse(issue.updated) <= Date.parse(watch.updatedThrough)
+      ) {
+        continue;
+      }
+      if (!comments.has(row.key)) {
+        comments.set(
+          row.key,
+          yield* jira.watchComments(site, row.key).pipe(
+            Effect.catchTags({
+              JiraError: (error) =>
+                Effect.logWarning("Jira issue watch read failed", {
+                  site,
+                  key: row.key,
+                  reason: error.reason,
+                }).pipe(Effect.as(null)),
+            }),
+          ),
+        );
+      }
+      // An unread issue is read again on the next sweep.
+      const read = comments.get(row.key);
+      if (read == null) continue;
+      const report = evaluateJiraWatch(watch, { issue, ...read });
+      if (report.changes.length === 0) {
+        if (!watchesEqual(report.next, watch)) yield* recordWatch(row, watch, report.next);
+        continue;
+      }
+      yield* recordWatch(
+        row,
+        watch,
+        report.exhausted ? null : report.next,
+        jiraWatchMessage({ key: row.key, summary: issue.summary, url: issue.url, report }),
+      );
+    }
+  });
+
   const syncSite = Effect.fn("JiraIssueSyncReactor.syncSite")(function* (
     site: string,
     rows: ReadonlyArray<LinkRow>,
@@ -129,6 +239,7 @@ const make = Effect.gen(function* () {
       if (issue === undefined || snapshotCurrent(row.snapshot, issue)) continue;
       yield* dispatchSync(row, issue, syncedAt);
     }
+    yield* syncWatches(site, rows, byKey);
   });
 
   /** `requested` reads only links queued from events; `all` is the periodic sweep. */

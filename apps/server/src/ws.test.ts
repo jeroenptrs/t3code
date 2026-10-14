@@ -169,6 +169,20 @@ it("records the session's user as who linked a Jira issue, never the client's cl
   };
   assert.propertyVal(withSessionUserAttribution(link, ada), "linkedByUserId", ada);
   assert.notProperty(withSessionUserAttribution(link, null), "linkedByUserId");
+
+  // Watching links an unlinked issue first, so it records who did it the same way.
+  const watch: OrchestrationV2Command = {
+    type: "thread.jira-issue.watch",
+    commandId: CommandId.make("watch"),
+    threadId: ThreadId.make("thread:new"),
+    site: "acme.atlassian.net",
+    key: "ABC-1",
+    watching: true,
+    linkSource: "manual",
+    linkedByUserId: AuthUserId.make("user-spoofed"),
+  };
+  assert.propertyVal(withSessionUserAttribution(watch, ada), "linkedByUserId", ada);
+  assert.notProperty(withSessionUserAttribution(watch, null), "linkedByUserId");
 });
 
 it("shows a webhook's URL and audit trail only to sessions that may operate", () => {
