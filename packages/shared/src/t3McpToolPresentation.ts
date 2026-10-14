@@ -68,6 +68,9 @@ export type T3McpToolSummaryAction =
   | "link-jira"
   | "unlink-jira"
   | "list-jira"
+  | "propose-jira-issues"
+  | "propose-jira-comment"
+  | "propose-jira-transition"
   | "diff-walkthrough-write"
   | "diff-walkthrough-read"
   | "thread-diff-read"
@@ -130,7 +133,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "read-pr-guide",
     "pull-request",
   ),
-  // Fork-only Jira link tools; later Jira tools add one entry each here.
+  // Fork-only Jira tools; later Jira tools add one entry each here.
   link_jira_issue: tool(["Link", "Linking", "Linked", "a Jira issue"], "link-jira", "jira"),
   unlink_jira_issue: tool(
     ["Unlink", "Unlinking", "Unlinked", "a Jira issue"],
@@ -140,6 +143,21 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   list_thread_jira_issues: tool(
     ["Check", "Checking", "Checked", "linked Jira issues"],
     "list-jira",
+    "jira",
+  ),
+  propose_jira_issues: tool(
+    ["Propose", "Proposing", "Proposed", "Jira issues"],
+    "propose-jira-issues",
+    "jira",
+  ),
+  propose_jira_comment: tool(
+    ["Propose", "Proposing", "Proposed", "a Jira comment"],
+    "propose-jira-comment",
+    "jira",
+  ),
+  propose_jira_transition: tool(
+    ["Propose", "Proposing", "Proposed", "a Jira transition"],
+    "propose-jira-transition",
     "jira",
   ),
   write_diff_walkthrough: tool(
