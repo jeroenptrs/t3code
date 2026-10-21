@@ -142,6 +142,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.jiraDecideProposal]: "jira",
   [WS_METHODS.jiraAddComment]: "jira",
   [WS_METHODS.jiraTransitionIssue]: "jira",
+  [WS_METHODS.jiraSetSprint]: "jira",
+  [WS_METHODS.jiraSetStoryPoints]: "jira",
   [WS_METHODS.pullRequestsInvalidate]: "pull-requests",
   [WS_METHODS.pullRequestsReportState]: "pull-requests",
   [WS_METHODS.pullRequestsSubscribeRefreshes]: "pull-requests",

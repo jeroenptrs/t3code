@@ -1003,6 +1003,12 @@ it.effect("refuses direct writes without the caller's own token, before asking J
       for (const error of [
         yield* service.addComment(ALICE, comment).pipe(Effect.flip),
         yield* service.transitionIssue(ALICE, transition).pipe(Effect.flip),
+        yield* service
+          .setSprint(ALICE, { site: SITE, keys: ["ABC-1"], sprintId: 8 })
+          .pipe(Effect.flip),
+        yield* service
+          .setStoryPoints(ALICE, { site: SITE, key: "ABC-1", storyPoints: 3 })
+          .pipe(Effect.flip),
       ]) {
         expect(error).toMatchObject({
           reason: "personal-token-required",
@@ -1203,6 +1209,211 @@ it.effect("tells a watch which comments T3 Code posted and which accounts are it
       // Remembered for a few hours, which covers a watch's next read.
       yield* TestClock.adjust("5 hours");
       expect([...(yield* service.watchComments(SITE, "ABC-1")).ownCommentIds]).toEqual([]);
+    }),
+  );
+});
+
+/**
+ * Jira for sprint planning as Alice or the bot: ABC-3 refuses to change sprint, and searches,
+ * sprint lookups, and velocity find nothing.
+ */
+const makePlanningJira = (fields: ReadonlyArray<unknown> = FIELDS) =>
+  makeJira((path, body, authorization) => {
+    if (path === "/_edge/tenant_info") return { status: 200, body: { cloudId: "cloud-1" } };
+    if (authorization !== basic("alice") && authorization !== "Bearer secret-token") {
+      return { status: 401, body: null };
+    }
+    switch (path) {
+      case "/rest/api/3/myself":
+        return { status: 200, body: { accountId: "acc-alice", displayName: "alice" } };
+      case "/rest/api/3/field":
+        return { status: 200, body: fields };
+      case "/rest/api/3/search/jql":
+        return { status: 200, body: { issues: [] } };
+      case "/rest/api/3/jql/autocompletedata/suggestions":
+        return { status: 200, body: { results: [] } };
+      case "/rest/api/3/issue/ABC-1/comment":
+        return { status: 200, body: { comments: [], total: 0 } };
+      case "/rest/api/3/issue/ABC-1/transitions":
+        return { status: 200, body: { transitions: [] } };
+      case "/rest/api/3/issue/ABC-3":
+        return body === undefined
+          ? { status: 200, body: issue("ABC-3") }
+          : {
+              status: 400,
+              body: {
+                errors: {
+                  customfield_10020: "Issue can be assigned only active or future sprints.",
+                },
+              },
+            };
+      default:
+        return path.startsWith("/rest/api/3/issue/") && !path.slice(18).includes("/")
+          ? body === undefined
+            ? { status: 200, body: issue(path.slice(18)) }
+            : { status: 200, body: null }
+          : { status: 404, body: null };
+    }
+  });
+
+const edits = (requests: ReadonlyArray<Recorded>) =>
+  writes(requests)
+    .filter((request) => request.method === "PUT")
+    .map((request) => ({
+      key: new URL(request.url).pathname.split("/").at(-1),
+      authorization: request.authorization,
+      body: request.body,
+    }));
+
+it.effect("moves issues into a sprint and back to the backlog as the caller", () => {
+  const jira = makePlanningJira();
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      yield* storeToken(ALICE, "alice");
+      const service = yield* JiraService.JiraService;
+
+      expect(
+        yield* service.setSprint(ALICE, { site: SITE, keys: ["ABC-1", "ABC-2"], sprintId: 8 }),
+      ).toEqual({ updated: ["ABC-1", "ABC-2"], failed: [] });
+      expect(edits(jira.requests).toSorted((a, b) => a.key!.localeCompare(b.key!))).toEqual([
+        { key: "ABC-1", authorization: basic("alice"), body: { fields: { customfield_10020: 8 } } },
+        { key: "ABC-2", authorization: basic("alice"), body: { fields: { customfield_10020: 8 } } },
+      ]);
+
+      yield* service.setSprint(ALICE, { site: SITE, keys: ["ABC-1"], sprintId: null });
+      expect(edits(jira.requests).at(-1)).toEqual({
+        key: "ABC-1",
+        authorization: basic("alice"),
+        body: { fields: { customfield_10020: null } },
+      });
+    }),
+  );
+});
+
+it.effect("reports an issue Jira refuses to move while the others move", () => {
+  const jira = makePlanningJira();
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      yield* storeToken(ALICE, "alice");
+      const service = yield* JiraService.JiraService;
+      expect(
+        yield* service.setSprint(ALICE, {
+          site: SITE,
+          keys: ["ABC-1", "ABC-3", "ABC-2"],
+          sprintId: 7,
+        }),
+      ).toEqual({
+        updated: ["ABC-1", "ABC-2"],
+        failed: [{ key: "ABC-3", message: "Issue can be assigned only active or future sprints." }],
+      });
+    }),
+  );
+});
+
+it.effect("has the caller's next issue, search, sprints and velocity reads ask Jira again", () => {
+  const jira = makePlanningJira();
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      yield* storeToken(ALICE, "alice");
+      const service = yield* JiraService.JiraService;
+      const as = { actingUserId: ALICE };
+      const readAll = Effect.all([
+        service.issue({ site: SITE, key: "ABC-1" }, as),
+        service.search({ jql: "assignee = currentUser()" }, as),
+        service.sprints({ site: SITE, projectKey: "ABC" }, as),
+        service.velocity({ site: SITE, projectKey: "ABC" }, as),
+        // The reader's own cached search is left to expire.
+        service.search({ jql: "assignee = currentUser()" }),
+      ]);
+      const counts = () => {
+        const reads = jira.requests.filter((request) => request.method !== "PUT");
+        const as = (who: string) => reads.filter((request) => request.authorization === who);
+        const searches = (who: string, jql: string) =>
+          as(who).filter((request) => (request.body as { jql?: string } | undefined)?.jql === jql)
+            .length;
+        return {
+          issue: as(basic("alice")).filter((request) => request.url.endsWith("/issue/ABC-1"))
+            .length,
+          search: searches(basic("alice"), "assignee = currentUser()"),
+          sprints: as(basic("alice")).filter((request) =>
+            request.url.endsWith("/autocompletedata/suggestions"),
+          ).length,
+          velocity: as(basic("alice")).filter((request) =>
+            (request.body as { jql?: string } | undefined)?.jql?.includes("closedSprints()"),
+          ).length,
+          reader: searches("Bearer secret-token", "assignee = currentUser()"),
+        };
+      };
+
+      yield* readAll;
+      yield* readAll;
+      const before = counts();
+      expect(before).toEqual({ issue: 1, search: 1, sprints: 1, velocity: 1, reader: 1 });
+
+      yield* service.setSprint(ALICE, { site: SITE, keys: ["ABC-1"], sprintId: 8 });
+      yield* readAll;
+      expect(counts()).toEqual({ issue: 2, search: 2, sprints: 2, velocity: 2, reader: 1 });
+
+      yield* service.setStoryPoints(ALICE, { site: SITE, key: "ABC-1", storyPoints: 5 });
+      yield* readAll;
+      expect(counts()).toEqual({ issue: 3, search: 3, sprints: 3, velocity: 3, reader: 1 });
+    }),
+  );
+});
+
+it.effect("sets and clears story points as the caller", () => {
+  const jira = makePlanningJira();
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      yield* storeToken(ALICE, "alice");
+      const service = yield* JiraService.JiraService;
+      yield* service.setStoryPoints(ALICE, { site: SITE, key: "ABC-1", storyPoints: 5 });
+      yield* service.setStoryPoints(ALICE, { site: SITE, key: "ABC-1", storyPoints: null });
+      expect(edits(jira.requests)).toEqual([
+        { key: "ABC-1", authorization: basic("alice"), body: { fields: { customfield_10016: 5 } } },
+        {
+          key: "ABC-1",
+          authorization: basic("alice"),
+          body: { fields: { customfield_10016: null } },
+        },
+      ]);
+    }),
+  );
+});
+
+it.effect("refuses planning writes on a site without the field, before writing", () => {
+  const jira = makePlanningJira([{ id: "summary", name: "Summary" }]);
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      yield* storeToken(ALICE, "alice");
+      const service = yield* JiraService.JiraService;
+      expect(
+        yield* service
+          .setStoryPoints(ALICE, { site: SITE, key: "ABC-1", storyPoints: 5 })
+          .pipe(Effect.flip),
+      ).toMatchObject({
+        reason: "invalid",
+        message: "Jira at acme.atlassian.net has no story points field.",
+      });
+      expect(
+        yield* service
+          .setSprint(ALICE, { site: SITE, keys: ["ABC-1"], sprintId: 8 })
+          .pipe(Effect.flip),
+      ).toMatchObject({
+        reason: "invalid",
+        message: "Jira at acme.atlassian.net has no sprint field.",
+      });
+      expect(edits(jira.requests)).toEqual([]);
     }),
   );
 });
