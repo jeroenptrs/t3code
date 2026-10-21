@@ -79,12 +79,13 @@ describe("RPC authorization scopes", () => {
     ]);
   });
 
-  it("lets only operators comment on, move, or plan a Jira issue", () => {
+  it("lets only operators comment on, move, plan, or break down a Jira issue", () => {
     for (const method of [
       WS_METHODS.jiraAddComment,
       WS_METHODS.jiraTransitionIssue,
       WS_METHODS.jiraSetSprint,
       WS_METHODS.jiraSetStoryPoints,
+      WS_METHODS.jiraStartBreakdown,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
       expect(clientRpcRequiredScopes(method, undefined)).toEqual([AuthOrchestrationOperateScope]);
