@@ -2,6 +2,7 @@ import type {
   JiraComment,
   JiraFilterView,
   JiraIssueSummary,
+  JiraProjectSprint,
   JiraSprint,
   JiraStatusCategory,
   JiraTransition,
@@ -95,9 +96,12 @@ export const toJiraUser = (user: unknown): JiraUser | null => {
 
 const SPRINT_STATES = new Set(["active", "future", "closed"]);
 
-/** Sprint objects in field order. Legacy string-encoded sprints and anything malformed are skipped. */
-const toSprints = (value: unknown): Array<JiraSprint> =>
-  (Array.isArray(value) ? value : []).flatMap((sprint): Array<JiraSprint> => {
+/**
+ * A sprint field's sprint objects in field order, with their dates. Legacy string-encoded sprints
+ * and anything malformed are skipped.
+ */
+export const toProjectSprints = (value: unknown): Array<JiraProjectSprint> =>
+  (Array.isArray(value) ? value : []).flatMap((sprint): Array<JiraProjectSprint> => {
     if (!isRecord(sprint)) return [];
     const state = typeof sprint.state === "string" ? sprint.state.toLowerCase() : "";
     if (
@@ -109,8 +113,30 @@ const toSprints = (value: unknown): Array<JiraSprint> =>
     ) {
       return [];
     }
-    return [{ id: sprint.id, name: sprint.name, state: state as JiraSprint["state"] }];
+    return [
+      {
+        id: sprint.id,
+        name: sprint.name,
+        state: state as JiraSprint["state"],
+        startDate: toIsoDateTime(sprint.startDate),
+        endDate: toIsoDateTime(sprint.endDate),
+        completeDate: toIsoDateTime(sprint.completeDate),
+      },
+    ];
   });
+
+/** Rows carry sprints without dates, to keep them small. */
+const toSprints = (value: unknown): Array<JiraSprint> =>
+  toProjectSprints(value).map(({ id, name, state }) => ({ id, name, state }));
+
+/** The issue's story points, or null when the site has no such field or it is unset. */
+export const toStoryPoints = (
+  fields: Readonly<Record<string, unknown>>,
+  fieldIds: JiraFieldIds,
+): number | null => {
+  const value = fieldIds.storyPoints === null ? null : fields[fieldIds.storyPoints];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+};
 
 /**
  * Jira translates status and issue type names into the reading account's language, and keeps the
@@ -129,8 +155,6 @@ export const toIssueSummary = (
 ): JiraIssueSummary => {
   const fields = issue.fields ?? {};
   const status = isRecord(fields.status) ? fields.status : {};
-  const storyPoints =
-    context.fieldIds.storyPoints === null ? null : fields[context.fieldIds.storyPoints];
   return {
     site: context.site,
     key: issue.key,
@@ -144,8 +168,7 @@ export const toIssueSummary = (
     priority: nameOf(fields.priority),
     assignee: toJiraUser(fields.assignee),
     sprints: context.fieldIds.sprint === null ? [] : toSprints(fields[context.fieldIds.sprint]),
-    storyPoints:
-      typeof storyPoints === "number" && Number.isFinite(storyPoints) ? storyPoints : null,
+    storyPoints: toStoryPoints(fields, context.fieldIds),
     updated: toIsoDateTime(fields.updated),
   };
 };
