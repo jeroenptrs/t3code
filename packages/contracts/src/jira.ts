@@ -76,6 +76,21 @@ export const JiraSprint = Schema.Struct({
 });
 export type JiraSprint = typeof JiraSprint.Type;
 
+/**
+ * A sprint a project can plan into. Without the Agile API the server finds sprints two ways: on
+ * the sprint field of the project's issues, which carries state and dates, and in Jira's JQL
+ * autocomplete, which also lists empty sprints but says nothing else. A sprint known only from
+ * autocomplete is `future` with null dates.
+ */
+export const JiraProjectSprint = Schema.Struct({
+  ...JiraSprint.fields,
+  startDate: Schema.NullOr(IsoDateTime),
+  endDate: Schema.NullOr(IsoDateTime),
+  /** When a closed sprint was completed; null for open sprints. */
+  completeDate: Schema.NullOr(IsoDateTime),
+});
+export type JiraProjectSprint = typeof JiraProjectSprint.Type;
+
 /** The row shape: what a list, a facet or a link card needs, and nothing that is long. */
 export const JiraIssueInput = Schema.Struct({
   ...JiraIssueKey.fields,
@@ -455,13 +470,56 @@ export const JiraCreateMeta = Schema.Struct({
   issueTypes: Schema.Array(
     Schema.Struct({ id: TrimmedNonEmptyString, name: Schema.String, subtask: Schema.Boolean }),
   ),
-  /**
-   * Active and future sprints found on the project's issues. Scoped tokens cannot list sprints,
-   * so a future sprint with no issues yet is missing.
-   */
-  sprints: Schema.Array(JiraSprint),
+  /** The project's active and future sprints, as `jira.sprints` lists them. */
+  sprints: Schema.Array(JiraProjectSprint),
 });
 export type JiraCreateMeta = typeof JiraCreateMeta.Type;
+
+/** Sprints and velocity are read per Jira project, as the caller. */
+export const JiraSprintsInput = Schema.Struct({
+  site: TrimmedNonEmptyString,
+  projectKey: JiraProjectKey,
+  /** Skip the server's read cache, for an explicit refresh. */
+  refresh: Schema.optional(Schema.Boolean),
+});
+export type JiraSprintsInput = typeof JiraSprintsInput.Type;
+
+export const JiraSprintsResult = Schema.Struct({
+  /** Active sprints first, then future ones, each by start date and then id. */
+  sprints: Schema.Array(JiraProjectSprint),
+});
+export type JiraSprintsResult = typeof JiraSprintsResult.Type;
+
+export const JiraVelocityInput = Schema.Struct({
+  ...JiraSprintsInput.fields,
+  /** Closed sprints to report, most recent first. Default 6. */
+  lastN: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(20))),
+});
+export type JiraVelocityInput = typeof JiraVelocityInput.Type;
+
+/**
+ * Points in one closed sprint, from the issues the caller can see. `committed` counts every issue
+ * the sprint field puts in the sprint, including ones added after it started, since the sprint
+ * report is Agile API only. `completed` counts those resolved by the time the sprint completed.
+ */
+export const JiraSprintVelocity = Schema.Struct({
+  sprint: JiraProjectSprint,
+  committedPoints: Schema.Number,
+  completedPoints: Schema.Number,
+  issueCount: NonNegativeInt,
+  completedIssueCount: NonNegativeInt,
+});
+export type JiraSprintVelocity = typeof JiraSprintVelocity.Type;
+
+export const JiraVelocityResult = Schema.Struct({
+  /** Most recently completed first. */
+  sprints: Schema.Array(JiraSprintVelocity),
+  /** Mean of `completedPoints` over `sprints`; null when there are none. */
+  averageCompletedPoints: Schema.NullOr(Schema.Number),
+  /** The read stopped at its issue cap, so older sprints may be undercounted. */
+  partial: Schema.Boolean,
+});
+export type JiraVelocityResult = typeof JiraVelocityResult.Type;
 
 /** Post a comment as the caller, with their personal token. */
 export const JiraAddCommentInput = Schema.Struct({
