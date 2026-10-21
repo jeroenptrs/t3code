@@ -7,7 +7,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -30,6 +30,7 @@ import * as JiraUserCredentials from "./JiraUserCredentials.ts";
 interface Recorded {
   readonly method: string;
   readonly url: string;
+  readonly query: URLSearchParams;
   readonly authorization: string | undefined;
   readonly body: unknown;
 }
@@ -77,12 +78,14 @@ const makeJira = (
     path: string,
     body: unknown,
     authorization: string | undefined,
+    url: URL,
   ) => { status: number; body: unknown },
 ) => {
   const requests: Array<Recorded> = [];
   const client = HttpClient.make((request) =>
     Effect.sync(() => {
       const url = new URL(request.url);
+      url.search = UrlParams.toString(request.urlParams);
       const body =
         request.body._tag === "Uint8Array"
           ? JSON.parse(new TextDecoder().decode(request.body.body))
@@ -90,11 +93,12 @@ const makeJira = (
       requests.push({
         method: request.method,
         url: request.url,
+        query: url.searchParams,
         authorization: request.headers.authorization,
         body,
       });
       const path = url.pathname.replace("/ex/jira/cloud-1", "");
-      const answer = respond(path, body, request.headers.authorization);
+      const answer = respond(path, body, request.headers.authorization, url);
       return HttpClientResponse.fromWeb(
         request,
         new Response(JSON.stringify(answer.body), { status: answer.status }),
@@ -568,7 +572,13 @@ it.effect("a personal token Jira rejects is recorded and never falls back to the
 it.effect(
   "offers a project's issue types and open sprints for editing a proposal, as the caller",
   () => {
-    const sprint = (id: number, state: string) => ({ id, name: `Sprint ${id}`, state, boardId: 1 });
+    const sprint = (id: number, state: string) => ({
+      id,
+      name: `Sprint ${id}`,
+      state,
+      boardId: 1,
+      ...(state === "future" ? {} : { startDate: "2026-10-12T09:00:00.000+0000" }),
+    });
     const people = makeJira((path, body, authorization) => {
       if (path === "/_edge/tenant_info") return { status: 200, body: { cloudId: "cloud-1" } };
       if (authorization !== basic("alice") && authorization !== "Bearer secret-token") {
@@ -589,6 +599,8 @@ it.effect(
               ],
             },
           };
+        case "/rest/api/3/jql/autocompletedata/suggestions":
+          return { status: 200, body: { results: [] } };
         case "/rest/api/3/search/jql":
           expect(body).toMatchObject({
             jql: 'project = "ABC" AND (sprint in openSprints() OR sprint in futureSprints())',
@@ -631,8 +643,22 @@ it.effect(
             { id: "2", name: "Sub-task", subtask: true },
           ],
           sprints: [
-            { id: 8, name: "Sprint 8", state: "active" },
-            { id: 9, name: "Sprint 9", state: "future" },
+            {
+              id: 8,
+              name: "Sprint 8",
+              state: "active",
+              startDate: "2026-10-12T09:00:00.000Z",
+              endDate: null,
+              completeDate: null,
+            },
+            {
+              id: 9,
+              name: "Sprint 9",
+              state: "future",
+              startDate: null,
+              endDate: null,
+              completeDate: null,
+            },
           ],
         });
         const reads = people.requests.filter((request) => request.url.includes("createmeta"));
@@ -641,6 +667,247 @@ it.effect(
     );
   },
 );
+
+const OPEN_SPRINTS_JQL =
+  'project = "ABC" AND (sprint in openSprints() OR sprint in futureSprints())';
+
+/**
+ * Jira for a sprints read: ABC's issues sit in active sprint "Phoenix 8", and autocomplete for
+ * "Phoenix" also offers closed sprint 7, empty sprint 9 and sprint 10, which another project's
+ * issues are in.
+ */
+const makeSprintsJira = (suggestionStatus: number) =>
+  makeJira((path, body, _authorization, url) => {
+    switch (path) {
+      case "/rest/api/3/field":
+        return { status: 200, body: FIELDS };
+      case "/rest/api/3/jql/autocompletedata/suggestions":
+        if (suggestionStatus !== 200) return { status: suggestionStatus, body: null };
+        return {
+          status: 200,
+          body: {
+            results:
+              url.searchParams.get("fieldValue") === "Phoenix"
+                ? [
+                    { value: "7", displayName: "<b>Phoenix</b> 7 (7)" },
+                    { value: "8", displayName: "<b>Phoenix</b> 8 (8)" },
+                    { value: "9", displayName: "<b>Phoenix</b> 9 (9)" },
+                    { value: "10", displayName: "<b>Phoenix</b> 10 (10)" },
+                  ]
+                : [],
+          },
+        };
+      case "/rest/api/3/search/jql": {
+        const jql = (body as { readonly jql: string }).jql;
+        const inSprint = (id: number, state: string, startDate?: string) => ({
+          id: `${id}`,
+          key: `ABC-${id}`,
+          fields: {
+            customfield_10020: [{ id, name: `Phoenix ${id}`, state, startDate }],
+          },
+        });
+        if (jql === OPEN_SPRINTS_JQL) {
+          return {
+            status: 200,
+            body: { issues: [inSprint(8, "active", "2026-10-12T09:00:00.000+0000")] },
+          };
+        }
+        if (jql === "sprint in (7, 9, 10)") {
+          return {
+            status: 200,
+            body: { issues: [inSprint(7, "closed"), { ...inSprint(10, "active"), key: "XYZ-1" }] },
+          };
+        }
+        return { status: 400, body: { errorMessages: [`Unexpected JQL ${jql}`] } };
+      }
+      default:
+        return { status: 404, body: null };
+    }
+  });
+
+it.effect(
+  "adds empty sprints autocomplete finds, leaving out closed and other projects' sprints",
+  () => {
+    const jira = makeSprintsJira(200);
+    return run(
+      config,
+      jira.client,
+      Effect.gen(function* () {
+        const service = yield* JiraService.JiraService;
+        const result = yield* service.sprints({ site: SITE, projectKey: "ABC" });
+        expect(result.sprints).toEqual([
+          {
+            id: 8,
+            name: "Phoenix 8",
+            state: "active",
+            startDate: "2026-10-12T09:00:00.000Z",
+            endDate: null,
+            completeDate: null,
+          },
+          {
+            id: 9,
+            name: "Phoenix 9",
+            state: "future",
+            startDate: null,
+            endDate: null,
+            completeDate: null,
+          },
+        ]);
+        const asked = jira.requests
+          .filter((request) => request.url.includes("autocompletedata"))
+          .map((request) => [request.query.get("fieldName"), request.query.get("fieldValue")]);
+        expect(asked).toEqual([
+          ["sprint", "ABC"],
+          ["sprint", "Phoenix"],
+        ]);
+        // A second read is cached; a refresh asks Jira again.
+        const count = jira.requests.length;
+        yield* service.sprints({ site: SITE, projectKey: "ABC" });
+        expect(jira.requests.length).toBe(count);
+        yield* service.sprints({ site: SITE, projectKey: "ABC", refresh: true });
+        expect(jira.requests.length).toBeGreaterThan(count);
+      }),
+    );
+  },
+);
+
+it.effect("falls back to the sprints issues name when autocomplete fails", () => {
+  const jira = makeSprintsJira(500);
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      const result = yield* (yield* JiraService.JiraService).sprints({
+        site: SITE,
+        projectKey: "ABC",
+      });
+      expect(result.sprints.map((sprint) => sprint.id)).toEqual([8]);
+    }),
+  );
+});
+
+const VELOCITY_JQL = 'project = "ABC" AND sprint in closedSprints() ORDER BY updated DESC';
+
+it.effect("sums points per closed sprint across pages of the project's issues", () => {
+  const first = {
+    id: 1,
+    name: "Sprint 1",
+    state: "closed",
+    endDate: "2026-09-14T17:00:00.000+0000",
+    completeDate: "2026-09-15T09:00:00.000+0000",
+  };
+  const second = {
+    id: 2,
+    name: "Sprint 2",
+    state: "closed",
+    endDate: "2026-09-28T17:00:00.000+0000",
+    completeDate: "2026-09-29T09:00:00.000+0000",
+  };
+  const row = (
+    key: string,
+    sprints: ReadonlyArray<unknown>,
+    points: number,
+    resolved?: string,
+  ) => ({
+    id: key,
+    key,
+    fields: { customfield_10020: sprints, customfield_10016: points, resolutiondate: resolved },
+  });
+  const jira = makeJira((path, body) => {
+    switch (path) {
+      case "/rest/api/3/field":
+        return { status: 200, body: FIELDS };
+      case "/rest/api/3/search/jql": {
+        const request = body as { readonly jql: string; readonly nextPageToken?: string };
+        expect(request).toMatchObject({
+          jql: VELOCITY_JQL,
+          fields: ["customfield_10020", "customfield_10016", "resolutiondate"],
+          maxResults: 100,
+        });
+        return request.nextPageToken === undefined
+          ? {
+              status: 200,
+              body: {
+                issues: [row("ABC-1", [first, second], 5, "2026-09-20T10:00:00.000+0000")],
+                nextPageToken: "page-2",
+              },
+            }
+          : {
+              status: 200,
+              body: {
+                issues: [
+                  row("ABC-2", [first], 3, "2026-09-10T10:00:00.000+0000"),
+                  row("ABC-3", [second], 2),
+                ],
+              },
+            };
+      }
+      default:
+        return { status: 404, body: null };
+    }
+  });
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      const result = yield* (yield* JiraService.JiraService).velocity({
+        site: SITE,
+        projectKey: "ABC",
+      });
+      expect(
+        result.sprints.map((entry) => ({
+          id: entry.sprint.id,
+          committed: entry.committedPoints,
+          completed: entry.completedPoints,
+          issues: entry.issueCount,
+          completedIssues: entry.completedIssueCount,
+        })),
+      ).toEqual([
+        { id: 2, committed: 7, completed: 5, issues: 2, completedIssues: 1 },
+        { id: 1, committed: 8, completed: 3, issues: 2, completedIssues: 1 },
+      ]);
+      expect(result.averageCompletedPoints).toBe(4);
+      expect(result.partial).toBe(false);
+    }),
+  );
+});
+
+it.effect("stops a velocity read at its issue cap and says it is partial", () => {
+  const jira = makeJira((path, body) => {
+    if (path === "/rest/api/3/field") return { status: 200, body: FIELDS };
+    const { maxResults } = body as { readonly maxResults: number };
+    return {
+      status: 200,
+      body: {
+        issues: Array.from({ length: maxResults }, (_, index) => ({
+          id: `${index}`,
+          key: `ABC-${index}`,
+          fields: {
+            customfield_10020: [{ id: 1, name: "Sprint 1", state: "closed" }],
+            customfield_10016: 1,
+          },
+        })),
+        nextPageToken: "more",
+      },
+    };
+  });
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      const result = yield* (yield* JiraService.JiraService).velocity({
+        site: SITE,
+        projectKey: "ABC",
+        lastN: 3,
+      });
+      expect(result.partial).toBe(true);
+      expect(result.sprints[0]?.issueCount).toBe(500);
+      expect(jira.requests.filter((request) => request.url.endsWith("/search/jql"))).toHaveLength(
+        5,
+      );
+    }),
+  );
+});
 
 /** Jira for direct writes: Alice's token is accepted, and ABC-1 offers only transition 31. */
 const makeWritableJira = () =>
