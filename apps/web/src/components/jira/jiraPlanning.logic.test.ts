@@ -9,8 +9,8 @@ import {
   jiraPlanningSections,
   jiraSprintSectionJql,
   jiraStoryPointsTotal,
-  mergeJiraSetSprintOutcomes,
   normalizeJiraProjectKey,
+  sendJiraMove,
   parseJiraStoryPointsInput,
   sharedJiraProjectKey,
 } from "./jiraPlanning.logic";
@@ -48,10 +48,15 @@ describe("sharedJiraProjectKey", () => {
 });
 
 describe("planning JQL", () => {
-  it("reads a sprint and the open backlog in rank order", () => {
-    expect(jiraSprintSectionJql("ABC", 42)).toBe('project = "ABC" AND sprint = 42 ORDER BY Rank');
+  it("reads a sprint in rank order without its sub-tasks", () => {
+    expect(jiraSprintSectionJql("ABC", 42)).toBe(
+      'project = "ABC" AND sprint = 42 AND issuetype not in subTaskIssueTypes() ORDER BY Rank',
+    );
+  });
+
+  it("counts unfinished issues left behind by closed sprints as backlog", () => {
     expect(jiraBacklogJql("ABC")).toBe(
-      'project = "ABC" AND sprint is EMPTY AND statusCategory != Done ORDER BY Rank',
+      'project = "ABC" AND (sprint is EMPTY OR sprint not in (openSprints(), futureSprints())) AND statusCategory != Done AND issuetype not in subTaskIssueTypes() ORDER BY Rank',
     );
   });
 });
@@ -122,23 +127,35 @@ describe("chunkJiraKeys", () => {
   });
 });
 
-describe("mergeJiraSetSprintOutcomes", () => {
-  it("keeps per-issue refusals and fails every key of a chunk that failed whole", () => {
-    expect(
-      mergeJiraSetSprintOutcomes([
-        {
-          ok: true,
-          result: { updated: ["ABC-1"], failed: [{ key: "ABC-2", message: "No permission" }] },
-        },
-        { ok: false, keys: ["ABC-3", "ABC-4"], message: "Token rejected" },
-      ]),
-    ).toEqual({
-      updated: ["ABC-1"],
-      failed: [
-        { key: "ABC-2", message: "No permission" },
-        { key: "ABC-3", message: "Token rejected" },
-        { key: "ABC-4", message: "Token rejected" },
-      ],
+describe("sendJiraMove", () => {
+  const keys = Array.from({ length: 120 }, (_, index) => `ABC-${index + 1}`);
+
+  it("collects every chunk's moves and per-issue refusals", async () => {
+    const outcome = await sendJiraMove(keys, async (chunk) => ({
+      ok: true,
+      result: {
+        updated: chunk.filter((key) => key !== "ABC-2"),
+        failed: chunk.includes("ABC-2") ? [{ key: "ABC-2", message: "No permission" }] : [],
+      },
+    }));
+    expect(outcome.updated).toHaveLength(119);
+    expect(outcome.failed).toEqual([{ key: "ABC-2", message: "No permission" }]);
+    expect(outcome.attempted).toEqual(keys);
+    expect(outcome.stopped).toBeNull();
+  });
+
+  it("stops at a chunk that failed whole, counting its keys as attempted", async () => {
+    const sent: Array<ReadonlyArray<string>> = [];
+    const outcome = await sendJiraMove(keys, async (chunk) => {
+      sent.push(chunk);
+      return sent.length === 1
+        ? { ok: true, result: { updated: [...chunk], failed: [] } }
+        : { ok: false, message: "Token rejected" };
     });
+    expect(sent).toHaveLength(2);
+    expect(outcome.updated).toEqual(keys.slice(0, 50));
+    expect(outcome.failed).toEqual([]);
+    expect(outcome.attempted).toEqual(keys.slice(0, 100));
+    expect(outcome.stopped).toBe("Token rejected");
   });
 });

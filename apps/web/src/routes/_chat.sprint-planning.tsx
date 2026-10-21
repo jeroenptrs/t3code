@@ -21,14 +21,13 @@ import { useAtomValue } from "@effect/atom-react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { ChevronDownIcon, TriangleAlertIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { JiraIcon } from "../components/Icons";
 import { JiraIssuesPageShell } from "../components/jira/JiraIssuesPageShell";
 import { mergeJiraSearchPages } from "../components/jira/jiraIssueList.logic";
 import { jiraIssueWriteAccess } from "../components/jira/jiraIssueWrite.logic";
 import {
-  chunkJiraKeys,
   formatJiraPoints,
   formatJiraPointsTotal,
   jiraBacklogJql,
@@ -36,8 +35,8 @@ import {
   jiraPlanningSections,
   jiraSprintSectionJql,
   jiraStoryPointsTotal,
-  mergeJiraSetSprintOutcomes,
   normalizeJiraProjectKey,
+  sendJiraMove,
   type JiraMoveTarget,
   type JiraPlanningSection,
 } from "../components/jira/jiraPlanning.logic";
@@ -71,7 +70,7 @@ import {
 import { toastManager } from "../components/ui/toast";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { cn } from "../lib/utils";
-import { jiraIssueSurface } from "../rightPanelStore";
+import { jiraIssueSurface, setJiraIssuesPanelOnSprintPlanning } from "../rightPanelStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { jiraEnvironment, jiraFailureReason } from "../state/jira";
 import { useEnvironmentQuery } from "../state/query";
@@ -95,6 +94,10 @@ const LAST_PROJECT_STORAGE_KEY = "t3.jiraPlanning.project";
 const LastProjectSchema = Schema.NullOr(Schema.String);
 
 function SprintPlanningRouteView() {
+  useEffect(() => {
+    setJiraIssuesPanelOnSprintPlanning(true);
+    return () => setJiraIssuesPanelOnSprintPlanning(false);
+  }, []);
   return (
     <JiraIssuesPageShell title="Sprint planning" loadingCaption="Loading sprints">
       {(context) => <JiraSprintPlanning {...context} />}
@@ -290,11 +293,11 @@ function JiraProjectPlan({
 
   // Selected issue keys, each with the section it was selected in, which a move re-reads.
   const [selection, setSelection] = useState<ReadonlyMap<string, string>>(() => new Map());
-  const toggleSelected = (sectionId: string, issue: JiraIssueSummary, selected: boolean) =>
+  const toggleSelected = (sectionId: string, issueKey: string, selected: boolean) =>
     setSelection((current) => {
       const next = new Map(current);
-      if (selected) next.set(issue.key, sectionId);
-      else next.delete(issue.key);
+      if (selected) next.set(issueKey, sectionId);
+      else next.delete(issueKey);
       return next;
     });
 
@@ -310,35 +313,35 @@ function JiraProjectPlan({
     if (moved.size === 0 || movingRef.current) return;
     movingRef.current = true;
     setMoving(true);
-    const outcomes = [];
-    for (const keys of chunkJiraKeys([...moved.keys()])) {
-      const result = await setSprint({
-        environmentId,
-        input: { site, keys, sprintId: moveTarget.sprintId },
-      });
-      outcomes.push(
-        result._tag === "Success"
-          ? { ok: true as const, result: result.value }
+    const { updated, failed, attempted, stopped } = await sendJiraMove(
+      [...moved.keys()],
+      async (keys) => {
+        const result = await setSprint({
+          environmentId,
+          input: { site, keys, sprintId: moveTarget.sprintId },
+        });
+        return result._tag === "Success"
+          ? { ok: true, result: result.value }
           : {
-              ok: false as const,
-              keys,
+              ok: false,
               message: isAtomCommandInterrupted(result)
                 ? "The move was interrupted."
                 : jiraProposalFailureMessage(squashAtomCommandFailure(result)),
-            },
-      );
-    }
+            };
+      },
+    );
     movingRef.current = false;
     setMoving(false);
-    const { updated, failed } = mergeJiraSetSprintOutcomes(outcomes);
 
     const targetSection = sections.find((section) =>
       moveTarget.sprintId === null
         ? section.kind === "backlog"
         : section.kind === "sprint" && section.sprint.id === moveTarget.sprintId,
     );
-    const touched = new Set(updated.flatMap((key) => moved.get(key) ?? []));
-    if (targetSection !== undefined && updated.length > 0) touched.add(targetSection.id);
+    // A chunk that failed whole may still have moved some of its issues before Jira refused.
+    const written = stopped === null ? updated : attempted;
+    const touched = new Set(written.flatMap((key) => moved.get(key) ?? []));
+    if (targetSection !== undefined && written.length > 0) touched.add(targetSection.id);
     refreshSections(touched);
     setSelection((current) => {
       const remaining = new Map(current);
@@ -346,7 +349,8 @@ function JiraProjectPlan({
       return remaining;
     });
 
-    if (failed.length === 0) {
+    const notMoved = moved.size - updated.length;
+    if (notMoved === 0) {
       toastManager.add({
         type: "success",
         title: `Moved ${updated.length} ${updated.length === 1 ? "issue" : "issues"} to ${moveTarget.label}`,
@@ -356,9 +360,12 @@ function JiraProjectPlan({
         type: "error",
         title:
           updated.length === 0
-            ? `Could not move ${failed.length === 1 ? "the issue" : `${failed.length} issues`}`
-            : `Moved ${updated.length}, could not move ${failed.length}`,
-        description: failed.map((failure) => `${failure.key}: ${failure.message}`).join("\n"),
+            ? `Could not move ${notMoved === 1 ? "the issue" : `${notMoved} issues`}`
+            : `Moved ${updated.length}, could not move ${notMoved}`,
+        description: [
+          ...(stopped === null ? [] : [stopped]),
+          ...failed.map((failure) => `${failure.key}: ${failure.message}`),
+        ].join("\n"),
       });
     }
   };
@@ -504,7 +511,7 @@ function JiraProjectPlan({
                 setExpandedById({ ...expandedById, [section.id]: !isExpanded(section) })
               }
               onSelectIssue={onSelectIssue}
-              onToggleSelected={(issue, selected) => toggleSelected(section.id, issue, selected)}
+              onToggleSelected={toggleSelected}
               onCommitStoryPoints={commitStoryPoints}
             />
           ))}
@@ -609,7 +616,7 @@ function JiraPlanningSectionView({
   selectedIssueId: string | null;
   onToggleExpanded: () => void;
   onSelectIssue: (issue: JiraIssueSummary) => void;
-  onToggleSelected: (issue: JiraIssueSummary, selected: boolean) => void;
+  onToggleSelected: (sectionId: string, issueKey: string, selected: boolean) => void;
   onCommitStoryPoints: (issue: JiraIssueSummary, storyPoints: number | null) => Promise<boolean>;
 }) {
   const baseInput = sectionSearchInput(projectKey, section);
@@ -751,6 +758,7 @@ function JiraPlanningSectionView({
           {merged.issues.map((issue) => (
             <JiraPlanningRow
               key={issue.key}
+              sectionId={section.id}
               issue={issue}
               opened={selectedIssueId === jiraIssueSurface(issue).id}
               selected={selection.has(issue.key)}
