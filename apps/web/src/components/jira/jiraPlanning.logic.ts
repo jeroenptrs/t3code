@@ -1,19 +1,13 @@
-import { jiraProjectKeyOf } from "@t3tools/client-runtime/state/jira";
-import type {
-  JiraIssueSummary,
-  JiraProjectSprint,
-  JiraSetSprintResult,
-  JiraSprintState,
+import {
+  JIRA_PROJECT_KEY_PATTERN,
+  JIRA_SET_SPRINT_MAX_KEYS,
+  JIRA_STORY_POINTS_MAX,
+  jiraProjectKeyOf,
+  type JiraIssueSummary,
+  type JiraProjectSprint,
+  type JiraSetSprintResult,
+  type JiraSprintState,
 } from "@t3tools/contracts";
-
-/** What `jira.sprints` and `jira.velocity` accept as a project key. */
-const JIRA_PROJECT_KEY_PATTERN = /^[A-Z][A-Z0-9_]+$/;
-
-/** The most issues one `jira.setSprint` call takes. */
-export const JIRA_SET_SPRINT_MAX_KEYS = 50;
-
-/** The most story points the server accepts on one issue. */
-const JIRA_STORY_POINTS_MAX = 10_000;
 
 /** A project key as typed, upper-cased; null when Jira would not accept it. */
 export function normalizeJiraProjectKey(text: string | null | undefined): string | null {
@@ -28,14 +22,17 @@ export function sharedJiraProjectKey(issues: ReadonlyArray<Pick<JiraIssueSummary
   return keys.size === 1 && only !== undefined ? normalizeJiraProjectKey(only) : null;
 }
 
-// The project key is validated against the pattern above, so quoting it is all the escaping it
-// needs; sprint ids are numbers. Nothing user-typed reaches the JQL otherwise.
+// The project key is validated against JIRA_PROJECT_KEY_PATTERN, so quoting it is all the escaping
+// it needs; sprint ids are numbers. Nothing user-typed reaches the JQL otherwise. Sub-tasks are
+// left out, as Jira's own planning does: they follow their parent's sprint and cannot be moved alone.
 export function jiraSprintSectionJql(projectKey: string, sprintId: number): string {
-  return `project = "${projectKey}" AND sprint = ${sprintId} ORDER BY Rank`;
+  return `project = "${projectKey}" AND sprint = ${sprintId} AND issuetype not in subTaskIssueTypes() ORDER BY Rank`;
 }
 
+// Jira keeps closed sprints in the sprint field, so an unfinished issue carried out of a closed
+// sprint, or moved to the backlog after one, is in no open sprint rather than in none at all.
 export function jiraBacklogJql(projectKey: string): string {
-  return `project = "${projectKey}" AND sprint is EMPTY AND statusCategory != Done ORDER BY Rank`;
+  return `project = "${projectKey}" AND (sprint is EMPTY OR sprint not in (openSprints(), futureSprints())) AND statusCategory != Done AND issuetype not in subTaskIssueTypes() ORDER BY Rank`;
 }
 
 export type JiraPlanningSection =
@@ -130,22 +127,34 @@ export function chunkJiraKeys(
   return chunks;
 }
 
+export type JiraSetSprintChunkOutcome =
+  | { readonly ok: true; readonly result: JiraSetSprintResult }
+  | { readonly ok: false; readonly message: string };
+
+export type JiraMoveOutcome = JiraSetSprintResult & {
+  /** Every key sent, those of a chunk that failed whole included: Jira may have moved some. */
+  readonly attempted: ReadonlyArray<string>;
+  /** Why the move stopped early, when a chunk failed whole. */
+  readonly stopped: string | null;
+};
+
 /**
- * One move's outcome over all its chunks. A chunk that failed as a whole, such as a refused
- * token, counts each of its keys as failed with that chunk's message.
+ * Sends a move one chunk at a time. A chunk that fails whole, such as on a refused token, ends
+ * the move, since the chunks after it would fail the same way.
  */
-export function mergeJiraSetSprintOutcomes(
-  outcomes: ReadonlyArray<
-    | { readonly ok: true; readonly result: JiraSetSprintResult }
-    | { readonly ok: false; readonly keys: ReadonlyArray<string>; readonly message: string }
-  >,
-): JiraSetSprintResult {
-  return {
-    updated: outcomes.flatMap((outcome) => (outcome.ok ? outcome.result.updated : [])),
-    failed: outcomes.flatMap((outcome) =>
-      outcome.ok
-        ? outcome.result.failed
-        : outcome.keys.map((key) => ({ key, message: outcome.message })),
-    ),
-  };
+export async function sendJiraMove(
+  keys: ReadonlyArray<string>,
+  send: (chunk: ReadonlyArray<string>) => Promise<JiraSetSprintChunkOutcome>,
+): Promise<JiraMoveOutcome> {
+  const updated: string[] = [];
+  const failed: JiraSetSprintResult["failed"][number][] = [];
+  const attempted: string[] = [];
+  for (const chunk of chunkJiraKeys(keys)) {
+    attempted.push(...chunk);
+    const outcome = await send(chunk);
+    if (!outcome.ok) return { updated, failed, attempted, stopped: outcome.message };
+    updated.push(...outcome.result.updated);
+    failed.push(...outcome.result.failed);
+  }
+  return { updated, failed, attempted, stopped: null };
 }
