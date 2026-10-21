@@ -123,6 +123,13 @@ const RawCreateMetaIssueTypes = Schema.Struct({
   values: Schema.optional(Schema.Array(RawCreateMetaIssueType)),
 });
 
+const RawSuggestion = Schema.Struct({ value: Schema.String, displayName: Schema.String });
+export type JiraRawSuggestion = typeof RawSuggestion.Type;
+
+const RawSuggestions = Schema.Struct({
+  results: Schema.optional(Schema.Array(RawSuggestion)),
+});
+
 const RawErrorBody = Schema.Struct({
   errorMessages: Schema.optional(Schema.Array(Schema.String)),
   errors: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -144,6 +151,7 @@ const decodeRawFields = Schema.decodeUnknownEffect(Schema.Array(RawField));
 const decodeRawCreatedIssue = Schema.decodeUnknownEffect(RawCreatedIssue);
 const decodeRawComment = Schema.decodeUnknownEffect(RawComment);
 const decodeRawCreateMetaIssueTypes = Schema.decodeUnknownEffect(RawCreateMetaIssueTypes);
+const decodeRawSuggestions = Schema.decodeUnknownEffect(RawSuggestions);
 
 export class JiraApi extends Context.Service<
   JiraApi,
@@ -208,6 +216,15 @@ export class JiraApi extends Context.Service<
       identity: JiraServerIdentity,
       projectKey: string,
     ) => Effect.Effect<ReadonlyArray<JiraRawCreateMetaIssueType>, JiraError>;
+    /**
+     * `GET /rest/api/3/jql/autocompletedata/suggestions` for the sprint field: sprints whose name
+     * matches `prefix`, empty ones included, as the JQL editor offers them. Jira caps the list
+     * and says nothing about a sprint but its id and a highlighted name.
+     */
+    readonly sprintSuggestions: (
+      identity: JiraServerIdentity,
+      prefix: string,
+    ) => Effect.Effect<ReadonlyArray<JiraRawSuggestion>, JiraError>;
     /** `POST /rest/api/3/issue`. `fields` is Jira's create body, custom field ids included. */
     readonly createIssue: (
       identity: JiraServerIdentity,
@@ -518,6 +535,17 @@ const make = Effect.gen(function* () {
       ).pipe(
         Effect.map((page) => page.issueTypes ?? page.values ?? []),
         Effect.withSpan("JiraApi.createMetaIssueTypes"),
+      ),
+    sprintSuggestions: (identity, prefix) =>
+      read(
+        identity,
+        HttpClientRequest.get("/rest/api/3/jql/autocompletedata/suggestions").pipe(
+          HttpClientRequest.setUrlParams({ fieldName: "sprint", fieldValue: prefix }),
+        ),
+        decodeRawSuggestions,
+      ).pipe(
+        Effect.map((page) => page.results ?? []),
+        Effect.withSpan("JiraApi.sprintSuggestions"),
       ),
     createIssue: (identity, fields) =>
       read(
