@@ -274,6 +274,9 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.include(breakdown, "<jira_breakdown>");
       assert.include(breakdown, "independently mergeable");
       assert.include(breakdown, "propose_jira_issues once");
+      // Read-only only until the proposal, so a follow-up can implement a package.
+      assert.include(breakdown, "Until you have proposed them");
+      assert.include(breakdown, "including implementing a package");
       // Kept beside the general Jira guidance, not instead of it.
       assert.include(breakdown, "<jira_issue_linking>");
       assert.notInclude(
