@@ -7,6 +7,7 @@ import { linkedThreadTitle } from "./linkedThreadSurface";
 import { reopenClosedView } from "./reopenClosedView";
 import {
   hostRightPanel,
+  JIRA_ISSUES_PANEL_REF,
   migratePersistedRightPanelState,
   pullRequestSurface,
   pullRequestSurfaceId,
@@ -14,6 +15,7 @@ import {
   selectActiveRightPanelSurface,
   selectThreadPanelVisibility,
   selectThreadRightPanelState,
+  setJiraIssuesPanelOnSprintPlanning,
   useRightPanelStore,
 } from "./rightPanelStore";
 
@@ -77,6 +79,31 @@ describe("rightPanelStore", () => {
         .getState()
         .entries.map((entry) => (entry.kind === "panel-tab" ? entry.surface.id : null)),
     ).toEqual(["device", "diff", pr.id]);
+  });
+
+  it("records which page a shared Jira issue tab was closed on", () => {
+    const store = useRightPanelStore.getState();
+    const site = "acme.atlassian.net";
+    store.openJiraIssue(JIRA_ISSUES_PANEL_REF, { site, key: "ABC-1" });
+    store.openJiraIssue(JIRA_ISSUES_PANEL_REF, { site, key: "ABC-2" });
+    store.openJiraIssue(refA, { site, key: "ABC-3" });
+    setJiraIssuesPanelOnSprintPlanning(true);
+    const [first, second] = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      JIRA_ISSUES_PANEL_REF,
+    ).surfaces;
+    store.closeSurface(JIRA_ISSUES_PANEL_REF, first!.id);
+    store.closeSurface(
+      refA,
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces[0]!.id,
+    );
+    setJiraIssuesPanelOnSprintPlanning(false);
+    store.closeSurface(JIRA_ISSUES_PANEL_REF, second!.id);
+    expect(
+      useClosedViewStore
+        .getState()
+        .entries.map((entry) => (entry.kind === "panel-tab" ? entry.page : null)),
+    ).toEqual([undefined, undefined, "sprint-planning"]);
   });
 
   it("reopens the active tab first after a bulk close", () => {
