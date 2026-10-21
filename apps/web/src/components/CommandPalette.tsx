@@ -62,6 +62,7 @@ import {
   FolderPlusIcon,
   MessageSquareDashedIcon,
   LinkIcon,
+  ListTreeIcon,
   MessageSquareIcon,
   PaletteIcon,
   RotateCcwIcon,
@@ -115,6 +116,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { useNewProject } from "../hooks/useNewProject";
+import { visibleThreadJiraIssues } from "@t3tools/client-runtime/state/jira";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import {
   useEnvironmentProviders,
@@ -138,8 +140,10 @@ import { onOpenCommandPalette } from "../commandPaletteBus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
+  JIRA_ISSUES_PANEL_REF,
   PULL_REQUESTS_PANEL_REF,
   selectActiveRightPanel,
+  selectActiveRightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
 import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
@@ -204,6 +208,7 @@ import {
 import {
   buildNewThreadInProjectItems,
   buildProjectSearchItems,
+  projectFaviconIcon,
 } from "./CommandPaletteProjectItems";
 import {
   CommandPaletteSubmitButton,
@@ -230,9 +235,16 @@ import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { openJiraIssueDialog } from "./jira/LinkJiraIssueDialog";
+import {
+  JIRA_BREAKDOWN_NEEDS_TOKEN,
+  jiraBreakdownPaletteIssue,
+  jiraBreakdownProjects,
+} from "./jira/jiraBreakdown.logic";
+import { jiraIssueWriteAccess } from "./jira/jiraIssueWrite.logic";
+import { useBreakDownJiraIssue } from "./jira/useBreakDownJiraIssue";
 import { JiraIcon } from "./Icons";
 import { useJiraIssueLinking } from "../hooks/useJiraIssueLinking";
-import { useJiraCapabilities, useJiraEnvironmentId } from "../state/jira";
+import { jiraEnvironment, useJiraCapabilities, useJiraEnvironmentId } from "../state/jira";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
@@ -561,7 +573,27 @@ function OpenCommandPaletteDialog(props: {
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
   );
   const activeThreadJira = useJiraIssueLinking(activeThread?.environmentId ?? null);
-  const workspaceJiraConfigured = useJiraCapabilities(useJiraEnvironmentId())?.configured === true;
+  const workspaceJiraEnvironmentId = useJiraEnvironmentId();
+  const workspaceJiraCapabilities = useJiraCapabilities(workspaceJiraEnvironmentId);
+  const workspaceJiraConfigured = workspaceJiraCapabilities?.configured === true;
+  // The Jira pages open issues in their own panel and read through the workspace environment;
+  // elsewhere an issue is open beside the active thread, in its environment.
+  const onJiraPage = pathname === "/issues" || pathname === "/sprint-planning";
+  const jiraPanelRef = onJiraPage
+    ? JIRA_ISSUES_PANEL_REF
+    : activeThread
+      ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+      : null;
+  const jiraPanelSurface = useRightPanelStore((state) =>
+    selectActiveRightPanelSurface(state.byThreadKey, jiraPanelRef),
+  );
+  const jiraBreakdownEnvironmentId = onJiraPage
+    ? workspaceJiraEnvironmentId
+    : (activeThread?.environmentId ?? null);
+  const canBreakDownJiraIssue = useAtomValue(
+    jiraEnvironment.startBreakdown.permissionAtom(jiraBreakdownEnvironmentId),
+  );
+  const { breakDown: breakDownJiraIssue } = useBreakDownJiraIssue();
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
       ? null
@@ -1421,6 +1453,80 @@ function OpenCommandPaletteDialog(props: {
         openJiraIssueDialog(threadRef, "open");
       },
     });
+  }
+
+  const jiraBreakdownIssue = jiraBreakdownPaletteIssue({
+    openIssue: jiraPanelSurface?.kind === "jira-issue" ? jiraPanelSurface : null,
+    linkedIssues: onJiraPage ? [] : visibleThreadJiraIssues(activeThread?.source.jiraIssues),
+  });
+  const jiraBreakdownCapabilities = onJiraPage
+    ? workspaceJiraCapabilities
+    : activeThreadJira.capabilities;
+  const jiraBreakdownAccess =
+    jiraBreakdownIssue === null || jiraBreakdownCapabilities?.configured !== true
+      ? "hidden"
+      : jiraIssueWriteAccess({
+          capabilities: jiraBreakdownCapabilities,
+          canOperate: canBreakDownJiraIssue,
+          site: jiraBreakdownIssue.site,
+        });
+  if (
+    jiraBreakdownIssue !== null &&
+    jiraBreakdownEnvironmentId !== null &&
+    jiraBreakdownAccess !== "hidden"
+  ) {
+    const issue = jiraBreakdownIssue;
+    const environmentId = jiraBreakdownEnvironmentId;
+    const searchTerms = ["break down", "jira", "issue", "split", "work packages", "plan"];
+    const choice = jiraBreakdownProjects({
+      environmentId,
+      threadProjectId: onJiraPage ? null : (activeThread?.projectId ?? null),
+      projects,
+    });
+    if (jiraBreakdownAccess === "needs-token" || choice.kind === "thread") {
+      actionItems.push({
+        kind: "action",
+        value: "action:break-down-jira-issue",
+        searchTerms,
+        title: `Break down ${issue.key}`,
+        description:
+          jiraBreakdownAccess === "needs-token"
+            ? JIRA_BREAKDOWN_NEEDS_TOKEN
+            : "Start a thread that proposes its work packages",
+        disabled: jiraBreakdownAccess === "needs-token",
+        icon: <ListTreeIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          if (choice.kind === "thread") {
+            await breakDownJiraIssue(issue, scopeProjectRef(environmentId, choice.projectId));
+          }
+        },
+      });
+    } else {
+      actionItems.push({
+        kind: "submenu",
+        value: "action:break-down-jira-issue",
+        searchTerms,
+        title: `Break down ${issue.key} in…`,
+        icon: <ListTreeIcon className={ITEM_ICON_CLASS} />,
+        addonIcon: <ListTreeIcon className={ADDON_ICON_CLASS} />,
+        groups: [
+          {
+            value: "projects",
+            label: "Projects",
+            items: choice.projects.map((project) => ({
+              kind: "action",
+              value: `break-down-jira-issue-in:${project.environmentId}:${project.id}`,
+              searchTerms: [project.title, project.workspaceRoot],
+              title: project.title,
+              description: project.workspaceRoot,
+              icon: projectFaviconIcon(project),
+              run: () =>
+                breakDownJiraIssue(issue, scopeProjectRef(project.environmentId, project.id)),
+            })),
+          },
+        ],
+      });
+    }
   }
 
   if (activeThread !== null) {
