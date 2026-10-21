@@ -36,6 +36,7 @@ import { Route as SettingsArchivedRouteImport } from './routes/settings.archived
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as SettingsAccountRouteImport } from './routes/settings.account'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
+import { Route as ChatSprintPlanningRouteImport } from './routes/_chat.sprint-planning'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as ChatIssuesRouteImport } from './routes/_chat.issues'
@@ -177,6 +178,11 @@ const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   path: '/projects/$projectKey',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ChatSprintPlanningRoute = ChatSprintPlanningRouteImport.update({
+  id: '/sprint-planning',
+  path: '/sprint-planning',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   id: '/pull-requests',
   path: '/pull-requests',
@@ -216,6 +222,7 @@ export interface FileRoutesByFullPath {
   '/issues': typeof ChatIssuesRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/sprint-planning': typeof ChatSprintPlanningRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -248,6 +255,7 @@ export interface FileRoutesByTo {
   '/issues': typeof ChatIssuesRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/sprint-planning': typeof ChatSprintPlanningRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -283,6 +291,7 @@ export interface FileRoutesById {
   '/_chat/issues': typeof ChatIssuesRoute
   '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
+  '/_chat/sprint-planning': typeof ChatSprintPlanningRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -319,6 +328,7 @@ export interface FileRouteTypes {
     | '/issues'
     | '/new'
     | '/pull-requests'
+    | '/sprint-planning'
     | '/projects/$projectKey'
     | '/settings/account'
     | '/settings/appearance'
@@ -351,6 +361,7 @@ export interface FileRouteTypes {
     | '/issues'
     | '/new'
     | '/pull-requests'
+    | '/sprint-planning'
     | '/projects/$projectKey'
     | '/settings/account'
     | '/settings/appearance'
@@ -385,6 +396,7 @@ export interface FileRouteTypes {
     | '/_chat/issues'
     | '/_chat/new'
     | '/_chat/pull-requests'
+    | '/_chat/sprint-planning'
     | '/projects/$projectKey'
     | '/settings/account'
     | '/settings/appearance'
@@ -611,6 +623,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_chat/sprint-planning': {
+      id: '/_chat/sprint-planning'
+      path: '/sprint-planning'
+      fullPath: '/sprint-planning'
+      preLoaderRoute: typeof ChatSprintPlanningRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/pull-requests': {
       id: '/_chat/pull-requests'
       path: '/pull-requests'
@@ -653,6 +672,7 @@ interface ChatRouteChildren {
   ChatIssuesRoute: typeof ChatIssuesRoute
   ChatNewRoute: typeof ChatNewRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
+  ChatSprintPlanningRoute: typeof ChatSprintPlanningRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
@@ -662,6 +682,7 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatIssuesRoute: ChatIssuesRoute,
   ChatNewRoute: ChatNewRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
+  ChatSprintPlanningRoute: ChatSprintPlanningRoute,
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
