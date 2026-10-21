@@ -249,6 +249,7 @@ import * as DiffWalkthroughService from "./diffWalkthrough/DiffWalkthroughServic
 import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.ts";
 import * as JiraService from "./jira/JiraService.ts";
 import * as JiraProposals from "./jira/JiraProposals.ts";
+import * as JiraBreakdownService from "./jira/JiraBreakdownService.ts";
 import * as JiraUserCredentials from "./jira/JiraUserCredentials.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
@@ -3428,6 +3429,7 @@ const layerWsJiraRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const jira = yield* JiraService.JiraService;
       const credentials = yield* JiraUserCredentials.JiraUserCredentials;
       const proposals = yield* JiraProposals.JiraProposals;
+      const breakdowns = yield* JiraBreakdownService.JiraBreakdownService;
       const request = { actingUserId: currentSession.userId };
       return ServerWsJiraRpcGroup.of({
         [WS_METHODS.jiraCapabilities]: () => jira.capabilities(request),
@@ -3451,6 +3453,7 @@ const layerWsJiraRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
         [WS_METHODS.jiraSetSprint]: (input) => jira.setSprint(currentSession.userId, input),
         [WS_METHODS.jiraSetStoryPoints]: (input) =>
           jira.setStoryPoints(currentSession.userId, input),
+        [WS_METHODS.jiraStartBreakdown]: (input) => breakdowns.start(currentSession.userId, input),
       });
     }),
   );
@@ -3474,6 +3477,7 @@ export const layer = Layer.unwrap(
     const jira = yield* JiraService.JiraService;
     const jiraCredentials = yield* JiraUserCredentials.JiraUserCredentials;
     const jiraProposals = yield* JiraProposals.JiraProposals;
+    const jiraBreakdowns = yield* JiraBreakdownService.JiraBreakdownService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3583,6 +3587,10 @@ export const layer = Layer.unwrap(
               ),
               // Shared, so decisions on one proposal from several clients run one at a time.
               Layer.provide(Layer.succeed(JiraProposals.JiraProposals, jiraProposals)),
+              // Shared, so two clients pressing at once start one breakdown between them.
+              Layer.provide(
+                Layer.succeed(JiraBreakdownService.JiraBreakdownService, jiraBreakdowns),
+              ),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
