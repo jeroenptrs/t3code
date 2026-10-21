@@ -235,9 +235,9 @@ export function createJiraEnvironmentAtoms<R, E>(
     }),
     /**
      * Puts issues in a sprint, or back in the backlog, as the caller. The moved issues are re-read
-     * where they are open, and their projects' sprints, since an issue can be the first to name a
-     * sprint. Searches are left to the view that ran them: only it knows which sections held the
-     * issues, and the server has already dropped its cached searches for the writer.
+     * where they are open. Searches are left to the view that ran them: only it knows which
+     * sections held the issues, and the server has already dropped its cached searches for the
+     * writer.
      */
     setSprint: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:jira:set-sprint",
@@ -246,9 +246,6 @@ export function createJiraEnvironmentAtoms<R, E>(
         Effect.sync(() => {
           for (const key of result.updated) {
             refreshIssue(registry, { environmentId, input: { site: input.site, key } });
-          }
-          for (const projectKey of new Set(result.updated.map(jiraProjectKeyOf))) {
-            refreshSprints(registry, { environmentId, input: { site: input.site, projectKey } });
           }
         }),
     }),
@@ -329,11 +326,6 @@ export function jiraIssueKeyOf(issue: JiraIssueKey): string {
 
 export function jiraIssueKeysEqual(left: JiraIssueKey, right: JiraIssueKey): boolean {
   return jiraIssueKeyOf(left) === jiraIssueKeyOf(right);
-}
-
-/** The project an issue key belongs to: `ABC` for `ABC-123`. */
-export function jiraProjectKeyOf(issueKey: string): string {
-  return issueKey.slice(0, issueKey.lastIndexOf("-")).toUpperCase();
 }
 
 export function jiraIssueUrl(issue: JiraIssueKey): string {
