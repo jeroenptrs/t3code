@@ -59,6 +59,7 @@ import {
   aggregateVelocity,
   mergeProjectSprints,
   parseSprintSuggestion,
+  sprintNameHasPrefix,
   sprintSuggestionPrefixes,
   type JiraVelocityRow,
 } from "./sprints.ts";
@@ -88,6 +89,8 @@ const POSTED_COMMENT_CAPACITY = 2000;
 const DETAIL_FIELDS = ["description", "reporter", "created"];
 /** Issues read to find a project's open sprints; scoped tokens cannot list sprints directly. */
 const SPRINT_SEARCH_LIMIT = 100;
+/** Reads one sprint lookup makes at most, each leaving out the issues already accounted for. */
+const SPRINT_SEARCH_ROUNDS = 5;
 /** Autocomplete requests per sprints read, each for one name prefix. */
 const SPRINT_SUGGESTION_PREFIXES = 3;
 const VELOCITY_PAGE_SIZE = 100;
@@ -601,15 +604,37 @@ const make = Effect.gen(function* () {
     return { comments, ownAccountIds, ownCommentIds };
   });
 
-  /** Every sprint the sprint field lists on the issues `jql` finds, closed ones included. */
-  const sprintsOnIssues = (identity: JiraServerIdentity, sprintField: string, jql: string) =>
-    api
-      .searchJql(identity, { jql, fields: [sprintField], maxResults: SPRINT_SEARCH_LIMIT })
-      .pipe(
-        Effect.map((page) =>
-          (page.issues ?? []).flatMap((issue) => toProjectSprints(issue.fields?.[sprintField])),
-        ),
-      );
+  /**
+   * Every sprint the sprint field lists on the issues `jqlFor` finds, closed ones included. A
+   * read that comes back full asks again with the JQL `jqlFor` builds from what was found, which
+   * leaves out the issues already accounted for, so each round finds new sprints or stops.
+   * `jqlFor` returns null when nothing is left to look for.
+   */
+  const sprintsOnIssues = Effect.fn("JiraService.sprintsOnIssues")(function* (
+    identity: JiraServerIdentity,
+    sprintField: string,
+    jqlFor: (found: ReadonlyArray<JiraProjectSprint>) => string | null,
+  ) {
+    const found = new Map<number, JiraProjectSprint>();
+    for (let round = 0; round < SPRINT_SEARCH_ROUNDS; round++) {
+      const jql = jqlFor([...found.values()]);
+      if (jql === null) break;
+      const page = yield* api.searchJql(identity, {
+        jql,
+        fields: [sprintField],
+        maxResults: SPRINT_SEARCH_LIMIT,
+      });
+      const issues = page.issues ?? [];
+      const before = found.size;
+      for (const issue of issues) {
+        for (const sprint of toProjectSprints(issue.fields?.[sprintField])) {
+          if (!found.has(sprint.id)) found.set(sprint.id, sprint);
+        }
+      }
+      if (issues.length < SPRINT_SEARCH_LIMIT || found.size === before) break;
+    }
+    return [...found.values()];
+  });
 
   /**
    * Autocomplete only makes the list more complete, so a failure other than a rejected token
@@ -629,64 +654,80 @@ const make = Effect.gen(function* () {
         }),
       );
 
+  const suggestedSprints = (identity: JiraServerIdentity, prefix: string) =>
+    api.sprintSuggestions(identity, prefix).pipe(
+      Effect.map((suggestions) =>
+        suggestions.flatMap((suggestion) => {
+          const sprint = parseSprintSuggestion(suggestion);
+          return sprint !== null && sprintNameHasPrefix(sprint.name, prefix) ? [sprint] : [];
+        }),
+      ),
+      autocompleteOr([]),
+    );
+
+  const readProjectSprints = Effect.fn("JiraService.readProjectSprints")(function* (
+    identity: JiraServerIdentity,
+    projectKey: string,
+  ) {
+    const sprintField = (yield* fieldIds(identity)).sprint;
+    if (sprintField === null) return [];
+    const openJql = `project = "${projectKey}" AND (sprint in openSprints() OR sprint in futureSprints())`;
+    const [fromIssues, byProjectKey] = yield* Effect.all(
+      [
+        // An issue is in one open sprint at most, so leaving out the open sprints already found
+        // leaves only issues in ones not found yet. Closed sprints stay in: carried-over issues
+        // list them beside their open one.
+        sprintsOnIssues(identity, sprintField, (found) => {
+          const open = found.filter((sprint) => sprint.state !== "closed");
+          return open.length === 0
+            ? openJql
+            : `${openJql} AND sprint not in (${open.map((sprint) => sprint.id).join(", ")})`;
+        }),
+        suggestedSprints(identity, projectKey),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const prefixes = sprintSuggestionPrefixes(
+      projectKey,
+      mergeProjectSprints(fromIssues, []),
+      SPRINT_SUGGESTION_PREFIXES,
+    ).filter((prefix) => prefix !== projectKey);
+    const byName = yield* Effect.forEach(prefixes, (prefix) => suggestedSprints(identity, prefix), {
+      concurrency: "unbounded",
+    });
+    const suggested = [...byProjectKey, ...byName.flat()];
+    const known = new Set(fromIssues.map((sprint) => sprint.id));
+    const unknownIds = [
+      ...new Set(suggested.map((sprint) => sprint.id).filter((id) => !known.has(id))),
+    ];
+    if (unknownIds.length === 0) return mergeProjectSprints(fromIssues, suggested);
+    // Autocomplete lists closed sprints and other teams' sprints too, and says neither. A
+    // sprint any issue is in is one of those: an open sprint this project uses was already
+    // found on its issues. Only empty sprints are kept, and without the answer none are.
+    return yield* sprintsOnIssues(identity, sprintField, (found) => {
+      const seen = new Set(found.map((sprint) => sprint.id));
+      const remaining = unknownIds.filter((id) => !seen.has(id));
+      return remaining.length === 0 ? null : `sprint in (${remaining.join(", ")})`;
+    }).pipe(
+      Effect.map((revealed) => {
+        const used = new Set(revealed.map((sprint) => sprint.id));
+        return mergeProjectSprints(
+          fromIssues,
+          suggested.filter((sprint) => !used.has(sprint.id)),
+        );
+      }),
+      autocompleteOr(mergeProjectSprints(fromIssues, [])),
+    );
+  });
+
   const projectSprints = (
     identity: JiraServerIdentity,
     projectKey: string,
     refresh?: boolean,
   ): Effect.Effect<ReadonlyArray<JiraProjectSprint>, JiraError> =>
-    cache.get(
-      "sprints",
-      cacheKey(identity, projectKey),
-      Effect.gen(function* () {
-        const sprintField = (yield* fieldIds(identity)).sprint;
-        if (sprintField === null) return [];
-        const fromIssues = yield* sprintsOnIssues(
-          identity,
-          sprintField,
-          `project = "${projectKey}" AND (sprint in openSprints() OR sprint in futureSprints())`,
-        );
-        const prefixes = sprintSuggestionPrefixes(
-          projectKey,
-          mergeProjectSprints(fromIssues, []),
-          SPRINT_SUGGESTION_PREFIXES,
-        );
-        const suggested = yield* Effect.forEach(
-          prefixes,
-          (prefix) => api.sprintSuggestions(identity, prefix).pipe(autocompleteOr([])),
-          { concurrency: "unbounded" },
-        ).pipe(
-          Effect.map((pages) =>
-            pages.flat().flatMap((suggestion) => {
-              const sprint = parseSprintSuggestion(suggestion);
-              return sprint === null ? [] : [sprint];
-            }),
-          ),
-        );
-        const known = new Set(fromIssues.map((sprint) => sprint.id));
-        const unknownIds = [
-          ...new Set(suggested.map((sprint) => sprint.id).filter((id) => !known.has(id))),
-        ];
-        if (unknownIds.length === 0) return mergeProjectSprints(fromIssues, suggested);
-        // Autocomplete lists closed sprints and other teams' sprints too, and says neither. A
-        // sprint any issue is in is one of those: an open sprint this project uses was already
-        // found on its issues. Only empty sprints are kept, and without the answer none are.
-        return yield* sprintsOnIssues(
-          identity,
-          sprintField,
-          `sprint in (${unknownIds.join(", ")})`,
-        ).pipe(
-          Effect.map((revealed) => {
-            const used = new Set(revealed.map((sprint) => sprint.id));
-            return mergeProjectSprints(
-              fromIssues,
-              suggested.filter((sprint) => !used.has(sprint.id)),
-            );
-          }),
-          autocompleteOr(mergeProjectSprints(fromIssues, [])),
-        );
-      }),
-      { refresh },
-    );
+    cache.get("sprints", cacheKey(identity, projectKey), readProjectSprints(identity, projectKey), {
+      refresh,
+    });
 
   const sprints: JiraService["Service"]["sprints"] = Effect.fn("JiraService.sprints")(
     function* (input, options) {
@@ -699,53 +740,58 @@ const make = Effect.gen(function* () {
     },
   );
 
-  /** The project's issues in closed sprints, most recently updated first, up to the cap. */
-  const velocityRows = (identity: JiraServerIdentity, projectKey: string, refresh?: boolean) =>
-    cache.get(
-      "velocity",
-      cacheKey(identity, projectKey),
-      Effect.gen(function* () {
-        const ids = yield* fieldIds(identity);
-        const rows: Array<JiraVelocityRow> = [];
-        if (ids.sprint === null) return { rows, partial: false };
-        const sprintField = ids.sprint;
-        const fields = [
-          sprintField,
-          ...(ids.storyPoints === null ? [] : [ids.storyPoints]),
-          "resolutiondate",
-        ];
-        let nextPageToken: string | undefined;
-        while (true) {
-          const page = yield* api.searchJql(identity, {
-            jql: `project = "${projectKey}" AND sprint in closedSprints() ORDER BY updated DESC`,
-            fields,
-            maxResults: Math.min(VELOCITY_PAGE_SIZE, VELOCITY_ISSUE_LIMIT - rows.length),
-            nextPageToken,
-          });
-          const issues = page.issues ?? [];
-          for (const issue of issues) {
-            const issueFields = issue.fields ?? {};
-            rows.push({
-              sprints: toProjectSprints(issueFields[sprintField]),
-              storyPoints: toStoryPoints(issueFields, ids),
-              resolutionDate: toIsoDateTime(issueFields.resolutiondate),
-            });
-          }
-          nextPageToken = page.nextPageToken ?? undefined;
-          if (nextPageToken === undefined || issues.length === 0) return { rows, partial: false };
-          if (rows.length >= VELOCITY_ISSUE_LIMIT) return { rows, partial: true };
-        }
-      }),
-      { refresh },
-    );
+  /**
+   * The project's issues in closed sprints, newest first, up to the cap. Created order keeps
+   * recent sprints' issues ahead of a bulk edit to old ones, so a cap cuts the oldest sprints.
+   */
+  const readVelocityRows = Effect.fn("JiraService.readVelocityRows")(function* (
+    identity: JiraServerIdentity,
+    projectKey: string,
+  ) {
+    const ids = yield* fieldIds(identity);
+    const rows: Array<JiraVelocityRow> = [];
+    if (ids.sprint === null) return { rows, partial: false };
+    const sprintField = ids.sprint;
+    const fields = [
+      sprintField,
+      ...(ids.storyPoints === null ? [] : [ids.storyPoints]),
+      "resolutiondate",
+    ];
+    let nextPageToken: string | undefined;
+    while (true) {
+      const page = yield* api.searchJql(identity, {
+        jql: `project = "${projectKey}" AND sprint in closedSprints() ORDER BY created DESC`,
+        fields,
+        maxResults: Math.min(VELOCITY_PAGE_SIZE, VELOCITY_ISSUE_LIMIT - rows.length),
+        nextPageToken,
+      });
+      const issues = page.issues ?? [];
+      for (const issue of issues) {
+        const issueFields = issue.fields ?? {};
+        rows.push({
+          sprints: toProjectSprints(issueFields[sprintField]),
+          storyPoints: toStoryPoints(issueFields, ids),
+          resolutionDate: toIsoDateTime(issueFields.resolutiondate),
+        });
+      }
+      nextPageToken = page.nextPageToken ?? undefined;
+      if (nextPageToken === undefined || issues.length === 0) return { rows, partial: false };
+      if (rows.length >= VELOCITY_ISSUE_LIMIT) return { rows, partial: true };
+    }
+  });
 
   const velocity: JiraService["Service"]["velocity"] = Effect.fn("JiraService.velocity")(
     function* (input, options) {
       yield* annotateActingUser(options);
       const identity = yield* readIdentity(input.site, options);
-      const { rows, partial } = yield* velocityRows(identity, input.projectKey, input.refresh).pipe(
-        asIdentity(identity),
-      );
+      const { rows, partial } = yield* cache
+        .get(
+          "velocity",
+          cacheKey(identity, input.projectKey),
+          readVelocityRows(identity, input.projectKey),
+          { refresh: input.refresh },
+        )
+        .pipe(asIdentity(identity));
       return { ...aggregateVelocity(rows, input.lastN ?? DEFAULT_VELOCITY_SPRINTS), partial };
     },
   );
@@ -754,29 +800,27 @@ const make = Effect.gen(function* () {
     function* (input, options) {
       yield* annotateActingUser(options);
       const identity = yield* readIdentity(input.site, options);
-      return yield* cache
-        .get(
-          "createMeta",
-          cacheKey(identity, input.projectKey),
-          Effect.gen(function* () {
-            const [issueTypes, sprints] = yield* Effect.all(
-              [
-                api.createMetaIssueTypes(identity, input.projectKey),
-                projectSprints(identity, input.projectKey),
-              ],
-              { concurrency: "unbounded" },
-            );
-            return {
-              issueTypes: issueTypes.map((type) => ({
-                id: type.id,
-                name: type.untranslatedName ?? type.name,
-                subtask: type.subtask ?? false,
-              })),
-              sprints,
-            };
-          }),
-        )
-        .pipe(asIdentity(identity));
+      // Sprints are cached on their own, so a sprints refresh reaches the proposal card too.
+      const [issueTypes, sprints] = yield* Effect.all(
+        [
+          cache.get(
+            "createMeta",
+            cacheKey(identity, input.projectKey),
+            api.createMetaIssueTypes(identity, input.projectKey).pipe(
+              Effect.map((types) =>
+                types.map((type) => ({
+                  id: type.id,
+                  name: type.untranslatedName ?? type.name,
+                  subtask: type.subtask ?? false,
+                })),
+              ),
+            ),
+          ),
+          projectSprints(identity, input.projectKey),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(asIdentity(identity));
+      return { issueTypes, sprints };
     },
   );
 
