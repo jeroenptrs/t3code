@@ -6,8 +6,9 @@ import { personalCredentialForSite } from "./jiraIssueList.logic";
 export const JIRA_COMMENT_MAX_LENGTH = 32_000;
 
 /**
- * Whether the signed-in user may comment on and move issues of `site` as themselves. Both need
- * their personal token for that site and the operate grant. `needs-token` is shown only to a
+ * Whether the signed-in user may comment on, move, or break down issues of `site` as themselves.
+ * Each needs their personal token for that site and the operate grant; a breakdown needs the token
+ * because its proposal is approved with it. `needs-token` is shown only to a
  * session that can store a token at all; for anyone else the controls are simply absent.
  */
 export function jiraIssueWriteAccess(input: {
