@@ -44,6 +44,7 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as JiraBreakdownThreads from "../jira/JiraBreakdownThreads.ts";
 import * as JiraIdentities from "../jira/JiraIdentities.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
@@ -653,6 +654,7 @@ function layerTest(input: {
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
   readonly jiraIdentitiesLayer?: Layer.Layer<JiraIdentities.JiraIdentities>;
+  readonly jiraBreakdownThreadsLayer?: Layer.Layer<JiraBreakdownThreads.JiraBreakdownThreads>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -747,6 +749,9 @@ function layerTest(input: {
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
           ...(input.jiraIdentitiesLayer === undefined ? [] : [input.jiraIdentitiesLayer]),
+          ...(input.jiraBreakdownThreadsLayer === undefined
+            ? []
+            : [input.jiraBreakdownThreadsLayer]),
         ),
       ),
     ),
@@ -820,6 +825,7 @@ function runBrowserAccessScenario(input: {
   readonly projectExists?: boolean;
   readonly delegatedBy?: ThreadId;
   readonly jiraConfigured?: boolean;
+  readonly jiraBreakdown?: boolean;
 }) {
   return Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -869,6 +875,14 @@ function runBrowserAccessScenario(input: {
           idleTimeoutMs: 1_000,
           mcpConfigs,
           projectServiceLayer: layerProjectService,
+          ...(input.jiraBreakdown === undefined
+            ? {}
+            : {
+                jiraBreakdownThreadsLayer: Layer.mock(JiraBreakdownThreads.JiraBreakdownThreads)({
+                  isBreakdownThread: (requested) =>
+                    Effect.succeed(input.jiraBreakdown === true && requested === threadId),
+                }),
+              }),
           ...(input.jiraConfigured === undefined
             ? {}
             : {
@@ -5528,6 +5542,25 @@ it.effect("ProviderSessionManagerV2 grants the jira capability only when Jira is
     const absent = yield* runBrowserAccessScenario(scenario);
     assert.isFalse(absent?.capabilities?.has("jira"));
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 grants the jira-breakdown capability only to breakdown threads",
+  () =>
+    Effect.gen(function* () {
+      const scenario = {
+        enableAgentBrowserAccess: true,
+        projectOverride: true,
+        jiraConfigured: true,
+      };
+      const breakdown = yield* runBrowserAccessScenario({ ...scenario, jiraBreakdown: true });
+      assert.isTrue(breakdown?.capabilities?.has("jira-breakdown"));
+      assert.isTrue(breakdown?.capabilities?.has("jira"));
+      const ordinary = yield* runBrowserAccessScenario({ ...scenario, jiraBreakdown: false });
+      assert.isFalse(ordinary?.capabilities?.has("jira-breakdown"));
+      const absent = yield* runBrowserAccessScenario(scenario);
+      assert.isFalse(absent?.capabilities?.has("jira-breakdown"));
+    }),
 );
 
 it.effect(
