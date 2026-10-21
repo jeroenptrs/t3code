@@ -20,6 +20,9 @@ import {
   type JiraProjectSprint,
   type JiraSearchInput,
   type JiraSearchResult,
+  type JiraSetSprintInput,
+  type JiraSetSprintResult,
+  type JiraSetStoryPointsInput,
   type JiraSprintsInput,
   type JiraSprintsResult,
   type JiraTransitionIssueInput,
@@ -94,9 +97,10 @@ const SPRINT_SEARCH_ROUNDS = 5;
 /** Autocomplete requests per sprints read, each for one name prefix. */
 const SPRINT_SUGGESTION_PREFIXES = 3;
 const VELOCITY_PAGE_SIZE = 100;
-/** Issues a velocity read pages through, most recently updated first, before calling it partial. */
+/** Issues a velocity read pages through, newest created first, before calling it partial. */
 const VELOCITY_ISSUE_LIMIT = 500;
 const DEFAULT_VELOCITY_SPRINTS = 6;
+const SET_SPRINT_CONCURRENCY = 4;
 
 const signInRequired = new JiraError({
   reason: "forbidden",
@@ -213,6 +217,20 @@ export class JiraService extends Context.Service<
     readonly transitionIssue: (
       userId: AuthUserId | undefined,
       input: JiraTransitionIssueInput,
+    ) => Effect.Effect<void, JiraError>;
+    /**
+     * Moves issues into a sprint, or back to the backlog, as the caller's personal token. Each
+     * issue is written on its own and a refusal is reported per issue; a rejected token fails
+     * the call. Rank is left alone, and Jira decides which sprints take issues.
+     */
+    readonly setSprint: (
+      userId: AuthUserId | undefined,
+      input: JiraSetSprintInput,
+    ) => Effect.Effect<JiraSetSprintResult, JiraError>;
+    /** Sets or clears an issue's story points as the caller's personal token. */
+    readonly setStoryPoints: (
+      userId: AuthUserId | undefined,
+      input: JiraSetStoryPointsInput,
     ) => Effect.Effect<void, JiraError>;
   }
 >()("t3/jira/JiraService") {}
@@ -874,6 +892,90 @@ const make = Effect.gen(function* () {
     yield* cache.invalidate("issue", cacheKey(identity, input.key));
   });
 
+  /**
+   * After a write as `identity`, its reads the write may have changed: the issues, their
+   * projects' sprints and velocity, and every search, since list pages and planning sections
+   * are JQL searches. Other identities' reads, such as the service reader's, are left to expire.
+   */
+  const invalidateWritten = (identity: JiraServerIdentity, keys: ReadonlyArray<string>) => {
+    const projectKeys = new Set(keys.map((key) => key.slice(0, key.lastIndexOf("-"))));
+    return Effect.all(
+      [
+        Effect.forEach(keys, (key) => cache.invalidate("issue", cacheKey(identity, key)), {
+          discard: true,
+        }),
+        Effect.forEach(
+          projectKeys,
+          (projectKey) =>
+            Effect.all([
+              cache.invalidate("sprints", cacheKey(identity, projectKey)),
+              cache.invalidate("velocity", cacheKey(identity, projectKey)),
+            ]),
+          { discard: true },
+        ),
+        cache.invalidateMatching(
+          "search",
+          (key) => (JSON.parse(key) as ReadonlyArray<unknown>)[0] === identity.name,
+        ),
+      ],
+      { discard: true },
+    );
+  };
+
+  const setSprint: JiraService["Service"]["setSprint"] = Effect.fn("JiraService.setSprint")(
+    function* (userId, input) {
+      const identity = yield* writeIdentity(userId, input.site);
+      const sprintField = (yield* fieldIds(identity).pipe(asIdentity(identity))).sprint;
+      if (sprintField === null) {
+        return yield* new JiraError({
+          reason: "invalid",
+          message: `Jira at ${identity.site} has no sprint field.`,
+        });
+      }
+      const keys = [...new Set(input.keys)];
+      // A rejected token would fail every other issue the same way, so it fails the call; the
+      // writes that landed before it are still invalidated.
+      const outcomes = yield* Effect.forEach(
+        keys,
+        (key) =>
+          api.editIssue(identity, key, { [sprintField]: input.sprintId }).pipe(
+            asIdentity(identity),
+            Effect.as({ key, message: null }),
+            Effect.catchTags({
+              JiraError: (error) =>
+                error.reason === "unauthorized"
+                  ? Effect.fail(error)
+                  : Effect.succeed({ key, message: error.message }),
+            }),
+          ),
+        { concurrency: SET_SPRINT_CONCURRENCY },
+      ).pipe(Effect.ensuring(invalidateWritten(identity, keys)));
+      return {
+        updated: outcomes.flatMap((outcome) => (outcome.message === null ? [outcome.key] : [])),
+        failed: outcomes.flatMap(({ key, message }) =>
+          message === null ? [] : [{ key, message }],
+        ),
+      };
+    },
+  );
+
+  const setStoryPoints: JiraService["Service"]["setStoryPoints"] = Effect.fn(
+    "JiraService.setStoryPoints",
+  )(function* (userId, input) {
+    const identity = yield* writeIdentity(userId, input.site);
+    const storyPointsField = (yield* fieldIds(identity).pipe(asIdentity(identity))).storyPoints;
+    if (storyPointsField === null) {
+      return yield* new JiraError({
+        reason: "invalid",
+        message: `Jira at ${identity.site} has no story points field.`,
+      });
+    }
+    yield* api
+      .editIssue(identity, input.key, { [storyPointsField]: input.storyPoints })
+      .pipe(asIdentity(identity));
+    yield* invalidateWritten(identity, [input.key]);
+  });
+
   return JiraService.of({
     capabilities,
     filters,
@@ -891,6 +993,8 @@ const make = Effect.gen(function* () {
     fieldIds,
     addComment,
     transitionIssue,
+    setSprint,
+    setStoryPoints,
   });
 });
 
