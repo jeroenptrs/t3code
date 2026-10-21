@@ -1,7 +1,8 @@
 /**
  * A Jira issue beside a thread, read lazily through the environment's reader identity, or the
  * signed-in user's own token on their site. A user with a token for the issue's site can also
- * comment and move the issue as themselves; assignment stays in Jira for now.
+ * comment and move the issue as themselves, and break it down into work packages they approve;
+ * assignment stays in Jira for now.
  */
 import { useAtomValue } from "@effect/atom-react";
 import { jiraIssueUrl } from "@t3tools/client-runtime/state/jira";
@@ -38,6 +39,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
+import { JiraBreakdownNeedsTokenNote, JiraIssueBreakdownAction } from "./JiraBreakdownControls";
 import { personalCredentialForSite } from "./jiraIssueList.logic";
 import { jiraCommentToPost, jiraIssueWriteAccess } from "./jiraIssueWrite.logic";
 import { jiraProposalFailureMessage } from "./jiraProposal.logic";
@@ -210,7 +212,13 @@ function JiraIssueDetailContent(props: {
   const openJira = useOpenJiraLink(threadRef);
   const capabilities = useJiraCapabilities(environmentId);
   const canOperate = useAtomValue(jiraEnvironment.addComment.permissionAtom(environmentId));
+  const canBreakDown = useAtomValue(jiraEnvironment.startBreakdown.permissionAtom(environmentId));
   const writeAccess = jiraIssueWriteAccess({ capabilities, canOperate, site: detail.site });
+  const breakdownAccess = jiraIssueWriteAccess({
+    capabilities,
+    canOperate: canBreakDown,
+    site: detail.site,
+  });
   const hiddenComments = detail.commentCount - detail.comments.length;
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -226,6 +234,11 @@ function JiraIssueDetailContent(props: {
             <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
           </a>
           <span className="flex-1" />
+          <JiraIssueBreakdownAction
+            environmentId={environmentId}
+            threadRef={threadRef}
+            issue={detail}
+          />
           <Button
             variant="ghost"
             size="icon-xs"
@@ -266,6 +279,7 @@ function JiraIssueDetailContent(props: {
             <MetaRow label="Updated">{formatRelativeTimeLabel(detail.updated)}</MetaRow>
           ) : null}
         </dl>
+        {breakdownAccess === "needs-token" ? <JiraBreakdownNeedsTokenNote /> : null}
       </header>
 
       <DetailSection title="Description">

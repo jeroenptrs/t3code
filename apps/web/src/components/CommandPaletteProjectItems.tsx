@@ -31,7 +31,7 @@ interface ProjectItemsInput {
   readonly runProject: (project: CommandPaletteProject) => Promise<void>;
 }
 
-function projectFaviconIcon(project: Project) {
+export function projectFaviconIcon(project: Project) {
   return <ProjectFavicon project={project} className={ITEM_ICON_CLASS} />;
 }
 
