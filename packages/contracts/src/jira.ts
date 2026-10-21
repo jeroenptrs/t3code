@@ -534,3 +534,32 @@ export const JiraTransitionIssueInput = Schema.Struct({
   transitionId: TrimmedNonEmptyString.check(Schema.isMaxLength(40)),
 });
 export type JiraTransitionIssueInput = typeof JiraTransitionIssueInput.Type;
+
+/**
+ * Put issues of one site in a sprint as the caller, with their personal token, by writing each
+ * issue's sprint field. Rank is never changed.
+ */
+export const JiraSetSprintInput = Schema.Struct({
+  site: TrimmedNonEmptyString,
+  keys: Schema.Array(JiraIssueKeyString).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
+  /** An active or future sprint; null moves the issues back to the backlog. */
+  sprintId: Schema.NullOr(PositiveInt),
+});
+export type JiraSetSprintInput = typeof JiraSetSprintInput.Type;
+
+/** Each issue is written on its own, so some may move while Jira refuses others. */
+export const JiraSetSprintResult = Schema.Struct({
+  updated: Schema.Array(JiraIssueKeyString),
+  failed: Schema.Array(Schema.Struct({ key: JiraIssueKeyString, message: Schema.String })),
+});
+export type JiraSetSprintResult = typeof JiraSetSprintResult.Type;
+
+/** Set or clear an issue's story points as the caller, with their personal token. */
+export const JiraSetStoryPointsInput = Schema.Struct({
+  ...JiraIssueKey.fields,
+  /** Null clears the estimate. */
+  storyPoints: Schema.NullOr(
+    Schema.Number.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(10_000)),
+  ),
+});
+export type JiraSetStoryPointsInput = typeof JiraSetStoryPointsInput.Type;
