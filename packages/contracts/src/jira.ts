@@ -580,3 +580,21 @@ export const JiraSetStoryPointsInput = Schema.Struct({
   ),
 });
 export type JiraSetStoryPointsInput = typeof JiraSetStoryPointsInput.Type;
+
+/**
+ * Break an issue into work packages: the server starts a thread in `projectId` whose agent reads
+ * the issue and the repository and proposes child issues for the caller to approve. Refused when
+ * the caller has no personal token, since only they could approve what it proposes.
+ */
+export const JiraBreakdownStartInput = Schema.Struct({
+  ...JiraIssueKey.fields,
+  projectId: ProjectId,
+});
+export type JiraBreakdownStartInput = typeof JiraBreakdownStartInput.Type;
+
+export const JiraBreakdownStartResult = Schema.Struct({
+  threadId: ThreadId,
+  /** False when a breakdown of the issue was already running and this returned its thread. */
+  started: Schema.Boolean,
+});
+export type JiraBreakdownStartResult = typeof JiraBreakdownStartResult.Type;
