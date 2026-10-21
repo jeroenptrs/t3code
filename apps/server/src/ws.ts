@@ -3342,6 +3342,9 @@ const layerWsJiraRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
         [WS_METHODS.jiraAddComment]: (input) => jira.addComment(currentSession.userId, input),
         [WS_METHODS.jiraTransitionIssue]: (input) =>
           jira.transitionIssue(currentSession.userId, input),
+        [WS_METHODS.jiraSetSprint]: (input) => jira.setSprint(currentSession.userId, input),
+        [WS_METHODS.jiraSetStoryPoints]: (input) =>
+          jira.setStoryPoints(currentSession.userId, input),
       });
     }),
   );
