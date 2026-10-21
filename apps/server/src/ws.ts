@@ -3413,6 +3413,8 @@ const layerWsJiraRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
         [WS_METHODS.jiraTestPersonalToken]: () => credentials.test(currentSession.userId),
         [WS_METHODS.jiraClearPersonalToken]: () => credentials.clear(currentSession.userId),
         [WS_METHODS.jiraCreateMeta]: (input) => jira.createMeta(input, request),
+        [WS_METHODS.jiraSprints]: (input) => jira.sprints(input, request),
+        [WS_METHODS.jiraVelocity]: (input) => jira.velocity(input, request),
         [WS_METHODS.jiraDecideProposal]: (input) =>
           Effect.annotateCurrentSpan("orchestration_v2.thread_id", input.threadId).pipe(
             Effect.andThen(proposals.decide(currentSession.userId, input)),
