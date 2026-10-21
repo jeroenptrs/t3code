@@ -16,8 +16,8 @@ import { JiraStatusBadge } from "./jiraPresentation";
 
 /**
  * Story points edited in place: Enter or leaving the field saves, an emptied field clears the
- * estimate, Escape puts the old value back. A saved value stays shown until the re-read row
- * carries it, so the field never flashes back to the old estimate.
+ * estimate, Escape puts the old value back. A saved value stays shown until the row's value moves
+ * off the estimate it replaced, so the field never flashes back to the old estimate.
  */
 function JiraStoryPointsField({
   issueKey,
@@ -38,10 +38,12 @@ function JiraStoryPointsField({
   }>();
   // Enter disables the field, which blurs it within the same render; this guard is synchronous.
   const inFlight = useRef(false);
-  // The saved value is shown only while the row still carries the estimate it replaced.
-  const shownSaved = saved !== undefined && saved.over === value ? saved : undefined;
-  const current = shownSaved === undefined ? value : shownSaved.value;
-  const text = draft ?? (current === null ? "" : formatJiraPoints(current));
+  // Once the row carries anything but the estimate the save replaced, the saved value or someone
+  // else's, the row is shown again; a later return to the replaced estimate must not revive it.
+  if (saved !== undefined && saved.over !== value) setSaved(undefined);
+  const current = saved !== undefined && saved.over === value ? saved.value : value;
+  const shown = current === null ? "" : formatJiraPoints(current);
+  const text = draft ?? shown;
 
   const commit = async () => {
     if (draft === null || inFlight.current) return;
@@ -50,7 +52,8 @@ function JiraStoryPointsField({
       setInvalid(parsed.message);
       return;
     }
-    if (parsed.storyPoints === current) {
+    // Compared as shown, so retyping a rounded estimate does not overwrite its exact value.
+    if ((parsed.storyPoints === null ? "" : formatJiraPoints(parsed.storyPoints)) === shown) {
       setDraft(null);
       return;
     }
@@ -104,6 +107,7 @@ function JiraStoryPointsField({
 }
 
 function JiraPlanningRowImpl({
+  sectionId,
   issue,
   opened,
   selected,
@@ -112,6 +116,8 @@ function JiraPlanningRowImpl({
   onToggleSelected,
   onCommitStoryPoints,
 }: {
+  /** The section listing this row, which a move re-reads. */
+  sectionId: string;
   issue: JiraIssueSummary;
   /** Open in the right panel. */
   opened: boolean;
@@ -119,7 +125,7 @@ function JiraPlanningRowImpl({
   /** The user can move and estimate issues as themselves. */
   writable: boolean;
   onOpen: (issue: JiraIssueSummary) => void;
-  onToggleSelected: (issue: JiraIssueSummary, selected: boolean) => void;
+  onToggleSelected: (sectionId: string, issueKey: string, selected: boolean) => void;
   onCommitStoryPoints: (issue: JiraIssueSummary, storyPoints: number | null) => Promise<boolean>;
 }) {
   return (
@@ -134,7 +140,7 @@ function JiraPlanningRowImpl({
         <Checkbox
           aria-label={`Select ${issue.key}`}
           checked={selected}
-          onCheckedChange={(checked) => onToggleSelected(issue, checked)}
+          onCheckedChange={(checked) => onToggleSelected(sectionId, issue.key, checked)}
         />
       ) : null}
       <button
