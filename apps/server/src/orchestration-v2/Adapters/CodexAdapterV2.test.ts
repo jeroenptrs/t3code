@@ -267,6 +267,31 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.notInclude(yield* runtimeContext(new Set(["orchestration"])), "<jira_issue_linking>");
     }),
   );
+
+  it.effect("tells only a breakdown thread's agent what a good work package is", () =>
+    Effect.gen(function* () {
+      const runtimeContext = (mcpCapabilities: ReadonlySet<string>) =>
+        CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-jira-breakdown-instructions",
+          codexInput: [{ type: "text", text: "Break down ABC-12." }],
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          hasT3Mcp: true,
+          mcpCapabilities,
+        }).pipe(Effect.map((params) => params.additionalContext?.t3_code_runtime?.value ?? ""));
+
+      const breakdown = yield* runtimeContext(new Set(["orchestration", "jira", "jira-breakdown"]));
+      assert.include(breakdown, "<jira_breakdown>");
+      assert.include(breakdown, "independently mergeable");
+      assert.include(breakdown, "propose_jira_issues once");
+      // Kept beside the general Jira guidance, not instead of it.
+      assert.include(breakdown, "<jira_issue_linking>");
+      assert.notInclude(
+        yield* runtimeContext(new Set(["orchestration", "jira"])),
+        "<jira_breakdown>",
+      );
+    }),
+  );
 });
 
 describe("CodexAdapterV2 native protocol logging", () => {
