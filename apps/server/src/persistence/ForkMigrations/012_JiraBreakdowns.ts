@@ -8,7 +8,7 @@ export default Effect.gen(function* () {
   // as a breakdown, which grants its agent the breakdown instructions, and lets a second press
   // join a breakdown still running, across restarts too. `status` is `running` until the
   // thread's first run ends, then `proposed`, `no-proposal` or `failed`, with `reason` saying
-  // why for the last two.
+  // why for the last two. `user_id` records who started it, for auditing only.
   yield* sql`
     CREATE TABLE IF NOT EXISTS fork_jira_breakdowns (
       thread_id TEXT PRIMARY KEY,
