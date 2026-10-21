@@ -5,6 +5,7 @@ import {
   aggregateVelocity,
   mergeProjectSprints,
   parseSprintSuggestion,
+  sprintNameHasPrefix,
   sprintSuggestionPrefixes,
 } from "./sprints.ts";
 
@@ -62,6 +63,17 @@ describe("sprintSuggestionPrefixes", () => {
         3,
       ),
     ).toEqual(["ABC", "Team Phoenix", "Q"]);
+  });
+});
+
+describe("sprintNameHasPrefix", () => {
+  it("matches the prefix only as whole words of the name", () => {
+    expect(sprintNameHasPrefix("ABC Sprint 3", "ABC")).toBe(true);
+    expect(sprintNameHasPrefix("Board abc 3", "ABC")).toBe(true);
+    expect(sprintNameHasPrefix("ABCD Sprint 3", "ABC")).toBe(false);
+    expect(sprintNameHasPrefix("Team Phoenix 24", "Team Phoenix")).toBe(true);
+    expect(sprintNameHasPrefix("Team Phoenixes 2", "Team Phoenix")).toBe(false);
+    expect(sprintNameHasPrefix("Q4 (a+b) 1", "Q4 (a+b)")).toBe(true);
   });
 });
 
