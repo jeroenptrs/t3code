@@ -53,6 +53,7 @@ import {
 } from "../observability/Metrics.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
+import * as JiraBreakdownThreads from "../jira/JiraBreakdownThreads.ts";
 import * as JiraIdentities from "../jira/JiraIdentities.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -470,6 +471,13 @@ export const layerWithOptions = (
         yield* Effect.serviceOption(JiraIdentities.JiraIdentities),
         { onNone: () => false, onSome: (identities) => identities.configured },
       );
+      // Fork-only and optional like the identities above. Fixed per thread once it exists.
+      const jiraBreakdowns = yield* Effect.serviceOption(JiraBreakdownThreads.JiraBreakdownThreads);
+      const isJiraBreakdownThread = (threadId: ThreadId) =>
+        Option.match(jiraBreakdowns, {
+          onNone: () => Effect.succeed(false),
+          onSome: (breakdowns) => breakdowns.isBreakdownThread(threadId),
+        });
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const promptSuggestionStore = yield* SubscriptionRef.make<
@@ -618,6 +626,8 @@ export const layerWithOptions = (
                   capabilities.add("background-wait");
                 }
                 if (jiraConfigured) capabilities.add("jira");
+                const jiraBreakdown = yield* isJiraBreakdownThread(threadId);
+                if (jiraBreakdown) capabilities.add("jira-breakdown");
                 const subagent = yield* projectionStore.getThread(threadId).pipe(
                   Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
                   Effect.orElseSucceed(() => false),
@@ -646,6 +656,7 @@ export const layerWithOptions = (
                     // A failed capability read cannot tell that the live credential is wrong.
                     (Option.isNone(backgroundWait) ||
                       resolved.capabilities.has("background-wait") === backgroundWait.value) &&
+                    resolved.capabilities.has("jira-breakdown") === jiraBreakdown &&
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent
                   ) {

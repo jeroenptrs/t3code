@@ -24,6 +24,26 @@ const JIRA_ISSUE_LINKING_INSTRUCTIONS = `<jira_issue_linking>
 ${JIRA_ISSUE_TOOL_GUIDANCE.map((line) => `- ${line}`).join("\n")}
 </jira_issue_linking>`;
 
+/**
+ * Fork-only. What a good work package is for this team, for threads the server started to break
+ * a Jira issue into work packages; the server grants those threads the "jira-breakdown" MCP
+ * capability. The first message carries the issue and its planning context.
+ */
+const JIRA_BREAKDOWN_GUIDANCE = [
+  "This thread breaks the Jira issue in its first message into work packages for the user to approve. Read the repository to understand the work, but do not edit files, commit, push, or open pull requests.",
+  "Each package is independently mergeable: it can ship as its own pull request without waiting on another unmerged package. When one package builds on another, say so and state the order.",
+  "Estimate each package in story points (storyPoints on the draft), consistent with the team's velocity given in the first message.",
+  "Name each package with the parent's key for context, for example `ABC-12: <what this package does>`.",
+  "Write each description in Markdown: a short why, then acceptance criteria as a checklist (`- [ ] ...`).",
+  "Put the packages under the issue: when it is a story or task, create sub-tasks with parentKey set to the issue's key and a sub-task issue type the project lists; when it is an epic, create stories or tasks with parentKey set to the epic. When sub-tasks do not fit, put them under the epic the issue names, with parentKey set to that epic.",
+  "Suggest a sprint with sprintId from the open sprints given, or leave it out.",
+  "End by calling propose_jira_issues once with every package. If no sensible breakdown exists, do not propose anything; say why in your final message instead.",
+];
+
+const JIRA_BREAKDOWN_INSTRUCTIONS = `<jira_breakdown>
+${JIRA_BREAKDOWN_GUIDANCE.map((line) => `- ${line}`).join("\n")}
+</jira_breakdown>`;
+
 /** Omit model and effort when the harness manages them dynamically. */
 export function buildRuntimeInstructions(runtime: {
   readonly harness: string;
@@ -51,6 +71,7 @@ export function buildRuntimeInstructions(runtime: {
     runtimeInfo,
     ...(runtime.pullRequestLinking === false ? [] : [PULL_REQUEST_LINKING_INSTRUCTIONS]),
     ...(runtime.mcpCapabilities?.has("jira") ? [JIRA_ISSUE_LINKING_INSTRUCTIONS] : []),
+    ...(runtime.mcpCapabilities?.has("jira-breakdown") ? [JIRA_BREAKDOWN_INSTRUCTIONS] : []),
     ...(workspace === "" ? [] : [workspace]),
   ].join("\n\n");
 }
