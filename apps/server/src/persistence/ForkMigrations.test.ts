@@ -135,6 +135,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [9, "JiraProposals"],
       [10, "ProjectionThreadJiraIssueWatch"],
       [11, "JiraRemoteLinks"],
+      [12, "JiraBreakdowns"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
