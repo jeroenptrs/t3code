@@ -5,7 +5,6 @@
  */
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { jiraIssueKeyOf } from "@t3tools/client-runtime/state/jira";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type {
@@ -171,7 +170,7 @@ function JiraIssuesList({
   const { start: startThreadFromIssue, startingKey } = useStartThreadFromJiraIssue(environmentId);
   const onStartThread = (issue: JiraIssueSummary, project: EnvironmentProject) =>
     void startThreadFromIssue(issue, scopeProjectRef(project.environmentId, project.id));
-  const { breakDown, pendingIssueId: breakingDownId } = useBreakDownJiraIssue();
+  const { breakDown, isPending: isBreakingDown } = useBreakDownJiraIssue();
   const onBreakDown = (issue: JiraIssueSummary, project: EnvironmentProject) =>
     void breakDown(issue, scopeProjectRef(project.environmentId, project.id));
 
@@ -462,9 +461,7 @@ function JiraIssuesList({
                         issue={issue}
                         selected={selectedIssueId === jiraIssueSurface(issue).id}
                         projects={projects}
-                        starting={
-                          startingKey === issue.key || breakingDownId === jiraIssueKeyOf(issue)
-                        }
+                        starting={startingKey === issue.key || isBreakingDown(issue)}
                         breakdown={jiraIssueWriteAccess({
                           capabilities,
                           canOperate: canBreakDown,
