@@ -3,7 +3,9 @@
  * saved Jira filter by default, ad-hoc JQL when asked. Rows group by status category, narrow by
  * facets over what is loaded, and open in the page's own right panel.
  */
+import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { jiraIssueKeyOf } from "@t3tools/client-runtime/state/jira";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type {
@@ -25,6 +27,7 @@ import {
 import { useState } from "react";
 
 import { JiraIcon } from "../components/Icons";
+import { jiraIssueThreadProjects } from "../components/jira/jiraBreakdown.logic";
 import { JiraIssueFacetsMenu, JiraViewPicker } from "../components/jira/JiraIssueListControls";
 import { JiraIssueRow } from "../components/jira/JiraIssueRow";
 import { JiraIssuesPageShell } from "../components/jira/JiraIssuesPageShell";
@@ -40,8 +43,10 @@ import {
   writeJiraIssuesViewId,
   type JiraIssueFacetSelection,
 } from "../components/jira/jiraIssueList.logic";
+import { jiraIssueWriteAccess } from "../components/jira/jiraIssueWrite.logic";
 import { sharedJiraProjectKey } from "../components/jira/jiraPlanning.logic";
 import { JIRA_STATUS_CATEGORY_LABEL, JiraStatusDot } from "../components/jira/jiraPresentation";
+import { useBreakDownJiraIssue } from "../components/jira/useBreakDownJiraIssue";
 import { useStartThreadFromJiraIssue } from "../components/jira/useStartThreadFromJiraIssue";
 import { PullRequestListGhost } from "../components/pullRequest/PullRequestGhosts";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../components/ui/alert";
@@ -161,14 +166,14 @@ function JiraIssuesList({
     done: true,
   });
 
-  const allProjects = useProjects();
-  // The thread runs where the reader is configured, so its branch detector can link the issue.
-  const projects = allProjects
-    .filter((project) => project.environmentId === environmentId)
-    .toSorted((left, right) => left.title.localeCompare(right.title));
+  const canBreakDown = useAtomValue(jiraEnvironment.startBreakdown.permissionAtom(environmentId));
+  const projects = jiraIssueThreadProjects(useProjects(), environmentId);
   const { start: startThreadFromIssue, startingKey } = useStartThreadFromJiraIssue(environmentId);
   const onStartThread = (issue: JiraIssueSummary, project: EnvironmentProject) =>
     void startThreadFromIssue(issue, scopeProjectRef(project.environmentId, project.id));
+  const { breakDown, pendingIssueId: breakingDownId } = useBreakDownJiraIssue();
+  const onBreakDown = (issue: JiraIssueSummary, project: EnvironmentProject) =>
+    void breakDown(issue, scopeProjectRef(project.environmentId, project.id));
 
   const changeView = (next: JiraIssuesView) => {
     setChosenView(next);
@@ -457,9 +462,17 @@ function JiraIssuesList({
                         issue={issue}
                         selected={selectedIssueId === jiraIssueSurface(issue).id}
                         projects={projects}
-                        starting={startingKey === issue.key}
+                        starting={
+                          startingKey === issue.key || breakingDownId === jiraIssueKeyOf(issue)
+                        }
+                        breakdown={jiraIssueWriteAccess({
+                          capabilities,
+                          canOperate: canBreakDown,
+                          site: issue.site,
+                        })}
                         onSelect={onSelectIssue}
                         onStartThread={onStartThread}
+                        onBreakDown={onBreakDown}
                       />
                     ))}
               </section>
