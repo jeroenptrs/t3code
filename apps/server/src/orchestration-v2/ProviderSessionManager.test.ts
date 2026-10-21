@@ -3685,6 +3685,75 @@ it.effect(
 );
 
 it.effect(
+  "ProviderSessionManagerV2 keeps a breakdown thread's credential when it cannot tell whether it is one",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const breakdownAnswer = yield* Ref.make<boolean | undefined>(true);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const open = Effect.fn(function* (
+          threadId: ThreadId,
+          providerSessionId: ProviderSessionId,
+        ) {
+          yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+          const config = (yield* Ref.get(mcpConfigs)).at(-1)!;
+          const token = config.authorizationHeader.replace(/^Bearer\s+/, "");
+          return { config, resolved: yield* registry.resolve(token) };
+        });
+        const allocate = (threadId: ThreadId) =>
+          idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+
+        const threadId = ThreadId.make("thread-provider-session-manager-breakdown-unknown");
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const providerSessionId = yield* allocate(threadId);
+        const first = yield* open(threadId, providerSessionId);
+        assert.isTrue(first.resolved?.capabilities.has("jira-breakdown"));
+
+        yield* manager.detach({ providerSessionId, threadId, detail: "Workspace changed." });
+        yield* Ref.set(breakdownAnswer, undefined);
+        const again = yield* open(threadId, providerSessionId);
+        assert.equal(again.config.providerSessionId, first.config.providerSessionId);
+        assert.isTrue(again.resolved?.capabilities.has("jira-breakdown"));
+
+        // A fresh credential gets nothing it cannot confirm.
+        const freshThreadId = ThreadId.make("thread-provider-session-manager-breakdown-fresh");
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: freshThreadId, now })],
+        });
+        const fresh = yield* open(freshThreadId, yield* allocate(freshThreadId));
+        assert.isDefined(fresh.resolved);
+        assert.isFalse(fresh.resolved?.capabilities.has("jira-breakdown"));
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1_000,
+            mcpConfigs,
+            jiraBreakdownThreadsLayer: Layer.mock(JiraBreakdownThreads.JiraBreakdownThreads)({
+              isBreakdownThread: () => Ref.get(breakdownAnswer),
+            }),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 applies project device access independently of browser access",
   () =>
     Effect.gen(function* () {
