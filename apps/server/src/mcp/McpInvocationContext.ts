@@ -22,6 +22,9 @@ const ALL_MCP_CAPABILITIES = [
   // Fork-only: granted to thread sessions when Jira is configured on this server. The Jira tools
   // do not require it; it decides whether agents are told about them.
   "jira",
+  // Fork-only: granted to threads the server started to break a Jira issue into work packages,
+  // which get the breakdown instructions.
+  "jira-breakdown",
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
