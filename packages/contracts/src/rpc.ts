@@ -138,7 +138,11 @@ import {
   JiraProposalDecisionResult,
   JiraSearchInput,
   JiraSearchResult,
+  JiraSprintsInput,
+  JiraSprintsResult,
   JiraTransitionIssueInput,
+  JiraVelocityInput,
+  JiraVelocityResult,
 } from "./jira.ts";
 import {
   WorktreeSetupCancelInput,
@@ -611,6 +615,9 @@ export const WS_METHODS = {
   // Direct changes a signed-in user makes as themselves from an issue's detail
   jiraAddComment: "jira.addComment",
   jiraTransitionIssue: "jira.transitionIssue",
+  // Sprint planning reads, as the caller
+  jiraSprints: "jira.sprints",
+  jiraVelocity: "jira.velocity",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1313,6 +1320,19 @@ const WsJiraAddCommentRpc = Rpc.make(WS_METHODS.jiraAddComment, {
 /** Needs the caller's personal token; refused when the issue no longer offers the transition. */
 const WsJiraTransitionIssueRpc = Rpc.make(WS_METHODS.jiraTransitionIssue, {
   payload: JiraTransitionIssueInput,
+  error: JiraRpcError,
+});
+
+/** Active and future sprints of one project, including empty ones Jira's autocomplete knows. */
+const WsJiraSprintsRpc = Rpc.make(WS_METHODS.jiraSprints, {
+  payload: JiraSprintsInput,
+  success: JiraSprintsResult,
+  error: JiraRpcError,
+});
+
+const WsJiraVelocityRpc = Rpc.make(WS_METHODS.jiraVelocity, {
+  payload: JiraVelocityInput,
+  success: JiraVelocityResult,
   error: JiraRpcError,
 });
 
@@ -2058,6 +2078,8 @@ export const WsJiraRpcGroup = RpcGroup.make(
   WsJiraDecideProposalRpc,
   WsJiraAddCommentRpc,
   WsJiraTransitionIssueRpc,
+  WsJiraSprintsRpc,
+  WsJiraVelocityRpc,
 ).middleware(RpcScopeAuthorization);
 
 /** Every RPC except those in `WsJiraRpcGroup`. */
