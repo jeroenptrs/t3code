@@ -149,6 +149,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.jiraFilter]: AuthOrchestrationReadScope,
   [WS_METHODS.jiraSearch]: AuthOrchestrationReadScope,
   [WS_METHODS.jiraIssue]: AuthOrchestrationReadScope,
+  [WS_METHODS.jiraSprints]: AuthOrchestrationReadScope,
+  [WS_METHODS.jiraVelocity]: AuthOrchestrationReadScope,
   // A user only manages their own personal token, Readers included: the server keys it by the
   // session's user, never by the payload.
   [WS_METHODS.jiraSetPersonalToken]: AuthOrchestrationReadScope,
