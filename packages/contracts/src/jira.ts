@@ -355,7 +355,13 @@ export type ThreadJiraIssueLink = typeof ThreadJiraIssueLink.Type;
 // Proposals: Jira writes an agent asks for and a user approves. The server performs an approved
 // write with the approver's personal token, never a service account's, and records who approved.
 
-const JiraProjectKey = TrimmedNonEmptyString.check(Schema.isPattern(/^[A-Z][A-Z0-9_]+$/));
+/** Jira Cloud project keys: an uppercase letter, then uppercase letters, digits or `_`. */
+export const JIRA_PROJECT_KEY_PATTERN = /^[A-Z][A-Z0-9_]+$/;
+const JiraProjectKey = TrimmedNonEmptyString.check(Schema.isPattern(JIRA_PROJECT_KEY_PATTERN));
+
+/** The project an issue key belongs to: everything before its last `-`. */
+export const jiraProjectKeyOf = (issueKey: string): string =>
+  issueKey.slice(0, issueKey.lastIndexOf("-")).toUpperCase();
 /** Markdown the server converts to Atlassian Document Format when it writes. */
 const JiraMarkdown = Schema.String.check(Schema.isMaxLength(32_000));
 const JiraLabel = TrimmedNonEmptyString.check(Schema.isPattern(/^\S+$/), Schema.isMaxLength(255));
@@ -539,9 +545,17 @@ export type JiraTransitionIssueInput = typeof JiraTransitionIssueInput.Type;
  * Put issues of one site in a sprint as the caller, with their personal token, by writing each
  * issue's sprint field. Rank is never changed.
  */
+/** Issues one sprint move may write. */
+export const JIRA_SET_SPRINT_MAX_KEYS = 50;
+/** The largest estimate a story points write accepts. */
+export const JIRA_STORY_POINTS_MAX = 10_000;
+
 export const JiraSetSprintInput = Schema.Struct({
   site: TrimmedNonEmptyString,
-  keys: Schema.Array(JiraIssueKeyString).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
+  keys: Schema.Array(JiraIssueKeyString).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(JIRA_SET_SPRINT_MAX_KEYS),
+  ),
   /** An active or future sprint; null moves the issues back to the backlog. */
   sprintId: Schema.NullOr(PositiveInt),
 });
@@ -559,7 +573,10 @@ export const JiraSetStoryPointsInput = Schema.Struct({
   ...JiraIssueKey.fields,
   /** Null clears the estimate. */
   storyPoints: Schema.NullOr(
-    Schema.Number.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(10_000)),
+    Schema.Number.check(
+      Schema.isGreaterThanOrEqualTo(0),
+      Schema.isLessThanOrEqualTo(JIRA_STORY_POINTS_MAX),
+    ),
   ),
 });
 export type JiraSetStoryPointsInput = typeof JiraSetStoryPointsInput.Type;
