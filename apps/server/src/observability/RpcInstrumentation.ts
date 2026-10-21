@@ -132,6 +132,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.jiraFilter]: "jira",
   [WS_METHODS.jiraSearch]: "jira",
   [WS_METHODS.jiraIssue]: "jira",
+  [WS_METHODS.jiraSprints]: "jira",
+  [WS_METHODS.jiraVelocity]: "jira",
   [WS_METHODS.jiraSetPersonalToken]: "jira",
   [WS_METHODS.jiraTestPersonalToken]: "jira",
   [WS_METHODS.jiraClearPersonalToken]: "jira",
