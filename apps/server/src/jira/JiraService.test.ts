@@ -771,6 +771,50 @@ it.effect(
   },
 );
 
+it.effect("keeps reading the project's open sprints past a full page", () => {
+  const inSprint = (index: number, id: number, state: string) => ({
+    id: `${index}`,
+    key: `ABC-${index}`,
+    fields: { customfield_10020: [{ id, name: `Phoenix ${id}`, state }] },
+  });
+  const jira = makeJira((path, body) => {
+    switch (path) {
+      case "/rest/api/3/field":
+        return { status: 200, body: FIELDS };
+      case "/rest/api/3/jql/autocompletedata/suggestions":
+        return { status: 200, body: { results: [] } };
+      case "/rest/api/3/search/jql": {
+        const jql = (body as { readonly jql: string }).jql;
+        if (jql === OPEN_SPRINTS_JQL) {
+          return {
+            status: 200,
+            body: {
+              issues: Array.from({ length: 100 }, (_, index) => inSprint(index + 1, 8, "active")),
+            },
+          };
+        }
+        if (jql === `${OPEN_SPRINTS_JQL} AND sprint not in (8)`) {
+          return { status: 200, body: { issues: [inSprint(101, 11, "future")] } };
+        }
+        return { status: 400, body: { errorMessages: [`Unexpected JQL ${jql}`] } };
+      }
+      default:
+        return { status: 404, body: null };
+    }
+  });
+  return run(
+    config,
+    jira.client,
+    Effect.gen(function* () {
+      const result = yield* (yield* JiraService.JiraService).sprints({
+        site: SITE,
+        projectKey: "ABC",
+      });
+      expect(result.sprints.map((sprint) => sprint.id)).toEqual([8, 11]);
+    }),
+  );
+});
+
 it.effect("falls back to the sprints issues name when autocomplete fails", () => {
   const jira = makeSprintsJira(500);
   return run(
@@ -786,7 +830,7 @@ it.effect("falls back to the sprints issues name when autocomplete fails", () =>
   );
 });
 
-const VELOCITY_JQL = 'project = "ABC" AND sprint in closedSprints() ORDER BY updated DESC';
+const VELOCITY_JQL = 'project = "ABC" AND sprint in closedSprints() ORDER BY created DESC';
 
 it.effect("sums points per closed sprint across pages of the project's issues", () => {
   const first = {
