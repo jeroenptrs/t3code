@@ -15,6 +15,7 @@
  */
 import {
   type AuthUserId,
+  type BranchNamingOptions,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   JiraError,
@@ -32,7 +33,7 @@ import {
   jiraProjectKeyOf,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
+import { formatGeneratedBranchName, resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -78,8 +79,9 @@ export class JiraBreakdownService extends Context.Service<
     /**
      * Follows the breakdown in `threadId` until its first run ends, then records how it ended
      * and returns that. Joins the follower already running for the thread; a breakdown that
-     * already ended returns its stored status, and a thread that is not one returns null.
-     * `start` and server startup run it in the background.
+     * already ended returns its stored status, and a thread that is not one returns null. A
+     * follower that fails while the run goes on leaves it `running` and returns that. `start` and
+     * server startup run it in the background; tests call it to await the outcome without sleeping.
      */
     readonly follow: (threadId: ThreadId) => Effect.Effect<JiraBreakdownStatus | null>;
   }
@@ -290,6 +292,12 @@ const noProposalOutcome = (
   };
 };
 
+/** The run a breakdown's first message started, without the runs that continued it. */
+const firstRunOf = (runs: ReadonlyArray<OrchestrationV2Run>): OrchestrationV2Run | undefined =>
+  runs
+    .filter((run) => run.restartContinuationOfRunId === undefined)
+    .toSorted((left, right) => left.ordinal - right.ordinal)[0];
+
 /** The thread's first run and the runs that continued it after restarts. */
 const continuationChain = (
   runs: ReadonlyArray<OrchestrationV2Run>,
@@ -458,35 +466,74 @@ const make = Effect.gen(function* () {
       modelSelection,
       runtimeMode: resolved.defaultRuntimeMode,
       workspaceRoot: project.workspaceRoot,
+      branchNaming: {
+        mode: resolved.branchNamingMode,
+        prefix: resolved.branchNamePrefix,
+        instructions: resolved.branchNameInstructions,
+      },
     };
   });
 
   /**
-   * Where the agent works: a worktree from the project's current branch, or its commit when
-   * detached, so it cannot touch the user's checkout. Its branch carries the issue key, so the
-   * branch link detector agrees with the link the breakdown makes. A project Git cannot read,
-   * such as one that is not a repository, works in its checkout.
+   * What the agent's worktree starts from: the project's current branch, or its commit when
+   * detached, so it cannot touch the user's checkout. Read before the claim, since Git is a
+   * subprocess away. Null for a project Git cannot read, such as one that is not a repository.
    */
-  const workspaceStrategy = Effect.fn("JiraBreakdownService.workspaceStrategy")(
-    function* (workspaceRoot: string, key: string) {
-      const branch = yield* git.resolveBranchName(workspaceRoot, "HEAD");
-      const baseRef =
-        branch ?? (yield* git.resolveCommit({ cwd: workspaceRoot, revision: "HEAD" })).commitSha;
-      const existing = yield* git.listLocalBranchNames(workspaceRoot);
-      return {
-        type: "worktree",
-        baseRef,
-        branch: resolveAutoFeatureBranchName(existing, `jira/${key.toLowerCase()}-breakdown`),
-        startFromOrigin: false,
-      } satisfies ThreadLaunch.ThreadLaunchWorkspaceStrategy;
+  const readWorkspaceBase = Effect.fn("JiraBreakdownService.readWorkspaceBase")(
+    function* (workspaceRoot: string) {
+      const [baseRef, existingBranches] = yield* Effect.all(
+        [
+          git
+            .resolveBranchName(workspaceRoot, "HEAD")
+            .pipe(
+              Effect.flatMap((branch) =>
+                branch === null
+                  ? git
+                      .resolveCommit({ cwd: workspaceRoot, revision: "HEAD" })
+                      .pipe(Effect.map((commit) => commit.commitSha))
+                  : Effect.succeed(branch),
+              ),
+            ),
+          git.listLocalBranchNames(workspaceRoot),
+        ],
+        { concurrency: "unbounded" },
+      );
+      return { baseRef, existingBranches };
     },
     Effect.catchTags({
       GitCommandError: (error) =>
         Effect.logWarning("Could not resolve a worktree base for a Jira breakdown", {
           operation: error.operation,
-        }).pipe(Effect.as<ThreadLaunch.ThreadLaunchWorkspaceStrategy>({ type: "root" })),
+        }).pipe(Effect.as(null)),
     }),
   );
+
+  /**
+   * The agent's worktree, on a free branch named the way the project names branches. The issue
+   * key leads its last segment, so the branch link detector agrees with the link the breakdown
+   * makes. Custom naming gets the plain name, since its instructions are written for a model, and
+   * a name without a prefix gets `jira/` rather than the `feature/` a bare name would get.
+   */
+  const workspaceStrategy = (
+    base: { readonly baseRef: string; readonly existingBranches: ReadonlyArray<string> } | null,
+    key: string,
+    naming: BranchNamingOptions,
+  ): ThreadLaunch.ThreadLaunchWorkspaceStrategy => {
+    if (base === null) return { type: "root" };
+    const named = formatGeneratedBranchName(
+      `${key}-breakdown`,
+      naming.mode === "custom" ? undefined : naming,
+    );
+    return {
+      type: "worktree",
+      baseRef: base.baseRef,
+      branch: resolveAutoFeatureBranchName(
+        base.existingBranches,
+        named.includes("/") ? named : `jira/${named}`,
+      ),
+      startFromOrigin: false,
+    };
+  };
 
   /** Waits for the thread's first run, following restarts, and records how it ended. */
   const watch = Effect.fn("JiraBreakdownService.watch")(function* (threadId: ThreadId) {
@@ -499,9 +546,7 @@ const make = Effect.gen(function* () {
     if (shell === null || shell.deletedAt !== null) {
       return yield* finish(threadId, "failed", "The breakdown thread was deleted.");
     }
-    const first = (yield* orchestrator.getThreadRecords(threadId, ["runs"])).runs
-      .filter((run) => run.restartContinuationOfRunId === undefined)
-      .toSorted((left, right) => left.ordinal - right.ordinal)[0];
+    const first = firstRunOf((yield* orchestrator.getThreadRecords(threadId, ["runs"])).runs);
     if (first === undefined) {
       return yield* finish(threadId, "failed", "The breakdown thread never started a run.");
     }
@@ -556,6 +601,24 @@ const make = Effect.gen(function* () {
     return yield* finish(threadId, status, reason);
   });
 
+  /**
+   * Whether the breakdown's first run, with its restart continuations, has ended. A follower
+   * that failed only gives up on a run known to have ended: one still going is followed again
+   * at the next startup, and pressing again joins it instead of starting a second agent.
+   */
+  const firstRunEnded = Effect.fn("JiraBreakdownService.firstRunEnded")(function* (
+    threadId: ThreadId,
+  ) {
+    const runs = (yield* orchestrator.getThreadRecords(threadId, ["runs"])).runs;
+    const first = firstRunOf(runs);
+    if (first === undefined) return true;
+    const chain = continuationChain(runs, first);
+    const chainRuns = runs.filter((run) => chain.has(run.id));
+    if (!chainRuns.every((run) => ThreadManagement.isTerminalRunStatus(run.status))) return false;
+    const latest = chainRuns.toSorted((left, right) => right.ordinal - left.ordinal)[0]!;
+    return !(yield* orchestrator.restartContinuationPending(latest));
+  });
+
   /** The thread's follower, started in the service scope unless one is already running. */
   const follower = Effect.fn("JiraBreakdownService.follower")(function* (threadId: ThreadId) {
     const existing = followers.get(threadId);
@@ -569,10 +632,17 @@ const make = Effect.gen(function* () {
               threadId,
               cause: Cause.pretty(cause),
             }).pipe(
-              // Ended, so the next press starts a new breakdown instead of joining this one.
-              Effect.andThen(finish(threadId, "failed", "T3 Code could not follow the run.")),
+              Effect.andThen(firstRunEnded(threadId)),
+              Effect.flatMap((ended) =>
+                ended
+                  ? // Ended, so the next press starts a new breakdown instead of joining this one.
+                    finish(threadId, "failed", "T3 Code could not follow the run.")
+                  : Effect.logWarning("Left a Jira breakdown running while its run goes on", {
+                      threadId,
+                    }).pipe(Effect.as<JiraBreakdownStatus | null>("running")),
+              ),
               Effect.catch((error) =>
-                Effect.logWarning("Could not record a Jira breakdown as failed", {
+                Effect.logWarning("Could not record how a Jira breakdown ended", {
                   threadId,
                   errorTag: error._tag,
                 }).pipe(Effect.as<JiraBreakdownStatus | null>("running")),
@@ -611,14 +681,21 @@ const make = Effect.gen(function* () {
       const running = yield* runningBreakdown(site, input.key, input.projectId);
       if (running !== null) return { threadId: running, started: false };
       const launchSettings = yield* resolveLaunchSettings(input.projectId);
-      // Read before the claim: Jira can be slow, and a second press must not wait on it.
-      const context = yield* readContext(userId, identity, input.key);
+      // Read before the claim: Jira and Git can be slow, and a second press must not wait on them.
+      const [context, workspaceBase] = yield* Effect.all(
+        [readContext(userId, identity, input.key), readWorkspaceBase(launchSettings.workspaceRoot)],
+        { concurrency: "unbounded" },
+      );
       // Uninterruptible once claimed: a client hanging up must not leave a row without its thread.
       return yield* claims(`${site}\u0000${input.key}`)(
         Effect.gen(function* () {
           const joined = yield* runningBreakdown(site, input.key, input.projectId);
           if (joined !== null) return { threadId: joined, started: false };
-          const workspace = yield* workspaceStrategy(launchSettings.workspaceRoot, input.key);
+          const workspace = workspaceStrategy(
+            workspaceBase,
+            input.key,
+            launchSettings.branchNaming,
+          );
           const threadId = yield* ids.allocate
             .thread({ projectId: input.projectId })
             .pipe(Effect.catch(ledgerFailed));
