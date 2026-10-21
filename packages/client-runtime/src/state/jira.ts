@@ -264,6 +264,20 @@ export function createJiraEnvironmentAtoms<R, E>(
         ),
     }),
     /**
+     * Starts a thread whose agent proposes the issue's work packages. One start per issue is in
+     * flight, whatever project it names, since the server runs one breakdown per issue; the new
+     * thread reaches clients through the shell stream like any other.
+     */
+    startBreakdown: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:jira:start-breakdown",
+      tag: WS_METHODS.jiraStartBreakdown,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.site.toLowerCase(), input.key.toUpperCase()]),
+      },
+    }),
+    /**
      * The caller's own token. Setting or clearing re-reads capabilities and every cached read,
      * because reads now go out as a different identity; testing re-reads capabilities only.
      */
