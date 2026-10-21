@@ -5,10 +5,11 @@ can browse issues by saved filter, open an issue, link it to a thread, and start
 thread from it.
 
 T3 Code changes Jira as you, with your own token. That covers changes you approve
-after an agent proposes them and the comments and moves you make yourself. The one
-thing the server writes with its own identity is a link on the Jira issue back to a
-linked thread. Everything else is read-only. See
-[Agents that write to Jira](#agents-that-write-to-jira) and
+after an agent proposes them, and the comments, status moves, sprint moves, and story
+point edits you make yourself. The one thing the server writes with its own identity
+is a link on the Jira issue back to a linked thread. Everything else is read-only. See
+[Agents that write to Jira](#agents-that-write-to-jira),
+[Plan a sprint](#plan-a-sprint), and
 [Link back to the thread](#link-back-to-the-thread).
 
 ## What you can do
@@ -24,6 +25,10 @@ linked thread. Everything else is read-only. See
   as yourself, so this needs your [personal Jira token](#use-your-own-jira-token) for
   the issue's site and permission to operate the environment. Readers cannot. A move
   offers only the statuses Jira currently allows for the issue.
+- [Plan a sprint](#plan-a-sprint). See a project's velocity, its sprints, and its
+  backlog, move issues between them, and set story points.
+- [Break an issue into work packages](#break-an-issue-into-work-packages) with an
+  agent, then approve the child issues it proposes.
 - Let an agent [watch a linked issue](#watch-linked-issues) and pick up where it
   left off when the issue changes.
 
@@ -83,8 +88,8 @@ T3 Code to put [thread links](#link-back-to-the-thread) on issues.
 
 Scoped tokens cannot use Jira's Agile API, which covers boards and sprint endpoints.
 They also cannot use the Development panel, Automation, or Dashboards. T3 Code does
-not need any of these. It reads sprints from each issue's sprint field, and you can
-build sprint views as saved filters.
+not need any of these. It reads sprints from the sprint field on issues and from
+Jira's search suggestions, and you can build sprint views as saved filters.
 
 A classic token is a personal API token paired with the account's email. It reads as
 that person, so it sees everything that person can see.
@@ -104,9 +109,10 @@ dedicated service account if you want to limit what the team can see.
 When the server uses organisation sign-in, each signed-in user can store a personal
 Jira token instead. While it is stored, your Issues page and issue details read Jira
 as you, so you see what your own Jira account can see, and changes you approve are
-made as you. So are the comments and moves you make from an issue's detail. Everyone
-without a token still reads as the reader identity and cannot approve changes,
-comment, or move issues.
+made as you. So are the comments and moves you make from an issue's detail and the
+sprint moves and story point edits you make while you plan. Everyone without a token
+still reads as the reader identity and cannot approve changes, comment, move or
+estimate issues, or break an issue down.
 
 Agents never receive your token. Background work, such as linking branches,
 refreshing linked issues, watching issues, and writing thread links, always uses the
@@ -120,7 +126,8 @@ server's identities.
 2. In T3 Code, open Settings → Account and enter the email of your Atlassian account
    and the token.
 
-The token needs `write:jira-work` for approvals, comments, and moves.
+The token needs `write:jira-work` for approvals, comments, status moves, sprint moves,
+and story points.
 
 T3 Code checks the token with Jira before saving it. A rejected token is not saved.
 The token can only be for a site the server is configured for. The server stores it
@@ -150,6 +157,38 @@ project = ABC AND sprint in openSprints() ORDER BY Rank
 project = ABC AND sprint in futureSprints()
 project = ABC AND sprint in closedSprints()
 ```
+
+## Plan a sprint
+
+The sprint planning page shows one Jira project at a time. It lists the average
+story points the project completed per sprint over its recent closed sprints, with
+the committed and completed points of each. Below that it lists each active and
+future sprint with its dates and story point total, then the backlog in Jira's rank
+order.
+
+To start, choose **Plan sprint** on the Issues page, or run **Plan a Jira sprint**
+from the command palette. Enter the project key, such as `ABC`. T3 Code remembers the
+last key you used.
+
+With your [personal Jira token](#use-your-own-jira-token), you can select issues and
+move them to a sprint or back to the backlog, and set or clear an issue's story
+points in its row. Without a token the page is read-only.
+
+A few things work differently from Jira's board:
+
+- Create, start, and complete sprints in Jira. A new sprint with no issues appears
+  here once it exists in Jira. T3 Code finds an empty sprint by name through Jira's
+  search suggestions, so it finds sprints named after the project key or after the
+  project's other sprints.
+- Moving an issue does not change its rank, and you cannot reorder by dragging.
+- Velocity counts only the issues your Jira account can see. Without a personal
+  token, that is what the reader account can see. An issue counts as completed in a
+  sprint when it was resolved by the time that sprint ended. Committed points include
+  issues added after the sprint started.
+- The backlog includes unfinished issues that a closed sprint returned.
+- Sub-tasks are not listed. They follow their parent issue.
+- T3 Code writes story points to the site's story points field. Jira refuses the
+  edit when that field is not on the project's screen.
 
 ## Link issues to threads
 
@@ -227,6 +266,42 @@ An agent that should change Jira as itself uses the `jtk` CLI with its own
 credentials. Set `JIRA_*` environment variables on the provider instance's
 environment in provider settings. Those credentials are separate from the ones
 above, so the agent's write access does not depend on the reader identity.
+
+## Break an issue into work packages
+
+An agent can split a Jira issue into child issues for you. It reads the issue with
+its description and comments, the parent issue, the project's issue types, its open
+sprints and velocity, and the repository. It then proposes the child issues as a
+proposal card in a new thread. You edit the proposal and approve it. Jira creates the
+issues with your own account, and they link to the thread. Nothing is created until
+you approve, and a breakdown is never approved automatically.
+
+To start, choose **Break down** in the issue's panel, use the row menu on the Issues
+page, or run **Break down** from the command palette. Next to a thread, the breakdown
+uses that thread's project. Elsewhere you pick the project. The project needs a
+default model.
+
+You need your [personal Jira token](#use-your-own-jira-token) before you start,
+because only you can approve what the agent proposes.
+
+The agent works in its own worktree, on a branch named after the issue, so it never
+edits your checkout. A project that is not a Git repository is the exception. There
+the agent works in the project folder. After it proposes the packages, you can keep
+talking in the thread, for example to ask it to implement one of them.
+
+Pressing **Break down** again while a breakdown of the same issue runs in the same
+project opens the running thread instead of starting another.
+
+The agent aims for packages that match these rules:
+
+- Each package is independently mergeable.
+- Each package has a story point estimate that fits the project's velocity.
+- Each name starts with the parent's key, as in `ABC-12: Add the export endpoint`.
+- Each description has a short reason and acceptance criteria in a checklist.
+- Each package can name a suggested sprint.
+
+If the agent finds no sensible breakdown, it proposes nothing and the thread says why.
+Approval works as it does for any other [proposal](#agents-that-write-to-jira).
 
 ## Start a thread from Jira
 
