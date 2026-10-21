@@ -77,6 +77,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Planning a sprint writes each issue's sprint or story points as the caller.
   [WS_METHODS.jiraSetSprint]: AuthOrchestrationOperateScope,
   [WS_METHODS.jiraSetStoryPoints]: AuthOrchestrationOperateScope,
+  // A breakdown starts a thread that runs a model on this environment's providers.
+  [WS_METHODS.jiraStartBreakdown]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
