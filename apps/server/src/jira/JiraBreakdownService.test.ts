@@ -28,6 +28,7 @@ import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as JiraApi from "./JiraApi.ts";
 import * as JiraBreakdownService from "./JiraBreakdownService.ts";
 import * as JiraBreakdownThreads from "./JiraBreakdownThreads.ts";
@@ -176,23 +177,59 @@ const layerLaunch = (launches: Ref.Ref<ReadonlyArray<ThreadLaunch.ThreadLaunchIn
     }),
   );
 
-/** Real orchestration, thread waits and Jira services; Jira's HTTP and the launch are fake. */
+const otherProject: Project = {
+  ...project,
+  id: ProjectId.make("project:other"),
+  title: "Payments",
+  workspaceRoot: "/repos/payments",
+};
+
+/** Billing's checkout is on `main`, which already has a breakdown branch; Payments' is detached. */
+const layerGit = Layer.mock(GitVcsDriver.GitVcsDriver)({
+  resolveBranchName: (cwd) => Effect.succeed(cwd === otherProject.workspaceRoot ? null : "main"),
+  resolveCommit: () => Effect.succeed({ commitSha: "c0ffee" }),
+  listLocalBranchNames: () => Effect.succeed(["main", "jira/abc-12-breakdown"]),
+});
+
+/** Every run wait fails, as when the thread's records cannot be read. */
+const layerFailingWaits = Layer.effect(
+  ThreadManagement.ThreadManagementService,
+  Effect.map(ThreadManagement.ThreadManagementService, (threads) =>
+    ThreadManagement.ThreadManagementService.of({
+      ...threads,
+      waitForThread: () => Effect.die("wait failed"),
+    }),
+  ),
+);
+
+/** Real orchestration, thread waits and Jira services; Jira's HTTP, Git and the launch are fake. */
 const layerFor = (
   name: string,
   client: HttpClient.HttpClient,
   launches: Ref.Ref<ReadonlyArray<ThreadLaunch.ThreadLaunchInput>>,
+  options: {
+    /** The projects the server knows; Billing and Payments when absent. */
+    readonly projects?: Ref.Ref<ReadonlyArray<Project>>;
+    readonly failWaits?: boolean;
+  } = {},
 ) =>
   JiraBreakdownService.layer.pipe(
     Layer.provideMerge(JiraBreakdownThreads.layer),
     Layer.provide(layerLaunch(launches)),
+    Layer.provide(options.failWaits === true ? layerFailingWaits : Layer.empty),
     Layer.provide(ThreadManagement.layer),
     Layer.provide(CommandReceiptStore.layer),
     Layer.provide(ServerSettings.layerTest({})),
     Layer.provide(
       Layer.mock(ProjectService.ProjectService)({
-        getById: (id) => Effect.succeed(id === projectId ? Option.some(project) : Option.none()),
+        getById: (id) =>
+          (options.projects === undefined
+            ? Effect.succeed<ReadonlyArray<Project>>([project, otherProject])
+            : Ref.get(options.projects)
+          ).pipe(Effect.map((known) => Option.fromNullishOr(known.find((p) => p.id === id)))),
       }),
     ),
+    Layer.provide(layerGit),
     Layer.provide(IdAllocator.layer),
     Layer.provideMerge(JiraService.layer),
     Layer.provideMerge(JiraUserCredentials.layer),
@@ -290,7 +327,14 @@ it.effect("starts one breakdown thread per issue while it runs and links the iss
         createdByUserId: ALICE,
       });
       assert.deepStrictEqual(launch!.modelSelection, modelSelection);
-      assert.deepStrictEqual(launch!.workspaceStrategy, { type: "root" });
+      // Its own worktree from the checkout's branch, named for the issue and clear of the
+      // breakdown branch already there.
+      assert.deepStrictEqual(launch!.workspaceStrategy, {
+        type: "worktree",
+        baseRef: "main",
+        branch: "jira/abc-12-breakdown-2",
+        startFromOrigin: false,
+      });
       const message = launch!.initialMessage!.text;
       assert.include(message, "## ABC-12: Import invoices from the bank");
       assert.include(message, "- Type: Story (standard level)");
@@ -378,15 +422,15 @@ it.effect("says in the thread why a breakdown ended without proposing anything",
       assert.equal(yield* breakdowns.follow(threadId), "no-proposal");
       const [row] = yield* breakdownRows;
       assert.include(row, { threadId, status: "no-proposal" });
-      assert.include(row!.reason, "without proposing");
+      assert.equal(row!.reason, "The agent gave no final message.");
       const notices = yield* orchestrator.getThreadRecords(threadId, ["turnItems"], {
         turnItemTypes: ["system_notice"],
       });
       assert.equal(notices.turnItems.length, 1);
       assert.include(notices.turnItems[0], { runId: run.id, status: "completed" });
-      assert.include(
+      assert.equal(
         notices.turnItems[0]!.type === "system_notice" ? notices.turnItems[0]!.message : "",
-        "The breakdown ended without proposing work packages.",
+        "The breakdown ended without proposing work packages. The agent gave no final message.",
       );
 
       // A breakdown that ended is not joined; pressing again starts another.
@@ -396,3 +440,87 @@ it.effect("says in the thread why a breakdown ended without proposing anything",
     }).pipe(Effect.provide(layerFor("breakdown-no-proposal", jira.client, launches)));
   });
 });
+
+it.effect(
+  "records a breakdown it cannot follow as failed, so the next press starts another",
+  () => {
+    const jira = makeJira();
+    return Effect.gen(function* () {
+      const launches = yield* Ref.make<ReadonlyArray<ThreadLaunch.ThreadLaunchInput>>([]);
+      yield* Effect.gen(function* () {
+        const breakdowns = yield* JiraBreakdownService.JiraBreakdownService;
+        yield* storeToken(ALICE, "alice");
+        const { threadId } = yield* breakdowns.start(ALICE, input);
+
+        assert.equal(yield* breakdowns.follow(threadId), "failed");
+        assert.deepStrictEqual(yield* breakdownRows, [
+          { threadId, status: "failed", reason: "T3 Code could not follow the run." },
+        ]);
+        const next = yield* breakdowns.start(ALICE, input);
+        assert.isTrue(next.started);
+        assert.notEqual(next.threadId, threadId);
+      }).pipe(
+        Effect.provide(
+          layerFor("breakdown-unfollowable", jira.client, launches, { failWaits: true }),
+        ),
+      );
+    });
+  },
+);
+
+it.effect("joins a running breakdown only from the project it runs in", () => {
+  const jira = makeJira();
+  return Effect.gen(function* () {
+    const launches = yield* Ref.make<ReadonlyArray<ThreadLaunch.ThreadLaunchInput>>([]);
+    const projects = yield* Ref.make<ReadonlyArray<Project>>([project, otherProject]);
+    yield* Effect.gen(function* () {
+      const breakdowns = yield* JiraBreakdownService.JiraBreakdownService;
+      yield* storeToken(ALICE, "alice");
+      const billing = yield* breakdowns.start(ALICE, input);
+      const payments = yield* breakdowns.start(ALICE, { ...input, projectId: otherProject.id });
+      assert.isTrue(payments.started);
+      assert.notEqual(payments.threadId, billing.threadId);
+      // Payments' checkout is detached, so its worktree starts from the commit.
+      assert.deepInclude((yield* Ref.get(launches))[1]!.workspaceStrategy, {
+        type: "worktree",
+        baseRef: "c0ffee",
+      });
+
+      // Joining needs nothing from the project, so a default model removed since is no obstacle.
+      yield* Ref.set(projects, [{ ...project, defaultModelSelection: null }, otherProject]);
+      assert.deepStrictEqual(yield* breakdowns.start(ALICE, input), {
+        threadId: billing.threadId,
+        started: false,
+      });
+      assert.equal((yield* Ref.get(launches)).length, 2);
+    }).pipe(Effect.provide(layerFor("breakdown-projects", jira.client, launches, { projects })));
+  });
+});
+
+it.effect(
+  "answers whether a thread is a breakdown once, and not at all when it cannot read",
+  () => {
+    const jira = makeJira();
+    return Effect.gen(function* () {
+      const launches = yield* Ref.make<ReadonlyArray<ThreadLaunch.ThreadLaunchInput>>([]);
+      yield* Effect.gen(function* () {
+        const breakdowns = yield* JiraBreakdownService.JiraBreakdownService;
+        const threads = yield* JiraBreakdownThreads.JiraBreakdownThreads;
+        const sql = yield* SqlClient.SqlClient;
+        yield* storeToken(ALICE, "alice");
+        const { threadId } = yield* breakdowns.start(ALICE, input);
+        const ordinary = ThreadId.make("thread:ordinary");
+        assert.isTrue(yield* threads.isBreakdownThread(threadId));
+
+        yield* sql`ALTER TABLE fork_jira_breakdowns RENAME TO fork_jira_breakdowns_away`;
+        // Kept from before the table went away.
+        assert.isTrue(yield* threads.isBreakdownThread(threadId));
+        // Unknown rather than false, so a caller can tell a failed read from an ordinary thread.
+        assert.isUndefined(yield* threads.isBreakdownThread(ordinary));
+        yield* sql`ALTER TABLE fork_jira_breakdowns_away RENAME TO fork_jira_breakdowns`;
+        // The failure was not kept.
+        assert.isFalse(yield* threads.isBreakdownThread(ordinary));
+      }).pipe(Effect.provide(layerFor("breakdown-threads-cache", jira.client, launches)));
+    });
+  },
+);
