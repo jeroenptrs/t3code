@@ -164,6 +164,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.jiraTransitionIssue]: AuthOrchestrationOperateScope,
   [WS_METHODS.jiraSetSprint]: AuthOrchestrationOperateScope,
   [WS_METHODS.jiraSetStoryPoints]: AuthOrchestrationOperateScope,
+  // A breakdown starts a thread whose agent runs on this environment's providers.
+  [WS_METHODS.jiraStartBreakdown]: AuthOrchestrationOperateScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,
