@@ -1,21 +1,17 @@
-import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { jiraIssueKeyOf } from "@t3tools/client-runtime/state/jira";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, JiraIssueKey, ScopedThreadRef } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
 import { ChevronDownIcon, ListTreeIcon } from "lucide-react";
 
 import { JIRA_ISSUES_PANEL_REF } from "~/rightPanelStore";
 import { useProjects, useThreadShell } from "~/state/entities";
-import { jiraEnvironment, useJiraCapabilities } from "~/state/jira";
 
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Menu, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
 import { JIRA_BREAKDOWN_NEEDS_TOKEN, jiraBreakdownProjects } from "./jiraBreakdown.logic";
-import { jiraIssueWriteAccess } from "./jiraIssueWrite.logic";
+import type { JiraIssueWriteAccess } from "./jiraIssueWrite.logic";
 import { useBreakDownJiraIssue } from "./useBreakDownJiraIssue";
 
 /** The projects an issue's thread can start in, as menu items. */
@@ -37,24 +33,23 @@ export function JiraProjectMenuItems(props: {
 /**
  * "Break down" for an issue shown in a right panel: beside a thread it starts in that thread's
  * project; on the Jira pages the user picks one, as starting a thread from the issue does.
+ * `access` is the panel's, from `jiraIssueWriteAccess` with the start-breakdown grant.
  */
 export function JiraIssueBreakdownAction(props: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
   issue: JiraIssueKey;
+  access: JiraIssueWriteAccess;
 }) {
-  const { environmentId, threadRef, issue } = props;
-  const capabilities = useJiraCapabilities(environmentId);
-  const canOperate = useAtomValue(jiraEnvironment.startBreakdown.permissionAtom(environmentId));
-  const access = jiraIssueWriteAccess({ capabilities, canOperate, site: issue.site });
+  const { environmentId, threadRef, issue, access } = props;
   const besideThread = scopedThreadKey(threadRef) !== scopedThreadKey(JIRA_ISSUES_PANEL_REF);
   const shell = useThreadShell(besideThread ? threadRef : null);
   const allProjects = useProjects();
-  const { breakDown, pendingIssueId } = useBreakDownJiraIssue();
+  const { breakDown, isPending } = useBreakDownJiraIssue();
   // Beside a thread whose shell has not arrived, there is no project to offer yet.
   if (access === "hidden" || (besideThread && shell === null)) return null;
 
-  const pending = pendingIssueId === jiraIssueKeyOf(issue);
+  const pending = isPending(issue);
   const label = (
     <>
       {pending ? <Spinner aria-hidden size="sm" /> : <ListTreeIcon aria-hidden />}
@@ -109,18 +104,5 @@ export function JiraIssueBreakdownAction(props: {
         </MenuGroup>
       </MenuPopup>
     </Menu>
-  );
-}
-
-/** Where to add the token a breakdown needs, under the panel's own controls. */
-export function JiraBreakdownNeedsTokenNote() {
-  return (
-    <p className="text-muted-foreground text-xs">
-      Breaking this issue down needs your Jira token in{" "}
-      <Link to="/settings/account" className="underline">
-        Settings → Account
-      </Link>
-      , since you approve what it proposes with your own account.
-    </p>
   );
 }
