@@ -56,6 +56,15 @@ export const sprintSuggestionPrefixes = (
     ),
   ].slice(0, limit);
 
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Autocomplete matches the start of any word, so "ABC" also finds "ABCD Sprint 3". A sprint
+ * counts as named for the prefix only when the prefix is whole words of its name.
+ */
+export const sprintNameHasPrefix = (name: string, prefix: string): boolean =>
+  new RegExp(`(?:^|\\s)${escapeRegExp(prefix)}(?![\\p{L}\\p{N}])`, "iu").test(name);
+
 const STATE_ORDER = { active: 0, future: 1, closed: 2 } as const;
 
 const timeOrNull = (iso: string | null) => {
