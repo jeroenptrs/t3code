@@ -144,6 +144,9 @@ import {
   JiraProposalDecisionResult,
   JiraSearchInput,
   JiraSearchResult,
+  JiraSetSprintInput,
+  JiraSetSprintResult,
+  JiraSetStoryPointsInput,
   JiraSprintsInput,
   JiraSprintsResult,
   JiraTransitionIssueInput,
@@ -634,6 +637,9 @@ export const WS_METHODS = {
   // Sprint planning reads, as the caller
   jiraSprints: "jira.sprints",
   jiraVelocity: "jira.velocity",
+  // Sprint planning writes, as the caller with their personal token
+  jiraSetSprint: "jira.setSprint",
+  jiraSetStoryPoints: "jira.setStoryPoints",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1356,6 +1362,19 @@ const WsJiraSprintsRpc = Rpc.make(WS_METHODS.jiraSprints, {
 const WsJiraVelocityRpc = Rpc.make(WS_METHODS.jiraVelocity, {
   payload: JiraVelocityInput,
   success: JiraVelocityResult,
+  error: JiraRpcError,
+});
+
+/** Needs the caller's personal token; moves issues into a sprint or back to the backlog. */
+const WsJiraSetSprintRpc = Rpc.make(WS_METHODS.jiraSetSprint, {
+  payload: JiraSetSprintInput,
+  success: JiraSetSprintResult,
+  error: JiraRpcError,
+});
+
+/** Needs the caller's personal token. */
+const WsJiraSetStoryPointsRpc = Rpc.make(WS_METHODS.jiraSetStoryPoints, {
+  payload: JiraSetStoryPointsInput,
   error: JiraRpcError,
 });
 
@@ -2124,6 +2143,8 @@ export const WsJiraRpcGroup = RpcGroup.make(
   WsJiraTransitionIssueRpc,
   WsJiraSprintsRpc,
   WsJiraVelocityRpc,
+  WsJiraSetSprintRpc,
+  WsJiraSetStoryPointsRpc,
 ).middleware(RpcScopeAuthorization);
 
 /** Every RPC except those in `WsJiraRpcGroup`. */

@@ -74,6 +74,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Commenting on or moving an issue writes to Jira as the caller, like approving a proposal.
   [WS_METHODS.jiraAddComment]: AuthOrchestrationOperateScope,
   [WS_METHODS.jiraTransitionIssue]: AuthOrchestrationOperateScope,
+  // Planning a sprint writes each issue's sprint or story points as the caller.
+  [WS_METHODS.jiraSetSprint]: AuthOrchestrationOperateScope,
+  [WS_METHODS.jiraSetStoryPoints]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
