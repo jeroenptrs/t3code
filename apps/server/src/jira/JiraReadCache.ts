@@ -17,6 +17,9 @@ const JIRA_READ_TTL = {
   fields: Duration.hours(1),
   myself: Duration.minutes(5),
   createMeta: Duration.seconds(60),
+  sprints: Duration.seconds(60),
+  // Closed sprints change rarely, and a velocity read pages through hundreds of issues.
+  velocity: Duration.minutes(5),
 } as const;
 export type JiraReadKind = keyof typeof JIRA_READ_TTL;
 
