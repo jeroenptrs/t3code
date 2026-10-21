@@ -1,3 +1,4 @@
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Random from "effect/Random";
@@ -51,6 +52,8 @@ import * as DiffWalkthroughRunService from "./diffWalkthrough/DiffWalkthroughRun
 import * as DiffWalkthroughService from "./diffWalkthrough/DiffWalkthroughService.ts";
 import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.ts";
 import * as JiraApi from "./jira/JiraApi.ts";
+import * as JiraBreakdownService from "./jira/JiraBreakdownService.ts";
+import * as JiraBreakdownThreads from "./jira/JiraBreakdownThreads.ts";
 import * as JiraBranchLinkService from "./jira/JiraBranchLinkService.ts";
 import * as JiraIssueSyncReactor from "./jira/JiraIssueSyncReactor.ts";
 import * as JiraProposals from "./jira/JiraProposals.ts";
@@ -421,6 +424,13 @@ const layerJiraWorkers = Layer.effectDiscard(
   Layer.provide(layerJiraService),
 );
 
+// Fork-only: breakdown threads the server starts and follows. One instance, so two clients
+// pressing at once start one thread.
+const layerJiraBreakdowns = JiraBreakdownService.layer.pipe(
+  Layer.provide(layerJiraService),
+  Layer.provide(IdAllocator.layer),
+);
+
 const layerDiffWalkthroughWriter = DiffWalkthroughWriter.layer.pipe(
   Layer.provide(DiffWalkthroughChangeReader.layer),
 );
@@ -578,8 +588,9 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
 
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   Layer.provide(layerScheduledTaskWebhookOrigin),
-  // Fork-only: provider sessions get the "jira" MCP capability when Jira is configured.
-  Layer.provide(JiraIdentities.layer),
+  // Fork-only: provider sessions get the "jira" MCP capability when Jira is configured, and
+  // "jira-breakdown" in threads the server started as breakdowns.
+  Layer.provide(Layer.merge(JiraIdentities.layer, JiraBreakdownThreads.layer)),
   Layer.provide(ProviderEventIngestor.layerAnalytics),
   Layer.provide(layerCheckpointStore),
   Layer.provide(layerGitWorkflow),
@@ -818,6 +829,8 @@ const layerMakeRoutes = Layer.mergeAll(
   // One instance for both transports, so a walkthrough an agent writes over MCP reaches every
   // WebSocket subscriber.
   Layer.provide(layerDiffWalkthroughService),
+  // Started over the WebSocket; shares the Jira services below.
+  Layer.provide(layerJiraBreakdowns),
   // One instance, so every client reads through the same Jira caches.
   Layer.provide(layerJiraService),
   // The same activity instance RunExecutionService reports to, by layer memoization.
