@@ -190,7 +190,16 @@ describe("select options", () => {
       { id: "1", name: "Story", subtask: false },
       { id: "2", name: "Bug", subtask: false },
     ],
-    sprints: [{ id: 7, name: "Sprint 7", state: "active" }],
+    sprints: [
+      {
+        id: 7,
+        name: "Sprint 7",
+        state: "active",
+        startDate: null,
+        endDate: null,
+        completeDate: null,
+      },
+    ],
   };
 
   it("keeps the draft's own issue type when the project lacks it", () => {
