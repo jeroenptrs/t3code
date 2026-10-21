@@ -1,11 +1,11 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { JiraIssueSummary } from "@t3tools/contracts";
-import { MessageSquarePlusIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { ListTreeIcon, MessageSquarePlusIcon } from "lucide-react";
 import { memo } from "react";
 
 import { cn } from "~/lib/utils";
 
-import { ProjectFavicon } from "../ProjectFavicon";
 import {
   PULL_REQUEST_ROW_CLASS,
   PULL_REQUEST_ROW_NUMBER_CLASS,
@@ -13,8 +13,21 @@ import {
 } from "../pullRequest/PullRequestListRow";
 import { PullRequestActorAvatar } from "../pullRequest/pullRequestPresentation";
 import { Button } from "../ui/button";
-import { Menu, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuItemLabel,
+  MenuPopup,
+  MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../ui/menu";
 import { Spinner } from "../ui/spinner";
+import { JiraProjectMenuItems } from "./JiraBreakdownControls";
 import { JiraStatusBadge } from "./jiraPresentation";
 
 function JiraIssueRowImpl({
@@ -22,16 +35,21 @@ function JiraIssueRowImpl({
   selected,
   projects,
   starting,
+  breakdown,
   onSelect,
   onStartThread,
+  onBreakDown,
 }: {
   issue: JiraIssueSummary;
   selected: boolean;
   /** Where a thread for this issue can start: the projects on the Jira environment. */
   projects: ReadonlyArray<EnvironmentProject>;
+  /** A thread from this issue or its breakdown is starting. */
   starting: boolean;
+  breakdown: "enabled" | "needs-token" | "hidden";
   onSelect: (issue: JiraIssueSummary) => void;
   onStartThread: (issue: JiraIssueSummary, project: EnvironmentProject) => void;
+  onBreakDown: (issue: JiraIssueSummary, project: EnvironmentProject) => void;
 }) {
   const sprintNames = issue.sprints.map((sprint) => sprint.name).join(", ");
   return (
@@ -92,8 +110,14 @@ function JiraIssueRowImpl({
             <Button
               variant="ghost"
               size="icon-xs"
-              aria-label={`Start thread from ${issue.key}`}
-              title="Start thread from issue"
+              aria-label={
+                breakdown === "hidden"
+                  ? `Start thread from ${issue.key}`
+                  : `Start thread from or break down ${issue.key}`
+              }
+              title={
+                breakdown === "hidden" ? "Start thread from issue" : "Start thread or break down"
+              }
               disabled={starting}
             />
           }
@@ -103,20 +127,37 @@ function JiraIssueRowImpl({
         <MenuPopup align="end" side="bottom">
           <MenuGroup>
             <MenuGroupLabel>Start thread in</MenuGroupLabel>
-            {projects.length === 0 ? (
-              <MenuItem disabled>No projects on this server</MenuItem>
-            ) : (
-              projects.map((project) => (
-                <MenuItem
-                  key={`${project.environmentId}:${project.id}`}
-                  onClick={() => onStartThread(issue, project)}
-                >
-                  <ProjectFavicon project={project} className="size-3.5" />
-                  <span className="min-w-0 truncate">{project.title}</span>
-                </MenuItem>
-              ))
-            )}
+            <JiraProjectMenuItems
+              projects={projects}
+              onPick={(project) => onStartThread(issue, project)}
+            />
           </MenuGroup>
+          {breakdown === "enabled" ? (
+            <>
+              <MenuSeparator />
+              <MenuSub>
+                <MenuSubTrigger>
+                  <ListTreeIcon aria-hidden />
+                  <MenuItemLabel>Break down in</MenuItemLabel>
+                </MenuSubTrigger>
+                <MenuSubPopup>
+                  <JiraProjectMenuItems
+                    projects={projects}
+                    onPick={(project) => onBreakDown(issue, project)}
+                  />
+                </MenuSubPopup>
+              </MenuSub>
+            </>
+          ) : breakdown === "needs-token" ? (
+            <>
+              <MenuSeparator />
+              {/* Breaking down needs the user's token, since they approve what it proposes. */}
+              <MenuItem render={<Link to="/settings/account" />}>
+                <ListTreeIcon aria-hidden />
+                <MenuItemLabel>Add your Jira token to break down</MenuItemLabel>
+              </MenuItem>
+            </>
+          ) : null}
         </MenuPopup>
       </Menu>
     </div>
