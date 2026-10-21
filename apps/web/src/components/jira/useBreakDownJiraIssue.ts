@@ -26,15 +26,21 @@ export function useBreakDownJiraIssue() {
     // Failures are shown as a toast below.
     reportFailure: false,
   });
-  const [pendingIssueId, setPendingIssueId] = useState<string | null>(null);
+  // Per issue and project, so one start ending does not clear another's.
+  const [pendingStarts, setPendingStarts] = useState<ReadonlySet<string>>(() => new Set());
 
   const breakDown = async (issue: JiraIssueKey, projectRef: ScopedProjectRef) => {
-    setPendingIssueId(jiraIssueKeyOf(issue));
+    const startKey = pendingStartKey(issue, projectRef);
+    setPendingStarts((current) => new Set(current).add(startKey));
     const result = await startBreakdown({
       environmentId: projectRef.environmentId,
       input: { site: issue.site, key: issue.key, projectId: projectRef.projectId },
     });
-    setPendingIssueId(null);
+    setPendingStarts((current) => {
+      const next = new Set(current);
+      next.delete(startKey);
+      return next;
+    });
     if (result._tag === "Success") {
       if (!result.value.started) {
         toastManager.add({
@@ -58,5 +64,17 @@ export function useBreakDownJiraIssue() {
     });
   };
 
-  return { breakDown, pendingIssueId };
+  /** Whether a start of the issue is in flight, in any project. */
+  const isPending = (issue: JiraIssueKey) => {
+    const issuePrefix = `${jiraIssueKeyOf(issue)}\u0000`;
+    for (const startKey of pendingStarts) {
+      if (startKey.startsWith(issuePrefix)) return true;
+    }
+    return false;
+  };
+
+  return { breakDown, isPending };
 }
+
+const pendingStartKey = (issue: JiraIssueKey, projectRef: ScopedProjectRef) =>
+  `${jiraIssueKeyOf(issue)}\u0000${projectRef.environmentId}\u0000${projectRef.projectId}`;

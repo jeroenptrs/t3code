@@ -39,7 +39,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
-import { JiraBreakdownNeedsTokenNote, JiraIssueBreakdownAction } from "./JiraBreakdownControls";
+import { JiraIssueBreakdownAction } from "./JiraBreakdownControls";
 import { personalCredentialForSite } from "./jiraIssueList.logic";
 import { jiraCommentToPost, jiraIssueWriteAccess } from "./jiraIssueWrite.logic";
 import { jiraProposalFailureMessage } from "./jiraProposal.logic";
@@ -238,6 +238,7 @@ function JiraIssueDetailContent(props: {
             environmentId={environmentId}
             threadRef={threadRef}
             issue={detail}
+            access={breakdownAccess}
           />
           <Button
             variant="ghost"
@@ -279,7 +280,6 @@ function JiraIssueDetailContent(props: {
             <MetaRow label="Updated">{formatRelativeTimeLabel(detail.updated)}</MetaRow>
           ) : null}
         </dl>
-        {breakdownAccess === "needs-token" ? <JiraBreakdownNeedsTokenNote /> : null}
       </header>
 
       <DetailSection title="Description">
@@ -373,8 +373,12 @@ function JiraIssueDetailContent(props: {
         {writeAccess === "enabled" ? (
           <JiraCommentComposer environmentId={environmentId} detail={detail} />
         ) : writeAccess === "needs-token" ? (
+          // The panel's one token note, covering the disabled "Break down" too.
           <p className="text-muted-foreground text-xs">
-            Commenting and moving issues as yourself needs your Jira token in{" "}
+            {breakdownAccess === "needs-token"
+              ? "Commenting, moving, and breaking down issues as yourself needs"
+              : "Commenting and moving issues as yourself needs"}{" "}
+            your Jira token in{" "}
             <Link to="/settings/account" className="underline">
               Settings → Account
             </Link>
