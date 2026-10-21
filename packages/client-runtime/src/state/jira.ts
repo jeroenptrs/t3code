@@ -3,7 +3,7 @@
  * personal token on its site; thread shells carry only each linked issue's key, summary and status
  * category, so lists render from those and the detail query runs only where an issue is actually
  * opened. A client writes to Jira as the signed-in user, with their personal token: by approving an
- * agent's proposal, or by commenting and moving an issue directly.
+ * agent's proposal, by commenting and moving an issue directly, or by planning a sprint.
  */
 import {
   JIRA_ISSUE_KEY_PATTERN,
@@ -98,6 +98,37 @@ export function createJiraEnvironmentAtoms<R, E>(
     issueSkips.mark(target.input);
     registry.refresh(issue(target));
   };
+  const sprintsSkips = createJiraCacheSkips();
+  const sprints = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:jira:sprints",
+    tag: WS_METHODS.jiraSprints,
+    staleTimeMs: 5 * 60_000,
+    refreshTrigger,
+    execute: (input) =>
+      request(
+        WS_METHODS.jiraSprints,
+        sprintsSkips.take(input) ? { ...input, refresh: true } : input,
+      ).pipe(Effect.catchTags({ EnvironmentAuthorizationError: Effect.die })),
+  });
+  const refreshSprints = (
+    registry: AtomRegistry.AtomRegistry,
+    target: Parameters<typeof sprints>[0],
+  ) => {
+    sprintsSkips.mark(target.input);
+    registry.refresh(sprints(target));
+  };
+  const velocitySkips = createJiraCacheSkips();
+  const velocity = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:jira:velocity",
+    tag: WS_METHODS.jiraVelocity,
+    staleTimeMs: 5 * 60_000,
+    refreshTrigger,
+    execute: (input) =>
+      request(
+        WS_METHODS.jiraVelocity,
+        velocitySkips.take(input) ? { ...input, refresh: true } : input,
+      ).pipe(Effect.catchTags({ EnvironmentAuthorizationError: Effect.die })),
+  });
   return {
     capabilities: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:jira:capabilities",
@@ -135,6 +166,20 @@ export function createJiraEnvironmentAtoms<R, E>(
       staleTimeMs: 5 * 60_000,
       refreshTrigger,
     }),
+    /** A project's active and future sprints, including empty ones Jira only autocompletes. */
+    sprints,
+    /** Re-reads a project's sprints past the server's cache, for an explicit refresh. */
+    refreshSprints,
+    /** Points of a project's last closed sprints, from the issues the caller can see. */
+    velocity,
+    /** Re-reads velocity past the server's cache, for an explicit refresh. */
+    refreshVelocity: (
+      registry: AtomRegistry.AtomRegistry,
+      target: Parameters<typeof velocity>[0],
+    ) => {
+      velocitySkips.mark(target.input);
+      registry.refresh(velocity(target));
+    },
     /**
      * Approves or rejects a proposal. Approval waits for the Jira write, so one decision per
      * proposal is in flight; the issues it touched are re-read where they are shown.
@@ -180,6 +225,39 @@ export function createJiraEnvironmentAtoms<R, E>(
       tag: WS_METHODS.jiraTransitionIssue,
       concurrency: {
         mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.site.toLowerCase(), input.key.toUpperCase()]),
+      },
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() =>
+          refreshIssue(registry, { environmentId, input: { site: input.site, key: input.key } }),
+        ),
+    }),
+    /**
+     * Puts issues in a sprint, or back in the backlog, as the caller. The moved issues are re-read
+     * where they are open, and their projects' sprints, since an issue can be the first to name a
+     * sprint. Searches are left to the view that ran them: only it knows which sections held the
+     * issues, and the server has already dropped its cached searches for the writer.
+     */
+    setSprint: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:jira:set-sprint",
+      tag: WS_METHODS.jiraSetSprint,
+      onSuccess: ({ environmentId, input }, registry, result) =>
+        Effect.sync(() => {
+          for (const key of result.updated) {
+            refreshIssue(registry, { environmentId, input: { site: input.site, key } });
+          }
+          for (const projectKey of new Set(result.updated.map(jiraProjectKeyOf))) {
+            refreshSprints(registry, { environmentId, input: { site: input.site, projectKey } });
+          }
+        }),
+    }),
+    /** Sets or clears an issue's estimate as the caller; the issue is re-read where it is open. */
+    setStoryPoints: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:jira:set-story-points",
+      tag: WS_METHODS.jiraSetStoryPoints,
+      concurrency: {
+        mode: "serial",
         key: ({ environmentId, input }) =>
           JSON.stringify([environmentId, input.site.toLowerCase(), input.key.toUpperCase()]),
       },
@@ -251,6 +329,11 @@ export function jiraIssueKeyOf(issue: JiraIssueKey): string {
 
 export function jiraIssueKeysEqual(left: JiraIssueKey, right: JiraIssueKey): boolean {
   return jiraIssueKeyOf(left) === jiraIssueKeyOf(right);
+}
+
+/** The project an issue key belongs to: `ABC` for `ABC-123`. */
+export function jiraProjectKeyOf(issueKey: string): string {
+  return issueKey.slice(0, issueKey.lastIndexOf("-")).toUpperCase();
 }
 
 export function jiraIssueUrl(issue: JiraIssueKey): string {
