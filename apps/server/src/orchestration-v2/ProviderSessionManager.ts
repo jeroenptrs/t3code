@@ -335,7 +335,7 @@ export const layerWithOptions = (
       const jiraBreakdowns = yield* Effect.serviceOption(JiraBreakdownThreads.JiraBreakdownThreads);
       const isJiraBreakdownThread = (threadId: ThreadId) =>
         Option.match(jiraBreakdowns, {
-          onNone: () => Effect.succeed(false),
+          onNone: () => Effect.succeed<boolean | undefined>(false),
           onSome: (breakdowns) => breakdowns.isBreakdownThread(threadId),
         });
       const eventSink = yield* EventSink.EventSinkV2;
@@ -472,8 +472,10 @@ export const layerWithOptions = (
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
                 if (jiraConfigured) capabilities.add("jira");
-                const jiraBreakdown = yield* isJiraBreakdownThread(threadId);
-                if (jiraBreakdown) capabilities.add("jira-breakdown");
+                const knownJiraBreakdown = yield* isJiraBreakdownThread(threadId);
+                // When the lookup fails, the existing credential's own answer stands, so a
+                // transient error neither revokes nor grants the breakdown instructions.
+                let jiraBreakdown = knownJiraBreakdown ?? false;
                 const existing = yield* mcpSessions.read(threadId);
                 if (existing !== undefined) {
                   // Reserve before the async resolve so a release cannot
@@ -491,6 +493,9 @@ export const layerWithOptions = (
                         ),
                       ),
                     );
+                  if (knownJiraBreakdown === undefined && resolved?.thread.threadId === threadId) {
+                    jiraBreakdown = resolved.capabilities.has("jira-breakdown");
+                  }
                   if (
                     resolved !== undefined &&
                     resolved.thread.threadId === threadId &&
@@ -502,6 +507,13 @@ export const layerWithOptions = (
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
+                }
+                if (jiraBreakdown) capabilities.add("jira-breakdown");
+                if (knownJiraBreakdown === undefined) {
+                  yield* Effect.logWarning(
+                    "Issuing an MCP credential without knowing whether the thread is a Jira breakdown",
+                    { threadId, jiraBreakdown },
+                  );
                 }
                 yield* mcpSessionRegistry.revokeThread(threadId);
                 const credential = yield* mcpSessionRegistry.issue({
