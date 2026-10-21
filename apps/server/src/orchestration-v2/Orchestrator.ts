@@ -636,6 +636,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
       return command.parentThreadId;
     case "secret_request.record":
     case "jira_proposal.record":
+    case "system_notice.record":
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
@@ -7979,6 +7980,70 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  /**
+   * Fork-only. Adds a server notice to a run, which may have ended. The notice is final when
+   * recorded; recording the same item again keeps the first.
+   */
+  const dispatchSystemNoticeRecord = Effect.fn("orchestrationV2.dispatch.systemNoticeRecord")(
+    function* (
+      command: Extract<OrchestrationV2InternalCommand, { readonly type: "system_notice.record" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const projectionError = (cause: unknown) =>
+        new OrchestratorProjectionError({ threadId: command.threadId, cause });
+      const projection = yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs", "attempts", "providerTurns"])
+        .pipe(Effect.mapError(projectionError));
+      const existing = yield* projectionStore
+        .getTurnItem({ threadId: command.threadId, itemId: command.turnItemId })
+        .pipe(Effect.mapError(projectionError));
+      const refuse = (cause: string) =>
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause,
+        });
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (run === undefined || run.rootNodeId !== command.nodeId) {
+        return yield* refuse(`Node ${command.nodeId} is not the root of run ${command.runId}.`);
+      }
+      if (existing !== null && (existing.type !== "system_notice" || existing.runId !== run.id)) {
+        return yield* refuse(`Turn item ${command.turnItemId} is not a notice in this run.`);
+      }
+      const now = yield* DateTime.now;
+      const turnItem: OrchestrationV2TurnItem = existing ?? {
+        id: command.turnItemId,
+        threadId: command.threadId,
+        runId: command.runId,
+        nodeId: command.nodeId,
+        providerThreadId: run.providerThreadId,
+        providerTurnId: providerTurnForRun(projection, run)?.id ?? null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: yield* nextTurnItemOrdinal(projection),
+        status: "completed",
+        title: command.message,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "system_notice",
+        message: command.message,
+      };
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId: command.runId,
+        nodeId: command.nodeId,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: turnItem,
+      });
+    },
+  );
+
   const dispatchRuntimeRequestRespond = Effect.fn("Orchestrator.dispatchRuntimeRequestRespond")(
     function* (
       command: Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }>,
@@ -11959,6 +12024,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "jira_proposal.record":
         yield* dispatchJiraProposalRecord(command, events);
+        break;
+      case "system_notice.record":
+        yield* dispatchSystemNoticeRecord(command, events);
         break;
       default:
         return yield* dispatchUnsupported(command);
