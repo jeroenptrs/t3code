@@ -163,6 +163,13 @@ export const JIRA_ISSUES_PANEL_REF = scopeThreadRef(
   ThreadId.make("jira-issues-panel"),
 );
 
+let jiraIssuesPanelOnSprintPlanning = false;
+
+/** Fork-only. Sprint planning shows the `/jira` panel too, and its closed tabs reopen there. */
+export function setJiraIssuesPanelOnSprintPlanning(shown: boolean) {
+  jiraIssuesPanelOnSprintPlanning = shown;
+}
+
 const isPullRequestsPanelKey = (threadKey: string) =>
   threadKey.endsWith(":pull-requests-panel") ||
   threadKey.endsWith(":issues-panel") ||
@@ -308,7 +315,14 @@ const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
 const singletonSurface = (
   kind: Exclude<
     RightPanelKind,
-    "file" | "preview" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread" | "jira-issue"
+    | "file"
+    | "preview"
+    | "terminal"
+    | "pull-request"
+    | "issue"
+    | "thread"
+    | "linked-thread"
+    | "jira-issue"
   >,
 ): RightPanelSurface => {
   switch (kind) {
@@ -1482,7 +1496,14 @@ useRightPanelStore.subscribe((next, previous) => {
         (surface.kind === "preview" && surface.resourceId !== null)
       )
         continue;
-      useClosedViewStore.getState().remember({ kind: "panel-tab", threadRef, surface });
+      useClosedViewStore.getState().remember({
+        kind: "panel-tab",
+        threadRef,
+        surface,
+        ...(jiraIssuesPanelOnSprintPlanning && threadKey === scopedThreadKey(JIRA_ISSUES_PANEL_REF)
+          ? { page: "sprint-planning" as const }
+          : {}),
+      });
     }
   }
 });

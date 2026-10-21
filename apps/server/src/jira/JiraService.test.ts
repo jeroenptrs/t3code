@@ -1314,58 +1314,61 @@ it.effect("reports an issue Jira refuses to move while the others move", () => {
   );
 });
 
-it.effect("has the caller's next issue, search, sprints and velocity reads ask Jira again", () => {
-  const jira = makePlanningJira();
-  return run(
-    config,
-    jira.client,
-    Effect.gen(function* () {
-      yield* storeToken(ALICE, "alice");
-      const service = yield* JiraService.JiraService;
-      const as = { actingUserId: ALICE };
-      const readAll = Effect.all([
-        service.issue({ site: SITE, key: "ABC-1" }, as),
-        service.search({ jql: "assignee = currentUser()" }, as),
-        service.sprints({ site: SITE, projectKey: "ABC" }, as),
-        service.velocity({ site: SITE, projectKey: "ABC" }, as),
-        // The reader's own cached search is left to expire.
-        service.search({ jql: "assignee = currentUser()" }),
-      ]);
-      const counts = () => {
-        const reads = jira.requests.filter((request) => request.method !== "PUT");
-        const as = (who: string) => reads.filter((request) => request.authorization === who);
-        const searches = (who: string, jql: string) =>
-          as(who).filter((request) => (request.body as { jql?: string } | undefined)?.jql === jql)
-            .length;
-        return {
-          issue: as(basic("alice")).filter((request) => request.url.endsWith("/issue/ABC-1"))
-            .length,
-          search: searches(basic("alice"), "assignee = currentUser()"),
-          sprints: as(basic("alice")).filter((request) =>
-            request.url.endsWith("/autocompletedata/suggestions"),
-          ).length,
-          velocity: as(basic("alice")).filter((request) =>
-            (request.body as { jql?: string } | undefined)?.jql?.includes("closedSprints()"),
-          ).length,
-          reader: searches("Bearer secret-token", "assignee = currentUser()"),
+it.effect(
+  "has the caller's next issue and search reads ask Jira again, not sprints or velocity",
+  () => {
+    const jira = makePlanningJira();
+    return run(
+      config,
+      jira.client,
+      Effect.gen(function* () {
+        yield* storeToken(ALICE, "alice");
+        const service = yield* JiraService.JiraService;
+        const as = { actingUserId: ALICE };
+        const readAll = Effect.all([
+          service.issue({ site: SITE, key: "ABC-1" }, as),
+          service.search({ jql: "assignee = currentUser()" }, as),
+          service.sprints({ site: SITE, projectKey: "ABC" }, as),
+          service.velocity({ site: SITE, projectKey: "ABC" }, as),
+          // The reader's own cached search is left to expire.
+          service.search({ jql: "assignee = currentUser()" }),
+        ]);
+        const counts = () => {
+          const reads = jira.requests.filter((request) => request.method !== "PUT");
+          const as = (who: string) => reads.filter((request) => request.authorization === who);
+          const searches = (who: string, jql: string) =>
+            as(who).filter((request) => (request.body as { jql?: string } | undefined)?.jql === jql)
+              .length;
+          return {
+            issue: as(basic("alice")).filter((request) => request.url.endsWith("/issue/ABC-1"))
+              .length,
+            search: searches(basic("alice"), "assignee = currentUser()"),
+            sprints: as(basic("alice")).filter((request) =>
+              request.url.endsWith("/autocompletedata/suggestions"),
+            ).length,
+            velocity: as(basic("alice")).filter((request) =>
+              (request.body as { jql?: string } | undefined)?.jql?.includes("closedSprints()"),
+            ).length,
+            reader: searches("Bearer secret-token", "assignee = currentUser()"),
+          };
         };
-      };
 
-      yield* readAll;
-      yield* readAll;
-      const before = counts();
-      expect(before).toEqual({ issue: 1, search: 1, sprints: 1, velocity: 1, reader: 1 });
+        yield* readAll;
+        yield* readAll;
+        const before = counts();
+        expect(before).toEqual({ issue: 1, search: 1, sprints: 1, velocity: 1, reader: 1 });
 
-      yield* service.setSprint(ALICE, { site: SITE, keys: ["ABC-1"], sprintId: 8 });
-      yield* readAll;
-      expect(counts()).toEqual({ issue: 2, search: 2, sprints: 2, velocity: 2, reader: 1 });
+        yield* service.setSprint(ALICE, { site: SITE, keys: ["ABC-1"], sprintId: 8 });
+        yield* readAll;
+        expect(counts()).toEqual({ issue: 2, search: 2, sprints: 1, velocity: 1, reader: 1 });
 
-      yield* service.setStoryPoints(ALICE, { site: SITE, key: "ABC-1", storyPoints: 5 });
-      yield* readAll;
-      expect(counts()).toEqual({ issue: 3, search: 3, sprints: 3, velocity: 3, reader: 1 });
-    }),
-  );
-});
+        yield* service.setStoryPoints(ALICE, { site: SITE, key: "ABC-1", storyPoints: 5 });
+        yield* readAll;
+        expect(counts()).toEqual({ issue: 3, search: 3, sprints: 1, velocity: 1, reader: 1 });
+      }),
+    );
+  },
+);
 
 it.effect("sets and clears story points as the caller", () => {
   const jira = makePlanningJira();
