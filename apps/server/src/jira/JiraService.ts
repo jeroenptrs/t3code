@@ -893,26 +893,17 @@ const make = Effect.gen(function* () {
   });
 
   /**
-   * After a write as `identity`, its reads the write may have changed: the issues, their
-   * projects' sprints and velocity, and every search, since list pages and planning sections
-   * are JQL searches. Other identities' reads, such as the service reader's, are left to expire.
+   * After a write as `identity`, its reads the write changed: the issues, and every search, since
+   * list pages and planning sections are JQL searches. Sprints and velocity stay: moving issues
+   * between open sprints or the backlog changes neither the list of sprints nor closed sprints'
+   * points. Other identities' reads, such as the service reader's, are left to expire.
    */
-  const invalidateWritten = (identity: JiraServerIdentity, keys: ReadonlyArray<string>) => {
-    const projectKeys = new Set(keys.map((key) => key.slice(0, key.lastIndexOf("-"))));
-    return Effect.all(
+  const invalidateWritten = (identity: JiraServerIdentity, keys: ReadonlyArray<string>) =>
+    Effect.all(
       [
         Effect.forEach(keys, (key) => cache.invalidate("issue", cacheKey(identity, key)), {
           discard: true,
         }),
-        Effect.forEach(
-          projectKeys,
-          (projectKey) =>
-            Effect.all([
-              cache.invalidate("sprints", cacheKey(identity, projectKey)),
-              cache.invalidate("velocity", cacheKey(identity, projectKey)),
-            ]),
-          { discard: true },
-        ),
         cache.invalidateMatching(
           "search",
           (key) => (JSON.parse(key) as ReadonlyArray<unknown>)[0] === identity.name,
@@ -920,7 +911,6 @@ const make = Effect.gen(function* () {
       ],
       { discard: true },
     );
-  };
 
   const setSprint: JiraService["Service"]["setSprint"] = Effect.fn("JiraService.setSprint")(
     function* (userId, input) {
