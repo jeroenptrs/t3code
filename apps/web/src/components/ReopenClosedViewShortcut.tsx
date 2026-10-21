@@ -67,7 +67,7 @@ const isGlobalPullRequests = (ref: ScopedThreadRef) =>
 const isGlobalIssues = (ref: ScopedThreadRef) =>
   scopedThreadKey(ref) === scopedThreadKey(ISSUES_PANEL_REF);
 
-/** Fork-only. Tabs closed on the `/jira` page reopen there. */
+/** Fork-only. Tabs closed on the `/jira` page, or on sprint planning, reopen there. */
 const isGlobalJiraIssues = (ref: ScopedThreadRef) =>
   scopedThreadKey(ref) === scopedThreadKey(JIRA_ISSUES_PANEL_REF);
 
@@ -155,7 +155,12 @@ export function ReopenClosedViewShortcut() {
     } else if (globalIssues) {
       await navigate({ to: "/issues", search: readIssueListPreferences() });
     } else if (globalJiraIssues) {
-      await navigate({ to: "/jira" });
+      await navigate({
+        to:
+          restore.kind === "panel-tab" && restore.page === "sprint-planning"
+            ? "/sprint-planning"
+            : "/jira",
+      });
     } else {
       const draftId = thread === null ? drafts.getDraftIdByRef(ref) : null;
       if (draftId !== null)

@@ -18,6 +18,8 @@ export type ClosedView =
       kind: "panel-tab";
       threadRef: ScopedThreadRef;
       surface: Exclude<RightPanelSurface, { kind: "terminal" }>;
+      /** Fork-only. A Jira issue tab closed on sprint planning, which shares the `/issues` panel. */
+      page?: "sprint-planning";
     }
   | { kind: "browser"; threadRef: ScopedThreadRef; snapshot: PreviewSessionSnapshot };
 
@@ -57,6 +59,7 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
   if (!view || typeof view.id !== "string" || !isThreadRef(view.threadRef)) return false;
   if (view.kind === "browser") return isSnapshot(view.snapshot);
   if (view.kind !== "panel-tab") return false;
+  if (view.page !== undefined && view.page !== "sprint-planning") return false;
   const surface = view.surface;
   if (!surface || typeof surface.id !== "string") return false;
   switch (surface.kind) {
