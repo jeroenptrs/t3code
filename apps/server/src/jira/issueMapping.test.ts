@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { resolveFieldIds, toIssueSummary, toTransition } from "./issueMapping.ts";
+import { resolveFieldIds, toIssueSummary, toProjectSprints, toTransition } from "./issueMapping.ts";
 
 const fieldIds = { sprint: "customfield_10020", storyPoints: "customfield_10016" };
 
@@ -127,6 +127,42 @@ describe("toIssueSummary", () => {
     );
     expect(summary.sprints).toEqual([]);
     expect(summary.storyPoints).toBeNull();
+  });
+});
+
+describe("toProjectSprints", () => {
+  it("keeps a sprint's dates as strict ISO strings, null when absent", () => {
+    expect(
+      toProjectSprints([
+        {
+          id: 7,
+          name: "Sprint 7",
+          state: "closed",
+          startDate: "2026-09-01T09:00:00.000+0200",
+          endDate: "2026-09-14T17:00:00.000+0200",
+          completeDate: "2026-09-15T08:30:00.000Z",
+        },
+        { id: 8, name: "Sprint 8", state: "future" },
+        { id: "9", name: "Bad id", state: "future" },
+      ]),
+    ).toEqual([
+      {
+        id: 7,
+        name: "Sprint 7",
+        state: "closed",
+        startDate: "2026-09-01T07:00:00.000Z",
+        endDate: "2026-09-14T15:00:00.000Z",
+        completeDate: "2026-09-15T08:30:00.000Z",
+      },
+      {
+        id: 8,
+        name: "Sprint 8",
+        state: "future",
+        startDate: null,
+        endDate: null,
+        completeDate: null,
+      },
+    ]);
   });
 });
 
