@@ -3403,6 +3403,19 @@ const OrchestrationV2InternalCommand = Schema.Union([
     result: OrchestrationV2JiraProposalFields.result,
     error: OrchestrationV2JiraProposalFields.error,
   }),
+  /**
+   * Fork-only. A notice the server adds to a run, which may have ended, such as why a Jira
+   * breakdown proposed nothing. Internal so only the server speaks in a thread this way.
+   */
+  Schema.Struct({
+    type: Schema.Literal("system_notice.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    turnItemId: TurnItemId,
+    message: TrimmedNonEmptyString,
+  }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
 
