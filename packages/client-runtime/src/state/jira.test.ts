@@ -28,7 +28,6 @@ import {
   createJiraEnvironmentAtoms,
   JIRA_NOT_CONFIGURED,
   jiraIssueUrl,
-  jiraProjectKeyOf,
   parseJiraIssueInput,
   resolveJiraCapabilities,
   visibleThreadJiraIssues,
@@ -99,13 +98,6 @@ describe("jiraIssueUrl", () => {
     expect(jiraIssueUrl({ site: SITE, key: "ABC-1" })).toBe(
       "https://acme.atlassian.net/browse/ABC-1",
     );
-  });
-});
-
-describe("jiraProjectKeyOf", () => {
-  it("names the project before the issue number, underscores included", () => {
-    expect(jiraProjectKeyOf("ABC-123")).toBe("ABC");
-    expect(jiraProjectKeyOf("my_proj-7")).toBe("MY_PROJ");
   });
 });
 
