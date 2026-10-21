@@ -663,6 +663,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "secret_request.record":
     case "link_request.record":
     case "jira_proposal.record":
+    case "system_notice.record":
       return command.threadId;
     case "thread.fork":
     case "thread.merge_back":
@@ -2828,52 +2829,52 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
    * The watch is recorded first so the wake's own thread events carry it.
    */
   const dispatchWatchSync = Effect.fn("orchestrationV2.dispatch.watchSync")(function* (
-      command: Extract<
-        OrchestrationV2ServerCommand,
+    command: Extract<
+      OrchestrationV2ServerCommand,
       { readonly type: "thread.pull-request-watch.sync" | "thread.jira-issue-watch.sync" }
-      >,
+    >,
     subject: string,
     watchStartedAt: (thread: OrchestrationV2AppThread) => string | undefined,
-      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
-    ) {
-      const thread = yield* projectionStore
-        .getThread(command.threadId)
-        .pipe(
-          Effect.mapError(
-            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-          ),
-        );
-      const inactive =
-        thread.archivedAt !== null ||
-        thread.settledOverride === "settled" ||
-        thread.settledAt !== null ||
-        isProviderNativeSubagentThread(thread);
-    if (watchStartedAt(thread) !== command.startedAt || (command.wake && inactive)) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-        cause: `The ${subject} watch ended or its thread settled while it was read.`,
-        });
-      }
-      yield* dispatchThreadMutation(command, events, effects);
-      if (command.wake === undefined) return;
-      yield* dispatchMessage(
-        {
-          type: "message.dispatch",
-          commandId: command.commandId,
-          threadId: command.threadId,
-          messageId: command.wake.messageId,
-          text: command.wake.text,
-          notification: command.wake.notification,
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          creationSource: "server",
-        },
-        events,
-        effects,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
       );
+    const inactive =
+      thread.archivedAt !== null ||
+      thread.settledOverride === "settled" ||
+      thread.settledAt !== null ||
+      isProviderNativeSubagentThread(thread);
+    if (watchStartedAt(thread) !== command.startedAt || (command.wake && inactive)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `The ${subject} watch ended or its thread settled while it was read.`,
+      });
+    }
+    yield* dispatchThreadMutation(command, events, effects);
+    if (command.wake === undefined) return;
+    yield* dispatchMessage(
+      {
+        type: "message.dispatch",
+        commandId: command.commandId,
+        threadId: command.threadId,
+        messageId: command.wake.messageId,
+        text: command.wake.text,
+        notification: command.wake.notification,
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+      },
+      events,
+      effects,
+    );
   });
 
   // Deleted after the share change commits: the files of waiting messages it dismissed or dropped.
@@ -3003,7 +3004,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return yield* refuse(
           `Thread ${command.threadId} is settled or archived and cannot watch ${subject}.`,
-      );
+        );
       }
       // A subagent or delegated task reports to its parent thread, which owns the work. Its own
       // watch would wake it on every change of something it was not asked to babysit.
@@ -8759,6 +8760,70 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  /**
+   * Fork-only. Adds a server notice to a run, which may have ended. The notice is final when
+   * recorded; recording the same item again keeps the first.
+   */
+  const dispatchSystemNoticeRecord = Effect.fn("orchestrationV2.dispatch.systemNoticeRecord")(
+    function* (
+      command: Extract<OrchestrationV2InternalCommand, { readonly type: "system_notice.record" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const projectionError = (cause: unknown) =>
+        new OrchestratorProjectionError({ threadId: command.threadId, cause });
+      const projection = yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs", "attempts", "providerTurns"])
+        .pipe(Effect.mapError(projectionError));
+      const existing = yield* projectionStore
+        .getTurnItem({ threadId: command.threadId, itemId: command.turnItemId })
+        .pipe(Effect.mapError(projectionError));
+      const refuse = (cause: string) =>
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause,
+        });
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (run === undefined || run.rootNodeId !== command.nodeId) {
+        return yield* refuse(`Node ${command.nodeId} is not the root of run ${command.runId}.`);
+      }
+      if (existing !== null && (existing.type !== "system_notice" || existing.runId !== run.id)) {
+        return yield* refuse(`Turn item ${command.turnItemId} is not a notice in this run.`);
+      }
+      const now = yield* DateTime.now;
+      const turnItem: OrchestrationV2TurnItem = existing ?? {
+        id: command.turnItemId,
+        threadId: command.threadId,
+        runId: command.runId,
+        nodeId: command.nodeId,
+        providerThreadId: run.providerThreadId,
+        providerTurnId: providerTurnForRun(projection, run)?.id ?? null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: yield* nextTurnItemOrdinal(projection),
+        status: "completed",
+        title: command.message,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "system_notice",
+        message: command.message,
+      };
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId: command.runId,
+        nodeId: command.nodeId,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: turnItem,
+      });
+    },
+  );
+
   const dispatchRuntimeRequestRespond = Effect.fn("Orchestrator.dispatchRuntimeRequestRespond")(
     function* (
       command: Extract<OrchestrationV2Command, { readonly type: "runtime-request.respond" }>,
@@ -10659,28 +10724,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: thread.providerInstanceId,
         occurredAt: input.now,
         payload: {
-            ...withoutJiraIssueWatches(thread),
+          ...withoutJiraIssueWatches(thread),
           pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
         },
       });
     }
-      // Fork-only. Jira watches end in their own event, which keeps the reverse lookup in step.
-      if (thread.jiraIssues?.some((link) => link.watch !== undefined)) {
-        yield* emitEvent({
-          type: "thread.jira-issues-synced",
-          threadId: thread.id,
-          providerInstanceId: thread.providerInstanceId,
-          occurredAt: input.now,
-          payload: {
-            ...withoutJiraIssueWatches(thread),
-            ...(thread.pullRequests === undefined
-              ? {}
-              : {
-                  pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
-                }),
-          },
-        });
-      }
+    // Fork-only. Jira watches end in their own event, which keeps the reverse lookup in step.
+    if (thread.jiraIssues?.some((link) => link.watch !== undefined)) {
+      yield* emitEvent({
+        type: "thread.jira-issues-synced",
+        threadId: thread.id,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: input.now,
+        payload: {
+          ...withoutJiraIssueWatches(thread),
+          ...(thread.pullRequests === undefined
+            ? {}
+            : {
+                pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
+              }),
+        },
+      });
+    }
     const cohortRunIds = new Set(input.cohortRunIds);
     for (const run of runs) {
       if (run.delegatedCompletion?.delivery != null) cohortRunIds.add(run.id);
@@ -13116,8 +13181,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "link_request.record":
         yield* dispatchLinkRequestRecord(command, events, effects);
+        break;
       case "jira_proposal.record":
         yield* dispatchJiraProposalRecord(command, events);
+        break;
+      case "system_notice.record":
+        yield* dispatchSystemNoticeRecord(command, events);
         break;
       default:
         return yield* dispatchUnsupported(command);
