@@ -3541,7 +3541,7 @@ it.effect(
 );
 
 it.effect(
-  "ProviderSessionManagerV2 keeps a breakdown thread's credential when it cannot tell whether it is one",
+  "ProviderSessionManagerV2 keeps a breakdown thread's credential when it cannot tell whether it is one, and issues none without one",
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
@@ -3584,14 +3584,22 @@ it.effect(
         assert.equal(again.config.providerSessionId, first.config.providerSessionId);
         assert.isTrue(again.resolved?.capabilities.has("jira-breakdown"));
 
-        // A fresh credential gets nothing it cannot confirm.
+        // With no credential to keep, the open fails rather than guess the capabilities.
         const freshThreadId = ThreadId.make("thread-provider-session-manager-breakdown-fresh");
         yield* eventSink.write({
           events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: freshThreadId, now })],
         });
-        const fresh = yield* open(freshThreadId, yield* allocate(freshThreadId));
-        assert.isDefined(fresh.resolved);
-        assert.isFalse(fresh.resolved?.capabilities.has("jira-breakdown"));
+        const freshSessionId = yield* allocate(freshThreadId);
+        const configsBefore = (yield* Ref.get(mcpConfigs)).length;
+        const refused = yield* open(freshThreadId, freshSessionId).pipe(Effect.flip);
+        assert.equal(refused._tag, "ProviderSessionOpenError");
+        assert.include(String(refused.cause), "is a Jira breakdown");
+        assert.equal((yield* Ref.get(mcpConfigs)).length, configsBefore);
+
+        // Once the lookup answers, the same open succeeds with the right capabilities.
+        yield* Ref.set(breakdownAnswer, true);
+        const fresh = yield* open(freshThreadId, freshSessionId);
+        assert.isTrue(fresh.resolved?.capabilities.has("jira-breakdown"));
       });
 
       yield* effect.pipe(
