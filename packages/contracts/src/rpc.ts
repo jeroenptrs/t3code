@@ -121,6 +121,8 @@ import {
 } from "./diffWalkthrough.ts";
 import {
   JiraAddCommentInput,
+  JiraBreakdownStartInput,
+  JiraBreakdownStartResult,
   JiraCapabilities,
   JiraComment,
   JiraCreateMeta,
@@ -621,6 +623,8 @@ export const WS_METHODS = {
   // Sprint planning writes, as the caller with their personal token
   jiraSetSprint: "jira.setSprint",
   jiraSetStoryPoints: "jira.setStoryPoints",
+  // Breakdown: a server-started thread whose agent proposes an issue's work packages
+  jiraStartBreakdown: "jira.startBreakdown",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1343,6 +1347,13 @@ const WsJiraSetSprintRpc = Rpc.make(WS_METHODS.jiraSetSprint, {
 /** Needs the caller's personal token. */
 const WsJiraSetStoryPointsRpc = Rpc.make(WS_METHODS.jiraSetStoryPoints, {
   payload: JiraSetStoryPointsInput,
+  error: JiraRpcError,
+});
+
+/** Returns once the breakdown thread exists; its agent runs in the background. */
+const WsJiraStartBreakdownRpc = Rpc.make(WS_METHODS.jiraStartBreakdown, {
+  payload: JiraBreakdownStartInput,
+  success: JiraBreakdownStartResult,
   error: JiraRpcError,
 });
 
@@ -2092,6 +2103,7 @@ export const WsJiraRpcGroup = RpcGroup.make(
   WsJiraVelocityRpc,
   WsJiraSetSprintRpc,
   WsJiraSetStoryPointsRpc,
+  WsJiraStartBreakdownRpc,
 ).middleware(RpcScopeAuthorization);
 
 /** Every RPC except those in `WsJiraRpcGroup`. */
