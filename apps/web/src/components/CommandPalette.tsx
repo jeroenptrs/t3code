@@ -1648,6 +1648,16 @@ function OpenCommandPaletteDialog(props: {
         await navigate({ to: "/issues" });
       },
     });
+    actionItems.push({
+      kind: "action",
+      value: "action:jira-sprint-planning",
+      searchTerms: ["sprint", "planning", "plan", "jira", "backlog", "velocity", "story points"],
+      title: "Plan a Jira sprint",
+      icon: <JiraIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/sprint-planning" });
+      },
+    });
   }
 
   actionItems.push({
