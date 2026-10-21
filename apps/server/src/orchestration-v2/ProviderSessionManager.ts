@@ -134,6 +134,16 @@ export class ProviderSessionActivityError extends Schema.TaggedError<ProviderSes
   }
 }
 
+/** Carried as the cause of the open or attach that refused to guess a thread's breakdown role. */
+class JiraBreakdownRoleUnknownError extends Schema.TaggedError<JiraBreakdownRoleUnknownError>()(
+  "JiraBreakdownRoleUnknownError",
+  { threadId: ThreadId },
+) {
+  override get message(): string {
+    return `Could not tell whether thread ${this.threadId} is a Jira breakdown, so its agent tools cannot be set up. Try again.`;
+  }
+}
+
 export const ProviderSessionManagerV2Error = Schema.Union([
   ProviderSessionOpenError,
   ProviderWorkspaceMissingError,
@@ -429,7 +439,7 @@ export const layerWithOptions = (
       const prepareMcpSession = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
-      ): Effect.Effect<PreparedMcpCredential> =>
+      ): Effect.Effect<PreparedMcpCredential, JiraBreakdownRoleUnknownError> =>
         options.configureMcp === false
           ? mcpSessions
               .clear(threadId)
@@ -449,7 +459,7 @@ export const layerWithOptions = (
                 const knownJiraBreakdown = yield* isJiraBreakdownThread(threadId);
                 // When the lookup fails, the existing credential's own answer stands, so a
                 // transient error neither revokes nor grants the breakdown instructions.
-                let jiraBreakdown = knownJiraBreakdown ?? false;
+                let jiraBreakdown = knownJiraBreakdown;
                 const subagent = yield* projectionStore.getThread(threadId).pipe(
                   Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
                   Effect.orElseSucceed(() => false),
@@ -486,13 +496,16 @@ export const layerWithOptions = (
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
                 }
-                if (jiraBreakdown) capabilities.add("jira-breakdown");
-                if (knownJiraBreakdown === undefined) {
+                if (jiraBreakdown === undefined) {
+                  // Guessing would issue capabilities the next successful lookup rotates
+                  // under the running provider process, so the open fails and is retried.
                   yield* Effect.logWarning(
-                    "Issuing an MCP credential without knowing whether the thread is a Jira breakdown",
-                    { threadId, jiraBreakdown },
+                    "Refusing an MCP credential without knowing whether the thread is a Jira breakdown",
+                    { threadId },
                   );
+                  return yield* new JiraBreakdownRoleUnknownError({ threadId });
                 }
+                if (jiraBreakdown) capabilities.add("jira-breakdown");
                 yield* mcpSessionRegistry.revokeThread(threadId);
                 const credential = yield* mcpSessionRegistry.issue({
                   threadId,
@@ -1360,7 +1373,18 @@ export const layerWithOptions = (
               Effect.uninterruptible,
             );
             if (attached !== undefined) {
-              const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
+              const prepared = yield* prepareMcpSession(
+                input.threadId,
+                input.providerInstanceId,
+              ).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderSessionActivityError({
+                      providerSessionId: input.providerSessionId,
+                      cause,
+                    }),
+                ),
+              );
               preparedForCleanup = prepared;
               if (prepared.mcpCredentialId !== undefined) {
                 const mcpCredentialId = prepared.mcpCredentialId;
@@ -2129,6 +2153,15 @@ export const layerWithOptions = (
               const prepared = yield* prepareMcpSession(
                 input.threadId,
                 input.modelSelection.instanceId,
+              ).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderSessionOpenError({
+                      instanceId: input.modelSelection.instanceId,
+                      providerSessionId: input.providerSessionId,
+                      cause,
+                    }),
+                ),
               );
               const mcpCredentialId = prepared.mcpCredentialId;
               let reservationDropped = mcpCredentialId === undefined;
