@@ -31,6 +31,25 @@ it.effect("reuses a read until its kind's TTL passes", () =>
   }),
 );
 
+it.effect("drops every read of one kind whose key matches, and nothing else", () =>
+  Effect.gen(function* () {
+    const cache = yield* JiraReadCache.make;
+    const reads = yield* Ref.make(0);
+    const lookup = Ref.updateAndGet(reads, (count) => count + 1);
+
+    expect(yield* cache.get("search", "alice:a", lookup)).toBe(1);
+    expect(yield* cache.get("search", "alice:b", lookup)).toBe(2);
+    expect(yield* cache.get("search", "bot:a", lookup)).toBe(3);
+    expect(yield* cache.get("issue", "alice:a", lookup)).toBe(4);
+
+    yield* cache.invalidateMatching("search", (key) => key.startsWith("alice:"));
+    expect(yield* cache.get("search", "alice:a", lookup)).toBe(5);
+    expect(yield* cache.get("search", "alice:b", lookup)).toBe(6);
+    expect(yield* cache.get("search", "bot:a", lookup)).toBe(3);
+    expect(yield* cache.get("issue", "alice:a", lookup)).toBe(4);
+  }),
+);
+
 it.effect("does not cache failures", () =>
   Effect.gen(function* () {
     const cache = yield* JiraReadCache.make;

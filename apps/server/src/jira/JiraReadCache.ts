@@ -59,6 +59,11 @@ export class JiraReadCache extends Context.Service<
     ) => Effect.Effect<A, JiraError>;
     /** Drops a stored read, so the next `get` of it asks Jira; used after a write changes it. */
     readonly invalidate: (kind: JiraReadKind, key: string) => Effect.Effect<void>;
+    /** Drops every stored read of `kind` whose key `matches`, for writes that change many reads. */
+    readonly invalidateMatching: (
+      kind: JiraReadKind,
+      matches: (key: string) => boolean,
+    ) => Effect.Effect<void>;
   }
 >()("t3/jira/JiraReadCache") {}
 
@@ -82,6 +87,14 @@ export const make = Effect.gen(function* () {
     },
     // Equality ignores the lookup, so a placeholder names the stored read.
     invalidate: (kind, key) => Cache.invalidate(cache, new Read(kind, key, Effect.void)),
+    invalidateMatching: (kind, matches) =>
+      Effect.flatMap(Cache.keys(cache), (reads) =>
+        Effect.forEach(
+          Array.from(reads).filter((read) => read.kind === kind && matches(read.key)),
+          (read) => Cache.invalidate(cache, read),
+          { discard: true },
+        ),
+      ),
   });
 });
 
