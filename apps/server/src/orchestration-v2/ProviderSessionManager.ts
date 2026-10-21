@@ -41,6 +41,7 @@ import {
   withMetrics,
 } from "../observability/Metrics.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
+import * as JiraBreakdownThreads from "../jira/JiraBreakdownThreads.ts";
 import * as JiraIdentities from "../jira/JiraIdentities.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -330,6 +331,13 @@ export const layerWithOptions = (
         yield* Effect.serviceOption(JiraIdentities.JiraIdentities),
         { onNone: () => false, onSome: (identities) => identities.configured },
       );
+      // Fork-only and optional like the identities above. Fixed per thread once it exists.
+      const jiraBreakdowns = yield* Effect.serviceOption(JiraBreakdownThreads.JiraBreakdownThreads);
+      const isJiraBreakdownThread = (threadId: ThreadId) =>
+        Option.match(jiraBreakdowns, {
+          onNone: () => Effect.succeed(false),
+          onSome: (breakdowns) => breakdowns.isBreakdownThread(threadId),
+        });
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -464,6 +472,8 @@ export const layerWithOptions = (
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
                 if (jiraConfigured) capabilities.add("jira");
+                const jiraBreakdown = yield* isJiraBreakdownThread(threadId);
+                if (jiraBreakdown) capabilities.add("jira-breakdown");
                 const existing = yield* mcpSessions.read(threadId);
                 if (existing !== undefined) {
                   // Reserve before the async resolve so a release cannot
@@ -486,7 +496,8 @@ export const layerWithOptions = (
                     resolved.thread.threadId === threadId &&
                     resolved.thread.providerInstanceId === providerInstanceId &&
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
-                    resolved.capabilities.has("device") === deviceToolsAvailable
+                    resolved.capabilities.has("device") === deviceToolsAvailable &&
+                    resolved.capabilities.has("jira-breakdown") === jiraBreakdown
                   ) {
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
