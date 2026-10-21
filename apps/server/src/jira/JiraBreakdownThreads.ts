@@ -9,32 +9,50 @@
  * @module JiraBreakdownThreads
  */
 import type { ThreadId } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 export class JiraBreakdownThreads extends Context.Service<
   JiraBreakdownThreads,
   {
-    /** Whether the server started `threadId` as a breakdown; false when it cannot tell. */
-    readonly isBreakdownThread: (threadId: ThreadId) => Effect.Effect<boolean>;
+    /** Whether the server started `threadId` as a breakdown; undefined when it cannot tell. */
+    readonly isBreakdownThread: (threadId: ThreadId) => Effect.Effect<boolean | undefined>;
   }
 >()("t3/jira/JiraBreakdownThreads") {}
+
+/** Every provider session prepare asks; the threads a server touches between restarts fit. */
+const CACHE_CAPACITY = 1_000;
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
+  // The answer never changes once the thread exists: its row is inserted before the launch and
+  // never removed. Failures are not kept, so the next prepare asks again.
+  const answers = yield* Cache.makeWith(
+    (threadId: ThreadId) =>
+      sql<{ readonly found: number }>`
+        SELECT 1 AS found FROM fork_jira_breakdowns WHERE thread_id = ${threadId}
+      `.pipe(Effect.map((rows) => rows.length > 0)),
+    {
+      capacity: CACHE_CAPACITY,
+      timeToLive: Exit.match({
+        onSuccess: () => Duration.infinity,
+        onFailure: () => Duration.zero,
+      }),
+    },
+  );
+
   const isBreakdownThread: JiraBreakdownThreads["Service"]["isBreakdownThread"] = (threadId) =>
-    sql<{ readonly found: number }>`
-      SELECT 1 AS found FROM fork_jira_breakdowns WHERE thread_id = ${threadId}
-    `.pipe(
-      Effect.map((rows) => rows.length > 0),
-      // Without the answer the agent gets the ordinary Jira guidance, which is still correct.
+    Cache.get(answers, threadId).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Could not read whether a thread is a Jira breakdown", {
           errorTag: error._tag,
-        }).pipe(Effect.as(false)),
+        }).pipe(Effect.as(undefined)),
       ),
       Effect.withSpan("JiraBreakdownThreads.isBreakdownThread"),
     );
