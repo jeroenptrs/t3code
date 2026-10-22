@@ -206,14 +206,16 @@ function IngestionSection({
               gap; moving it later keeps what is already stored.
             </p>
           </div>
-          <Input
-            type="date"
-            size="sm"
-            aria-label="Start date"
-            disabled={!canManage}
-            value={startDate}
-            onChange={(event) => setStartDate(event.target.value)}
-          />
+          <div className="w-full shrink-0 sm:w-44">
+            <Input
+              type="date"
+              size="sm"
+              aria-label="Start date"
+              disabled={!canManage}
+              value={startDate}
+              onChange={(event) => setStartDate(event.target.value)}
+            />
+          </div>
         </div>
       </div>
       <div className={ITEM_ROW_CLASSNAME}>
@@ -225,14 +227,16 @@ function IngestionSection({
               separated globs, such as <code>release/*</code>.
             </p>
           </div>
-          <Input
-            size="sm"
-            aria-label="Release branches"
-            disabled={!canManage}
-            value={patterns}
-            placeholder="release/*"
-            onChange={(event) => setPatterns(event.target.value)}
-          />
+          <div className="w-full shrink-0 sm:w-64">
+            <Input
+              size="sm"
+              aria-label="Release branches"
+              disabled={!canManage}
+              value={patterns}
+              placeholder="release/*"
+              onChange={(event) => setPatterns(event.target.value)}
+            />
+          </div>
         </div>
       </div>
       <div className={ITEM_ROW_CLASSNAME}>
@@ -244,16 +248,18 @@ function IngestionSection({
               limit from GitLab pauses that host for the pull request panel too.
             </p>
           </div>
-          <Input
-            type="number"
-            size="sm"
-            min={1}
-            max={200}
-            aria-label="Requests per tick"
-            disabled={!canManage}
-            value={budget}
-            onChange={(event) => setBudget(event.target.value)}
-          />
+          <div className="w-full shrink-0 sm:w-28">
+            <Input
+              type="number"
+              size="sm"
+              min={1}
+              max={200}
+              aria-label="Requests per tick"
+              disabled={!canManage}
+              value={budget}
+              onChange={(event) => setBudget(event.target.value)}
+            />
+          </div>
         </div>
       </div>
       {canManage ? (
