@@ -1,7 +1,9 @@
 import {
   AuthUserId,
+  AuthUserRoleScopes,
   EnvironmentOperationForbiddenError,
   EnvironmentUserAccessConflictError,
+  type AuthEnvironmentScope,
   type AuthSessionState,
   type AuthSessionUser,
   type AuthUser,
@@ -11,7 +13,9 @@ import * as DateTime from "effect/DateTime";
 
 import {
   buildEntraSignInUrl,
+  canManageInsights,
   canManagePortalUsers,
+  canReadInsights,
   canReadPortalUsers,
   describeUserAccessChange,
   describeThreadCreator,
@@ -95,6 +99,24 @@ describe("user administration access", () => {
     expect(
       canReadPortalUsers({ ...session(["access:read"]), auth: { ...AUTH, entraSignIn: false } }),
     ).toBe(false);
+  });
+});
+
+describe("insights access", () => {
+  const session = (
+    permissions: ReadonlyArray<AuthEnvironmentScope>,
+    entraSignIn = true,
+  ): AuthSessionState => ({ authenticated: true, auth: { ...AUTH, entraSignIn }, permissions });
+
+  it("is for administrators only, signed in through Entra or paired", () => {
+    expect(canReadInsights(session(AuthUserRoleScopes.reader))).toBe(false);
+    expect(canReadInsights(session(AuthUserRoleScopes.operator))).toBe(false);
+    expect(canManageInsights(session(AuthUserRoleScopes.operator))).toBe(false);
+    expect(canReadInsights(session(AuthUserRoleScopes.administrator))).toBe(true);
+    expect(canManageInsights(session(AuthUserRoleScopes.administrator))).toBe(true);
+    expect(canManageInsights(session(AuthUserRoleScopes.administrator, false))).toBe(true);
+    expect(canManageInsights(session(["insights:read"]))).toBe(false);
+    expect(canReadInsights(null)).toBe(false);
   });
 });
 
