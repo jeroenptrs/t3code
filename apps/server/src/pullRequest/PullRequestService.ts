@@ -272,6 +272,14 @@ export class PullRequestService extends Context.Service<
       input: PullRequestInvalidateInput,
       options?: { readonly notifyReaders?: boolean },
     ) => Effect.Effect<void>;
+    /**
+     * Projects a provider serves, one per repository, each with its provider behind the same
+     * rate-limit pause as every read here. For background readers such as Insights that page
+     * through a repository's change requests themselves.
+     */
+    readonly providerProjects: (input?: {
+      readonly projectId?: ProjectId;
+    }) => Effect.Effect<ReadonlyArray<SupportedProject>, PullRequestError>;
   }
 >()("t3/pullRequest/PullRequestService") {}
 
@@ -3388,6 +3396,10 @@ export const make = Effect.gen(function* () {
     );
 
   return PullRequestService.of({
+    providerProjects: (input) =>
+      listWorkspaceProjects(
+        input?.projectId === undefined ? {} : { projectId: input.projectId },
+      ).pipe(Effect.map(({ supported }) => supported)),
     routing,
     routingIdentity,
     withRoutingCredential,
