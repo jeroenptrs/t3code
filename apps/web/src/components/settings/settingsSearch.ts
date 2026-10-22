@@ -41,6 +41,7 @@ export type SettingsPath =
   | "/settings/about"
   | "/settings/account"
   | "/settings/users"
+  | "/settings/insights"
   | "/settings/archived";
 
 export type SettingsSearchScope =
@@ -119,6 +120,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/voice": msg("Voice"),
   "/settings/account": msg("Account"),
   "/settings/users": msg("Users"),
+  "/settings/insights": msg("Insights"),
   "/settings/archived": msg("Archive"),
 };
 
@@ -161,7 +163,10 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       ...(isSecretsFeatureEnabled ? (["/settings/secrets"] as const) : []),
     ],
   },
-  { heading: msg("Portal"), paths: ["/settings/account", "/settings/users"] },
+  {
+    heading: msg("Portal"),
+    paths: ["/settings/account", "/settings/users", "/settings/insights"],
+  },
   {
     heading: null,
     paths: ["/settings/maintenance", "/settings/labs", "/settings/about", "/settings/archived"],
@@ -1377,6 +1382,8 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/account": null,
   // Portal users live on the primary environment; there is no scope to pick.
   "/settings/users": null,
+  // Insights is configured on the one environment the Insights page reads; no scope to pick.
+  "/settings/insights": null,
   "/settings/scheduled-tasks": null,
   "/settings/maintenance": null,
   "/settings/labs": null,
