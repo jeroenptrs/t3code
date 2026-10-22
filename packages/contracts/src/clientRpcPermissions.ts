@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
   AuthAccessWriteScope,
+  AuthInsightsWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -65,6 +66,12 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.jiraSetStoryPoints]: AuthOrchestrationOperateScope,
   // A breakdown starts a thread that runs a model on this environment's providers.
   [WS_METHODS.jiraStartBreakdown]: AuthOrchestrationOperateScope,
+  // Insights configuration decides whose work is stored, so only administrators change it.
+  [WS_METHODS.insightsUpdateSettings]: AuthInsightsWriteScope,
+  [WS_METHODS.insightsSetProjectEnabled]: AuthInsightsWriteScope,
+  [WS_METHODS.insightsRescanProject]: AuthInsightsWriteScope,
+  [WS_METHODS.insightsUpdateContributor]: AuthInsightsWriteScope,
+  [WS_METHODS.insightsMergeContributors]: AuthInsightsWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

@@ -6,6 +6,8 @@ import {
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   type AuthGrantScope,
+  AuthInsightsReadScope,
+  AuthInsightsWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -102,5 +104,15 @@ export const AUTH_SCOPE_OPTIONS: ReadonlyArray<{
     scope: AuthRelayWriteScope,
     title: "Manage relay",
     description: "Change managed tunnel connectivity.",
+  },
+  {
+    scope: AuthInsightsReadScope,
+    title: "View insights",
+    description: "Read estimated coding output per contributor.",
+  },
+  {
+    scope: AuthInsightsWriteScope,
+    title: "Manage insights",
+    description: "Choose the projects and people Insights covers.",
   },
 ];
