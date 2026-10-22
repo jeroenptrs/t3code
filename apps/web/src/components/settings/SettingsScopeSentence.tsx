@@ -59,6 +59,7 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/about",
   "/settings/account",
   "/settings/users",
+  "/settings/insights",
 ]);
 
 interface SettingsScopeMenuProps {
