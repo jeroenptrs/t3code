@@ -243,6 +243,10 @@
       "types": "./src/state/providerInstanceDisplay.ts",
       "default": "./src/state/providerInstanceDisplay.ts"
     },
+    "./state/insights": {
+      "types": "./src/state/insights.ts",
+      "default": "./src/state/insights.ts"
+    },
     "./state/jira": {
       "types": "./src/state/jira.ts",
       "default": "./src/state/jira.ts"
