@@ -48,6 +48,7 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
+  ChartLineIcon,
   ChartNoAxesColumnIcon,
   CheckIcon,
   ChevronRightIcon,
@@ -239,6 +240,7 @@ import { jiraIssueWriteAccess } from "./jira/jiraIssueWrite.logic";
 import { useBreakDownJiraIssue } from "./jira/useBreakDownJiraIssue";
 import { JiraIcon } from "./Icons";
 import { useJiraIssueLinking } from "../hooks/useJiraIssueLinking";
+import { useCanReadInsights } from "../state/insights";
 import { jiraEnvironment, useJiraCapabilities, useJiraEnvironmentId } from "../state/jira";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
@@ -571,6 +573,8 @@ function OpenCommandPaletteDialog(props: {
   const workspaceJiraEnvironmentId = useJiraEnvironmentId();
   const workspaceJiraCapabilities = useJiraCapabilities(workspaceJiraEnvironmentId);
   const workspaceJiraConfigured = workspaceJiraCapabilities?.configured === true;
+  // Fork-only. Administrators only, like the sidebar entry.
+  const canReadInsights = useCanReadInsights();
   // The Jira pages open issues in their own panel and read through the workspace environment;
   // elsewhere an issue is open beside the active thread, in its environment.
   const onJiraPage = pathname === "/issues" || pathname === "/sprint-planning";
@@ -1770,6 +1774,19 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/usage" });
     },
   });
+
+  if (canReadInsights) {
+    actionItems.push({
+      kind: "action",
+      value: "action:insights",
+      searchTerms: ["insights", "velocity", "coding time", "landed", "pushed", "contributors"],
+      title: "Open insights",
+      icon: <ChartLineIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/insights" });
+      },
+    });
+  }
 
   actionItems.push({
     kind: "action",
