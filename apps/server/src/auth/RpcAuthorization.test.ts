@@ -13,7 +13,12 @@ import {
   AuthSourceControlWriteScope,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
+  AuthInsightsReadScope,
+  AuthInsightsWriteScope,
+  AuthUserRoleScopes,
+  InsightsContributorId,
   WS_METHODS,
+  WsInsightsRpcGroup,
   WsRpcGroup,
   clientRpcRequiredScopes,
 } from "@t3tools/contracts";
@@ -99,6 +104,21 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("keeps Insights behind the administrator-only scopes", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.insightsOverview)).toBe(AuthInsightsReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.insightsConfig)).toBe(AuthInsightsReadScope);
+    for (const method of [
+      WS_METHODS.insightsUpdateSettings,
+      WS_METHODS.insightsSetProjectEnabled,
+      WS_METHODS.insightsRescanProject,
+      WS_METHODS.insightsUpdateContributor,
+      WS_METHODS.insightsMergeContributors,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthInsightsWriteScope);
+      expect(clientRpcRequiredScopes(method, undefined)).toEqual([AuthInsightsWriteScope]);
+    }
+  });
+
   it("separates passive terminal observation from operations that can change a shell", () => {
     for (const method of [WS_METHODS.terminalObserve, WS_METHODS.subscribeTerminalMetadata]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);
@@ -177,6 +197,78 @@ describe("RPC scope middleware", () => {
         requiredPermission: missing,
       });
       expect(handled).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("Insights authorization", () => {
+  const config = {
+    settings: {
+      startDate: "2026-01-01",
+      releaseBranchPatterns: [],
+      requestBudgetPerTick: 20,
+      updatedAt: null,
+    },
+    projects: [],
+    contributors: [],
+  };
+  const clientWith = (
+    scopes: ReadonlyArray<(typeof AuthUserRoleScopes)["administrator"][number]>,
+    handled: Array<string>,
+  ) =>
+    RpcTest.makeClient(WsInsightsRpcGroup).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          WsInsightsRpcGroup.toLayer({
+            [WS_METHODS.insightsOverview]: () => Effect.die("unused"),
+            [WS_METHODS.insightsConfig]: () =>
+              Effect.sync(() => handled.push("config")).pipe(Effect.as(config)),
+            [WS_METHODS.insightsUpdateSettings]: () => Effect.die("unused"),
+            [WS_METHODS.insightsSetProjectEnabled]: () => Effect.die("unused"),
+            [WS_METHODS.insightsRescanProject]: () => Effect.die("unused"),
+            [WS_METHODS.insightsUpdateContributor]: () =>
+              Effect.sync(() => handled.push("update")).pipe(Effect.as(config)),
+            [WS_METHODS.insightsMergeContributors]: () => Effect.die("unused"),
+          }),
+          RpcAuthorization.layer(scopes),
+        ),
+      ),
+    );
+
+  it.effect.each([
+    { role: "reader" as const, scopes: AuthUserRoleScopes.reader },
+    { role: "operator" as const, scopes: AuthUserRoleScopes.operator },
+  ])("refuses a $role before any Insights handler runs", ({ scopes }) =>
+    Effect.gen(function* () {
+      const handled: Array<string> = [];
+      const client = yield* clientWith(scopes, handled);
+      expect(yield* client[WS_METHODS.insightsConfig]({}).pipe(Effect.flip)).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthInsightsReadScope,
+      });
+      expect(
+        yield* client[WS_METHODS.insightsUpdateContributor]({
+          contributorId: InsightsContributorId.make("c-1"),
+          status: "included",
+        }).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthInsightsWriteScope,
+      });
+      expect(handled).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("lets an administrator read and change Insights", () =>
+    Effect.gen(function* () {
+      const handled: Array<string> = [];
+      const client = yield* clientWith(AuthUserRoleScopes.administrator, handled);
+      yield* client[WS_METHODS.insightsConfig]({});
+      yield* client[WS_METHODS.insightsUpdateContributor]({
+        contributorId: InsightsContributorId.make("c-1"),
+        status: "included",
+      });
+      expect(handled).toEqual(["config", "update"]);
     }).pipe(Effect.scoped),
   );
 });
