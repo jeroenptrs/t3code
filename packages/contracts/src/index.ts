@@ -47,6 +47,7 @@ export * from "./peerLink.ts";
 export * from "./threadMetadataMcp.ts";
 export * from "./threadPullRequest.ts";
 export * from "./jira.ts";
+export * from "./insights.ts";
 export * from "./threadSearch.ts";
 export * from "./threadTitle.ts";
 export * from "./t3ProjectFile.ts";

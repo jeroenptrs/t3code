@@ -45,6 +45,8 @@ export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
 export const AuthRelayReadScope = "relay:read" as const;
 export const AuthRelayWriteScope = "relay:write" as const;
+export const AuthInsightsReadScope = "insights:read" as const;
+export const AuthInsightsWriteScope = "insights:write" as const;
 export const AuthEnvironmentScope = Schema.Literals([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -63,6 +65,8 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthAccessWriteScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  AuthInsightsReadScope,
+  AuthInsightsWriteScope,
 ]);
 export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
 export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
@@ -106,6 +110,9 @@ const legacyParents: Partial<Record<AuthEnvironmentScope, AuthEnvironmentScope>>
   [AuthSourceControlWriteScope]: AuthOrchestrationOperateScope,
   [AuthFilesystemWriteScope]: AuthOrchestrationOperateScope,
   [AuthTerminalReadScope]: AuthTerminalOperateScope,
+  // Insights is administrator-only, like access management.
+  [AuthInsightsReadScope]: AuthAccessReadScope,
+  [AuthInsightsWriteScope]: AuthAccessWriteScope,
 };
 
 /** Keep permission denials decodable by clients with the original scope enum. */
@@ -163,6 +170,8 @@ export const AuthStandardClientScopes = [
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthRelayWriteScope,
+  AuthInsightsReadScope,
+  AuthInsightsWriteScope,
 ] as const;
 
 export const AuthTokenExchangeGrantType =
