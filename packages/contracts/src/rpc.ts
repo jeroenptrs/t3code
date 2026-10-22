@@ -126,6 +126,17 @@ import {
   DiffWalkthroughPutResult,
 } from "./diffWalkthrough.ts";
 import {
+  InsightsConfig,
+  InsightsContributorMergeInput,
+  InsightsContributorUpdateInput,
+  InsightsError,
+  InsightsOverview,
+  InsightsOverviewInput,
+  InsightsProjectEnabledInput,
+  InsightsProjectRescanInput,
+  InsightsSettingsUpdateInput,
+} from "./insights.ts";
+import {
   JiraAddCommentInput,
   JiraBreakdownStartInput,
   JiraBreakdownStartResult,
@@ -644,6 +655,15 @@ export const WS_METHODS = {
   jiraSetStoryPoints: "jira.setStoryPoints",
   // Breakdown: a server-started thread whose agent proposes an issue's work packages
   jiraStartBreakdown: "jira.startBreakdown",
+
+  // Insights (fork-only), administrators only
+  insightsOverview: "insights.overview",
+  insightsConfig: "insights.config",
+  insightsUpdateSettings: "insights.updateSettings",
+  insightsSetProjectEnabled: "insights.setProjectEnabled",
+  insightsRescanProject: "insights.rescanProject",
+  insightsUpdateContributor: "insights.updateContributor",
+  insightsMergeContributors: "insights.mergeContributors",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1387,6 +1407,50 @@ const WsJiraStartBreakdownRpc = Rpc.make(WS_METHODS.jiraStartBreakdown, {
   payload: JiraBreakdownStartInput,
   success: JiraBreakdownStartResult,
   error: JiraRpcError,
+});
+
+const InsightsRpcError = Schema.Union([InsightsError, EnvironmentAuthorizationError]);
+
+const WsInsightsOverviewRpc = Rpc.make(WS_METHODS.insightsOverview, {
+  payload: InsightsOverviewInput,
+  success: InsightsOverview,
+  error: InsightsRpcError,
+});
+
+const WsInsightsConfigRpc = Rpc.make(WS_METHODS.insightsConfig, {
+  payload: Schema.Struct({}),
+  success: InsightsConfig,
+  error: InsightsRpcError,
+});
+
+const WsInsightsUpdateSettingsRpc = Rpc.make(WS_METHODS.insightsUpdateSettings, {
+  payload: InsightsSettingsUpdateInput,
+  success: InsightsConfig,
+  error: InsightsRpcError,
+});
+
+const WsInsightsSetProjectEnabledRpc = Rpc.make(WS_METHODS.insightsSetProjectEnabled, {
+  payload: InsightsProjectEnabledInput,
+  success: InsightsConfig,
+  error: InsightsRpcError,
+});
+
+const WsInsightsRescanProjectRpc = Rpc.make(WS_METHODS.insightsRescanProject, {
+  payload: InsightsProjectRescanInput,
+  success: InsightsConfig,
+  error: InsightsRpcError,
+});
+
+const WsInsightsUpdateContributorRpc = Rpc.make(WS_METHODS.insightsUpdateContributor, {
+  payload: InsightsContributorUpdateInput,
+  success: InsightsConfig,
+  error: InsightsRpcError,
+});
+
+const WsInsightsMergeContributorsRpc = Rpc.make(WS_METHODS.insightsMergeContributors, {
+  payload: InsightsContributorMergeInput,
+  success: InsightsConfig,
+  error: InsightsRpcError,
 });
 
 const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLookupRepository, {
@@ -2159,7 +2223,18 @@ export const WsJiraRpcGroup = RpcGroup.make(
   WsJiraStartBreakdownRpc,
 ).middleware(RpcScopeAuthorization);
 
-/** Every RPC except those in `WsJiraRpcGroup`. */
+/** The fork's Insights RPCs, in a group of their own for the same reason as `WsJiraRpcGroup`. */
+export const WsInsightsRpcGroup = RpcGroup.make(
+  WsInsightsOverviewRpc,
+  WsInsightsConfigRpc,
+  WsInsightsUpdateSettingsRpc,
+  WsInsightsSetProjectEnabledRpc,
+  WsInsightsRescanProjectRpc,
+  WsInsightsUpdateContributorRpc,
+  WsInsightsMergeContributorsRpc,
+).middleware(RpcScopeAuthorization);
+
+/** Every RPC except those in `WsJiraRpcGroup` and `WsInsightsRpcGroup`. */
 export const WsCoreRpcGroup = RpcGroup.make(
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
@@ -2370,4 +2445,4 @@ export const WsCoreRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeCommandOutputRpc,
 ).middleware(RpcScopeAuthorization);
 
-export const WsRpcGroup = WsCoreRpcGroup.merge(WsJiraRpcGroup);
+export const WsRpcGroup = WsCoreRpcGroup.merge(WsJiraRpcGroup, WsInsightsRpcGroup);
