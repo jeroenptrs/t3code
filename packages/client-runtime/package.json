@@ -343,6 +343,10 @@
       "types": "./src/state/providerInstanceDisplay.ts",
       "default": "./src/state/providerInstanceDisplay.ts"
     },
+    "./state/insights": {
+      "types": "./src/state/insights.ts",
+      "default": "./src/state/insights.ts"
+    },
     "./state/issues": {
       "types": "./src/state/issues.ts",
       "default": "./src/state/issues.ts"

@@ -1,6 +1,8 @@
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthInsightsReadScope,
+  AuthInsightsWriteScope,
   sessionGrantsScope,
   ENTRA_SIGN_IN_ERROR_PARAM,
   ENTRA_SIGN_IN_RETURN_TO_PARAM,
@@ -68,6 +70,22 @@ export function canManagePortalUsers(session: AuthSessionState | null): boolean 
     canReadPortalUsers(session) &&
     session?.user !== undefined &&
     sessionGrantsScope(session, AuthAccessWriteScope)
+  );
+}
+
+/**
+ * Insights is administrator-only through its own scopes. Unlike the Users page it does not need
+ * Entra sign-in, so a server paired with the standard grant can use it too.
+ */
+export function canReadInsights(session: AuthSessionState | null): boolean {
+  return session !== null && sessionGrantsScope(session, AuthInsightsReadScope);
+}
+
+export function canManageInsights(session: AuthSessionState | null): boolean {
+  return (
+    session !== null &&
+    sessionGrantsScope(session, AuthInsightsReadScope) &&
+    sessionGrantsScope(session, AuthInsightsWriteScope)
   );
 }
 
