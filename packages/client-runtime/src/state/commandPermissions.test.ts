@@ -10,6 +10,8 @@ import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
+  AuthInsightsReadScope,
+  AuthInsightsWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -510,6 +512,53 @@ it.effect("requires access management to answer a link request", () =>
     expect(registry.get(answer.permissionAtom(env))).toBe(true);
     yield* answer.authorize(registry, env);
   }),
+);
+
+it.effect.each([
+  WS_METHODS.insightsUpdateSettings,
+  WS_METHODS.insightsSetProjectEnabled,
+  WS_METHODS.insightsRescanProject,
+  WS_METHODS.insightsUpdateContributor,
+  WS_METHODS.insightsMergeContributors,
+] as const)("%s needs insights:write, which an operator grant lacks", (method) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const command = createCommandPermissions(runtime, method);
+      // An operator holds every standard scope except access, relay, and Insights management.
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(true),
+          scopes: [AuthOrchestrationOperateScope, AuthSourceControlWriteScope],
+          permissions: [AuthOrchestrationOperateScope, AuthSourceControlWriteScope],
+        }),
+      );
+      expect(registry.get(command.permissionAtom(env))).toBe(false);
+      expect(yield* command.authorize(registry, env).pipe(Effect.flip)).toMatchObject({
+        requiredPermission: AuthInsightsWriteScope,
+      });
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [AuthInsightsReadScope],
+          permissions: [AuthInsightsReadScope],
+        }),
+      );
+      expect(registry.get(command.permissionAtom(env))).toBe(false);
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [AuthInsightsReadScope, AuthInsightsWriteScope],
+          permissions: [AuthInsightsReadScope, AuthInsightsWriteScope],
+        }),
+      );
+      expect(registry.get(command.permissionAtom(env))).toBe(true);
+      yield* command.authorize(registry, env);
+    }),
+  ),
 );
 
 it.effect("honors exact empty permissions and preserves legacy parent grants", () =>

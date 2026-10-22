@@ -1,4 +1,10 @@
-import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  ChartLineIcon,
+  ChartNoAxesColumnIcon,
+  SettingsIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
@@ -14,6 +20,7 @@ import {
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
+import { useCanReadInsights } from "../../state/insights";
 import { useJiraCapabilities, useJiraEnvironmentId } from "../../state/jira";
 import { JiraIcon } from "../Icons";
 import { T3Wordmark } from "../T3Wordmark";
@@ -231,6 +238,8 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const pullRequestsSupported = usePullRequestsSupported();
   // Fork-only. Gated like Pull Requests: hidden until the server says Jira is set up.
   const jiraConfigured = useJiraCapabilities(useJiraEnvironmentId())?.configured === true;
+  // Fork-only. Administrators only; Readers and Operators never see the entry.
+  const canReadInsights = useCanReadInsights();
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -257,6 +266,11 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
       setOpenMobile(false);
     }
     void navigate({ to: "/usage" });
+  };
+
+  const handleInsightsClick = () => {
+    closeMobileSidebar();
+    void navigate({ to: "/insights" });
   };
 
   const handleBackClick = () => {
@@ -295,6 +309,13 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Usage"
             onClick={handleUsageClick}
           />
+          {canReadInsights ? (
+            <SidebarUtilityItem
+              icon={<ChartLineIcon />}
+              label="Insights"
+              onClick={handleInsightsClick}
+            />
+          ) : null}
         </>
       )}
       <SidebarThreadUndoNotice />
