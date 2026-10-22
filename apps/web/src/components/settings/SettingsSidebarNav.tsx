@@ -13,6 +13,7 @@ import {
   BotIcon,
   createLucideIcon,
   CalendarClockIcon,
+  ChartLineIcon,
   FileDiffIcon,
   FolderTreeIcon,
   GitBranchIcon,
@@ -63,6 +64,7 @@ import { useSettingsSectionNavigation } from "./useSettingsSectionNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import { useCanOpenAccountSettings } from "./useCanOpenAccountSettings";
 import { useCanReadPortalUsers } from "./useCanReadPortalUsers";
+import { useCanReadInsights } from "../../state/insights";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -113,6 +115,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/about": InfoIcon,
   "/settings/account": UserRoundIcon,
   "/settings/users": UsersRoundIcon,
+  "/settings/insights": ChartLineIcon,
   "/settings/archived": ArchiveIcon,
 };
 
@@ -141,13 +144,15 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
   const canReadUsers = useCanReadPortalUsers();
   const canOpenAccount = useCanOpenAccountSettings();
+  const canReadInsights = useCanReadInsights();
   // Empty groups hide.
   const navGroups = SETTINGS_NAV_GROUPS.map((group) => ({
     ...group,
     paths: group.paths.filter(
       (to) =>
         (to !== "/settings/account" || canOpenAccount) &&
-        (to !== "/settings/users" || canReadUsers),
+        (to !== "/settings/users" || canReadUsers) &&
+        (to !== "/settings/insights" || canReadInsights),
     ),
   })).filter((group) => group.paths.length > 0);
   const navPaths = navGroups.flatMap((group) => group.paths);
