@@ -107,6 +107,33 @@ const assertJiraRemoteLinksSchema = Effect.gen(function* () {
   );
 });
 
+const assertInsightsSchema = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const tables = yield* sql<{ readonly name: string }>`
+    SELECT name FROM sqlite_master
+    WHERE type = 'table' AND name LIKE 'fork_insights_%'
+    ORDER BY name
+  `;
+  assert.deepStrictEqual(
+    tables.map(({ name }) => name),
+    [
+      "fork_insights_commits",
+      "fork_insights_contributor_emails",
+      "fork_insights_contributors",
+      "fork_insights_merge_requests",
+      "fork_insights_mr_reviews",
+      "fork_insights_projects",
+      "fork_insights_settings",
+    ],
+  );
+  // The pending gate is enforced by the schema too.
+  const rejected = yield* sql`
+    INSERT INTO fork_insights_contributors (contributor_id, status, first_seen_at)
+    VALUES ('c-1', 'approved', '2026-10-22T00:00:00.000Z')
+  `.pipe(Effect.flip);
+  assert.ok(rejected);
+});
+
 it.effect("server startup records upstream and fork migrations in separate ledgers", () =>
   Effect.gen(function* () {
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
@@ -116,6 +143,7 @@ it.effect("server startup records upstream and fork migrations in separate ledge
     yield* assertDiffWalkthroughSchema;
     yield* assertThreadJiraIssuesSchema;
     yield* assertJiraRemoteLinksSchema;
+    yield* assertInsightsSchema;
     assert.deepStrictEqual(yield* runForkMigrations(), []);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
@@ -136,6 +164,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [10, "ProjectionThreadJiraIssueWatch"],
       [11, "JiraRemoteLinks"],
       [12, "JiraBreakdowns"],
+      [13, "Insights"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
@@ -143,6 +172,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
     yield* assertDiffWalkthroughSchema;
     yield* assertThreadJiraIssuesSchema;
     yield* assertJiraRemoteLinksSchema;
+    yield* assertInsightsSchema;
   }).pipe(Effect.provide(memoryDatabase())),
 );
 
