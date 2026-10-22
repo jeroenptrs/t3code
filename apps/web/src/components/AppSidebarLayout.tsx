@@ -198,8 +198,13 @@ function registerWorkspaceFocusCommands(router: AnyRouter): () => void {
   };
 }
 
-// Fork: the Jira pages leave on Escape like the pull requests page.
-const ESCAPE_TO_LEAVE_PATHS = new Set(["/pull-requests", "/issues", "/sprint-planning"]);
+// Fork: Insights and the Jira pages leave on Escape like the pull requests page.
+const ESCAPE_TO_LEAVE_PATHS = new Set([
+  "/pull-requests",
+  "/insights",
+  "/issues",
+  "/sprint-planning",
+]);
 
 // Escape leaves the pull requests page when no scope (a selection, a dialog,
 // a drag) claimed it, so it observes after every other scope.
