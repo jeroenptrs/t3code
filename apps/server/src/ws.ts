@@ -108,6 +108,7 @@ import {
   type PullRequestRef,
   WS_METHODS,
   WsCoreRpcGroup,
+  WsInsightsRpcGroup,
   WsJiraRpcGroup,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -277,6 +278,7 @@ import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.
 import * as JiraService from "./jira/JiraService.ts";
 import * as JiraProposals from "./jira/JiraProposals.ts";
 import * as JiraBreakdownService from "./jira/JiraBreakdownService.ts";
+import * as InsightsService from "./insights/InsightsService.ts";
 import * as JiraUserCredentials from "./jira/JiraUserCredentials.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
@@ -741,6 +743,7 @@ const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 // Handlers are typed and provided per part; see WsJiraRpcGroup.
 const ServerWsCoreRpcGroup = WsCoreRpcGroup.middleware(RpcInstrumentation);
 const ServerWsJiraRpcGroup = WsJiraRpcGroup.middleware(RpcInstrumentation);
+const ServerWsInsightsRpcGroup = WsInsightsRpcGroup.middleware(RpcInstrumentation);
 
 // RpcGroup.toLayer derives each handler's requirements by scanning every RPC in
 // the group, so its type cost grows with handlers × RPCs. Near 200 methods that
@@ -3895,6 +3898,24 @@ const layerWsJiraRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
     }),
   );
 
+const layerWsInsightsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
+  ServerWsInsightsRpcGroup.toLayer(
+    Effect.gen(function* () {
+      const insights = yield* InsightsService.InsightsService;
+      // Recorded as who decided; the admin dev credential has no user.
+      const actor = currentSession.userId ?? null;
+      return ServerWsInsightsRpcGroup.of({
+        [WS_METHODS.insightsOverview]: (input) => insights.overview(input),
+        [WS_METHODS.insightsConfig]: () => insights.config,
+        [WS_METHODS.insightsUpdateSettings]: (input) => insights.updateSettings(input, actor),
+        [WS_METHODS.insightsSetProjectEnabled]: (input) => insights.setProjectEnabled(input, actor),
+        [WS_METHODS.insightsRescanProject]: (input) => insights.rescanProject(input),
+        [WS_METHODS.insightsUpdateContributor]: (input) => insights.updateContributor(input, actor),
+        [WS_METHODS.insightsMergeContributors]: (input) => insights.mergeContributors(input),
+      });
+    }),
+  );
+
 // Default socket-level Defect frames end every pending client request.
 export const WS_RPC_SERVER_OPTIONS = {
   disableTracing: true,
@@ -3922,6 +3943,7 @@ export const layer = Layer.unwrap(
     const jiraCredentials = yield* JiraUserCredentials.JiraUserCredentials;
     const jiraProposals = yield* JiraProposals.JiraProposals;
     const jiraBreakdowns = yield* JiraBreakdownService.JiraBreakdownService;
+    const insights = yield* InsightsService.InsightsService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3997,8 +4019,10 @@ export const layer = Layer.unwrap(
               serverBrowser,
               reportProfiles,
               readSettingsClient(url.value),
-            ).pipe(
+            )
+              .pipe(
               Layer.merge(layerWsJiraRpc(session)),
+                Layer.merge(layerWsInsightsRpc(session)),
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.
               Layer.provide(DefectReporter.layer),
@@ -4015,6 +4039,8 @@ export const layer = Layer.unwrap(
                 Layer.succeed(IssueTrackerConnections.IssueTrackerConnections, issueTrackers),
               ),
               Layer.provide(OtlpEndpointCheck.layer),
+              )
+              .pipe(
               Layer.provide(
                 Layer.succeed(
                   PullRequestReviewGuideService.PullRequestReviewGuideService,
@@ -4050,6 +4076,8 @@ export const layer = Layer.unwrap(
               Layer.provide(
                 Layer.succeed(JiraBreakdownService.JiraBreakdownService, jiraBreakdowns),
               ),
+                // Shared with the ingestion worker, so a reset cursor drops its walk in progress.
+                Layer.provide(Layer.succeed(InsightsService.InsightsService, insights)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
