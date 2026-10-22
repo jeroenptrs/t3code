@@ -16,6 +16,7 @@ import {
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   AuthDiagnosticsReadScope,
+  AuthInsightsReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -167,6 +168,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.jiraSetStoryPoints]: AuthOrchestrationOperateScope,
   // A breakdown starts a thread whose agent runs on this environment's providers.
   [WS_METHODS.jiraStartBreakdown]: AuthOrchestrationOperateScope,
+  // Insights shows per-contributor numbers, so reading it needs the administrator-only scope. Its
+  // writes are client-guarded above.
+  [WS_METHODS.insightsOverview]: AuthInsightsReadScope,
+  [WS_METHODS.insightsConfig]: AuthInsightsReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeProjectClones]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsListEntries]: AuthFilesystemReadScope,

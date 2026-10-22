@@ -100,6 +100,7 @@ import {
   type PullRequestRef,
   WS_METHODS,
   WsCoreRpcGroup,
+  WsInsightsRpcGroup,
   WsJiraRpcGroup,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -250,6 +251,7 @@ import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.
 import * as JiraService from "./jira/JiraService.ts";
 import * as JiraProposals from "./jira/JiraProposals.ts";
 import * as JiraBreakdownService from "./jira/JiraBreakdownService.ts";
+import * as InsightsService from "./insights/InsightsService.ts";
 import * as JiraUserCredentials from "./jira/JiraUserCredentials.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
@@ -566,6 +568,7 @@ const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 // Handlers are typed and provided per part; see WsJiraRpcGroup.
 const ServerWsCoreRpcGroup = WsCoreRpcGroup.middleware(RpcInstrumentation);
 const ServerWsJiraRpcGroup = WsJiraRpcGroup.middleware(RpcInstrumentation);
+const ServerWsInsightsRpcGroup = WsInsightsRpcGroup.middleware(RpcInstrumentation);
 
 // RpcGroup.toLayer derives each handler's requirements by scanning every RPC in
 // the group, so its type cost grows with handlers × RPCs. Near 200 methods that
@@ -664,8 +667,8 @@ export function withSessionUserAttribution(
   userId: AuthUserId | null,
 ): OrchestrationV2Command {
   if (command.type === "thread.create") {
-  const { createdByUserId: _clientValue, ...rest } = command;
-  return userId === null ? rest : { ...rest, createdByUserId: userId };
+    const { createdByUserId: _clientValue, ...rest } = command;
+    return userId === null ? rest : { ...rest, createdByUserId: userId };
   }
   if (command.type === "thread.jira-issue.link" || command.type === "thread.jira-issue.watch") {
     const { linkedByUserId: _clientValue, ...rest } = command;
@@ -1977,11 +1980,11 @@ export const layerWsRpc = (
                     ? threadLaunch.retryPreparation(command)
                     : ThreadMessageIntake.dispatchCommand(
                         withSessionUserAttribution(
-                        ThreadManagementService.withCreationProvenance(command, {
-                          createdBy: "user",
-                          creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
-                        }),
+                          ThreadManagementService.withCreationProvenance(command, {
+                            createdBy: "user",
+                            creationSource:
+                              "creationSource" in command ? command.creationSource : "web",
+                          }),
                           currentSession.userId ?? null,
                         ),
                       )
@@ -2727,7 +2730,7 @@ export const layerWsRpc = (
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           Effect.andThen(
             input.cwd === undefined ? Effect.void : ensureReadable(input.cwd),
-          sourceControlRepositories.lookupRepository(input),
+            sourceControlRepositories.lookupRepository(input),
           ),
         [WS_METHODS.sourceControlCloneRepository]: (input) =>
           sourceControlRepositories.cloneRepository(input),
@@ -2795,76 +2798,76 @@ export const layerWsRpc = (
         [WS_METHODS.projectsSearchEntries]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd),
-          workspaceEntries.search(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectSearchEntriesError({
-                  cwd: input.cwd,
-                  queryLength: input.query.length,
-                  limit: input.limit,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
+            workspaceEntries.search(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectSearchEntriesError({
+                    cwd: input.cwd,
+                    queryLength: input.query.length,
+                    limit: input.limit,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsSearchContents]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd),
-          workspaceEntries.searchContents(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectSearchContentsError({
-                  cwd: input.cwd,
-                  queryLength: input.query.length,
-                  limit: input.limit,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
+            workspaceEntries.searchContents(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectSearchContentsError({
+                    cwd: input.cwd,
+                    queryLength: input.query.length,
+                    limit: input.limit,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsListEntries]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd, path.resolve(input.cwd, input.directoryPath ?? "")),
-          workspaceEntries.list(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectListEntriesError({
-                  ...input,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
+            workspaceEntries.list(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectListEntriesError({
+                    ...input,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsListIgnoredFiles]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd),
-          workspaceEntries.listIgnoredFiles(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectListEntriesError({
-                  ...input,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
+            workspaceEntries.listIgnoredFiles(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectListEntriesError({
+                    ...input,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsReadFile]: (input) =>
           Effect.andThen(
             ensureReadable(path.resolve(input.cwd, input.relativePath)),
-          workspaceFileSystem.readFile(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectReadFileError({
-                  ...input,
-                  ...projectFileFailureContext(cause),
-                  cause,
-                }),
+            workspaceFileSystem.readFile(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectReadFileError({
+                    ...input,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           workspaceFileSystem.writeFile(input).pipe(
@@ -3392,6 +3395,24 @@ const layerWsJiraRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
     }),
   );
 
+const layerWsInsightsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
+  ServerWsInsightsRpcGroup.toLayer(
+    Effect.gen(function* () {
+      const insights = yield* InsightsService.InsightsService;
+      // Recorded as who decided; the admin dev credential has no user.
+      const actor = currentSession.userId ?? null;
+      return ServerWsInsightsRpcGroup.of({
+        [WS_METHODS.insightsOverview]: (input) => insights.overview(input),
+        [WS_METHODS.insightsConfig]: () => insights.config,
+        [WS_METHODS.insightsUpdateSettings]: (input) => insights.updateSettings(input, actor),
+        [WS_METHODS.insightsSetProjectEnabled]: (input) => insights.setProjectEnabled(input, actor),
+        [WS_METHODS.insightsRescanProject]: (input) => insights.rescanProject(input),
+        [WS_METHODS.insightsUpdateContributor]: (input) => insights.updateContributor(input, actor),
+        [WS_METHODS.insightsMergeContributors]: (input) => insights.mergeContributors(input),
+      });
+    }),
+  );
+
 // Default socket-level Defect frames end every pending client request.
 export const WS_RPC_SERVER_OPTIONS = {
   disableTracing: true,
@@ -3412,6 +3433,7 @@ export const layer = Layer.unwrap(
     const jiraCredentials = yield* JiraUserCredentials.JiraUserCredentials;
     const jiraProposals = yield* JiraProposals.JiraProposals;
     const jiraBreakdowns = yield* JiraBreakdownService.JiraBreakdownService;
+    const insights = yield* InsightsService.InsightsService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3485,6 +3507,7 @@ export const layer = Layer.unwrap(
               serverBrowser,
             ).pipe(
               Layer.merge(layerWsJiraRpc(session)),
+              Layer.merge(layerWsInsightsRpc(session)),
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.
               Layer.provide(DefectReporter.layer),
@@ -3526,6 +3549,8 @@ export const layer = Layer.unwrap(
               Layer.provide(
                 Layer.succeed(JiraBreakdownService.JiraBreakdownService, jiraBreakdowns),
               ),
+              // Shared with the ingestion worker, so a reset cursor drops its walk in progress.
+              Layer.provide(Layer.succeed(InsightsService.InsightsService, insights)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(
