@@ -14,6 +14,7 @@ import {
   BotIcon,
   createLucideIcon,
   CalendarClockIcon,
+  ChartLineIcon,
   GitBranchIcon,
   HardDriveIcon,
   PanelsTopLeftIcon,
@@ -53,6 +54,7 @@ import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchIte
 import { validateSettingsScopeSearch } from "./settingsScope";
 import { useCanOpenAccountSettings } from "./useCanOpenAccountSettings";
 import { useCanReadPortalUsers } from "./useCanReadPortalUsers";
+import { useCanReadInsights } from "../../state/insights";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -95,6 +97,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/beta": FlaskConicalIcon,
   "/settings/account": UserRoundIcon,
   "/settings/users": UsersRoundIcon,
+  "/settings/insights": ChartLineIcon,
   "/settings/archived": ArchiveIcon,
 };
 
@@ -127,11 +130,13 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
   const canReadUsers = useCanReadPortalUsers();
   const canOpenAccount = useCanOpenAccountSettings();
+  const canReadInsights = useCanReadInsights();
   const navItems = SETTINGS_NAV_ITEMS.filter(
     (item) =>
       (item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch)) &&
       (item.to !== "/settings/account" || canOpenAccount) &&
-      (item.to !== "/settings/users" || canReadUsers),
+      (item.to !== "/settings/users" || canReadUsers) &&
+      (item.to !== "/settings/insights" || canReadInsights),
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
