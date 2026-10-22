@@ -13,6 +13,7 @@ import {
   BotIcon,
   createLucideIcon,
   CalendarClockIcon,
+  ChartLineIcon,
   FileDiffIcon,
   FolderTreeIcon,
   GitBranchIcon,
@@ -60,6 +61,7 @@ import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchIte
 import { validateSettingsScopeSearch } from "./settingsScope";
 import { useCanOpenAccountSettings } from "./useCanOpenAccountSettings";
 import { useCanReadPortalUsers } from "./useCanReadPortalUsers";
+import { useCanReadInsights } from "../../state/insights";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -109,6 +111,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/about": InfoIcon,
   "/settings/account": UserRoundIcon,
   "/settings/users": UsersRoundIcon,
+  "/settings/insights": ChartLineIcon,
   "/settings/archived": ArchiveIcon,
 };
 
@@ -136,6 +139,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
   const canReadUsers = useCanReadPortalUsers();
   const canOpenAccount = useCanOpenAccountSettings();
+  const canReadInsights = useCanReadInsights();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   // Below md the nav is an icon rail; searching expands it over the page.
@@ -372,47 +376,48 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   const paths = group.paths.filter(
                     (to) =>
                       (to !== "/settings/account" || canOpenAccount) &&
-                      (to !== "/settings/users" || canReadUsers),
+                      (to !== "/settings/users" || canReadUsers) &&
+                      (to !== "/settings/insights" || canReadInsights),
                   );
                   return paths.length === 0 ? null : (
-                  <div
-                    key={group.heading ?? index}
-                    role="group"
-                    aria-label={group.heading ?? undefined}
-                    className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
-                  >
-                    {group.heading ? (
-                      <h3
-                        className={cn(
-                          "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
-                          !compactSearchOpen && "max-md:hidden",
-                        )}
-                      >
-                        {group.heading}
-                      </h3>
-                    ) : null}
-                    <SidebarMenu>
-                      {paths.map((to) => {
-                        const Icon = SETTINGS_SECTION_ICONS[to];
-                        const isActive = activePath === to || activePath.startsWith(`${to}/`);
-                        return (
-                          <SidebarMenuItem key={to}>
-                            <SidebarMenuButton
-                              isActive={isActive}
-                              onClick={() => handleSectionClick(to)}
-                            >
-                              <Icon />
-                              <span
-                                className={cn("truncate", !compactSearchOpen && "max-md:sr-only")}
+                    <div
+                      key={group.heading ?? index}
+                      role="group"
+                      aria-label={group.heading ?? undefined}
+                      className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
+                    >
+                      {group.heading ? (
+                        <h3
+                          className={cn(
+                            "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
+                            !compactSearchOpen && "max-md:hidden",
+                          )}
+                        >
+                          {group.heading}
+                        </h3>
+                      ) : null}
+                      <SidebarMenu>
+                        {paths.map((to) => {
+                          const Icon = SETTINGS_SECTION_ICONS[to];
+                          const isActive = activePath === to || activePath.startsWith(`${to}/`);
+                          return (
+                            <SidebarMenuItem key={to}>
+                              <SidebarMenuButton
+                                isActive={isActive}
+                                onClick={() => handleSectionClick(to)}
                               >
-                                {SETTINGS_SECTION_LABELS[to]}
-                              </span>
-                            </SidebarMenuButton>
-                          </SidebarMenuItem>
-                        );
-                      })}
-                    </SidebarMenu>
-                  </div>
+                                <Icon />
+                                <span
+                                  className={cn("truncate", !compactSearchOpen && "max-md:sr-only")}
+                                >
+                                  {SETTINGS_SECTION_LABELS[to]}
+                                </span>
+                              </SidebarMenuButton>
+                            </SidebarMenuItem>
+                          );
+                        })}
+                      </SidebarMenu>
+                    </div>
                   );
                 })}
               </div>
