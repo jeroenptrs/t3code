@@ -28,6 +28,7 @@ export type SettingsPath =
   | "/settings/connections"
   | "/settings/account"
   | "/settings/users"
+  | "/settings/insights"
   | "/settings/archived";
 
 export type SettingsSearchScope =
@@ -88,6 +89,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/connections": "Connections",
   "/settings/account": "Account",
   "/settings/users": "Users",
+  "/settings/insights": "Insights",
   "/settings/archived": "Archive",
 };
 
@@ -1032,6 +1034,8 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/account": null,
   // Portal users live on the primary environment; there is no scope to pick.
   "/settings/users": null,
+  // Insights is configured on the one environment the Insights page reads; no scope to pick.
+  "/settings/insights": null,
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
 };
