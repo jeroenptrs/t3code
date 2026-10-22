@@ -6,6 +6,8 @@ import {
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   type AuthGrantScope,
+  AuthInsightsReadScope,
+  AuthInsightsWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -112,6 +114,16 @@ export const AUTH_SCOPE_OPTIONS: ReadonlyArray<{
     description: msg(
       "Set up or replace T3 Connect, including its trusted pairing credential issuer.",
     ),
+  },
+  {
+    scope: AuthInsightsReadScope,
+    title: "View insights",
+    description: "Read estimated coding output per contributor.",
+  },
+  {
+    scope: AuthInsightsWriteScope,
+    title: "Manage insights",
+    description: "Choose the projects and people Insights covers.",
   },
 ];
 
