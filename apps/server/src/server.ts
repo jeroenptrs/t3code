@@ -61,6 +61,10 @@ import * as JiraIdentities from "./jira/JiraIdentities.ts";
 import * as JiraReadCache from "./jira/JiraReadCache.ts";
 import * as JiraRemoteLinkReactor from "./jira/JiraRemoteLinkReactor.ts";
 import * as JiraService from "./jira/JiraService.ts";
+import * as InsightsIngestor from "./insights/InsightsIngestor.ts";
+import * as InsightsService from "./insights/InsightsService.ts";
+import * as InsightsStore from "./insights/InsightsStore.ts";
+import * as Scheduler from "./scheduling/Scheduler.ts";
 import * as JiraUserCredentials from "./jira/JiraUserCredentials.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -431,6 +435,21 @@ const layerJiraBreakdowns = JiraBreakdownService.layer.pipe(
   Layer.provide(IdAllocator.layer),
 );
 
+// Fork-only Insights. One ingestor for the Scheduler and the WebSocket service, so resetting a
+// project's cursors drops the walk the worker has in progress.
+const layerInsights = InsightsService.layer.pipe(
+  Layer.provideMerge(InsightsIngestor.layer),
+  Layer.provide(InsightsStore.layer),
+  Layer.provide(layerPullRequestService),
+);
+
+const layerInsightsWorker = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const ingestor = yield* InsightsIngestor.InsightsIngestor;
+    yield* (yield* Scheduler.Scheduler).register("insights", ingestor.runDueWork);
+  }),
+).pipe(Layer.provide(layerInsights), Layer.provide(Scheduler.layer));
+
 const layerDiffWalkthroughWriter = DiffWalkthroughWriter.layer.pipe(
   Layer.provide(DiffWalkthroughChangeReader.layer),
 );
@@ -667,6 +686,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerThreadPullRequestWorker,
   DelegatedTaskAnalytics.layer,
   layerJiraWorkers,
+  layerInsightsWorker,
   Layer.effectDiscard(
     Effect.gen(function* () {
       const service = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -831,6 +851,8 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(layerDiffWalkthroughService),
   // Started over the WebSocket; shares the Jira services below.
   Layer.provide(layerJiraBreakdowns),
+  // The same instance the ingestion worker uses.
+  Layer.provide(layerInsights),
   // One instance, so every client reads through the same Jira caches.
   Layer.provide(layerJiraService),
   // The same activity instance RunExecutionService reports to, by layer memoization.
