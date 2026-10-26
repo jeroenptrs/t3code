@@ -127,6 +127,18 @@ it.layer(layerGit, { excludeTestServices: true })("checkout reads", (it) => {
     ),
   );
 
+  it.effect("lists the remote's branches and names its default branch", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repos = yield* makeRepositories;
+        yield* git(repos.work, ["push", "--quiet", "origin", "feature"]);
+        const listed = yield* InsightsGit.remoteBranches({ cwd: repos.checkout, remote: "origin" });
+        assert.strictEqual(listed.head, "main");
+        assert.deepStrictEqual(listed.branches.toSorted(), ["feature", "main"]);
+      }),
+    ),
+  );
+
   it.effect("gives a rebased commit the same patch-id and reads the branch since a date", () =>
     Effect.scoped(
       Effect.gen(function* () {
