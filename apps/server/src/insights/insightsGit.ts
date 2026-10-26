@@ -205,7 +205,9 @@ export const remoteBranches = Effect.fn("InsightsGit.remoteBranches")(function* 
   const result = yield* git.execute({
     operation: "InsightsGit.remoteBranches",
     cwd: input.cwd,
-    args: ["ls-remote", "--symref", "--heads", "--", input.remote, "HEAD"],
+    // Patterns filter the listing, so `--heads` with `HEAD` matched nothing. Asking for HEAD and
+    // every head keeps the symref line that names the default branch.
+    args: ["ls-remote", "--symref", "--", input.remote, "HEAD", "refs/heads/*"],
     timeoutMs: FETCH_TIMEOUT_MS,
   });
   const head = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(result.stdout)?.[1] ?? null;
