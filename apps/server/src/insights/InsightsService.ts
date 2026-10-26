@@ -156,7 +156,15 @@ const make = Effect.gen(function* () {
       .pipe(Effect.catch(unavailable));
     // An earlier start date leaves a gap before every stored cursor; a later one changes nothing
     // already stored.
-    if (input.startDate !== undefined && input.startDate < previous.startDate) {
+    // A branch that newly counts as landed shares the default branch's cursor, so its history
+    // before that cursor is only read by starting over.
+    const patternsChanged =
+      input.releaseBranchPatterns !== undefined &&
+      input.releaseBranchPatterns.join("\n") !== previous.releaseBranchPatterns.join("\n");
+    if (
+      (input.startDate !== undefined && input.startDate < previous.startDate) ||
+      patternsChanged
+    ) {
       yield* rescan().pipe(Effect.catch(unavailable));
     }
     return yield* config;
