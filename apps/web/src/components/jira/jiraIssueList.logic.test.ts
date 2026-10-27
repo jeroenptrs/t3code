@@ -27,6 +27,7 @@ function issue(key: string, patch: Partial<JiraIssueSummary> = {}): JiraIssueSum
     status: "To Do",
     statusCategory: "todo",
     issueType: "Task",
+    parentKey: null,
     priority: "Medium",
     assignee: null,
     sprints: [],

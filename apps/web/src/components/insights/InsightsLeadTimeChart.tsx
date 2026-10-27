@@ -2,15 +2,10 @@ import type { InsightsLeadTimeWeek, InsightsOverview } from "@t3tools/contracts"
 
 import { ChartFrame, type ChartSize } from "./charts/ChartFrame";
 import { ChartLegend } from "./charts/ChartLegend";
-import {
-  chartScale,
-  type ChartScale,
-  presentRuns,
-  seriesColor,
-  VIEW_WIDTH,
-} from "./charts/chartScale";
+import { chartScale, presentRuns, seriesColor, VIEW_WIDTH } from "./charts/chartScale";
 import { ChartTable } from "./charts/ChartTable";
 import { ChartTooltipRow, ChartTooltipTitle } from "./charts/ChartTooltip";
+import { SeriesLine } from "./charts/SeriesLine";
 import { useChartHover } from "./charts/useChartHover";
 import { formatInsightsDays, insightsSeries, insightsWeekLabel } from "./insights.logic";
 
@@ -21,45 +16,6 @@ interface LineSeries {
   readonly label: string;
   readonly color: string;
   readonly weeks: ReadonlyArray<InsightsLeadTimeWeek>;
-}
-
-function SeriesLine({
-  values,
-  slots,
-  scale,
-  color,
-}: {
-  readonly values: ReadonlyArray<number | null>;
-  readonly slots: number;
-  readonly scale: ChartScale;
-  readonly color: string;
-}) {
-  const slot = VIEW_WIDTH / Math.max(1, slots);
-  const x = (index: number) => index * slot + slot / 2;
-  return presentRuns(values).map((run) =>
-    run.length === 1 ? (
-      <line
-        key={run[0]}
-        x1={x(run[0]!) - slot * 0.15}
-        x2={x(run[0]!) + slot * 0.15}
-        y1={scale.y(values[run[0]!]!)}
-        y2={scale.y(values[run[0]!]!)}
-        stroke={color}
-        strokeWidth={2}
-        vectorEffect="non-scaling-stroke"
-      />
-    ) : (
-      <polyline
-        key={run[0]}
-        points={run.map((index) => `${x(index)},${scale.y(values[index]!)}`).join(" ")}
-        fill="none"
-        stroke={color}
-        strokeWidth={2}
-        strokeLinejoin="round"
-        vectorEffect="non-scaling-stroke"
-      />
-    ),
-  );
 }
 
 function LeadTimePlot({

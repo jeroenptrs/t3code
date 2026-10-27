@@ -2,7 +2,9 @@ import type { InsightsHeadline, InsightsOverview } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import type { ComponentType } from "react";
 
+import { cn } from "../../lib/utils";
 import { InsightsCycleCard, InsightsCycleExpanded } from "./InsightsCycleChart";
+import { InsightsJiraCard, InsightsJiraExpanded } from "./InsightsJiraChart";
 import { InsightsLeadTimeCard, InsightsLeadTimeExpanded } from "./InsightsLeadTimeChart";
 import { InsightsMixCard, InsightsMixExpanded } from "./InsightsMixChart";
 import { InsightsReviewsCard, InsightsReviewsExpanded } from "./InsightsReviewsChart";
@@ -22,6 +24,7 @@ export const INSIGHTS_CHART_VIEWS: Record<
   size: { Card: InsightsSizeCard, Expanded: InsightsSizeExpanded },
   mix: { Card: InsightsMixCard, Expanded: InsightsMixExpanded },
   reviews: { Card: InsightsReviewsCard, Expanded: InsightsReviewsExpanded },
+  jira: { Card: InsightsJiraCard, Expanded: InsightsJiraExpanded },
 };
 
 const TILES: ReadonlyArray<{
@@ -59,10 +62,23 @@ const TILES: ReadonlyArray<{
   },
 ];
 
-export function InsightsHeadlineTiles({ headline }: { readonly headline: InsightsHeadline }) {
+const JIRA_TILE: (typeof TILES)[number] = {
+  label: "Unticketed share",
+  chart: "jira",
+  value: (headline) => formatInsightsShare(headline.unticketedShare),
+};
+
+export function InsightsHeadlineTiles({ overview }: { readonly overview: InsightsOverview }) {
+  const tiles = overview.jira === null ? TILES : [...TILES, JIRA_TILE];
+  const headline = overview.headline;
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-      {TILES.map((tile) => (
+    <div
+      className={cn(
+        "grid grid-cols-2 gap-3 sm:grid-cols-3",
+        tiles.length > 5 ? "lg:grid-cols-6" : "lg:grid-cols-5",
+      )}
+    >
+      {tiles.map((tile) => (
         <Link
           key={tile.label}
           to="/insights/$chart"
