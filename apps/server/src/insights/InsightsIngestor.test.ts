@@ -377,6 +377,13 @@ it.layer(layerGit, { excludeTestServices: true })("Insights ingestion", (it) => 
           assert.strictEqual(overview.contributors[0]!.commits, 1);
           assert.strictEqual(overview.contributors[0]!.medianFirstReviewHours, 2);
 
+          const bob = yield* include("bob");
+          yield* tick;
+          const both = yield* insights.overview({ from: "2026-02-02", to: "2026-02-08" });
+          assert.deepStrictEqual(both.reviews.cells, [
+            { reviewerContributorId: bob, authorContributorId: ada, count: 1, mergeRequests: [1] },
+          ]);
+
           // Excluding deletes what was stored for her.
           yield* insights.updateContributor({ contributorId: ada, status: "excluded" }, null);
           assert.deepStrictEqual(yield* commitRows, []);
@@ -538,6 +545,18 @@ it.layer(layerGit, { excludeTestServices: true })("Insights ingestion", (it) => 
               ],
             );
             assert.isFalse(rows.some((row) => row.sha === rewritten));
+            const overview = yield* (yield* InsightsService.InsightsService).overview({
+              from: "2026-02-02",
+              to: "2026-02-08",
+            });
+            assert.strictEqual(overview.cycle.weeks[0]!.count, 1);
+            assert.deepStrictEqual(overview.cycle.weeks[0]!.toTrunk, { median: 0, p85: 0 });
+            assert.deepStrictEqual(
+              overview.size.buckets.map((bucket) => bucket.count),
+              [1, 0, 0, 0, 0],
+            );
+            assert.strictEqual(overview.mix.contributors[0]!.commitsByType.other, 3);
+            assert.strictEqual(overview.headline.abandonedShare, 0);
           }).pipe(Effect.provide(layerFor([{ id: "app", root: repos.checkout, stub }])));
         }),
       ),
