@@ -27,12 +27,13 @@ export function InsightsOverviewView() {
   const overview = useInsightsOverview();
   if (overview.data === null) return <Reading text={overview.error} />;
   const data = overview.data;
+  const charts = INSIGHTS_CHARTS.filter((chart) => chart.key !== "jira" || data.jira !== null);
   return (
     <>
       <p className="text-xs text-muted-foreground">{INSIGHTS_ESTIMATE_LABEL}</p>
-      <InsightsHeadlineTiles headline={data.headline} />
+      <InsightsHeadlineTiles overview={data} />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {INSIGHTS_CHARTS.map((chart) => {
+        {charts.map((chart) => {
           const { Card } = INSIGHTS_CHART_VIEWS[chart.key];
           return (
             <section
@@ -89,26 +90,43 @@ export function InsightsOverviewView() {
   );
 }
 
+function NoChart({ title, description }: { readonly title: string; readonly description: string }) {
+  return (
+    <Empty>
+      <EmptyMedia variant="icon">
+        <ChartLineIcon />
+      </EmptyMedia>
+      <EmptyHeader>
+        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyDescription>{description}</EmptyDescription>
+      </EmptyHeader>
+      <Button size="sm" render={<Link to="/insights" search={(previous) => previous} />}>
+        Back to Insights
+      </Button>
+    </Empty>
+  );
+}
+
 export function InsightsChartView() {
   const chart = insightsChartByKey(useParams({ from: "/insights/$chart" }).chart);
   const overview = useInsightsOverview();
   if (chart === null) {
     return (
-      <Empty>
-        <EmptyMedia variant="icon">
-          <ChartLineIcon />
-        </EmptyMedia>
-        <EmptyHeader>
-          <EmptyTitle>No such chart</EmptyTitle>
-          <EmptyDescription>This link names a chart Insights does not have.</EmptyDescription>
-        </EmptyHeader>
-        <Button size="sm" render={<Link to="/insights" search={(previous) => previous} />}>
-          Back to Insights
-        </Button>
-      </Empty>
+      <NoChart
+        title="No such chart"
+        description="This link names a chart Insights does not have."
+      />
     );
   }
   if (overview.data === null) return <Reading text={overview.error} />;
+  if (chart.key === "jira" && overview.data.jira === null) {
+    return (
+      <NoChart
+        title="Jira is not configured"
+        description="Jira work appears once this server has a Jira identity."
+      />
+    );
+  }
   const { Expanded } = INSIGHTS_CHART_VIEWS[chart.key];
   return (
     <section className="flex flex-col gap-4">
