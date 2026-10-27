@@ -118,12 +118,165 @@ export const InsightsContributorRow = Schema.Struct({
 });
 export type InsightsContributorRow = typeof InsightsContributorRow.Type;
 
+export const InsightsContributorWeek = Schema.Struct({
+  weekStart: InsightsDay,
+  contributorId: InsightsContributorId,
+  pushedHours: Schema.Number,
+  landedHours: Schema.Number,
+});
+export type InsightsContributorWeek = typeof InsightsContributorWeek.Type;
+
+/** A median and 85th percentile; both null when nothing was measured. */
+export const InsightsSpread = Schema.Struct({
+  median: Schema.NullOr(Schema.Number),
+  p85: Schema.NullOr(Schema.Number),
+});
+export type InsightsSpread = typeof InsightsSpread.Type;
+
+/**
+ * Hours of each merged merge request's path to trunk: coding (first commit authored to created),
+ * pickup (created to first review, or to merge without one), review (first review to merge) and
+ * to trunk (merge to the earliest landed commit).
+ */
+const InsightsCycleSegments = {
+  count: NonNegativeInt,
+  coding: InsightsSpread,
+  pickup: InsightsSpread,
+  review: InsightsSpread,
+  toTrunk: InsightsSpread,
+};
+
+export const InsightsCycleWeek = Schema.Struct({
+  weekStart: InsightsDay,
+  ...InsightsCycleSegments,
+});
+export type InsightsCycleWeek = typeof InsightsCycleWeek.Type;
+
+export const InsightsCycleContributor = Schema.Struct({
+  contributorId: InsightsContributorId,
+  ...InsightsCycleSegments,
+});
+export type InsightsCycleContributor = typeof InsightsCycleContributor.Type;
+
+export const InsightsCycle = Schema.Struct({
+  weeks: Schema.Array(InsightsCycleWeek),
+  contributors: Schema.Array(InsightsCycleContributor),
+});
+export type InsightsCycle = typeof InsightsCycle.Type;
+
+/** Days from first commit authored to landed for merge requests merged that week. */
+export const InsightsLeadTimeWeek = Schema.Struct({
+  weekStart: InsightsDay,
+  count: NonNegativeInt,
+  medianDays: Schema.NullOr(Schema.Number),
+  p85Days: Schema.NullOr(Schema.Number),
+});
+export type InsightsLeadTimeWeek = typeof InsightsLeadTimeWeek.Type;
+
+export const InsightsLeadTime = Schema.Struct({
+  weeks: Schema.Array(InsightsLeadTimeWeek),
+  contributors: Schema.Array(
+    Schema.Struct({
+      contributorId: InsightsContributorId,
+      weeks: Schema.Array(InsightsLeadTimeWeek),
+    }),
+  ),
+});
+export type InsightsLeadTime = typeof InsightsLeadTime.Type;
+
+/** Merged merge requests by lines added plus deleted, `min` to `max` inclusive. */
+export const InsightsSizeBucket = Schema.Struct({
+  min: NonNegativeInt,
+  /** Null for the open-ended last bucket. */
+  max: Schema.NullOr(NonNegativeInt),
+  count: NonNegativeInt,
+  medianChangedFiles: Schema.NullOr(Schema.Number),
+  medianFirstReviewHours: Schema.NullOr(Schema.Number),
+  byContributor: Schema.Array(
+    Schema.Struct({ contributorId: InsightsContributorId, count: NonNegativeInt }),
+  ),
+});
+export type InsightsSizeBucket = typeof InsightsSizeBucket.Type;
+
+export const InsightsCommitTypes = ["feat", "fix", "chore", "docs", "test", "other"] as const;
+export const InsightsCommitType = Schema.Literals(InsightsCommitTypes);
+export type InsightsCommitType = typeof InsightsCommitType.Type;
+
+const InsightsByCommitType = Schema.Struct({
+  feat: Schema.Number,
+  fix: Schema.Number,
+  chore: Schema.Number,
+  docs: Schema.Number,
+  test: Schema.Number,
+  other: Schema.Number,
+});
+export type InsightsByCommitType = typeof InsightsByCommitType.Type;
+
+/** Landed hours and commits by conventional commit type. */
+export const InsightsMix = Schema.Struct({
+  contributors: Schema.Array(
+    Schema.Struct({
+      contributorId: InsightsContributorId,
+      hoursByType: InsightsByCommitType,
+      commitsByType: InsightsByCommitType,
+    }),
+  ),
+  weeks: Schema.Array(
+    Schema.Struct({
+      weekStart: InsightsDay,
+      hoursByType: InsightsByCommitType,
+      commitsByType: InsightsByCommitType,
+    }),
+  ),
+});
+export type InsightsMix = typeof InsightsMix.Type;
+
+export const InsightsReviews = Schema.Struct({
+  /** Distinct merge requests each included reviewer reviewed for each included author. */
+  cells: Schema.Array(
+    Schema.Struct({
+      reviewerContributorId: InsightsContributorId,
+      authorContributorId: InsightsContributorId,
+      count: NonNegativeInt,
+      mergeRequests: Schema.Array(PositiveInt),
+    }),
+  ),
+  unreviewedMergesByAuthor: Schema.Array(
+    Schema.Struct({
+      contributorId: InsightsContributorId,
+      merged: NonNegativeInt,
+      unreviewed: NonNegativeInt,
+    }),
+  ),
+});
+export type InsightsReviews = typeof InsightsReviews.Type;
+
+export const InsightsHeadline = Schema.Struct({
+  leadTimeMedianDays: Schema.NullOr(Schema.Number),
+  medianMergeRequestLines: Schema.NullOr(Schema.Number),
+  /** Merged without a review over merged. */
+  unreviewedMergeShare: Schema.NullOr(Schema.Number),
+  /** Pushed hours of commits with an agent co-author over pushed hours. */
+  agentAssistedShare: Schema.NullOr(Schema.Number),
+  /** Closed without merging over closed plus merged. */
+  abandonedShare: Schema.NullOr(Schema.Number),
+});
+export type InsightsHeadline = typeof InsightsHeadline.Type;
+
 export const InsightsOverview = Schema.Struct({
   from: InsightsDay,
   to: InsightsDay,
   workingDays: NonNegativeInt,
   weeks: Schema.Array(InsightsWeek),
   contributors: Schema.Array(InsightsContributorRow),
+  /** Only weeks a contributor pushed or landed something. */
+  byContributorWeeks: Schema.Array(InsightsContributorWeek),
+  cycle: InsightsCycle,
+  leadTime: InsightsLeadTime,
+  size: Schema.Struct({ buckets: Schema.Array(InsightsSizeBucket) }),
+  mix: InsightsMix,
+  reviews: InsightsReviews,
+  headline: InsightsHeadline,
 });
 export type InsightsOverview = typeof InsightsOverview.Type;
 
