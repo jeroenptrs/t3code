@@ -25,25 +25,35 @@ function weekLabel(weekStart: string): string {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
+const SHARE_TICKS = [0, 0.5, 1];
+
 /**
- * Pushed and landed hours per active contributor for each week, with the landed share as a line
- * on its own 0 to 100% scale. Static SVG: a hover shows the week's numbers through `<title>`, so
- * nothing repaints while the pointer moves.
+ * Pushed and landed hours per active contributor for each week, with the landed share to date as
+ * a line on its own 0 to 100% axis. The share is cumulative over the window, so it ends at the
+ * table's total; a week's own ratio swings past 100% whenever earlier work lands. Static SVG: a
+ * hover shows the week's numbers through `<title>`, so nothing repaints while the pointer moves.
  */
 export function InsightsTrendChart({ weeks }: { readonly weeks: ReadonlyArray<InsightsWeek> }) {
-  const columns = weeks.map((week) => ({
-    week,
-    pushed: perContributor(week.pushedHours, week.activeContributors),
-    landed: perContributor(week.landedHours, week.activeContributors),
-    share: week.pushedHours > 0 ? week.landedHours / week.pushedHours : null,
-  }));
-  const max = niceMax(Math.max(0, ...columns.map((column) => column.pushed)));
+  const columns = weeks.map((week, index) => {
+    const toDate = weeks.slice(0, index + 1);
+    const pushedToDate = toDate.reduce((sum, past) => sum + past.pushedHours, 0);
+    const landedToDate = toDate.reduce((sum, past) => sum + past.landedHours, 0);
+    return {
+      week,
+      pushed: perContributor(week.pushedHours, week.activeContributors),
+      landed: perContributor(week.landedHours, week.activeContributors),
+      share: pushedToDate > 0 ? landedToDate / pushedToDate : null,
+    };
+  });
+  const max = niceMax(Math.max(0, ...columns.flatMap((column) => [column.pushed, column.landed])));
   const ticks = Array.from({ length: TICK_COUNT + 1 }, (_, index) => (max / TICK_COUNT) * index);
   const toY = (value: number) => VIEW_HEIGHT - (value / max) * (VIEW_HEIGHT - PLOT_TOP);
   const slot = columns.length === 0 ? VIEW_WIDTH : VIEW_WIDTH / columns.length;
   const barWidth = Math.max(2, slot * 0.32);
   const lastColumn = columns.at(-1);
-  const shareY = (share: number) => VIEW_HEIGHT - share * (VIEW_HEIGHT - PLOT_TOP);
+  // Landed can exceed pushed early in a window; the line stays inside the plot and the hover
+  // shows the real value.
+  const shareY = (share: number) => VIEW_HEIGHT - Math.min(1, share) * (VIEW_HEIGHT - PLOT_TOP);
   const sharePoints = columns.flatMap((column, index) =>
     column.share === null
       ? []
@@ -90,7 +100,7 @@ export function InsightsTrendChart({ weeks }: { readonly weeks: ReadonlyArray<In
               return (
                 <g key={column.week.weekStart}>
                   <title>
-                    {`Week of ${weekLabel(column.week.weekStart)}: ${formatInsightsHours(column.pushed)} pushed, ${formatInsightsHours(column.landed)} landed per active contributor (${column.week.activeContributors} active), landed share ${formatInsightsShare(column.share)}`}
+                    {`Week of ${weekLabel(column.week.weekStart)}: ${formatInsightsHours(column.pushed)} pushed, ${formatInsightsHours(column.landed)} landed per active contributor (${column.week.activeContributors} active), landed share to date ${formatInsightsShare(column.share)}`}
                   </title>
                   <rect
                     x={index * slot}
@@ -123,15 +133,27 @@ export function InsightsTrendChart({ weeks }: { readonly weeks: ReadonlyArray<In
                 points={sharePoints.join(" ")}
                 fill="none"
                 stroke="currentColor"
-                strokeWidth={2}
-                className="text-foreground"
+                strokeWidth={1.5}
+                strokeLinejoin="round"
+                className="text-foreground/70"
                 vectorEffect="non-scaling-stroke"
               />
             ) : null}
           </svg>
         </div>
+        <div className="relative h-52 w-10 shrink-0">
+          {SHARE_TICKS.map((tick) => (
+            <span
+              key={tick}
+              className="absolute left-0 -translate-y-1/2 text-3xs text-muted-foreground tabular-nums"
+              style={{ top: `${(shareY(tick) / VIEW_HEIGHT) * 100}%` }}
+            >
+              {formatInsightsShare(tick)}
+            </span>
+          ))}
+        </div>
       </div>
-      <div className="flex justify-between pl-14 text-3xs text-muted-foreground uppercase">
+      <div className="flex justify-between pr-12 pl-14 text-3xs text-muted-foreground uppercase">
         <span>{columns[0] ? weekLabel(columns[0].week.weekStart) : ""}</span>
         <span>{lastColumn ? weekLabel(lastColumn.week.weekStart) : ""}</span>
       </div>
@@ -145,8 +167,8 @@ export function InsightsTrendChart({ weeks }: { readonly weeks: ReadonlyArray<In
           Landed per active contributor
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="h-0.5 w-3 bg-foreground" />
-          Landed share (0 to 100%)
+          <span className="h-0.5 w-3 bg-foreground/70" />
+          Landed share to date
         </span>
       </div>
     </div>
