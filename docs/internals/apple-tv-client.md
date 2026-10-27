@@ -307,19 +307,36 @@ For the TV, the device grant path would remove the Clerk UI and these
 identity constraints entirely, which is another reason to propose the relay
 change upstream.
 
-## Open questions to verify before committing effort
+## Status as of 2026-10-27
 
-- Does `ClerkKit` build for the `appletvos` SDK under Xcode 27, and does
-  `ClerkKitUI`'s email code view lay out on a TV? One SwiftPM test target
-  answers both.
-- Does `react-native-tvos@0.88.0-0` in `apps/tv` coexist with
-  `react-native@0.88.0` in `apps/mobile` under pnpm's isolated layout, with
-  Metro resolving the right one? One prebuild and run answers it.
-- Which markdown renderer for the TV. `react-native-enriched-markdown` is
-  native iOS codegen in the T3 tarball. A JavaScript renderer over the same
-  `remark` pipeline the app already depends on is the likely answer.
-- Whether upstream accepts the one-line relay change so the device grant
-  can serve clients, not only the CLI.
+The open questions from the first draft are answered, and `apps/tv` exists on
+this branch.
+
+- `react-native-tvos@0.88.0-0` coexists with the mobile app under pnpm. Metro
+  needed a resolver pin in `apps/tv/metro.config.js`, because Expo's workspace
+  autolinking walked up to the upstream `react-native` copy.
+- ClerkKit 1.3.3 compiles for tvOS, but every ClerkKitUI view is excluded
+  there. It did not matter: `@clerk/expo` 4.14 runs headless on `clerk-js`
+  with no native pod, so the TV signs in with a plain React Native email code
+  screen. Production Clerk answered from the simulator. Sign-up, OAuth, Apple,
+  and passkeys are not offered on the TV. Upgrading clerk-ios past 1.6.1
+  breaks ClerkKitUI for tvOS; the TV does not depend on it.
+- The markdown renderer is TypeScript over `remark-parse`, with each block a
+  focus stop so the remote scrolls long replies.
+- Pairing by host and code, reconnect on launch, environment and thread
+  lists, a thread view with live streaming, and sending a reply all work on
+  the tvOS 27 simulator against a local server. The reply box is a native text
+  input, so the tvOS keyboard with Siri dictation and the iPhone Continuity
+  keyboard are the dictation path today.
+- The client sends device type `unknown` on the wire, because released servers
+  reject `tv`. The contracts and server on this branch accept `tv`; switch the
+  client once that server has shipped.
+- Not verified: remote-button navigation, a real sign-in and the relay
+  environment list, and a device build. This Xcode install has no
+  Simulator.app, so those wait for hardware. `apps/tv/README.md` has the
+  device steps.
+- Still to do from the dictation design: the phone handoff and the mirrored
+  draft. The upstream relay change for the device grant is not proposed yet.
 
 ## Sources
 
