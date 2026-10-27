@@ -5,8 +5,12 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   formatInsightsSizeBucket,
   formatInsightsSpread,
+  formatInsightsHoursOf,
   insightsChartByKey,
+  insightsJiraSeries,
+  insightsJiraTypeLabel,
   insightsSeries,
+  insightsUnticketedShare,
   insightsWindowChoice,
   insightsWindowForWeeks,
   parseInsightsSearch,
@@ -153,5 +157,61 @@ describe("insightsSeries", () => {
       folded: ["c1", "c0"],
     });
     expect(insightsSeries([{ id: "idle", total: 0 }])).toEqual({ shown: [], folded: [] });
+  });
+});
+
+describe("insightsJiraSeries", () => {
+  const entry = (issueType: string, landedHours: number) => ({ issueType, landedHours });
+
+  it("ranks issue types by hours and keeps unticketed last in the last color", () => {
+    expect(
+      insightsJiraSeries([entry("Unticketed", 9), entry("Bug", 2), entry("Story", 5)]),
+    ).toEqual([
+      { key: "Story", label: "Story", types: ["Story"], colorIndex: 0 },
+      { key: "Bug", label: "Bug", types: ["Bug"], colorIndex: 1 },
+      { key: "Unticketed", label: "Unticketed", types: ["Unticketed"], colorIndex: 5 },
+    ]);
+  });
+
+  it("folds beyond five issue types into other and drops types without hours", () => {
+    const series = insightsJiraSeries([
+      ...["A", "B", "C", "D", "E", "F"].map((type, index) => entry(type, 10 - index)),
+      entry("Idle", 0),
+      entry("Unticketed", 1),
+    ]);
+    expect(series.map((line) => [line.label, line.colorIndex])).toEqual([
+      ["A", 0],
+      ["B", 1],
+      ["C", 2],
+      ["D", 3],
+      ["Other", 4],
+      ["Unticketed", 5],
+    ]);
+    expect(series[4]!.types).toEqual(["E", "F"]);
+    expect(
+      insightsJiraSeries(["A", "B", "C", "D", "E"].map((type) => entry(type, 1))).map(
+        (line) => line.label,
+      ),
+    ).toEqual(["A", "B", "C", "D", "E"]);
+  });
+
+  it("labels keys Jira has not described as an unknown type", () => {
+    expect(insightsJiraTypeLabel("Unknown")).toBe("Unknown type");
+    expect(insightsJiraTypeLabel("Unticketed")).toBe("Unticketed");
+    expect(insightsJiraTypeLabel("Story")).toBe("Story");
+  });
+});
+
+describe("insightsUnticketedShare", () => {
+  it("is null for a week that landed nothing", () => {
+    expect(insightsUnticketedShare({ landedHours: 4, unticketedHours: 1 })).toBe(0.25);
+    expect(insightsUnticketedShare({ landedHours: 0, unticketedHours: 0 })).toBeNull();
+  });
+});
+
+describe("formatInsightsHoursOf", () => {
+  it("shows hours with their share of the total", () => {
+    expect(formatInsightsHoursOf(2, 8)).toBe("2.0h · 25%");
+    expect(formatInsightsHoursOf(0, 0)).toBe("0.0h · -");
   });
 });
