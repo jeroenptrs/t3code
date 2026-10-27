@@ -7,12 +7,10 @@ const config = getDefaultConfig(__dirname);
 const workspaceRoot = path.resolve(__dirname, "../..");
 const escapedWorkspaceRoot = workspaceRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// pnpm stores the fork as node_modules/.pnpm/react-native-tvos@.../node_modules/react-native-tvos.
-// Imports of `react-native` from inside the fork, from packages without a `react-native`
-// sibling, or through Expo's workspace autolinking resolver (which resolves from inside the
-// fork's directory) fall through to node_modules/.pnpm/node_modules/react-native: the upstream
-// package apps/mobile uses. Resolve every `react-native` import from this app instead, so it
-// goes through apps/tv/node_modules/react-native and keeps the fork's `exports` map.
+// Resolve every `react-native` import from this app, not from the importer. Expo's workspace
+// autolinking resolver and packages without a `react-native` sibling otherwise fall through to
+// node_modules/.pnpm/node_modules/react-native, the upstream copy apps/mobile uses, instead of
+// the tvOS fork behind apps/tv/node_modules/react-native and its `exports` map.
 const reactNativeOrigin = path.join(__dirname, "index.ts");
 
 config.watchFolders = [...new Set([...(config.watchFolders ?? []), workspaceRoot])];

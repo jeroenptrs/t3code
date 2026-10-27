@@ -9,7 +9,22 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@clerk/expo": "catalog:",
+    "@effect/atom-react": "catalog:",
+    "@noble/curves": "catalog:",
+    "@t3tools/client-runtime": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
+    "effect": "catalog:",
     "expo": "58.0.14",
+    "expo-application": "~58.1.2",
+    "expo-constants": "~58.0.12",
+    "expo-crypto": "~58.0.7",
+    "expo-device": "~58.0.5",
+    "expo-file-system": "~58.0.9",
+    "expo-network": "~58.0.3",
+    "expo-secure-store": "~58.0.2",
+    "expo-sqlite": "~58.0.13",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-native": "npm:react-native-tvos@0.88.0-0"
@@ -17,6 +32,7 @@
   "devDependencies": {
     "@babel/core": "^7.29.7",
     "@react-native-tvos/config-tv": "0.1.7",
+    "@types/node": "catalog:",
     "@types/react": "catalog:",
     "babel-preset-expo": "~58.0.17",
     "metro-resolver": "0.87.1",

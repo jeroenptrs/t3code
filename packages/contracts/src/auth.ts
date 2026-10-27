@@ -198,6 +198,7 @@ export const AuthClientMetadataDeviceType = Schema.Literals([
   "desktop",
   "mobile",
   "tablet",
+  "tv",
   "bot",
   "unknown",
 ]);
