@@ -1,5 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
+import { parseInsightsSearch } from "../components/insights/insights.logic";
 import { InsightsPage } from "../components/insights/InsightsPage";
 
 export const Route = createFileRoute("/insights")({
@@ -11,5 +12,6 @@ export const Route = createFileRoute("/insights")({
       throw redirect({ to: "/pair", replace: true });
     }
   },
+  validateSearch: parseInsightsSearch,
   component: InsightsPage,
 });
