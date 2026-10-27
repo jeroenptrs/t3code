@@ -15,8 +15,21 @@ or the settings section.
 Pick a window of the last 4, 8, 13, or 26 weeks, or a custom range. You can narrow the page to
 some of the people Insights covers.
 
-- **Team trend.** Weekly bars of pushed and landed hours per active person, with the landed
-  share to date as a line: landed hours over pushed hours from the start of the window.
+The page opens on an overview of charts. Each chart opens a larger view with its numbers on hover
+and in a table under it. The window and the people you picked stay in the address, so a copied
+link opens the same view. Tiles above the charts give the headline numbers, and each tile opens
+the chart behind it.
+
+- **Team trend.** Are pushed and landed hours per active person going up or down, and how much
+  of what was pushed has landed so far?
+- **Cycle time.** Where does a merged merge request wait: coding, waiting for a first review, in
+  review, or between merge and the default branch?
+- **Lead time.** How many days pass from a merge request's first commit to landing?
+- **Merge request size.** How large are merged merge requests, and do larger ones wait longer
+  for a first review?
+- **Work mix.** How do landed hours split across features, fixes, chores, docs, tests, and
+  other commits, read from conventional commit prefixes such as `feat:`?
+- **Reviews.** Who reviews whose merge requests, and how many merge without a review?
 - **Contributor table.** Landed hours, pushed hours, landed share, throughput, commits, merge
   requests merged, reviews given, median time to first review, and median cycle time. Click a
   column heading to sort by it.
