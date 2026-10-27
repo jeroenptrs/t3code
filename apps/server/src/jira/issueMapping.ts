@@ -31,7 +31,15 @@ const STORY_POINTS_FIELD_TYPE = "com.pyxis.greenhopper.jira:jsw-story-points";
 const FLOAT_FIELD_TYPE = "com.atlassian.jira.plugin.system.customfieldtypes:float";
 
 /** Fields a row needs, before the site's sprint and story point field ids. */
-const SUMMARY_FIELDS = ["summary", "status", "issuetype", "priority", "assignee", "updated"];
+const SUMMARY_FIELDS = [
+  "summary",
+  "status",
+  "issuetype",
+  "parent",
+  "priority",
+  "assignee",
+  "updated",
+];
 
 export const summaryFields = (ids: JiraFieldIds): ReadonlyArray<string> => [
   ...SUMMARY_FIELDS,
@@ -165,6 +173,7 @@ export const toIssueSummary = (
       isRecord(status.statusCategory) ? status.statusCategory.key : undefined,
     ),
     issueType: nameOf(fields.issuetype),
+    parentKey: isRecord(fields.parent) ? stringOrNull(fields.parent.key) : null,
     priority: nameOf(fields.priority),
     assignee: toJiraUser(fields.assignee),
     sprints: context.fieldIds.sprint === null ? [] : toSprints(fields[context.fieldIds.sprint]),

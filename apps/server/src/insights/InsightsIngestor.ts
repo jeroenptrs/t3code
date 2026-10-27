@@ -22,6 +22,8 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import { parseJiraIssueKeysFrom } from "../jira/issueKeys.ts";
+import * as JiraIdentities from "../jira/JiraIdentities.ts";
+import * as JiraService from "../jira/JiraService.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { estimateCodingTime, hasAgentCoauthor } from "./codingTimeEstimate.ts";
@@ -42,6 +44,10 @@ const SQUASH_WINDOW_MS = 10 * 60_000;
 const COMMIT_LIST_LIMIT = 100;
 /** Detail and activity: the two calls that read one merge request. */
 const MERGE_REQUEST_COST = 2;
+/** One bulk read of issues by key. */
+const JIRA_KEYS_PER_CALL = 100;
+/** A cached issue, or a key Jira did not return, is read again after this long. */
+const JIRA_REFRESH_MS = 24 * 60 * 60_000;
 
 interface Walk {
   /** The project's cursor when the walk started; a reset cursor discards the walk. */
@@ -124,6 +130,8 @@ const make = Effect.gen(function* () {
   const store = yield* InsightsStore.InsightsStore;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const jira = yield* JiraService.JiraService;
+  const identities = yield* JiraIdentities.JiraIdentities;
   const walks = yield* Ref.make(new Map<ProjectId, Walk>());
   const failedAt = new Map<ProjectId, number>();
 
@@ -604,6 +612,50 @@ const make = Effect.gen(function* () {
     }
   });
 
+  /**
+   * The issue behind each key stored rows carry, a bulk read per call against the site's own
+   * budget. Git carries keys but no site, so every key is read on the reader's site.
+   */
+  const syncJiraIssues = Effect.fn("InsightsIngestor.syncJiraIssues")(function* (input: {
+    readonly meters: Map<string, Meter>;
+    readonly budget: number;
+    readonly now: string;
+    readonly nowMs: number;
+  }) {
+    if (!identities.configured) return;
+    const { site } = yield* identities.reader;
+    const host = `jira:${site}`;
+    const meter = input.meters.get(host) ?? { left: input.budget };
+    input.meters.set(host, meter);
+    while (meter.left > 0) {
+      const keys = yield* store.staleJiraKeys({
+        site,
+        olderThanIso: isoOf(input.nowMs - JIRA_REFRESH_MS),
+        limit: JIRA_KEYS_PER_CALL,
+      });
+      if (keys.length === 0) return;
+      meter.left -= 1;
+      const issues = new Map(
+        (yield* jira.issuesByKeys(site, keys)).map((issue) => [issue.key, issue]),
+      );
+      yield* store.putJiraIssues({
+        site,
+        fetchedAt: input.now,
+        rows: keys.map((key) => {
+          const issue = issues.get(key);
+          return {
+            key,
+            issueType: issue?.issueType ?? null,
+            statusCategory: issue?.statusCategory ?? null,
+            parentKey: issue?.parentKey ?? null,
+            summary: issue?.summary ?? null,
+          };
+        }),
+      });
+      if (keys.length < JIRA_KEYS_PER_CALL) return;
+    }
+  });
+
   const runDueWork: InsightsIngestor["Service"]["runDueWork"] = Effect.gen(function* () {
     const rows = (yield* store.projects).filter((row) => row.enabled);
     if (rows.length === 0) return;
@@ -671,6 +723,13 @@ const make = Effect.gen(function* () {
         }),
       );
     }
+
+    // Only ticks that synced a project get here, and those are when new keys arrive.
+    yield* syncJiraIssues({ meters, budget: settings.requestBudgetPerTick, now, nowMs }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Insights could not read Jira issues", { errorTag: error._tag }),
+      ),
+    );
   }).pipe(
     Effect.catch((error) =>
       Effect.logWarning("Insights ingestion tick failed", { errorTag: error._tag }),

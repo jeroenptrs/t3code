@@ -223,6 +223,7 @@ it.effect("searches a saved filter's JQL with the site's custom fields, and cach
           "summary",
           "status",
           "issuetype",
+          "parent",
           "priority",
           "assignee",
           "updated",
