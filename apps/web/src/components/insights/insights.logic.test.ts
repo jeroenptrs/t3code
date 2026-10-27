@@ -3,7 +3,13 @@ import { InsightsContributorId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  formatInsightsSizeBucket,
+  formatInsightsSpread,
+  insightsChartByKey,
+  insightsSeries,
+  insightsWindowChoice,
   insightsWindowForWeeks,
+  parseInsightsSearch,
   isInsightsAuthenticationError,
   nextInsightsSort,
   parseInsightsBranchPatterns,
@@ -91,5 +97,61 @@ describe("settings helpers", () => {
     );
     expect(isInsightsAuthenticationError("The project checkout is missing.")).toBe(false);
     expect(isInsightsAuthenticationError(null)).toBe(false);
+  });
+});
+
+describe("insightsChartByKey", () => {
+  it("knows every chart and nothing else", () => {
+    expect(insightsChartByKey("leadTime")?.title).toBe("Lead time");
+    expect(insightsChartByKey("toString")).toBeNull();
+  });
+});
+
+describe("parseInsightsSearch", () => {
+  it("keeps valid days and contributor lists and drops the rest", () => {
+    expect(
+      parseInsightsSearch({ from: "2026-10-01", to: "yesterday", contributors: ["ada", 7] }),
+    ).toEqual({ from: "2026-10-01", contributors: ["ada"] });
+    expect(parseInsightsSearch({ contributors: [] })).toEqual({ contributors: [] });
+    expect(parseInsightsSearch({})).toEqual({});
+  });
+});
+
+describe("insightsWindowChoice", () => {
+  it("names the preset a window matches and calls anything else custom", () => {
+    const now = new Date("2026-10-22T15:00:00Z");
+    expect(insightsWindowChoice(insightsWindowForWeeks(8, now), now)).toBe(8);
+    expect(insightsWindowChoice({ from: "2026-10-01", to: "2026-10-22" }, now)).toBe("custom");
+  });
+});
+
+describe("formatInsightsSizeBucket", () => {
+  it("labels open ends with < and >", () => {
+    expect(formatInsightsSizeBucket({ min: 0, max: 49 })).toBe("<50");
+    expect(formatInsightsSizeBucket({ min: 50, max: 200 })).toBe("50–200");
+    expect(formatInsightsSizeBucket({ min: 1001, max: null })).toBe(">1000");
+  });
+});
+
+describe("formatInsightsSpread", () => {
+  it("shows the median beside the 85th percentile", () => {
+    expect(formatInsightsSpread({ median: 2, p85: 30 })).toBe("2.0h median, 30.0h p85");
+    expect(formatInsightsSpread({ median: null, p85: null })).toBe("-");
+  });
+});
+
+describe("insightsSeries", () => {
+  it("draws up to six series and folds the smallest into other beyond that", () => {
+    const totals = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({ id: `c${index}`, total: index + 1 }));
+    expect(insightsSeries(totals(6))).toEqual({
+      shown: ["c5", "c4", "c3", "c2", "c1", "c0"],
+      folded: [],
+    });
+    expect(insightsSeries(totals(7))).toEqual({
+      shown: ["c6", "c5", "c4", "c3", "c2"],
+      folded: ["c1", "c0"],
+    });
+    expect(insightsSeries([{ id: "idle", total: 0 }])).toEqual({ shown: [], folded: [] });
   });
 });
