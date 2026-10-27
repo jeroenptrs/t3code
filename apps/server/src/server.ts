@@ -448,6 +448,7 @@ const layerInsights = InsightsService.layer.pipe(
   Layer.provideMerge(InsightsIngestor.layer),
   Layer.provide(InsightsStore.layer),
   Layer.provide(layerPullRequestService),
+  Layer.provide(layerJiraService),
 );
 
 const layerInsightsWorker = Layer.effectDiscard(
