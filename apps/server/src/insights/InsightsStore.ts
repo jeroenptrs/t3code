@@ -101,8 +101,17 @@ export interface StoredCommit {
 
 export type OverviewRows = Pick<
   RollupInput,
-  "contributors" | "commits" | "mergeRequests" | "reviews"
+  "contributors" | "commits" | "mergeRequests" | "reviews" | "jiraIssues"
 >;
+
+/** A cached Jira issue; every field but the key is null when Jira did not return it. */
+export interface JiraIssueRow {
+  readonly key: string;
+  readonly issueType: string | null;
+  readonly statusCategory: string | null;
+  readonly parentKey: string | null;
+  readonly summary: string | null;
+}
 
 type Sql<A> = Effect.Effect<A, SqlError.SqlError>;
 
@@ -223,10 +232,27 @@ export class InsightsStore extends Context.Service<
       authoredAt: string,
     ) => Sql<void>;
 
+    /**
+     * Keys on included contributors' commits and merge requests with no cached issue for `site`,
+     * or one fetched before `olderThanIso`; never-fetched keys first.
+     */
+    readonly staleJiraKeys: (input: {
+      readonly site: string;
+      readonly olderThanIso: string;
+      readonly limit: number;
+    }) => Sql<ReadonlyArray<string>>;
+    readonly putJiraIssues: (input: {
+      readonly site: string;
+      readonly fetchedAt: string;
+      readonly rows: ReadonlyArray<JiraIssueRow>;
+    }) => Sql<void>;
+
     readonly overviewRows: (input: {
       readonly fromIso: string;
       readonly toIso: string;
       readonly contributorIds?: ReadonlyArray<InsightsContributorId> | undefined;
+      /** The reader's site; null when Jira is not configured. */
+      readonly jiraSite: string | null;
     }) => Sql<OverviewRows>;
   }
 >()("t3/insights/InsightsStore") {}
@@ -269,6 +295,19 @@ const toStoredCommit = (row: CommitDbRow): StoredCommit => ({
 });
 
 const COMMIT_COLUMNS = "sha, contributor_id, mr_number, patch_id, landed_at, superseded_by_sha";
+
+/** Well under SQLite's bound parameter limit. */
+const JIRA_KEYS_PER_QUERY = 500;
+
+const chunked = <A>(items: ReadonlyArray<A>, size: number): A[][] =>
+  Array.from({ length: Math.ceil(items.length / size) }, (_, index) =>
+    items.slice(index * size, (index + 1) * size),
+  );
+
+const parseKeys = (json: string): ReadonlyArray<string> => {
+  const value: unknown = JSON.parse(json);
+  return Array.isArray(value) ? value.filter((key): key is string => typeof key === "string") : [];
+};
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -804,6 +843,44 @@ const make = Effect.gen(function* () {
         AND (first_commit_authored_at IS NULL OR first_commit_authored_at > ${authoredAt})
     `.pipe(Effect.asVoid);
 
+  const staleJiraKeys: InsightsStore["Service"]["staleJiraKeys"] = (input) =>
+    sql<{ readonly key: string }>`
+      WITH included AS (
+        SELECT contributor_id FROM fork_insights_contributors WHERE status = 'included'
+      ), keys AS (
+        SELECT j.value AS key FROM fork_insights_commits c, json_each(c.jira_keys_json) j
+        WHERE c.contributor_id IN (SELECT contributor_id FROM included)
+        UNION
+        SELECT j.value AS key FROM fork_insights_merge_requests m, json_each(m.jira_keys_json) j
+        WHERE m.author_contributor_id IN (SELECT contributor_id FROM included)
+      )
+      SELECT keys.key FROM keys
+      LEFT JOIN fork_insights_jira_issues i ON i.site = ${input.site} AND i.key = keys.key
+      WHERE i.fetched_at IS NULL OR i.fetched_at < ${input.olderThanIso}
+      ORDER BY i.fetched_at IS NOT NULL, i.fetched_at, keys.key
+      LIMIT ${input.limit}
+    `.pipe(Effect.map((rows) => rows.map((row) => row.key)));
+
+  const putJiraIssues: InsightsStore["Service"]["putJiraIssues"] = (input) =>
+    Effect.forEach(
+      input.rows,
+      (row) => sql`
+        INSERT INTO fork_insights_jira_issues (
+          site, key, issue_type, status_category, parent_key, summary, fetched_at
+        ) VALUES (
+          ${input.site}, ${row.key}, ${row.issueType}, ${row.statusCategory}, ${row.parentKey},
+          ${row.summary}, ${input.fetchedAt}
+        )
+        ON CONFLICT (site, key) DO UPDATE SET
+          issue_type = excluded.issue_type,
+          status_category = excluded.status_category,
+          parent_key = excluded.parent_key,
+          summary = excluded.summary,
+          fetched_at = excluded.fetched_at
+      `,
+      { discard: true },
+    ).pipe(sql.withTransaction);
+
   const overviewRows: InsightsStore["Service"]["overviewRows"] = Effect.fn(
     "InsightsStore.overviewRows",
   )(function* (input) {
@@ -824,7 +901,7 @@ const make = Effect.gen(function* () {
       `;
     const ids = contributorRows.map((row) => row.contributor_id);
     if (ids.length === 0) {
-      return { contributors: [], commits: [], mergeRequests: [], reviews: [] };
+      return { contributors: [], commits: [], mergeRequests: [], reviews: [], jiraIssues: [] };
     }
     const commits = yield* sql<{
       readonly contributor_id: string;
@@ -838,9 +915,11 @@ const make = Effect.gen(function* () {
       readonly has_agent_coauthor: number;
       readonly additions: number;
       readonly deletions: number;
+      readonly jira_keys_json: string;
     }>`
         SELECT contributor_id, project_id, mr_number, authored_at, landed_at, estimated_hours,
-          superseded_by_sha, message_subject, has_agent_coauthor, additions, deletions
+          superseded_by_sha, message_subject, has_agent_coauthor, additions, deletions,
+          jira_keys_json
         FROM fork_insights_commits
         WHERE contributor_id IN ${sql.in(ids)}
           AND ((authored_at >= ${input.fromIso} AND authored_at < ${input.toIso})
@@ -882,6 +961,22 @@ const make = Effect.gen(function* () {
           AND r.first_at >= ${input.fromIso} AND r.first_at < ${input.toIso}
         GROUP BY r.reviewer_contributor_id, r.project_id, r.number
       `;
+    const commitKeys = new Map(commits.map((row) => [row, parseKeys(row.jira_keys_json)] as const));
+    const keys = [...new Set([...commitKeys.values()].flat())];
+    const jiraIssues =
+      input.jiraSite === null || keys.length === 0
+        ? []
+        : (yield* Effect.forEach(
+            chunked(keys, JIRA_KEYS_PER_QUERY),
+            (batch) => sql<{
+              readonly key: string;
+              readonly issue_type: string | null;
+              readonly parent_key: string | null;
+            }>`
+              SELECT key, issue_type, parent_key FROM fork_insights_jira_issues
+              WHERE site = ${input.jiraSite} AND key IN ${sql.in(batch)}
+            `,
+          )).flat();
     return {
       contributors: contributorRows.map((row) => ({
         contributorId: row.contributor_id,
@@ -899,6 +994,7 @@ const make = Effect.gen(function* () {
         hasAgentCoauthor: row.has_agent_coauthor !== 0,
         additions: row.additions,
         deletions: row.deletions,
+        jiraKeys: commitKeys.get(row) ?? [],
       })),
       mergeRequests: mergeRequests.map((row) => ({
         authorContributorId: row.author_contributor_id,
@@ -918,6 +1014,11 @@ const make = Effect.gen(function* () {
         mergeRequestNumber: row.number,
         authorContributorId: row.author_contributor_id,
         firstAt: row.first_at,
+      })),
+      jiraIssues: jiraIssues.map((row) => ({
+        key: row.key,
+        issueType: row.issue_type,
+        parentKey: row.parent_key,
       })),
     };
   });
@@ -950,6 +1051,8 @@ const make = Effect.gen(function* () {
     unlandedCommitByPatchId,
     hasMergeRequestLandedNear,
     setFirstCommitAuthoredAt,
+    staleJiraKeys,
+    putJiraIssues,
     overviewRows,
   });
 });
