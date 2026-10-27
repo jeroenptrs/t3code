@@ -17,14 +17,17 @@ import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ApproveAgentRouteImport } from './routes/approve-agent'
 import { Route as ChatRouteImport } from './routes/_chat'
+import { Route as InsightsIndexRouteImport } from './routes/insights.index'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
+import { Route as InsightsChartRouteImport } from './routes/insights.$chart'
 import { Route as ChatWorkflowsRouteImport } from './routes/_chat.workflows'
 import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ChatSprintPlanningRouteImport } from './routes/_chat.sprint-planning'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as ChatJiraRouteImport } from './routes/_chat.jira'
 import { Route as ChatIssuesRouteImport } from './routes/_chat.issues'
 import { Route as ThreadsEnvironmentIdThreadIdRouteImport } from './routes/threads.$environmentId.$threadId'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
@@ -100,6 +103,11 @@ const ChatRoute = ChatRouteImport.update({
   id: '/_chat',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InsightsIndexRoute = InsightsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => InsightsRoute,
+} as any)
 const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -109,6 +117,11 @@ const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   id: '/projects/$projectKey',
   path: '/projects/$projectKey',
   getParentRoute: () => rootRouteImport,
+} as any)
+const InsightsChartRoute = InsightsChartRouteImport.update({
+  id: '/$chart',
+  path: '/$chart',
+  getParentRoute: () => InsightsRoute,
 } as any)
 const ChatWorkflowsRoute = ChatWorkflowsRouteImport.update({
   id: '/workflows',
@@ -138,6 +151,11 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
 const ChatNewRoute = ChatNewRouteImport.update({
   id: '/new',
   path: '/new',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatJiraRoute = ChatJiraRouteImport.update({
+  id: '/jira',
+  path: '/jira',
   getParentRoute: () => ChatRoute,
 } as any)
 const ChatIssuesRoute = ChatIssuesRouteImport.update({
@@ -331,17 +349,20 @@ export interface FileRoutesByFullPath {
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
   '/guest': typeof GuestRoute
-  '/insights': typeof InsightsRoute
+  '/insights': typeof InsightsRouteWithChildren
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
   '/issues': typeof ChatIssuesRoute
+  '/jira': typeof ChatJiraRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/sprint-planning': typeof ChatSprintPlanningRoute
   '/usage': typeof ChatUsageRoute
   '/workflows': typeof ChatWorkflowsRoute
+  '/insights/$chart': typeof InsightsChartRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/insights/': typeof InsightsIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/about': typeof ChatSettingsAboutRoute
@@ -382,18 +403,20 @@ export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
   '/guest': typeof GuestRoute
-  '/insights': typeof InsightsRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
   '/issues': typeof ChatIssuesRoute
+  '/jira': typeof ChatJiraRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/sprint-planning': typeof ChatSprintPlanningRoute
   '/usage': typeof ChatUsageRoute
   '/workflows': typeof ChatWorkflowsRoute
+  '/insights/$chart': typeof InsightsChartRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/': typeof ChatIndexRoute
+  '/insights': typeof InsightsIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/about': typeof ChatSettingsAboutRoute
@@ -436,18 +459,21 @@ export interface FileRoutesById {
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
   '/guest': typeof GuestRoute
-  '/insights': typeof InsightsRoute
+  '/insights': typeof InsightsRouteWithChildren
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
   '/_chat/issues': typeof ChatIssuesRoute
+  '/_chat/jira': typeof ChatJiraRoute
   '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/_chat/settings': typeof ChatSettingsRouteWithChildren
   '/_chat/sprint-planning': typeof ChatSprintPlanningRoute
   '/_chat/usage': typeof ChatUsageRoute
   '/_chat/workflows': typeof ChatWorkflowsRoute
+  '/insights/$chart': typeof InsightsChartRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/_chat/': typeof ChatIndexRoute
+  '/insights/': typeof InsightsIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/_chat/settings/about': typeof ChatSettingsAboutRoute
@@ -495,13 +521,16 @@ export interface FileRouteTypes {
     | '/pair'
     | '/welcome'
     | '/issues'
+    | '/jira'
     | '/new'
     | '/pull-requests'
     | '/settings'
     | '/sprint-planning'
     | '/usage'
     | '/workflows'
+    | '/insights/$chart'
     | '/projects/$projectKey'
+    | '/insights/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/about'
@@ -542,18 +571,20 @@ export interface FileRouteTypes {
     | '/connect'
     | '/connect-agent'
     | '/guest'
-    | '/insights'
     | '/pair'
     | '/welcome'
     | '/issues'
+    | '/jira'
     | '/new'
     | '/pull-requests'
     | '/settings'
     | '/sprint-planning'
     | '/usage'
     | '/workflows'
+    | '/insights/$chart'
     | '/projects/$projectKey'
     | '/'
+    | '/insights'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/about'
@@ -599,14 +630,17 @@ export interface FileRouteTypes {
     | '/pair'
     | '/welcome'
     | '/_chat/issues'
+    | '/_chat/jira'
     | '/_chat/new'
     | '/_chat/pull-requests'
     | '/_chat/settings'
     | '/_chat/sprint-planning'
     | '/_chat/usage'
     | '/_chat/workflows'
+    | '/insights/$chart'
     | '/projects/$projectKey'
     | '/_chat/'
+    | '/insights/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
     | '/_chat/settings/about'
@@ -649,7 +683,7 @@ export interface RootRouteChildren {
   ConnectRoute: typeof ConnectRoute
   ConnectAgentRoute: typeof ConnectAgentRoute
   GuestRoute: typeof GuestRoute
-  InsightsRoute: typeof InsightsRoute
+  InsightsRoute: typeof InsightsRouteWithChildren
   PairRoute: typeof PairRoute
   WelcomeRoute: typeof WelcomeRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
@@ -714,6 +748,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/insights/': {
+      id: '/insights/'
+      path: '/'
+      fullPath: '/insights/'
+      preLoaderRoute: typeof InsightsIndexRouteImport
+      parentRoute: typeof InsightsRoute
+    }
     '/_chat/': {
       id: '/_chat/'
       path: '/'
@@ -727,6 +768,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/projects/$projectKey'
       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/insights/$chart': {
+      id: '/insights/$chart'
+      path: '/$chart'
+      fullPath: '/insights/$chart'
+      preLoaderRoute: typeof InsightsChartRouteImport
+      parentRoute: typeof InsightsRoute
     }
     '/_chat/workflows': {
       id: '/_chat/workflows'
@@ -768,6 +816,13 @@ declare module '@tanstack/react-router' {
       path: '/new'
       fullPath: '/new'
       preLoaderRoute: typeof ChatNewRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/jira': {
+      id: '/_chat/jira'
+      path: '/jira'
+      fullPath: '/jira'
+      preLoaderRoute: typeof ChatJiraRouteImport
       parentRoute: typeof ChatRoute
     }
     '/_chat/issues': {
@@ -1090,6 +1145,7 @@ const ChatSettingsRouteWithChildren = ChatSettingsRoute._addFileChildren(
 
 interface ChatRouteChildren {
   ChatIssuesRoute: typeof ChatIssuesRoute
+  ChatJiraRoute: typeof ChatJiraRoute
   ChatNewRoute: typeof ChatNewRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatSettingsRoute: typeof ChatSettingsRouteWithChildren
@@ -1104,6 +1160,7 @@ interface ChatRouteChildren {
 
 const ChatRouteChildren: ChatRouteChildren = {
   ChatIssuesRoute: ChatIssuesRoute,
+  ChatJiraRoute: ChatJiraRoute,
   ChatNewRoute: ChatNewRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatSettingsRoute: ChatSettingsRouteWithChildren,
@@ -1119,13 +1176,27 @@ const ChatRouteChildren: ChatRouteChildren = {
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
+interface InsightsRouteChildren {
+  InsightsChartRoute: typeof InsightsChartRoute
+  InsightsIndexRoute: typeof InsightsIndexRoute
+}
+
+const InsightsRouteChildren: InsightsRouteChildren = {
+  InsightsChartRoute: InsightsChartRoute,
+  InsightsIndexRoute: InsightsIndexRoute,
+}
+
+const InsightsRouteWithChildren = InsightsRoute._addFileChildren(
+  InsightsRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
   ApproveAgentRoute: ApproveAgentRoute,
   ConnectRoute: ConnectRoute,
   ConnectAgentRoute: ConnectAgentRoute,
   GuestRoute: GuestRoute,
-  InsightsRoute: InsightsRoute,
+  InsightsRoute: InsightsRouteWithChildren,
   PairRoute: PairRoute,
   WelcomeRoute: WelcomeRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
