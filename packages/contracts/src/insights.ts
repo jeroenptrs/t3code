@@ -251,6 +251,41 @@ export const InsightsReviews = Schema.Struct({
 });
 export type InsightsReviews = typeof InsightsReviews.Type;
 
+/** The issue type entry for landed commits that carry no issue key. */
+export const INSIGHTS_JIRA_UNTICKETED = "Unticketed";
+/** The issue type entry for keys Jira has not been read for yet or the reader cannot see. */
+export const INSIGHTS_JIRA_UNKNOWN = "Unknown";
+
+/**
+ * Landed hours by the Jira issue type of the keys commits carry. A commit with several keys splits
+ * its hours evenly across them.
+ */
+export const InsightsJira = Schema.Struct({
+  byType: Schema.Array(
+    Schema.Struct({
+      issueType: Schema.String,
+      landedHours: Schema.Number,
+      commits: NonNegativeInt,
+    }),
+  ),
+  byTypeByContributor: Schema.Array(
+    Schema.Struct({
+      contributorId: InsightsContributorId,
+      hoursByType: Schema.Array(
+        Schema.Struct({ issueType: Schema.String, landedHours: Schema.Number }),
+      ),
+    }),
+  ),
+  weeks: Schema.Array(
+    Schema.Struct({
+      weekStart: InsightsDay,
+      landedHours: Schema.Number,
+      unticketedHours: Schema.Number,
+    }),
+  ),
+});
+export type InsightsJira = typeof InsightsJira.Type;
+
 export const InsightsHeadline = Schema.Struct({
   leadTimeMedianDays: Schema.NullOr(Schema.Number),
   medianMergeRequestLines: Schema.NullOr(Schema.Number),
@@ -260,6 +295,8 @@ export const InsightsHeadline = Schema.Struct({
   agentAssistedShare: Schema.NullOr(Schema.Number),
   /** Closed without merging over closed plus merged. */
   abandonedShare: Schema.NullOr(Schema.Number),
+  /** Landed hours without an issue key over landed hours; null when Jira is not configured. */
+  unticketedShare: Schema.NullOr(Schema.Number),
 });
 export type InsightsHeadline = typeof InsightsHeadline.Type;
 
@@ -276,6 +313,8 @@ export const InsightsOverview = Schema.Struct({
   size: Schema.Struct({ buckets: Schema.Array(InsightsSizeBucket) }),
   mix: InsightsMix,
   reviews: InsightsReviews,
+  /** Null when Jira is not configured on this server. */
+  jira: Schema.NullOr(InsightsJira),
   headline: InsightsHeadline,
 });
 export type InsightsOverview = typeof InsightsOverview.Type;
