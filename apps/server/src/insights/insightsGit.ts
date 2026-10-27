@@ -297,6 +297,7 @@ export const readBranchCommits = Effect.fn("InsightsGit.readBranchCommits")(func
 export const readPatchIds = Effect.fn("InsightsGit.readPatchIds")(function* (input: {
   readonly cwd: string;
   readonly shas: ReadonlyArray<string>;
+  readonly maxOutputBytes?: number;
 }) {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const ids = new Map<string, string>();
@@ -306,7 +307,9 @@ export const readPatchIds = Effect.fn("InsightsGit.readPatchIds")(function* (inp
       cwd: input.cwd,
       args: ["log", "--no-walk=unsorted", "--stdin", "-p", "--no-color", "--format=commit %H"],
       stdin: `${batch.join("\n")}\n`,
-      maxOutputBytes: PATCH_MAX_OUTPUT_BYTES,
+      maxOutputBytes: input.maxOutputBytes ?? PATCH_MAX_OUTPUT_BYTES,
+      // Without the marker, output over the limit fails the command instead of truncating it.
+      appendTruncationMarker: true,
     });
     let text = patches.stdout;
     let cutOff: string | null = null;
