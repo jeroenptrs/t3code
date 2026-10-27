@@ -1,8 +1,10 @@
-import type {
-  InsightsCommitType,
-  InsightsContributor,
-  InsightsContributorRow,
-  InsightsContributorStatus,
+import {
+  INSIGHTS_JIRA_UNKNOWN,
+  INSIGHTS_JIRA_UNTICKETED,
+  type InsightsCommitType,
+  type InsightsContributor,
+  type InsightsContributorRow,
+  type InsightsContributorStatus,
 } from "@t3tools/contracts";
 
 export const INSIGHTS_ESTIMATE_LABEL = "Model estimate of coding output, not hours worked.";
@@ -156,6 +158,11 @@ export const INSIGHTS_CHARTS = [
     title: "Reviews",
     description: "Merge requests each person reviewed, by author.",
   },
+  {
+    key: "jira",
+    title: "Jira work",
+    description: "Landed hours by Jira issue type, with the share that carries no issue key.",
+  },
 ] as const;
 
 export type InsightsChartKey = (typeof INSIGHTS_CHARTS)[number]["key"];
@@ -257,4 +264,73 @@ export function insightsSeries(
     shown: ranked.slice(0, INSIGHTS_MAX_SERIES - 1).map((entry) => entry.id),
     folded: ranked.slice(INSIGHTS_MAX_SERIES - 1).map((entry) => entry.id),
   };
+}
+
+/** `2.0h · 25%`: hours and their share of `total`. */
+export function formatInsightsHoursOf(hours: number, total: number): string {
+  return `${formatInsightsHours(hours)} · ${formatInsightsShare(total > 0 ? hours / total : null)}`;
+}
+
+export function insightsJiraTypeLabel(issueType: string): string {
+  return issueType === INSIGHTS_JIRA_UNKNOWN ? "Unknown type" : issueType;
+}
+
+export interface InsightsJiraSeries {
+  readonly key: string;
+  readonly label: string;
+  /** The issue types the series adds up. */
+  readonly types: ReadonlyArray<string>;
+  readonly colorIndex: number;
+}
+
+const INSIGHTS_JIRA_MAX_TYPES = 5;
+
+/**
+ * The series the Jira chart draws: issue types by landed hours, the smallest folded into `Other`
+ * beyond five, and unticketed last in the last of the six colors.
+ */
+export function insightsJiraSeries(
+  byType: ReadonlyArray<{ readonly issueType: string; readonly landedHours: number }>,
+): ReadonlyArray<InsightsJiraSeries> {
+  const ranked = byType
+    .filter((entry) => entry.landedHours > 0 && entry.issueType !== INSIGHTS_JIRA_UNTICKETED)
+    .toSorted((left, right) => right.landedHours - left.landedHours)
+    .map((entry) => entry.issueType);
+  const shown =
+    ranked.length <= INSIGHTS_JIRA_MAX_TYPES
+      ? ranked
+      : ranked.slice(0, INSIGHTS_JIRA_MAX_TYPES - 1);
+  const folded = ranked.slice(shown.length);
+  const unticketed = byType.some(
+    (entry) => entry.issueType === INSIGHTS_JIRA_UNTICKETED && entry.landedHours > 0,
+  );
+  return [
+    ...shown.map((type, index) => ({
+      key: type,
+      label: insightsJiraTypeLabel(type),
+      types: [type],
+      colorIndex: index,
+    })),
+    ...(folded.length > 0
+      ? [{ key: "other", label: "Other", types: folded, colorIndex: shown.length }]
+      : []),
+    ...(unticketed
+      ? [
+          {
+            key: INSIGHTS_JIRA_UNTICKETED,
+            label: INSIGHTS_JIRA_UNTICKETED,
+            types: [INSIGHTS_JIRA_UNTICKETED],
+            colorIndex: INSIGHTS_MAX_SERIES - 1,
+          },
+        ]
+      : []),
+  ];
+}
+
+/** A week's unticketed hours over its landed hours; null for a week that landed nothing. */
+export function insightsUnticketedShare(week: {
+  readonly landedHours: number;
+  readonly unticketedHours: number;
+}): number | null {
+  return week.landedHours > 0 ? week.unticketedHours / week.landedHours : null;
 }
