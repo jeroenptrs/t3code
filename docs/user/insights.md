@@ -16,7 +16,7 @@ Pick a window of the last 4, 8, 13, or 26 weeks, or a custom range. You can narr
 some of the people Insights covers.
 
 - **Team trend.** Weekly bars of pushed and landed hours per active person, with the landed
-  share as a line.
+  share to date as a line: landed hours over pushed hours from the start of the window.
 - **Contributor table.** Landed hours, pushed hours, landed share, throughput, commits, merge
   requests merged, reviews given, median time to first review, and median cycle time. Click a
   column heading to sort by it.
