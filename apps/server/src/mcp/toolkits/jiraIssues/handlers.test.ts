@@ -69,6 +69,7 @@ const issue = (key: string, summary: string): JiraIssueSummary => ({
   status: "In Progress",
   statusCategory: "in-progress",
   issueType: "Story",
+  parentKey: null,
   priority: null,
   assignee: null,
   sprints: [],

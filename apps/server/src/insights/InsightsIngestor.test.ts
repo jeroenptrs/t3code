@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  type JiraIssueSummary,
   type OrchestrationProjectShell,
   ProjectId,
   SourceControlProviderKind,
@@ -13,9 +14,12 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
+import * as JiraIdentities from "../jira/JiraIdentities.ts";
+import * as JiraService from "../jira/JiraService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -234,12 +238,78 @@ const project = (id: string, workspaceRoot: string): OrchestrationProjectShell =
   updatedAt: "2026-01-01T00:00:00Z",
 });
 
+const JIRA_SITE = "acme.atlassian.net";
+
+interface JiraStub {
+  readonly configured: boolean;
+  /** Issue type and parent per key the reader can see. */
+  readonly issues: ReadonlyMap<string, { readonly type: string; readonly parent: string | null }>;
+  readonly calls: Array<ReadonlyArray<string>>;
+}
+
+const noJira: JiraStub = { configured: false, issues: new Map(), calls: [] };
+
+const issueSummary = (
+  key: string,
+  issue: { readonly type: string; readonly parent: string | null },
+): JiraIssueSummary => ({
+  site: JIRA_SITE,
+  key,
+  url: `https://${JIRA_SITE}/browse/${key}`,
+  summary: `Issue ${key}`,
+  status: "In Progress",
+  statusCategory: "in-progress",
+  issueType: issue.type,
+  parentKey: issue.parent,
+  priority: null,
+  assignee: null,
+  sprints: [],
+  storyPoints: null,
+  updated: null,
+});
+
+const layerJira = (jira: JiraStub) =>
+  Layer.merge(
+    Layer.succeed(
+      JiraIdentities.JiraIdentities,
+      JiraIdentities.make(
+        jira.configured
+          ? {
+              reader: "bot",
+              identities: [
+                {
+                  name: "bot",
+                  site: JIRA_SITE,
+                  authMethod: "scoped-token",
+                  token: Redacted.make("token"),
+                  cloudId: "cloud-1",
+                },
+              ],
+            }
+          : undefined,
+      ),
+    ),
+    Layer.mock(JiraService.JiraService)({
+      issuesByKeys: (_site, keys) => {
+        jira.calls.push(keys);
+        return Effect.succeed(
+          keys.flatMap((key) => {
+            const issue = jira.issues.get(key);
+            return issue === undefined ? [] : [issueSummary(key, issue)];
+          }),
+        );
+      },
+    }),
+  );
+
 const layerFor = (
   projects: ReadonlyArray<{ readonly id: string; readonly root: string; readonly stub: Stub }>,
+  jira: JiraStub = noJira,
 ) =>
   InsightsService.layer.pipe(
     Layer.provideMerge(InsightsIngestor.layer),
     Layer.provideMerge(InsightsStore.layer),
+    Layer.provide(layerJira(jira)),
     Layer.provide(
       Layer.mock(PullRequestService.PullRequestService)({
         providerProjects: () =>
@@ -681,6 +751,137 @@ it.layer(layerGit, { excludeTestServices: true })("Insights ingestion", (it) => 
           assert.deepStrictEqual(yield* commitRows, []);
           assert.strictEqual(yield* git(repos.checkout, ["for-each-ref", "refs/t3/insights/"]), "");
         }).pipe(Effect.provide(layerFor([{ id: "app", root: repos.checkout, stub }])));
+      }),
+    ),
+  );
+
+  const ticketedMergeRequest = Effect.gen(function* () {
+    const repos = yield* makeRepositories;
+    yield* git(repos.work, ["switch", "--quiet", "-c", "feature-1"]);
+    const sha = yield* repos.commit(ADA, "ACME-7 add a thing", "2026-02-02T10:00:00Z");
+    yield* repos.pushMergeRequest(1);
+    const stub: Stub = {
+      mergeRequests: [
+        {
+          number: 1,
+          author: ADA,
+          state: "open",
+          createdAt: "2026-02-02T10:00:00Z",
+          updatedAt: "2026-02-02T11:00:00Z",
+          mergedAt: null,
+          shas: [sha],
+        },
+      ],
+      calls: [],
+      rateLimited: false,
+    };
+    return { repos, stub };
+  });
+
+  const jiraRows = Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    return yield* sql<{
+      readonly key: string;
+      readonly issue_type: string | null;
+      readonly parent_key: string | null;
+    }>`SELECT key, issue_type, parent_key FROM fork_insights_jira_issues ORDER BY key`;
+  });
+
+  it.effect("reads no Jira issue when Jira is not configured", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { repos, stub } = yield* ticketedMergeRequest;
+        const jira: JiraStub = { ...noJira, calls: [] };
+        yield* Effect.gen(function* () {
+          yield* enable;
+          yield* tick;
+          yield* include("ada");
+          yield* tick;
+          assert.strictEqual((yield* commitRows).length, 1);
+          assert.deepStrictEqual(jira.calls, []);
+          const overview = yield* (yield* InsightsService.InsightsService).overview({
+            from: "2026-02-02",
+            to: "2026-02-08",
+          });
+          assert.isNull(overview.jira);
+        }).pipe(Effect.provide(layerFor([{ id: "app", root: repos.checkout, stub }], jira)));
+      }),
+    ),
+  );
+
+  it.effect(
+    "reads each key's issue once, records the ones Jira did not return, and refreshes daily",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { repos, stub } = yield* ticketedMergeRequest;
+          const jira: JiraStub = {
+            configured: true,
+            issues: new Map([["ACME-7", { type: "Story", parent: "ACME-1" }]]),
+            calls: [],
+          };
+          yield* Effect.gen(function* () {
+            const insights = yield* InsightsService.InsightsService;
+            yield* enable;
+            yield* tick;
+            assert.deepStrictEqual(jira.calls, []);
+            yield* include("ada");
+            yield* tick;
+            // The merge request body says "Fixes ACME-12"; the reader cannot see that issue.
+            assert.deepStrictEqual(jira.calls, [["ACME-12", "ACME-7"]]);
+            assert.deepStrictEqual(yield* jiraRows, [
+              { key: "ACME-12", issue_type: null, parent_key: null },
+              { key: "ACME-7", issue_type: "Story", parent_key: "ACME-1" },
+            ]);
+
+            yield* insights.rescanProject({ projectId: PROJECT });
+            yield* tick;
+            assert.strictEqual(jira.calls.length, 1);
+
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`
+            UPDATE fork_insights_jira_issues SET fetched_at = '2026-01-01T00:00:00.000Z'
+            WHERE key = 'ACME-12'
+          `;
+            yield* insights.rescanProject({ projectId: PROJECT });
+            yield* tick;
+            assert.deepStrictEqual(jira.calls.at(-1), ["ACME-12"]);
+          }).pipe(Effect.provide(layerFor([{ id: "app", root: repos.checkout, stub }], jira)));
+        }),
+      ),
+  );
+
+  it.effect("stops reading Jira at the request budget and resumes on the next tick", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { repos, stub } = yield* ticketedMergeRequest;
+        const jira: JiraStub = { configured: true, issues: new Map(), calls: [] };
+        yield* Effect.gen(function* () {
+          const insights = yield* InsightsService.InsightsService;
+          yield* enable;
+          yield* tick;
+          yield* include("ada");
+          yield* tick;
+          assert.strictEqual(jira.calls.length, 1);
+
+          const sql = yield* SqlClient.SqlClient;
+          const keys = Array.from({ length: 150 }, (_, index) => `BULK-${index + 1}`);
+          yield* sql`UPDATE fork_insights_commits SET jira_keys_json = ${JSON.stringify(keys)}`;
+          yield* insights.updateSettings({ requestBudgetPerTick: 1 }, null);
+          yield* insights.rescanProject({ projectId: PROJECT });
+          yield* tick;
+          assert.deepStrictEqual(
+            jira.calls.map((call) => call.length),
+            [2, 100],
+          );
+          yield* tick;
+          assert.deepStrictEqual(
+            jira.calls.map((call) => call.length),
+            [2, 100, 50],
+          );
+          yield* tick;
+          assert.strictEqual(jira.calls.length, 3);
+        }).pipe(Effect.provide(layerFor([{ id: "app", root: repos.checkout, stub }], jira)));
       }),
     ),
   );
