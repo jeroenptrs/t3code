@@ -139,6 +139,32 @@ it.layer(layerGit, { excludeTestServices: true })("checkout reads", (it) => {
     ),
   );
 
+  it.effect("keeps the patch-ids read before the output limit and drops the cut-off one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repos = yield* makeRepositories;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(`${repos.work}/big.txt`, "x".repeat(200_000));
+        yield* git(repos.work, ["add", "."]);
+        yield* git(repos.work, ["commit", "--quiet", "-m", "big"]);
+        const bigSha = yield* git(repos.work, ["rev-parse", "HEAD"]);
+        yield* git(repos.work, ["push", "--quiet", "origin", "HEAD:refs/merge-requests/7/head"]);
+        yield* InsightsGit.fetchMergeRequestHeads({
+          cwd: repos.checkout,
+          remote: "origin",
+          numbers: [7],
+        });
+        const ids = yield* InsightsGit.readPatchIds({
+          cwd: repos.checkout,
+          shas: [repos.featureSha, bigSha],
+          maxOutputBytes: 64 * 1024,
+        });
+        assert.isDefined(ids.get(repos.featureSha));
+        assert.isUndefined(ids.get(bigSha));
+      }),
+    ),
+  );
+
   it.effect("gives a rebased commit the same patch-id and reads the branch since a date", () =>
     Effect.scoped(
       Effect.gen(function* () {
