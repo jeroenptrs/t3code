@@ -4,9 +4,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SQLite from "expo-sqlite";
 
 // A trimmed copy of apps/mobile/src/persistence/mobile-database.ts: the same client_cache
 // table, without legacy file migration, pull request caches, or preferences.
+
+// Import expo-sqlite statically: in development a dynamic import() fetches a lazy Metro bundle,
+// which needs HMRClient.setup(), and tvOS never calls it. On tvOS expo-sqlite already stores the
+// database under Library/Caches/SQLite; a purge just means refetching from the server.
 
 const DATABASE_NAME = "t3code-tv-client.db";
 
@@ -68,10 +73,7 @@ export class TvDatabase extends Context.Service<
 const makeAvailable = Effect.gen(function* () {
   const database = yield* Effect.acquireRelease(
     Effect.tryPromise({
-      try: async () => {
-        const SQLite = await import("expo-sqlite");
-        return SQLite.openDatabaseAsync(DATABASE_NAME);
-      },
+      try: () => SQLite.openDatabaseAsync(DATABASE_NAME),
       catch: databaseError("open"),
     }),
     (openDatabase) => Effect.promise(() => openDatabase.closeAsync()).pipe(Effect.ignore),
@@ -164,23 +166,36 @@ const makeAvailable = Effect.gen(function* () {
   });
 });
 
-function makeUnavailable(error: TvDatabaseError): TvDatabase["Service"] {
-  const fail = Effect.fail(error);
-  return TvDatabase.of({
-    loadCache: () => fail,
-    saveCache: () => fail,
-    removeCache: () => fail,
-    clearCacheKind: () => fail,
-    clearEnvironmentCache: () => fail,
-  });
+// The open failure is logged once by `layer`; afterwards the caches behave as empty so callers
+// do not log a warning for every load and save.
+const unavailable = TvDatabase.of({
+  loadCache: () => Effect.succeed(Option.none()),
+  saveCache: () => Effect.void,
+  removeCache: () => Effect.void,
+  clearCacheKind: () => Effect.void,
+  clearEnvironmentCache: () => Effect.void,
+});
+
+function describeCause(cause: unknown): string {
+  if (cause instanceof Error) {
+    const code = (cause as { readonly code?: unknown }).code;
+    return `${cause.name}${typeof code === "string" ? ` [${code}]` : ""}: ${cause.message}`;
+  }
+  return String(cause);
 }
 
-// A broken database must not stop the app from connecting; caches then fail per operation.
+// A broken database must not stop the app from connecting; the app then runs without caches.
 export const layer = Layer.effect(
   TvDatabase,
   Effect.result(makeAvailable).pipe(
-    Effect.map((result) =>
-      result._tag === "Success" ? result.success : makeUnavailable(result.failure),
+    Effect.tap((result) =>
+      result._tag === "Success"
+        ? Effect.void
+        : Effect.logWarning("TV database unavailable; client caches disabled.", {
+            operation: result.failure.operation,
+            cause: describeCause(result.failure.cause),
+          }),
     ),
+    Effect.map((result) => (result._tag === "Success" ? result.success : unavailable)),
   ),
 );
