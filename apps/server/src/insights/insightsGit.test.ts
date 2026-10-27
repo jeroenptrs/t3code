@@ -139,7 +139,26 @@ it.layer(layerGit, { excludeTestServices: true })("checkout reads", (it) => {
     ),
   );
 
-  it.effect("keeps the patch-ids read before the output limit and drops the cut-off one", () =>
+  it.effect("fetches the heads a batch has when one merge request's ref is gone", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repos = yield* makeRepositories;
+        const fetches = yield* InsightsGit.fetchMergeRequestHeads({
+          cwd: repos.checkout,
+          remote: "origin",
+          numbers: [7, 8],
+        });
+        assert.strictEqual(fetches, 3);
+        const present = yield* InsightsGit.presentCommits({
+          cwd: repos.checkout,
+          shas: [repos.featureSha],
+        });
+        assert.isTrue(present.has(repos.featureSha));
+      }),
+    ),
+  );
+
+  it.effect("reads the patch-ids around a commit that exceeds the output limit", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const repos = yield* makeRepositories;
@@ -154,13 +173,24 @@ it.layer(layerGit, { excludeTestServices: true })("checkout reads", (it) => {
           remote: "origin",
           numbers: [7],
         });
+        yield* fs.writeFileString(`${repos.work}/after.ts`, "export const after = 1;\n");
+        yield* git(repos.work, ["add", "."]);
+        yield* git(repos.work, ["commit", "--quiet", "-m", "after"]);
+        const afterSha = yield* git(repos.work, ["rev-parse", "HEAD"]);
+        yield* git(repos.work, ["push", "--quiet", "origin", "HEAD:refs/merge-requests/7/head"]);
+        yield* InsightsGit.fetchMergeRequestHeads({
+          cwd: repos.checkout,
+          remote: "origin",
+          numbers: [7],
+        });
         const ids = yield* InsightsGit.readPatchIds({
           cwd: repos.checkout,
-          shas: [repos.featureSha, bigSha],
+          shas: [repos.featureSha, bigSha, afterSha],
           maxOutputBytes: 64 * 1024,
         });
         assert.isDefined(ids.get(repos.featureSha));
         assert.isUndefined(ids.get(bigSha));
+        assert.isDefined(ids.get(afterSha));
       }),
     ),
   );
