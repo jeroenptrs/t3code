@@ -30,6 +30,9 @@ the chart behind it.
 - **Work mix.** How do landed hours split across features, fixes, chores, docs, tests, and
   other commits, read from conventional commit prefixes such as `feat:`?
 - **Reviews.** Who reviews whose merge requests, and how many merge without a review?
+- **Jira work.** How do landed hours split across Jira issue types, and how much carries no
+  issue key? It appears once a Jira identity is configured and uses the issue keys found in
+  merge request titles, branches and descriptions, and in commit subjects.
 - **Contributor table.** Landed hours, pushed hours, landed share, throughput, commits, merge
   requests merged, reviews given, median time to first review, and median cycle time. Click a
   column heading to sort by it.
