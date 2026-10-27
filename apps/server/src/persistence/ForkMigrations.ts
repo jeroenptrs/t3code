@@ -31,7 +31,8 @@
  * `fork_jira_breakdowns` (012);
  * `fork_insights_settings`, `fork_insights_projects`, `fork_insights_contributors`,
  * `fork_insights_contributor_emails`, `fork_insights_merge_requests`, `fork_insights_mr_reviews`,
- * `fork_insights_commits` (013).
+ * `fork_insights_commits` (013);
+ * `fork_insights_jira_issues` (014).
  *
  * Fork indexes on upstream tables: `idx_fork_turn_items_waiting_jira_proposals` on
  * `orchestration_v2_projection_turn_items` (009).
@@ -56,6 +57,7 @@ import ForkMigration0010 from "./ForkMigrations/010_ProjectionThreadJiraIssueWat
 import ForkMigration0011 from "./ForkMigrations/011_JiraRemoteLinks.ts";
 import ForkMigration0012 from "./ForkMigrations/012_JiraBreakdowns.ts";
 import ForkMigration0013 from "./ForkMigrations/013_Insights.ts";
+import ForkMigration0014 from "./ForkMigrations/014_InsightsJiraIssues.ts";
 
 export const forkMigrationsTable = "fork_sql_migrations";
 
@@ -73,6 +75,7 @@ export const forkMigrationEntries = [
   [11, "JiraRemoteLinks", ForkMigration0011],
   [12, "JiraBreakdowns", ForkMigration0012],
   [13, "Insights", ForkMigration0013],
+  [14, "InsightsJiraIssues", ForkMigration0014],
 ] as const;
 
 export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);

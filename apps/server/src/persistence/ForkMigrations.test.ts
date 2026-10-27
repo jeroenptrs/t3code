@@ -120,6 +120,7 @@ const assertInsightsSchema = Effect.gen(function* () {
       "fork_insights_commits",
       "fork_insights_contributor_emails",
       "fork_insights_contributors",
+      "fork_insights_jira_issues",
       "fork_insights_merge_requests",
       "fork_insights_mr_reviews",
       "fork_insights_projects",
@@ -132,6 +133,21 @@ const assertInsightsSchema = Effect.gen(function* () {
     VALUES ('c-1', 'approved', '2026-10-22T00:00:00.000Z')
   `.pipe(Effect.flip);
   assert.ok(rejected);
+  const jiraColumns = yield* sql<{ readonly name: string; readonly pk: number }>`
+    PRAGMA table_info(fork_insights_jira_issues)
+  `;
+  assert.deepStrictEqual(
+    jiraColumns.map(({ name, pk }) => [name, pk]),
+    [
+      ["site", 1],
+      ["key", 2],
+      ["issue_type", 0],
+      ["status_category", 0],
+      ["parent_key", 0],
+      ["summary", 0],
+      ["fetched_at", 0],
+    ],
+  );
 });
 
 it.effect("server startup records upstream and fork migrations in separate ledgers", () =>
@@ -165,6 +181,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [11, "JiraRemoteLinks"],
       [12, "JiraBreakdowns"],
       [13, "Insights"],
+      [14, "InsightsJiraIssues"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;

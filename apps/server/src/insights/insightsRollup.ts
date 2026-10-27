@@ -1,4 +1,6 @@
 import {
+  INSIGHTS_JIRA_UNKNOWN,
+  INSIGHTS_JIRA_UNTICKETED,
   type InsightsByCommitType,
   type InsightsCommitType,
   InsightsCommitTypes,
@@ -9,6 +11,7 @@ import {
   type InsightsCycle,
   type InsightsCycleWeek,
   type InsightsHeadline,
+  type InsightsJira,
   type InsightsLeadTime,
   type InsightsLeadTimeWeek,
   type InsightsMix,
@@ -40,6 +43,14 @@ export interface RollupCommit {
   readonly hasAgentCoauthor: boolean;
   readonly additions: number;
   readonly deletions: number;
+  readonly jiraKeys: ReadonlyArray<string>;
+}
+
+export interface RollupJiraIssue {
+  readonly key: string;
+  /** Null when Jira did not return the issue to the reader. */
+  readonly issueType: string | null;
+  readonly parentKey: string | null;
 }
 
 export interface RollupMergeRequest {
@@ -76,6 +87,9 @@ export interface RollupInput {
   readonly commits: ReadonlyArray<RollupCommit>;
   readonly mergeRequests: ReadonlyArray<RollupMergeRequest>;
   readonly reviews: ReadonlyArray<RollupReview>;
+  /** Cached issue rows for the keys the commits carry, on the reader's site. */
+  readonly jiraIssues: ReadonlyArray<RollupJiraIssue>;
+  readonly jiraConfigured: boolean;
 }
 
 const DAY_MS = 86_400_000;
@@ -384,6 +398,73 @@ function reviewsSection(
   };
 }
 
+/** Landed hours per issue type; ties fall back to the type's name so the order is stable. */
+function jiraSection(
+  landed: ReadonlyArray<RollupCommit & { readonly landedAt: string }>,
+  issues: ReadonlyArray<RollupJiraIssue>,
+  weekStarts: ReadonlyArray<string>,
+  contributorIds: ReadonlyArray<string>,
+): InsightsJira {
+  const typeByKey = new Map(issues.map((issue) => [issue.key, issue.issueType]));
+  const byType = new Map<string, { hours: number; commits: number }>();
+  const byContributor = new Map<string, Map<string, number>>();
+  const weeks = new Map(
+    weekStarts.map((weekStart) => [weekStart, { landedHours: 0, unticketedHours: 0 }]),
+  );
+  for (const commit of landed) {
+    const types =
+      commit.jiraKeys.length === 0
+        ? [INSIGHTS_JIRA_UNTICKETED]
+        : commit.jiraKeys.map((key) => typeByKey.get(key) ?? INSIGHTS_JIRA_UNKNOWN);
+    const share = commit.estimatedHours / types.length;
+    const contributor = byContributor.get(commit.contributorId) ?? new Map<string, number>();
+    byContributor.set(commit.contributorId, contributor);
+    for (const type of types) {
+      const entry = byType.get(type) ?? { hours: 0, commits: 0 };
+      entry.hours += share;
+      byType.set(type, entry);
+      contributor.set(type, (contributor.get(type) ?? 0) + share);
+    }
+    for (const type of new Set(types)) byType.get(type)!.commits += 1;
+    const week = weeks.get(weekStartOf(commit.landedAt.slice(0, 10)));
+    if (week !== undefined) {
+      week.landedHours += commit.estimatedHours;
+      if (commit.jiraKeys.length === 0) week.unticketedHours += commit.estimatedHours;
+    }
+  }
+  const ranked = <A>(entries: Iterable<[string, A]>, hours: (value: A) => number) =>
+    [...entries].toSorted(
+      ([leftType, left], [rightType, right]) =>
+        hours(right) - hours(left) || leftType.localeCompare(rightType),
+    );
+  return {
+    byType: ranked(byType, (entry) => entry.hours).map(([issueType, entry]) => ({
+      issueType,
+      landedHours: round(entry.hours),
+      commits: entry.commits,
+    })),
+    byTypeByContributor: contributorIds.flatMap((contributorId) => {
+      const hours = byContributor.get(contributorId);
+      return hours === undefined
+        ? []
+        : [
+            {
+              contributorId: asId(contributorId),
+              hoursByType: ranked(hours, (value) => value).map(([issueType, value]) => ({
+                issueType,
+                landedHours: round(value),
+              })),
+            },
+          ];
+    }),
+    weeks: [...weeks].map(([weekStart, week]) => ({
+      weekStart,
+      landedHours: round(week.landedHours),
+      unticketedHours: round(week.unticketedHours),
+    })),
+  };
+}
+
 export function rollup(input: RollupInput): InsightsOverview {
   const startMs = dayStartMs(input.from);
   const endMs = dayStartMs(input.to) + DAY_MS;
@@ -627,6 +708,12 @@ export function rollup(input: RollupInput): InsightsOverview {
     const days = leadTimeDays(request);
     return days === null ? [] : [days];
   });
+  const landed = live.flatMap((commit) =>
+    inWindow(commit.landedAt) ? [{ ...commit, landedAt: commit.landedAt }] : [],
+  );
+  const jira = input.jiraConfigured
+    ? jiraSection(landed, input.jiraIssues, weekStarts, contributorIds)
+    : null;
   const share = (part: number, whole: number) => (whole > 0 ? round(part / whole) : null);
   const headline: InsightsHeadline = {
     leadTimeMedianDays: roundOrNull(median(leadTimes)),
@@ -640,6 +727,16 @@ export function rollup(input: RollupInput): InsightsOverview {
     ),
     agentAssistedShare: share(agentHours, pushedHours),
     abandonedShare: share(abandoned, abandoned + merged.length),
+    unticketedShare:
+      jira === null
+        ? null
+        : share(
+            landed.reduce(
+              (sum, commit) => sum + (commit.jiraKeys.length === 0 ? commit.estimatedHours : 0),
+              0,
+            ),
+            landed.reduce((sum, commit) => sum + commit.estimatedHours, 0),
+          ),
   };
 
   return {
@@ -658,6 +755,7 @@ export function rollup(input: RollupInput): InsightsOverview {
       merged,
       contributorIds,
     ),
+    jira,
     headline,
   };
 }

@@ -9,7 +9,7 @@ import {
   type ThreadJiraIssueLink,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -44,10 +44,7 @@ const invocation: McpInvocationContext.McpInvocationScope = {
   issuedAt: 1,
 };
 
-const testCrypto = Crypto.make({
-  randomBytes: (size) => new Uint8Array(size).fill(7),
-  digest: (_algorithm, data) => Effect.succeed(data),
-});
+const testRandom = SecureRandom.make((size) => new Uint8Array(size).fill(7));
 
 const makeLink = (
   key: string,
@@ -69,6 +66,7 @@ const issue = (key: string, summary: string): JiraIssueSummary => ({
   status: "In Progress",
   statusCategory: "in-progress",
   issueType: "Story",
+  parentKey: null,
   priority: null,
   assignee: null,
   sprints: [],
@@ -164,7 +162,7 @@ const makeHarness = Effect.fn("makeJiraIssuesToolkitHarness")(function* (
       JiraIdentities.make("config" in options ? options.config : jiraConfig),
     ),
     Layer.mock(JiraProposals.JiraProposals)({}),
-    Layer.succeed(Crypto.Crypto, testCrypto),
+    Layer.succeed(SecureRandom.SecureRandom, testRandom),
     McpToolAccessTestkit.liveThreadsLayer,
   );
   const toolkit = yield* JiraIssuesToolkit.pipe(
