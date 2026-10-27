@@ -385,6 +385,50 @@ it.layer(layerGit, { excludeTestServices: true })("Insights ingestion", (it) => 
     ),
   );
 
+  it.effect("does not store a merge request's merge commits as pushed work", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repos = yield* makeRepositories;
+        yield* git(repos.work, ["switch", "--quiet", "-c", "feature-1"]);
+        const sha = yield* repos.commit(ADA, "the change", "2026-02-02T10:00:00Z");
+        yield* git(repos.work, ["switch", "--quiet", "main"]);
+        yield* repos.commit(ADA, "someone else's change", "2026-02-03T10:00:00Z");
+        yield* git(repos.work, ["switch", "--quiet", "feature-1"]);
+        yield* git(repos.work, ["merge", "--quiet", "--no-ff", "-m", "Merge main", "main"], {
+          GIT_AUTHOR_DATE: "2026-02-04T10:00:00Z",
+          GIT_COMMITTER_DATE: "2026-02-04T10:00:00Z",
+        });
+        const mergeSha = yield* git(repos.work, ["rev-parse", "HEAD"]);
+        yield* repos.pushMergeRequest(1);
+        const stub: Stub = {
+          mergeRequests: [
+            {
+              number: 1,
+              author: ADA,
+              state: "open",
+              createdAt: "2026-02-02T10:00:00Z",
+              updatedAt: "2026-02-04T11:00:00Z",
+              mergedAt: null,
+              shas: [sha, mergeSha],
+            },
+          ],
+          calls: [],
+          rateLimited: false,
+        };
+        yield* Effect.gen(function* () {
+          yield* enable;
+          yield* tick;
+          const ada = yield* include("ada");
+          yield* tick;
+          assert.deepStrictEqual(
+            (yield* commitRows).map((row) => [row.sha, row.contributor_id, row.mr_number]),
+            [[sha, ada, 1]],
+          );
+        }).pipe(Effect.provide(layerFor([{ id: "app", root: repos.checkout, stub }])));
+      }),
+    ),
+  );
+
   it.effect("moves the cursor only after a complete walk and stops at the budget", () =>
     Effect.scoped(
       Effect.gen(function* () {
