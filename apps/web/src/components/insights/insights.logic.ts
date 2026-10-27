@@ -1,4 +1,5 @@
 import type {
+  InsightsCommitType,
   InsightsContributor,
   InsightsContributorRow,
   InsightsContributorStatus,
@@ -28,8 +29,10 @@ export function insightsWindowForWeeks(
   return { from: utcDay(from), to: utcDay(today) };
 }
 
+const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
 export function isInsightsDayRange(from: string, to: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) && from <= to;
+  return DAY_PATTERN.test(from) && DAY_PATTERN.test(to) && from <= to;
 }
 
 export type InsightsSortKey = Exclude<keyof InsightsContributorRow, "contributorId" | "kind">;
@@ -118,4 +121,140 @@ export function parseInsightsBranchPatterns(text: string): ReadonlyArray<string>
 /** The provider error for a missing or expired `glab` login names authentication. */
 export function isInsightsAuthenticationError(lastError: string | null): boolean {
   return lastError !== null && /auth|log ?in|credential|401|unauthori[sz]ed/i.test(lastError);
+}
+
+export const INSIGHTS_CHARTS = [
+  {
+    key: "trend",
+    title: "Team trend",
+    description: "Pushed and landed hours per active contributor, with the landed share to date.",
+  },
+  {
+    key: "cycle",
+    title: "Cycle time",
+    description:
+      "Median hours a merged merge request spent coding, waiting, in review and to trunk.",
+  },
+  {
+    key: "leadTime",
+    title: "Lead time",
+    description:
+      "Median days from a merge request's first commit to landing, with the 85th percentile.",
+  },
+  {
+    key: "size",
+    title: "Merge request size",
+    description: "Merged merge requests by lines added and deleted.",
+  },
+  {
+    key: "mix",
+    title: "Work mix",
+    description: "Landed hours by conventional commit type.",
+  },
+  {
+    key: "reviews",
+    title: "Reviews",
+    description: "Merge requests each person reviewed, by author.",
+  },
+] as const;
+
+export type InsightsChartKey = (typeof INSIGHTS_CHARTS)[number]["key"];
+export type InsightsChart = (typeof INSIGHTS_CHARTS)[number];
+
+export function insightsChartByKey(key: string): InsightsChart | null {
+  return INSIGHTS_CHARTS.find((chart) => chart.key === key) ?? null;
+}
+
+/** The window and contributor filter shared by the overview and every expanded chart. */
+export interface InsightsSearch {
+  readonly from?: string;
+  readonly to?: string;
+  /** Absent for every included contributor; empty selects nobody. */
+  readonly contributors?: ReadonlyArray<string> | undefined;
+}
+
+export function parseInsightsSearch(raw: Record<string, unknown>): InsightsSearch {
+  const contributors = Array.isArray(raw.contributors)
+    ? raw.contributors.filter((value): value is string => typeof value === "string")
+    : undefined;
+  return {
+    ...(typeof raw.from === "string" && DAY_PATTERN.test(raw.from) ? { from: raw.from } : {}),
+    ...(typeof raw.to === "string" && DAY_PATTERN.test(raw.to) ? { to: raw.to } : {}),
+    ...(contributors === undefined ? {} : { contributors }),
+  };
+}
+
+/** The preset a window matches, or `custom`. */
+export function insightsWindowChoice(
+  range: { readonly from: string; readonly to: string },
+  now: Date,
+): (typeof INSIGHTS_WINDOW_WEEKS)[number] | "custom" {
+  return (
+    INSIGHTS_WINDOW_WEEKS.find((weeks) => {
+      const preset = insightsWindowForWeeks(weeks, now);
+      return preset.from === range.from && preset.to === range.to;
+    }) ?? "custom"
+  );
+}
+
+export function formatInsightsDays(days: number | null): string {
+  return days === null ? "-" : `${days.toFixed(1)}d`;
+}
+
+export function formatInsightsSizeBucket(bucket: {
+  readonly min: number;
+  readonly max: number | null;
+}): string {
+  if (bucket.max === null) return `>${bucket.min - 1}`;
+  if (bucket.min === 0) return `<${bucket.max + 1}`;
+  return `${bucket.min}–${bucket.max}`;
+}
+
+const COMMIT_TYPE_LABELS: Record<InsightsCommitType, string> = {
+  feat: "Features",
+  fix: "Fixes",
+  chore: "Chores",
+  docs: "Docs",
+  test: "Tests",
+  other: "Other",
+};
+
+export function insightsCommitTypeLabel(type: InsightsCommitType): string {
+  return COMMIT_TYPE_LABELS[type];
+}
+
+export function insightsWeekLabel(weekStart: string): string {
+  const date = new Date(`${weekStart}T00:00:00Z`);
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+/** `12.0h median, 30.0h p85`, or `-` when nothing was measured. */
+export function formatInsightsSpread(
+  spread: { readonly median: number | null; readonly p85: number | null },
+  format: (value: number | null) => string = formatInsightsHours,
+): string {
+  return spread.median === null
+    ? "-"
+    : `${format(spread.median)} median, ${format(spread.p85)} p85`;
+}
+
+const INSIGHTS_MAX_SERIES = 6;
+
+/**
+ * The series a chart draws: every id when they fit, otherwise the largest five and `other` for
+ * the rest, so no chart needs more than six colors.
+ */
+export function insightsSeries(
+  totals: ReadonlyArray<{ readonly id: string; readonly total: number }>,
+): { readonly shown: ReadonlyArray<string>; readonly folded: ReadonlyArray<string> } {
+  const ranked = totals
+    .filter((entry) => entry.total > 0)
+    .toSorted((left, right) => right.total - left.total);
+  if (ranked.length <= INSIGHTS_MAX_SERIES) {
+    return { shown: ranked.map((entry) => entry.id), folded: [] };
+  }
+  return {
+    shown: ranked.slice(0, INSIGHTS_MAX_SERIES - 1).map((entry) => entry.id),
+    folded: ranked.slice(INSIGHTS_MAX_SERIES - 1).map((entry) => entry.id),
+  };
 }

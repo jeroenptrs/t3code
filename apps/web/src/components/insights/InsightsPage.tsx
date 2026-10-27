@@ -9,9 +9,9 @@ import type {
   InsightsContributorId,
   InsightsOverviewInput,
 } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
+import { Link, Outlet, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { ChartLineIcon, ChevronDownIcon, Settings2Icon } from "lucide-react";
-import { useState } from "react";
+import { createContext, use, useState } from "react";
 
 import { isElectron } from "../../env";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -37,29 +37,61 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import {
-  INSIGHTS_ESTIMATE_LABEL,
   INSIGHTS_WINDOW_WEEKS,
+  insightsChartByKey,
   insightsContributorLabel,
   insightsContributorsWithStatus,
+  insightsWindowChoice,
   insightsWindowForWeeks,
   isInsightsDayRange,
 } from "./insights.logic";
-import { InsightsContributorTable } from "./InsightsContributorTable";
-import { InsightsTrendChart } from "./InsightsTrendChart";
 
-type WindowChoice = (typeof INSIGHTS_WINDOW_WEEKS)[number] | "custom";
+const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DEFAULT_WINDOW_WEEKS = 13;
 
+const InsightsQuery = createContext<{
+  readonly environmentId: EnvironmentId;
+  readonly input: InsightsOverviewInput;
+} | null>(null);
+
+/** The overview for the window and filter in the URL; only rendered under `InsightsPage`. */
+export function useInsightsOverview() {
+  const query = use(InsightsQuery);
+  if (query === null) throw new Error("useInsightsOverview needs InsightsPage around it.");
+  return useEnvironmentQuery(insightsEnvironment.overview(query));
+}
+
+/**
+ * The Insights layout: window, contributor filter and access checks around the overview and each
+ * expanded chart. The window and filter live in the URL so both views and shared links agree.
+ */
 export function InsightsPage() {
   const environmentId = useInsightsEnvironmentId();
   const access = useInsightsAccess(environmentId);
-  const [windowChoice, setWindowChoice] = useState<WindowChoice>(13);
-  // Fixed for the page's life, so the query key does not move under a mounted view.
+  const search = useSearch({ from: "/insights" });
+  const navigate = useNavigate();
+  const chart = insightsChartByKey(useParams({ strict: false }).chart ?? "");
+  // Fixed for the page's life, so the default window does not move under a mounted view.
   const [now] = useState(() => new Date());
-  const preset = insightsWindowForWeeks(windowChoice === "custom" ? 13 : windowChoice, now);
-  const [custom, setCustom] = useState(preset);
-  const range = windowChoice === "custom" ? custom : preset;
+  const [customOpen, setCustomOpen] = useState(false);
+  const fallback = insightsWindowForWeeks(DEFAULT_WINDOW_WEEKS, now);
+  const range = { from: search.from ?? fallback.from, to: search.to ?? fallback.to };
+  const windowChoice = customOpen ? "custom" : insightsWindowChoice(range, now);
   // Null selects every included contributor, including people included later.
-  const [selected, setSelected] = useState<ReadonlySet<InsightsContributorId> | null>(null);
+  const selected: ReadonlySet<InsightsContributorId> | null =
+    search.contributors === undefined
+      ? null
+      : new Set(search.contributors as ReadonlyArray<InsightsContributorId>);
+  const updateSearch = (patch: {
+    readonly from?: string;
+    readonly to?: string;
+    readonly contributors?: ReadonlyArray<string> | undefined;
+  }) =>
+    void navigate({
+      to: ".",
+      search: (previous) => ({ ...previous, ...patch }),
+      replace: true,
+    });
 
   const canQuery = environmentId !== null && access.canRead;
   const config = useEnvironmentQuery(
@@ -77,8 +109,22 @@ export function InsightsPage() {
     <div className="flex w-full min-w-0 flex-wrap items-center gap-x-3 gap-y-2 py-2">
       <WorkspaceBreadcrumb ariaLabel="Insights breadcrumb" className="min-w-0">
         <WorkspaceBreadcrumbItem>
-          <h1>Insights</h1>
+          {chart === null ? (
+            <h1>Insights</h1>
+          ) : (
+            <Link to="/insights" search={(previous) => previous}>
+              Insights
+            </Link>
+          )}
         </WorkspaceBreadcrumbItem>
+        {chart === null ? null : (
+          <>
+            <WorkspaceBreadcrumbSeparator />
+            <WorkspaceBreadcrumbItem current>
+              <h1>{chart.title}</h1>
+            </WorkspaceBreadcrumbItem>
+          </>
+        )}
         {access.canRead ? (
           <>
             <WorkspaceBreadcrumbSeparator />
@@ -86,7 +132,11 @@ export function InsightsPage() {
               <ContributorFilter
                 contributors={included}
                 selected={selected}
-                onChange={setSelected}
+                onChange={(next) =>
+                  updateSearch({
+                    contributors: next === null ? undefined : [...next].toSorted(),
+                  })
+                }
               />
             </WorkspaceBreadcrumbItem>
           </>
@@ -101,12 +151,13 @@ export function InsightsPage() {
             onValueChange={(next) => {
               const value = next[0];
               if (value === "custom") {
-                setCustom(range);
-                setWindowChoice("custom");
+                setCustomOpen(true);
                 return;
               }
               const weeks = INSIGHTS_WINDOW_WEEKS.find((option) => String(option) === value);
-              if (weeks !== undefined) setWindowChoice(weeks);
+              if (weeks === undefined) return;
+              setCustomOpen(false);
+              updateSearch(insightsWindowForWeeks(weeks, now));
             }}
           >
             {INSIGHTS_WINDOW_WEEKS.map((weeks) => (
@@ -122,16 +173,23 @@ export function InsightsPage() {
                 type="date"
                 size="sm"
                 aria-label="From"
-                value={custom.from}
-                onChange={(event) => setCustom({ ...custom, from: event.target.value })}
+                value={range.from}
+                onChange={(event) => {
+                  if (DAY_PATTERN.test(event.target.value)) {
+                    updateSearch({ from: event.target.value });
+                  }
+                }}
               />
               <span className="text-xs text-muted-foreground">to</span>
               <Input
                 type="date"
                 size="sm"
                 aria-label="To"
-                value={custom.to}
-                onChange={(event) => setCustom({ ...custom, to: event.target.value })}
+                value={range.to}
+                onChange={(event) => {
+                  if (DAY_PATTERN.test(event.target.value))
+                    updateSearch({ to: event.target.value });
+                }}
               />
             </div>
           ) : null}
@@ -173,7 +231,9 @@ export function InsightsPage() {
                 Pick a start day on or before the end day.
               </p>
             ) : (
-              <InsightsOverview environmentId={environmentId} input={input} />
+              <InsightsQuery value={{ environmentId, input }}>
+                <Outlet />
+              </InsightsQuery>
             )}
           </WorkspacePageContainer>
         </ScrollArea>
@@ -201,56 +261,6 @@ function NothingEnabled({ canManage }: { readonly canManage: boolean }) {
         </Button>
       ) : null}
     </Empty>
-  );
-}
-
-function InsightsOverview({
-  environmentId,
-  input,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly input: InsightsOverviewInput;
-}) {
-  const overview = useEnvironmentQuery(insightsEnvironment.overview({ environmentId, input }));
-  if (overview.data === null) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        {overview.error ?? "Reading estimated coding output…"}
-      </p>
-    );
-  }
-  const { weeks, contributors, workingDays } = overview.data;
-  return (
-    <>
-      <section className="flex flex-col gap-3">
-        <div className="flex flex-col gap-0.5">
-          <h2 className="text-sm font-medium">Team trend</h2>
-          <p className="text-xs text-muted-foreground">{INSIGHTS_ESTIMATE_LABEL}</p>
-        </div>
-        <InsightsTrendChart weeks={weeks} />
-      </section>
-      <section className="flex flex-col gap-3">
-        <div className="flex flex-col gap-0.5">
-          <h2 className="text-sm font-medium">Contributors</h2>
-          <p className="text-xs text-muted-foreground">
-            {INSIGHTS_ESTIMATE_LABEL} Throughput is pushed hours over {workingDays} working{" "}
-            {workingDays === 1 ? "day" : "days"} of eight hours.
-          </p>
-        </div>
-        {contributors.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No included contributor has commits or merge requests in this window.
-          </p>
-        ) : (
-          <InsightsContributorTable rows={contributors} />
-        )}
-        <p className="text-xs text-muted-foreground">
-          Read these numbers as a team trend. Do not rank or judge individuals by them: estimates
-          per person are noisy, leave out review, planning and investigation, and reward large
-          diffs.
-        </p>
-      </section>
-    </>
   );
 }
 
