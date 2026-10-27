@@ -137,6 +137,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-gutter: 0.75rem;
   --workspace-gutter-start: calc(env(safe-area-inset-left) + var(--workspace-gutter));
   --workspace-gutter-end: calc(env(safe-area-inset-right) + var(--workspace-gutter));
+  /* Categorical series colors in a fixed order, checked for color-blind separation against the
+     light and dark surfaces. */
+  --chart-1: var(--primary);
+  --chart-2: #0d9488;
+  --chart-3: #e11d48;
+  --chart-4: #d97706;
+  --chart-5: #9333ea;
+  --chart-6: #65a30d;
 
   @variant sm {
     --workspace-gutter: 1.25rem;
