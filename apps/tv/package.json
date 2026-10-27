@@ -9,6 +9,7 @@
     "ios:simulator": "EXPO_TV=1 EXPO_NO_GIT_STATUS=1 expo prebuild --clean --platform ios && EXPO_TV=1 expo run:ios",
     "ios:device": "EXPO_TV=1 EXPO_NO_GIT_STATUS=1 expo prebuild --clean --platform ios && EXPO_TV=1 expo run:ios --device",
     "ios:device:release": "EXPO_TV=1 EXPO_NO_GIT_STATUS=1 expo prebuild --clean --platform ios && EXPO_TV=1 expo run:ios --device --configuration Release --no-bundler",
+    "test": "vp test run --config ../../vite.config.ts --dir .",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

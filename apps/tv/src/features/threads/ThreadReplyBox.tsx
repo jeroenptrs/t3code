@@ -1,34 +1,59 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, TextInput, TVFocusGuideView, View } from "react-native";
 
 import { FocusablePressable } from "../../components/FocusablePressable";
 import { colors, typography } from "../../components/theme";
 
+// Text whose send failed after its reply box closed, by thread, so reopening the thread restores it.
+const unsentTextByThread = new Map<string, string>();
+
 /**
  * The reply box. On tvOS, selecting the input opens the system keyboard, which takes Siri
- * Remote dictation and the iPhone's Continuity keyboard; Send submits and clears.
+ * Remote dictation and the iPhone's Continuity keyboard. The text stays in the input until the
+ * server accepts it, and stays there with the error shown if the server refuses it.
  */
 export function ThreadReplyBox(props: {
+  readonly threadKey: string;
   readonly sendLabel: string;
   readonly hint: string | null;
   readonly error: string | null;
   readonly disabled: boolean;
   readonly onSend: (text: string) => Promise<boolean>;
 }) {
-  const [text, setText] = useState("");
+  const [text, setText] = useState(() => unsentTextByThread.get(props.threadKey) ?? "");
   const [inputFocused, setInputFocused] = useState(false);
   const [sending, setSending] = useState(false);
+  // State updates land a render late, so a second Send press in the same frame would pass a
+  // `sending` check. The ref blocks it at once.
+  const inFlight = useRef(false);
+  const mounted = useRef(true);
   const canSend = !props.disabled && !sending && text.trim().length > 0;
 
+  useEffect(() => {
+    mounted.current = true;
+    unsentTextByThread.delete(props.threadKey);
+    return () => {
+      mounted.current = false;
+    };
+  }, [props.threadKey]);
+
   const send = async () => {
-    if (!canSend) return;
+    if (!canSend || inFlight.current) return;
+    inFlight.current = true;
     const sentText = text.trim();
     setSending(true);
-    // Clear at once as mobile does, and restore the text if the server refuses it.
-    setText("");
-    const sent = await props.onSend(sentText);
+    let sent = false;
+    try {
+      sent = await props.onSend(sentText);
+    } finally {
+      inFlight.current = false;
+    }
+    if (!mounted.current) {
+      if (!sent) unsentTextByThread.set(props.threadKey, sentText);
+      return;
+    }
     setSending(false);
-    if (!sent) setText((current) => (current.length === 0 ? sentText : current));
+    if (sent) setText("");
   };
 
   return (
@@ -45,7 +70,7 @@ export function ThreadReplyBox(props: {
             placeholderTextColor={colors.textMuted}
             onFocus={() => setInputFocused(true)}
             onBlur={() => setInputFocused(false)}
-            editable={!props.disabled}
+            editable={!props.disabled && !sending}
             multiline={false}
             returnKeyType="send"
             onSubmitEditing={() => void send()}

@@ -3,7 +3,7 @@ import {
   deriveThreadActivityRun,
   deriveThreadStructureRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ServerProvider, ThreadId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BackHandler, StyleSheet, Text, View } from "react-native";
 
@@ -13,12 +13,19 @@ import { useDevSendMessage } from "../features/threads/devOpenThread";
 import {
   resolveThreadDispatchMode,
   sendThreadMessage,
+  threadIsCompacting,
 } from "../features/threads/sendThreadMessage";
 import { environmentThreadDetails } from "../features/threads/state";
 import { ThreadMessageList } from "../features/threads/ThreadMessageList";
 import { ThreadReplyBox } from "../features/threads/ThreadReplyBox";
 import { deriveThreadRows } from "../features/threads/threadRows";
-import { environmentProjects, environmentThreadShells } from "../state/environments";
+import {
+  environmentProjects,
+  environmentThreadShells,
+  serverEnvironment,
+} from "../state/environments";
+
+const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 
 const STATUS_LABELS: Record<string, string> = {
   preparing: "Preparing",
@@ -53,6 +60,7 @@ export function ThreadScreen(props: {
   const pendingRequests = useAtomValue(environmentThreadDetails.pendingRequestsAtom(ref));
   const shell = useAtomValue(environmentThreadShells.threadShellAtom(ref));
   const projects = useAtomValue(environmentProjects.environmentProjectsAtom(props.environmentId));
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const [sendError, setSendError] = useState<string | null>(null);
 
   // The remote's Menu button returns to the environment. Handlers run newest first, so this
@@ -92,7 +100,17 @@ export function ThreadScreen(props: {
   const title = thread?.title ?? shell?.title ?? "Thread";
   const projectId = thread?.projectId ?? shell?.projectId ?? null;
   const projectTitle = projects.find((project) => project.id === projectId)?.title ?? "";
-  const dispatchMode = resolveThreadDispatchMode({ runtime, activityRun, queueWorkflow });
+  const isCompacting = useMemo(
+    () => threadIsCompacting({ runtime, visibleItems }),
+    [runtime, visibleItems],
+  );
+  const dispatchMode = resolveThreadDispatchMode({
+    runtime,
+    activityRun,
+    queueWorkflow,
+    isCompacting,
+  });
+  const providers = serverConfig?.providers ?? EMPTY_PROVIDERS;
 
   const send = useCallback(
     async (text: string) => {
@@ -103,11 +121,12 @@ export function ThreadScreen(props: {
         thread,
         text,
         dispatchMode,
+        providers,
       });
       setSendError(error);
       return error === null;
     },
-    [dispatchMode, props.environmentId, thread],
+    [dispatchMode, props.environmentId, providers, thread],
   );
 
   useDevSendMessage(thread !== null && threadState.status === "live", send);
@@ -142,6 +161,8 @@ export function ThreadScreen(props: {
         {loadError ? <Text style={styles.error}>{loadError}</Text> : null}
         <ThreadMessageList rows={rows} emptyLabel={emptyLabel} />
         <ThreadReplyBox
+          key={`${props.environmentId}:${props.threadId}`}
+          threadKey={`${props.environmentId}:${props.threadId}`}
           sendLabel={dispatchMode === "queue" ? "Queue" : "Send"}
           hint={
             dispatchMode === "auto"

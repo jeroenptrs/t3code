@@ -10,7 +10,7 @@ import { parseTvLink } from "./lib/links";
 import { ConnectionsScreen } from "./screens/ConnectionsScreen";
 import { EnvironmentScreen } from "./screens/EnvironmentScreen";
 import { tvAtomRegistry } from "./state/atom-registry";
-import { submitPairingForm, updatePairingForm } from "./state/pairing-form";
+import { openPairingLink } from "./state/pairing-form";
 
 export { setTvCloudSession, type TvCloudSessionInput } from "./connection/cloud-session";
 
@@ -48,8 +48,7 @@ function Screens() {
         return;
       }
       setScreen({ name: "connections" });
-      updatePairingForm({ host: link.host, code: link.code });
-      void submitPairingForm();
+      openPairingLink({ host: link.host, code: link.code });
     };
     void Linking.getInitialURL().then(open);
     const subscription = Linking.addEventListener("url", (event) => open(event.url));
@@ -88,6 +87,7 @@ function Screens() {
         <SignInScreen onSignedIn={() => setScreen({ name: "connections" })} />
       ) : (
         <EnvironmentScreen
+          key={screen.environmentId}
           environmentId={screen.environmentId}
           onBack={() => setScreen({ name: "connections" })}
         />
