@@ -35,6 +35,7 @@ const commit = (
   hasAgentCoauthor: false,
   additions: 0,
   deletions: 0,
+  jiraKeys: [],
   ...extra,
 });
 
@@ -144,6 +145,8 @@ describe("rollup", () => {
     contributors,
     mergeRequests: [],
     reviews: [],
+    jiraIssues: [],
+    jiraConfigured: false,
   };
 
   it("buckets pushed by authored day and landed by landed day", () => {
@@ -323,6 +326,7 @@ describe("rollup", () => {
       unreviewedMergeShare: null,
       agentAssistedShare: null,
       abandonedShare: null,
+      unticketedShare: null,
     });
   });
 
@@ -376,5 +380,95 @@ describe("rollup", () => {
     expect(overview.byContributorWeeks).toEqual([
       { weekStart: "2026-10-12", contributorId: "ada", pushedHours: 1, landedHours: 1 },
     ]);
+  });
+
+  describe("Jira grouping", () => {
+    const jira = {
+      ...base,
+      jiraConfigured: true,
+      jiraIssues: [
+        { key: "ACME-1", issueType: "Story", parentKey: "ACME-100" },
+        { key: "ACME-2", issueType: "Bug", parentKey: null },
+        { key: "ACME-3", issueType: null, parentKey: null },
+      ],
+    };
+
+    it("is null when Jira is not configured", () => {
+      const overview = rollup({
+        ...base,
+        commits: [commit("ada", "2026-10-12T10:00:00Z", "2026-10-13T10:00:00Z", 2)],
+      });
+      expect(overview.jira).toBeNull();
+      expect(overview.headline.unticketedShare).toBeNull();
+    });
+
+    it("splits a commit's landed hours evenly across its keys", () => {
+      const overview = rollup({
+        ...jira,
+        commits: [
+          commit("ada", "2026-10-12T10:00:00Z", "2026-10-13T10:00:00Z", 3, false, {
+            jiraKeys: ["ACME-1", "ACME-2", "ACME-4"],
+          }),
+          commit("ada", "2026-10-12T10:00:00Z", "2026-10-13T10:00:00Z", 1, false, {
+            jiraKeys: ["ACME-1"],
+          }),
+        ],
+      });
+      expect(overview.jira!.byType).toEqual([
+        { issueType: "Story", landedHours: 2, commits: 2 },
+        { issueType: "Bug", landedHours: 1, commits: 1 },
+        { issueType: "Unknown", landedHours: 1, commits: 1 },
+      ]);
+      expect(overview.jira!.byTypeByContributor).toEqual([
+        {
+          contributorId: "ada",
+          hoursByType: [
+            { issueType: "Story", landedHours: 2 },
+            { issueType: "Bug", landedHours: 1 },
+            { issueType: "Unknown", landedHours: 1 },
+          ],
+        },
+      ]);
+    });
+
+    it("counts commits without keys as unticketed and keys Jira did not return as unknown", () => {
+      const overview = rollup({
+        ...jira,
+        commits: [
+          commit("ada", "2026-10-12T10:00:00Z", "2026-10-13T10:00:00Z", 1),
+          commit("bob", "2026-10-12T10:00:00Z", "2026-10-14T10:00:00Z", 2, false, {
+            jiraKeys: ["ACME-3", "ACME-9"],
+          }),
+          // Not landed, or superseded: neither counts.
+          commit("ada", "2026-10-12T10:00:00Z", null, 5),
+          commit("ada", "2026-10-12T10:00:00Z", "2026-10-13T10:00:00Z", 5, true),
+        ],
+      });
+      expect(overview.jira!.byType).toEqual([
+        { issueType: "Unknown", landedHours: 2, commits: 1 },
+        { issueType: "Unticketed", landedHours: 1, commits: 1 },
+      ]);
+    });
+
+    it("reports unticketed hours per week and the unticketed share", () => {
+      const overview = rollup({
+        ...jira,
+        commits: [
+          commit("ada", "2026-10-12T10:00:00Z", "2026-10-13T10:00:00Z", 1),
+          commit("ada", "2026-10-12T10:00:00Z", "2026-10-13T10:00:00Z", 2, false, {
+            jiraKeys: ["ACME-1"],
+          }),
+          commit("bob", "2026-10-12T10:00:00Z", "2026-10-20T10:00:00Z", 1, false, {
+            jiraKeys: ["ACME-2"],
+          }),
+        ],
+      });
+      expect(overview.jira!.weeks).toEqual([
+        { weekStart: "2026-10-12", landedHours: 3, unticketedHours: 1 },
+        { weekStart: "2026-10-19", landedHours: 1, unticketedHours: 0 },
+      ]);
+      expect(overview.headline.unticketedShare).toBe(0.25);
+      expect(rollup({ ...jira, commits: [] }).headline.unticketedShare).toBeNull();
+    });
   });
 });
