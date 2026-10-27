@@ -94,7 +94,6 @@ export const diagnoseLaunchFailure = Effect.fn("PreviewBrowserHost.diagnoseLaunc
     readonly setupCommand: string;
   }) {
     const { setupCommand } = input;
-    if (input.output.includes(ROOT_SANDBOX_SIGNATURE)) return new PreviewBrowserRootError();
     if (input.output.includes(NO_SANDBOX_SIGNATURE)) {
       // Playwright reports Chrome's refusal to sandbox as root as a sandbox failure too.
       return (yield* HostProcess.UserId) === 0
