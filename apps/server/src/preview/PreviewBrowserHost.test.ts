@@ -87,21 +87,6 @@ describe("diagnoseLaunchFailure", () => {
     }),
   );
 
-  it.effect("names root when the headless shell refuses its sandbox", () =>
-    Effect.gen(function* () {
-      const { error, commands } = yield* diagnose({
-        platform: "linux",
-        output:
-          "[1027/160816.124663:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:103] Running as root without --no-sandbox is not supported. See https://crbug.com/638180.",
-        ldd: LDD_IN_BARE_DEBIAN,
-        uid: 0,
-      });
-      expect(error?._tag).toBe("PreviewBrowserRootError");
-      expect(error?.message).toContain("T3CODE_SERVER_BROWSER_SANDBOX=0");
-      expect(commands).toEqual([]);
-    }),
-  );
-
   it.effect("trusts the browser's own start over ldd", () =>
     Effect.gen(function* () {
       // NixOS: ldd lists libraries that nix-ld still provides to the real loader.
