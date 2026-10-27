@@ -15,6 +15,7 @@ describe("toIssueSummary", () => {
             summary: "Fix the login",
             status: { name: "Code Review", statusCategory: { key: "indeterminate" } },
             issuetype: { name: "Bug" },
+            parent: { id: "10000", key: "ABC-1", fields: { summary: "Login epic" } },
             priority: { name: "High" },
             assignee: {
               accountId: "acc-1",
@@ -41,6 +42,7 @@ describe("toIssueSummary", () => {
       status: "Code Review",
       statusCategory: "in-progress",
       issueType: "Bug",
+      parentKey: "ABC-1",
       priority: "High",
       assignee: { accountId: "acc-1", displayName: "Ada", avatarUrl: "https://avatar/48" },
       sprints: [
@@ -77,6 +79,7 @@ describe("toIssueSummary", () => {
     expect(bare.assignee).toBeNull();
     expect(bare.priority).toBeNull();
     expect(bare.issueType).toBeNull();
+    expect(bare.parentKey).toBeNull();
     expect(bare.sprints).toEqual([]);
     expect(bare.storyPoints).toBeNull();
     expect(bare.updated).toBeNull();

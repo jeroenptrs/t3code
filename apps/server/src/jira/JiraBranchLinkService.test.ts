@@ -29,6 +29,7 @@ const toSummary = (key: string): JiraIssueSummary => ({
   status: "To Do",
   statusCategory: "todo",
   issueType: null,
+  parentKey: null,
   priority: null,
   assignee: null,
   sprints: [],

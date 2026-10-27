@@ -43,6 +43,7 @@ const toSummary = (site: string, key: string, issue: FakeIssue): JiraIssueSummar
   status: issue.statusCategory,
   statusCategory: issue.statusCategory,
   issueType: null,
+  parentKey: null,
   priority: null,
   assignee: null,
   sprints: [],
