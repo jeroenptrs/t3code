@@ -33,7 +33,7 @@ export function createInsightsEnvironmentAtoms<R, E>(
   };
 
   return {
-    /** Weekly trend and the contributor table for one window. */
+    /** Every Insights chart and the contributor table for one window. */
     overview: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:insights:overview",
       tag: WS_METHODS.insightsOverview,
