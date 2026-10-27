@@ -112,10 +112,32 @@ export const mergeRequestRefspecs = (numbers: ReadonlyArray<number>) =>
     MERGE_REQUEST_REFS_PER_FETCH,
   );
 
+const fetchRefspecs = Effect.fn("InsightsGit.fetchRefspecs")(function* (input: {
+  readonly cwd: string;
+  readonly remote: string;
+  readonly refspecs: ReadonlyArray<string>;
+}) {
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  yield* git.execute({
+    operation: "InsightsGit.fetchMergeRequestHeads",
+    cwd: input.cwd,
+    args: [
+      "fetch",
+      "--quiet",
+      "--no-tags",
+      "--no-write-fetch-head",
+      "--",
+      input.remote,
+      ...input.refspecs,
+    ],
+    timeoutMs: FETCH_TIMEOUT_MS,
+  });
+});
+
 /**
- * Fetches merge request heads in batches and returns how many fetches it ran. A batch that fails
- * (a deleted source branch can take its ref with it) is logged and skipped; its commits are then
- * missing locally and left for the next walk.
+ * Fetches merge request heads in batches and returns how many fetches it ran. A ref the remote
+ * no longer has (a deleted source branch can take it along) fails the whole batch, so a failed
+ * batch is retried one ref at a time and only the missing ones are skipped.
  */
 export const fetchMergeRequestHeads = Effect.fn("InsightsGit.fetchMergeRequestHeads")(
   function* (input: {
@@ -123,27 +145,17 @@ export const fetchMergeRequestHeads = Effect.fn("InsightsGit.fetchMergeRequestHe
     readonly remote: string;
     readonly numbers: ReadonlyArray<number>;
   }) {
-    const git = yield* GitVcsDriver.GitVcsDriver;
-    const batches = mergeRequestRefspecs(input.numbers);
-    for (const refspecs of batches) {
-      yield* git
-        .execute({
-          operation: "InsightsGit.fetchMergeRequestHeads",
-          cwd: input.cwd,
-          args: [
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            "--no-write-fetch-head",
-            "--",
-            input.remote,
-            ...refspecs,
-          ],
-          timeoutMs: FETCH_TIMEOUT_MS,
-        })
-        .pipe(Effect.ignore({ log: true }));
+    let fetches = 0;
+    for (const refspecs of mergeRequestRefspecs(input.numbers)) {
+      fetches += 1;
+      const batch = yield* fetchRefspecs({ ...input, refspecs }).pipe(Effect.result);
+      if (batch._tag === "Success" || refspecs.length === 1) continue;
+      for (const refspec of refspecs) {
+        fetches += 1;
+        yield* fetchRefspecs({ ...input, refspecs: [refspec] }).pipe(Effect.ignore({ log: true }));
+      }
     }
-    return batches.length;
+    return fetches;
   },
 );
 
@@ -301,7 +313,9 @@ export const readPatchIds = Effect.fn("InsightsGit.readPatchIds")(function* (inp
 }) {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const ids = new Map<string, string>();
-  for (const batch of chunks(input.shas, COMMITS_PER_READ)) {
+  const batches = [...chunks(input.shas, COMMITS_PER_READ)];
+  while (batches.length > 0) {
+    const batch = batches.shift()!;
     const patches = yield* git.execute({
       operation: "InsightsGit.readPatches",
       cwd: input.cwd,
@@ -312,11 +326,13 @@ export const readPatchIds = Effect.fn("InsightsGit.readPatchIds")(function* (inp
       appendTruncationMarker: true,
     });
     let text = patches.stdout;
-    let cutOff: string | null = null;
     if (patches.stdoutTruncated) {
+      // The commit cut off by the limit gets no patch-id; the ones after it are read next.
       const last = text.lastIndexOf("\ncommit ");
-      cutOff = last === -1 ? null : text.slice(last + 8, last + 8 + 40);
+      const cutOff = last === -1 ? batch[0]! : text.slice(last + 8, last + 8 + 40);
       text = last === -1 ? "" : text.slice(0, last + 1);
+      const rest = batch.slice(batch.indexOf(cutOff) + 1);
+      if (rest.length > 0) batches.unshift(rest);
     }
     if (text.length === 0) continue;
     const result = yield* git.execute({
@@ -325,9 +341,7 @@ export const readPatchIds = Effect.fn("InsightsGit.readPatchIds")(function* (inp
       args: ["patch-id", "--stable"],
       stdin: text,
     });
-    for (const [sha, patchId] of parsePatchIds(result.stdout)) {
-      if (sha !== cutOff) ids.set(sha, patchId);
-    }
+    for (const [sha, patchId] of parsePatchIds(result.stdout)) ids.set(sha, patchId);
   }
   return ids;
 });
