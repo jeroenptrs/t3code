@@ -1,0 +1,39 @@
+import type { ThreadId } from "@t3tools/contracts";
+import { useEffect } from "react";
+
+let devThreadOpened = false;
+
+/**
+ * Dev-only: EXPO_PUBLIC_TV_DEV_OPEN_THREAD=<threadId|first> opens that thread, or the newest
+ * visible one, the first time the environment screen lists it, for a simulator nothing presses
+ * remote buttons on. Fires once per launch so Menu can still return to the environment.
+ */
+export function useDevOpenThread(
+  threadIds: ReadonlyArray<ThreadId>,
+  open: (threadId: ThreadId) => void,
+): void {
+  const target = __DEV__ ? process.env.EXPO_PUBLIC_TV_DEV_OPEN_THREAD : undefined;
+  useEffect(() => {
+    if (devThreadOpened || !target) return;
+    const threadId = target === "first" ? threadIds[0] : threadIds.find((id) => id === target);
+    if (threadId === undefined) return;
+    devThreadOpened = true;
+    open(threadId);
+  }, [open, target, threadIds]);
+}
+
+let devMessageSent = false;
+
+/**
+ * Dev-only: EXPO_PUBLIC_TV_DEV_SEND_MESSAGE=<text> sends that text through the reply path once
+ * per launch, as soon as the opened thread can take a message, to exercise send and streaming
+ * without a remote.
+ */
+export function useDevSendMessage(ready: boolean, send: (text: string) => Promise<boolean>) {
+  const text = __DEV__ ? process.env.EXPO_PUBLIC_TV_DEV_SEND_MESSAGE : undefined;
+  useEffect(() => {
+    if (devMessageSent || !ready || !text) return;
+    devMessageSent = true;
+    void send(text);
+  }, [ready, send, text]);
+}

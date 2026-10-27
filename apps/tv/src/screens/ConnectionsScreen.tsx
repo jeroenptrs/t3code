@@ -7,12 +7,15 @@ import { ScrollView, StyleSheet, Text, TextInput, TVFocusGuideView, View } from 
 import { ConnectionBadge } from "../components/ConnectionBadge";
 import { FocusablePressable } from "../components/FocusablePressable";
 import { colors } from "../components/theme";
+import { CloudAccountCard } from "../features/cloud/CloudAccountCard";
+import { CloudEnvironmentList } from "../features/cloud/CloudEnvironmentList";
 import { tvAtomRegistry } from "../state/atom-registry";
 import { environmentCatalog, environmentSummaries } from "../state/environments";
 import { pairingFormAtom, submitPairingForm, updatePairingForm } from "../state/pairing-form";
 
 export function ConnectionsScreen(props: {
   readonly onOpenEnvironment: (environmentId: EnvironmentId) => void;
+  readonly onSignIn: () => void;
 }) {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const environments = useAtomValue(environmentSummaries.environmentsAtom);
@@ -23,14 +26,16 @@ export function ConnectionsScreen(props: {
       <View style={styles.columns}>
         <View style={styles.formColumn}>
           <PairingForm hasEnvironments={environments.length > 0} />
-          {/* cloud: sign-in entry goes here */}
+          <CloudAccountCard onSignIn={props.onSignIn} />
         </View>
         <TVFocusGuideView style={styles.listColumn} autoFocus>
           <Text style={styles.sectionTitle}>Environments</Text>
           {!catalog.isReady ? (
             <Text style={styles.muted}>Loading saved environments…</Text>
           ) : environments.length === 0 ? (
-            <Text style={styles.muted}>No environments yet. Pair one with its host and code.</Text>
+            <Text style={styles.muted}>
+              No environments yet. Pair one with its host and code, or add one from T3 Connect.
+            </Text>
           ) : (
             environments.map((environment, index) => (
               <EnvironmentRow
@@ -41,6 +46,7 @@ export function ConnectionsScreen(props: {
               />
             ))
           )}
+          <CloudEnvironmentList onOpenEnvironment={props.onOpenEnvironment} />
         </TVFocusGuideView>
       </View>
     </ScrollView>

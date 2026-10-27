@@ -1,6 +1,17 @@
-import { setManagedRelaySession } from "@t3tools/client-runtime/relay";
+import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
+import { ManagedRelay, setManagedRelaySession } from "@t3tools/client-runtime/relay";
+import {
+  createRuntimeCommand,
+  reportAtomCommandResult,
+  runAtomCommand,
+  settleAsyncResult,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import * as Effect from "effect/Effect";
 
+import { runtime } from "../lib/runtime";
 import { tvAtomRegistry } from "../state/atom-registry";
+import { connectionAtomRuntime } from "./runtime";
 
 /**
  * What the cloud sign-in hands the connection runtime. `readClerkToken` returns a Clerk
@@ -18,4 +29,30 @@ export interface TvCloudSessionInput {
  */
 export function setTvCloudSession(input: TvCloudSessionInput | null): void {
   setManagedRelaySession(tvAtomRegistry, input);
+}
+
+const removeRelayEnvironments = createRuntimeCommand(connectionAtomRuntime, {
+  label: "tv:cloud:remove-relay-environments",
+  execute: (_input: void) =>
+    EnvironmentRegistry.EnvironmentRegistry.pipe(
+      Effect.flatMap((registry) => registry.removeRelayEnvironments()),
+    ),
+});
+
+/**
+ * Forgets what a signed-out account left on this TV: its saved relay environments and the
+ * cached relay access tokens. Mobile also archives drafts here; the TV has none.
+ */
+export async function cleanUpTvCloudAccount(): Promise<void> {
+  const removal = await runAtomCommand(tvAtomRegistry, removeRelayEnvironments, undefined, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  if (removal._tag !== "Success") throw squashAtomCommandFailure(removal);
+  const reset = await settleAsyncResult(() =>
+    runtime.runPromiseExit(
+      ManagedRelay.ManagedRelayClient.pipe(Effect.flatMap((client) => client.resetTokenCache)),
+    ),
+  );
+  reportAtomCommandResult(reset, { label: "tv cloud account cleanup" });
 }

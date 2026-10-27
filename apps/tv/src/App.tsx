@@ -4,6 +4,7 @@ import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { BackHandler, Linking, StatusBar, StyleSheet, TVEventControl, View } from "react-native";
 
 import { colors } from "./components/theme";
+import { SignInScreen } from "./features/cloud/SignInScreen";
 import { startDevLaunch } from "./lib/devLaunch";
 import { parseTvLink } from "./lib/links";
 import { ConnectionsScreen } from "./screens/ConnectionsScreen";
@@ -15,6 +16,7 @@ export { setTvCloudSession, type TvCloudSessionInput } from "./connection/cloud-
 
 type Screen =
   | { readonly name: "connections" }
+  | { readonly name: "signIn" }
   | { readonly name: "environment"; readonly environmentId: EnvironmentId };
 
 /**
@@ -80,7 +82,10 @@ function Screens() {
       {screen.name === "connections" ? (
         <ConnectionsScreen
           onOpenEnvironment={(environmentId) => setScreen({ name: "environment", environmentId })}
+          onSignIn={() => setScreen({ name: "signIn" })}
         />
+      ) : screen.name === "signIn" ? (
+        <SignInScreen onSignedIn={() => setScreen({ name: "connections" })} />
       ) : (
         <EnvironmentScreen
           environmentId={screen.environmentId}

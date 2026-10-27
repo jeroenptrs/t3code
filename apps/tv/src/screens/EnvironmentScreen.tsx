@@ -4,21 +4,24 @@ import type {
   OrchestrationProjectShell,
   OrchestrationV2ThreadShell,
   ProjectId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { FlatList, StyleSheet, Text, TVFocusGuideView, View } from "react-native";
 
 import { ConnectionBadge } from "../components/ConnectionBadge";
 import { FocusablePressable } from "../components/FocusablePressable";
 import { colors } from "../components/theme";
+import { useDevOpenThread } from "../features/threads/devOpenThread";
 import {
   environmentProjects,
   environmentShell,
   environmentSummaries,
   environmentThreadShells,
 } from "../state/environments";
+import { ThreadScreen } from "./ThreadScreen";
 
 const ALL_PROJECTS = "all" as const;
 
@@ -64,6 +67,25 @@ export function EnvironmentScreen(props: {
   );
 
   const shellError = Option.getOrNull(shell.error);
+
+  // The open thread replaces this screen's content while its hooks keep the shell subscribed.
+  const [openThreadId, setOpenThreadId] = useState<ThreadId | null>(null);
+  const closeThread = useCallback(() => setOpenThreadId(null), []);
+  const visibleThreadIds = useMemo(
+    () => visibleThreads.map((thread) => thread.id),
+    [visibleThreads],
+  );
+  useDevOpenThread(visibleThreadIds, setOpenThreadId);
+
+  if (openThreadId !== null) {
+    return (
+      <ThreadScreen
+        environmentId={props.environmentId}
+        threadId={openThreadId}
+        onBack={closeThread}
+      />
+    );
+  }
 
   return (
     <View style={styles.root}>
@@ -125,7 +147,10 @@ export function EnvironmentScreen(props: {
               keyExtractor={(thread) => thread.id}
               contentContainerStyle={styles.listContent}
               renderItem={({ item: thread }) => (
-                <FocusablePressable style={styles.threadRow}>
+                <FocusablePressable
+                  style={styles.threadRow}
+                  onPress={() => setOpenThreadId(thread.id)}
+                >
                   <Text style={styles.rowTitle} numberOfLines={1}>
                     {thread.title || "Untitled thread"}
                   </Text>
