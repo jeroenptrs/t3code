@@ -464,7 +464,8 @@ const make = Effect.gen(function* () {
       let firstAuthoredAt: string | null = null;
       for (const sha of mergeRequest.shas) {
         const commit = facts.get(sha);
-        if (commit === undefined) continue;
+        // A merge of the target branch into the feature branch is not the author's work.
+        if (commit === undefined || commit.parents.length > 1) continue;
         firstAuthoredAt = minIso(firstAuthoredAt, commit.authoredAt);
         if (!newShas.has(sha) || commit.committedAt < input.startBoundary) continue;
         const contributor = yield* contributorForCommit(commit, mergeRequest.author);
