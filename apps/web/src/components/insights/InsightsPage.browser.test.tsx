@@ -16,24 +16,26 @@ import {
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import { AsyncResult, Atom } from "effect/reactivity";
+
 import { render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   inputs: [] as Array<unknown>,
   overview: null as InsightsOverview | null,
+  overviewAtom: null as unknown,
   config: null as InsightsConfig | null,
 }));
 
 // The real module builds atoms on the app's connection runtime, which tries to reach a server.
 vi.mock(import("../../state/insights"), async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
-  const overview = Atom.make(() => AsyncResult.success(state.overview!));
   const config = Atom.make(() => AsyncResult.success(state.config!));
   return {
     insightsEnvironment: {
       overview: ((target: { readonly input: unknown }) => {
         state.inputs.push(target.input);
-        return overview;
+        return state.overviewAtom;
       }) as never,
       config: (() => config) as never,
       refresh: () => undefined,
@@ -51,6 +53,12 @@ const ada = InsightsContributorId.make("ada");
 const bob = InsightsContributorId.make("bob");
 const spread = (median: number | null) => ({ median, p85: median });
 const byType = (feat: number) => ({ feat, fix: 0, chore: 0, docs: 0, test: 0, other: 0 });
+
+/** A fresh atom per overview: the registry keeps an atom's first value while it lives. */
+function serveOverview(overview: InsightsOverview) {
+  state.overview = overview;
+  state.overviewAtom = Atom.make(AsyncResult.success(overview));
+}
 
 function setup() {
   state.inputs = [];
@@ -101,7 +109,7 @@ function setup() {
     medianCycleHours: 20,
   });
   const weekStarts = ["2026-09-07", "2026-09-14"];
-  state.overview = {
+  serveOverview({
     from: "2026-09-07",
     to: "2026-09-20",
     workingDays: 10,
@@ -164,14 +172,31 @@ function setup() {
       ],
       unreviewedMergesByAuthor: [{ contributorId: ada, merged: 2, unreviewed: 0 }],
     },
+    jira: {
+      byType: [
+        { issueType: "Story", landedHours: 6, commits: 2 },
+        { issueType: "Unticketed", landedHours: 2, commits: 1 },
+      ],
+      byTypeByContributor: [
+        {
+          contributorId: ada,
+          hoursByType: [
+            { issueType: "Story", landedHours: 6 },
+            { issueType: "Unticketed", landedHours: 2 },
+          ],
+        },
+      ],
+      weeks: weekStarts.map((weekStart) => ({ weekStart, landedHours: 4, unticketedHours: 1 })),
+    },
     headline: {
       leadTimeMedianDays: 2,
       medianMergeRequestLines: 30,
       unreviewedMergeShare: 0,
       agentAssistedShare: 0.25,
       abandonedShare: null,
+      unticketedShare: 0.25,
     },
-  };
+  });
 }
 
 /** The Insights routes as the app declares them, without the app shell around them. */
@@ -264,4 +289,20 @@ it("keeps the window and contributor filter from the URL across views", async ()
     to: "2026-09-30",
     contributors: ["ada"],
   });
+});
+
+it("shows Jira work only when the server has Jira configured", async () => {
+  setup();
+  {
+    const { screen } = await renderAt("/insights");
+    await using _screen = screen;
+    await expect.element(page.getByRole("heading", { name: "Jira work" })).toBeVisible();
+    await expect.element(page.getByRole("link", { name: /Unticketed share/ })).toBeVisible();
+  }
+  serveOverview({ ...state.overview!, jira: null });
+  const { screen } = await renderAt("/insights");
+  await using _screen = screen;
+  await expect.element(page.getByRole("heading", { name: "Team trend" })).toBeVisible();
+  await expect.element(page.getByRole("heading", { name: "Jira work" })).not.toBeInTheDocument();
+  await expect.element(page.getByText("Unticketed share")).not.toBeInTheDocument();
 });
