@@ -107,6 +107,8 @@ export const JiraIssueSummary = Schema.Struct({
   status: Schema.String,
   statusCategory: JiraStatusCategory,
   issueType: Schema.NullOr(Schema.String),
+  /** The epic or parent issue; null for a top-level issue. */
+  parentKey: Schema.NullOr(JiraIssueKeyString),
   priority: Schema.NullOr(Schema.String),
   assignee: Schema.NullOr(JiraUser),
   /** Sprints in field order; empty when the site has no sprint field or the issue is in none. */
