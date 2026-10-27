@@ -19,6 +19,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as JiraIdentities from "../jira/JiraIdentities.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as InsightsGit from "./insightsGit.ts";
@@ -78,6 +79,7 @@ const make = Effect.gen(function* () {
   const ingestor = yield* InsightsIngestor.InsightsIngestor;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const identities = yield* JiraIdentities.JiraIdentities;
 
   /** T3 projects on this server whose remote is GitLab. */
   const gitLabProjects = pullRequests
@@ -134,14 +136,24 @@ const make = Effect.gen(function* () {
         return yield* invalid("The window can be at most three years long.");
       }
       const today = isoOf(yield* Effect.clockWith((clock) => clock.currentTimeMillis)).slice(0, 10);
+      const jiraSite = identities.configured
+        ? (yield* identities.reader.pipe(Effect.orDie)).site
+        : null;
       const rows = yield* store
         .overviewRows({
           fromIso: isoOf(from),
           toIso: isoOf(to + DAY_MS),
           contributorIds: input.contributorIds,
+          jiraSite,
         })
         .pipe(Effect.catch(unavailable));
-      return rollup({ from: input.from, to: input.to, today, ...rows });
+      return rollup({
+        from: input.from,
+        to: input.to,
+        today,
+        ...rows,
+        jiraConfigured: jiraSite !== null,
+      });
     },
   );
 
