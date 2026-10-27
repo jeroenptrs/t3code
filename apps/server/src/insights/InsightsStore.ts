@@ -20,6 +20,7 @@ import type * as SqlError from "effect/sql/SqlError";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { isoOf } from "./isoTime.ts";
+import type { RollupInput } from "./insightsRollup.ts";
 
 const DEFAULT_REQUEST_BUDGET_PER_TICK = 20;
 const DEFAULT_LOOKBACK_DAYS = 90;
@@ -98,32 +99,10 @@ export interface StoredCommit {
   readonly supersededBySha: string | null;
 }
 
-export interface OverviewRows {
-  readonly contributors: ReadonlyArray<{
-    readonly contributorId: string;
-    readonly displayName: string;
-    readonly kind: InsightsContributorKind;
-  }>;
-  readonly commits: ReadonlyArray<{
-    readonly contributorId: string;
-    readonly authoredAt: string;
-    readonly landedAt: string | null;
-    readonly estimatedHours: number;
-    readonly superseded: boolean;
-  }>;
-  readonly mergeRequests: ReadonlyArray<{
-    readonly authorContributorId: string;
-    readonly createdAt: string;
-    readonly mergedAt: string | null;
-    readonly firstReviewAt: string | null;
-    readonly firstCommitAuthoredAt: string | null;
-  }>;
-  readonly reviews: ReadonlyArray<{
-    readonly reviewerContributorId: string;
-    readonly mergeRequestKey: string;
-    readonly firstAt: string;
-  }>;
-}
+export type OverviewRows = Pick<
+  RollupInput,
+  "contributors" | "commits" | "mergeRequests" | "reviews"
+>;
 
 type Sql<A> = Effect.Effect<A, SqlError.SqlError>;
 
@@ -849,12 +828,19 @@ const make = Effect.gen(function* () {
     }
     const commits = yield* sql<{
       readonly contributor_id: string;
+      readonly project_id: string;
+      readonly mr_number: number | null;
       readonly authored_at: string;
       readonly landed_at: string | null;
       readonly estimated_hours: number;
       readonly superseded_by_sha: string | null;
+      readonly message_subject: string;
+      readonly has_agent_coauthor: number;
+      readonly additions: number;
+      readonly deletions: number;
     }>`
-        SELECT contributor_id, authored_at, landed_at, estimated_hours, superseded_by_sha
+        SELECT contributor_id, project_id, mr_number, authored_at, landed_at, estimated_hours,
+          superseded_by_sha, message_subject, has_agent_coauthor, additions, deletions
         FROM fork_insights_commits
         WHERE contributor_id IN ${sql.in(ids)}
           AND ((authored_at >= ${input.fromIso} AND authored_at < ${input.toIso})
@@ -862,29 +848,39 @@ const make = Effect.gen(function* () {
       `;
     const mergeRequests = yield* sql<{
       readonly author_contributor_id: string;
+      readonly project_id: string;
+      readonly number: number;
+      readonly state: string;
       readonly created_at: string;
       readonly merged_at: string | null;
+      readonly closed_at: string | null;
       readonly first_review_at: string | null;
       readonly first_commit_authored_at: string | null;
+      readonly changed_files: number | null;
     }>`
-        SELECT author_contributor_id, created_at, merged_at, first_review_at,
-          first_commit_authored_at
+        SELECT author_contributor_id, project_id, number, state, created_at, merged_at, closed_at,
+          first_review_at, first_commit_authored_at, changed_files
         FROM fork_insights_merge_requests
         WHERE author_contributor_id IN ${sql.in(ids)}
           AND ((created_at >= ${input.fromIso} AND created_at < ${input.toIso})
-            OR (merged_at >= ${input.fromIso} AND merged_at < ${input.toIso}))
+            OR (merged_at >= ${input.fromIso} AND merged_at < ${input.toIso})
+            OR (closed_at >= ${input.fromIso} AND closed_at < ${input.toIso}))
       `;
     const reviews = yield* sql<{
       readonly reviewer_contributor_id: string;
       readonly project_id: string;
       readonly number: number;
       readonly first_at: string;
+      readonly author_contributor_id: string | null;
     }>`
-        SELECT reviewer_contributor_id, project_id, number, MIN(first_at) AS first_at
-        FROM fork_insights_mr_reviews
-        WHERE reviewer_contributor_id IN ${sql.in(ids)}
-          AND first_at >= ${input.fromIso} AND first_at < ${input.toIso}
-        GROUP BY reviewer_contributor_id, project_id, number
+        SELECT r.reviewer_contributor_id, r.project_id, r.number, MIN(r.first_at) AS first_at,
+          m.author_contributor_id
+        FROM fork_insights_mr_reviews r
+        LEFT JOIN fork_insights_merge_requests m
+          ON m.project_id = r.project_id AND m.number = r.number
+        WHERE r.reviewer_contributor_id IN ${sql.in(ids)}
+          AND r.first_at >= ${input.fromIso} AND r.first_at < ${input.toIso}
+        GROUP BY r.reviewer_contributor_id, r.project_id, r.number
       `;
     return {
       contributors: contributorRows.map((row) => ({
@@ -898,17 +894,29 @@ const make = Effect.gen(function* () {
         landedAt: row.landed_at,
         estimatedHours: row.estimated_hours,
         superseded: row.superseded_by_sha !== null,
+        mergeRequestKey: row.mr_number === null ? null : `${row.project_id}:${row.mr_number}`,
+        messageSubject: row.message_subject,
+        hasAgentCoauthor: row.has_agent_coauthor !== 0,
+        additions: row.additions,
+        deletions: row.deletions,
       })),
       mergeRequests: mergeRequests.map((row) => ({
         authorContributorId: row.author_contributor_id,
+        mergeRequestKey: `${row.project_id}:${row.number}`,
+        number: row.number,
+        state: row.state,
         createdAt: row.created_at,
         mergedAt: row.merged_at,
+        closedAt: row.closed_at,
         firstReviewAt: row.first_review_at,
         firstCommitAuthoredAt: row.first_commit_authored_at,
+        changedFiles: row.changed_files,
       })),
       reviews: reviews.map((row) => ({
         reviewerContributorId: row.reviewer_contributor_id,
         mergeRequestKey: `${row.project_id}:${row.number}`,
+        mergeRequestNumber: row.number,
+        authorContributorId: row.author_contributor_id,
         firstAt: row.first_at,
       })),
     };
