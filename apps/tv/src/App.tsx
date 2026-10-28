@@ -1,24 +1,26 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useEffect, useReducer, type ComponentType, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { BackHandler, Linking, StatusBar, StyleSheet, TVEventControl, View } from "react-native";
 
 import { colors } from "./components/theme";
 import { SignInScreen } from "./features/cloud/SignInScreen";
 import { startDevLaunch } from "./lib/devLaunch";
 import { parseTvLink } from "./lib/links";
-import {
-  INITIAL_STACK,
-  shownStack,
-  stackReducer,
-  topOf,
-  type Route,
-  type ThreadRef,
-} from "./navigation/stack";
+import { INITIAL_STACK, shownStack, stackReducer, topOf, type Route } from "./navigation/stack";
+import { TvNavigationContext, type TvNavigation } from "./navigation/TvNavigation";
 import { ConnectionsScreen } from "./screens/ConnectionsScreen";
-import { EnvironmentScreen } from "./screens/EnvironmentScreen";
-import { HomeScreen } from "./screens/HomeScreen";
-import { ThreadScreen } from "./screens/ThreadScreen";
+import { MainScreen, type MainScreenHandle } from "./screens/MainScreen";
+import { TerminalScreen } from "./screens/TerminalScreen";
 import { tvAtomRegistry } from "./state/atom-registry";
 import { environmentCatalog } from "./state/environments";
 import { openPairingLink } from "./state/pairing-form";
@@ -47,32 +49,34 @@ function Screens() {
   const [stack, dispatch] = useReducer(stackReducer, INITIAL_STACK);
   const shown = shownStack(stack, !catalog.isReady || catalog.entries.size > 0);
   const top = topOf(shown);
-  // A thread shows over the list it was opened from, which stays mounted to keep its place.
-  const base =
-    top.name === "thread" ? (shown.findLast((route) => route.name !== "thread") ?? top) : top;
   const canGoBack = shown.length > 1;
+  const [environmentFilter, setEnvironmentFilter] = useState<EnvironmentId | null>(null);
+  const [inConversation, setInConversation] = useState(false);
+  const main = useRef<MainScreenHandle>(null);
 
   const push = useCallback((route: Route) => dispatch({ type: "push", route }), []);
   const back = useCallback(() => dispatch({ type: "back" }), []);
-  const openEnvironment = useCallback(
-    (environmentId: EnvironmentId) => push({ name: "environment", environmentId }),
-    [push],
+  const navigation = useMemo(
+    (): TvNavigation => ({
+      push,
+      back,
+      openTerminal: (thread, terminalId) =>
+        push({ name: "terminal", ...thread, ...(terminalId === undefined ? {} : { terminalId }) }),
+    }),
+    [back, push],
   );
-  const openThread = useCallback(
-    (thread: ThreadRef, siblings: ReadonlyArray<ThreadRef>) =>
-      push({ name: "thread", thread, siblings }),
-    [push],
-  );
+  // Environments are a sidebar filter now; opening one shows the main view filtered to it.
+  const openEnvironment = useCallback((environmentId: EnvironmentId) => {
+    setEnvironmentFilter(environmentId);
+    dispatch({ type: "reset", routes: INITIAL_STACK });
+  }, []);
 
   useEffect(() => {
     const open = (url: string | null | undefined) => {
       const link = url ? parseTvLink(url) : null;
       if (link === null) return;
       if (link.kind === "environment") {
-        dispatch({
-          type: "reset",
-          routes: [{ name: "home" }, { name: "environment", environmentId: link.environmentId }],
-        });
+        openEnvironment(link.environmentId);
         return;
       }
       dispatch({ type: "reset", routes: [{ name: "home" }, { name: "connections" }] });
@@ -81,71 +85,67 @@ function Screens() {
     void Linking.getInitialURL().then(open);
     const subscription = Linking.addEventListener("url", (event) => open(event.url));
     const stopDevLaunch = startDevLaunch({
-      openEnvironment: (environmentId) =>
-        dispatch({
-          type: "reset",
-          routes: [{ name: "home" }, { name: "environment", environmentId }],
-        }),
+      openEnvironment,
       openHome: () => dispatch({ type: "close", name: "connections" }),
     });
     return () => {
       subscription.remove();
       stopDevLaunch();
     };
-  }, []);
+  }, [openEnvironment]);
 
-  // tvOS exits the app on Menu (and the newer remote's Back) unless the root view holds a Menu
-  // recognizer, which enableTVMenuKey adds. Hold it whenever there is somewhere to go back to.
-  // A full-screen image is a Modal with its own native Menu recognizer, so this never changes
-  // while one is open: enabling again would add a second recognizer to the modal's view.
+  // tvOS exits on Menu unless the root holds the recognizer enableTVMenuKey adds; hold it while
+  // Menu can go back a route or to the sidebar. A full-screen image's Modal has its own; its
+  // focus counts as the conversation's, so this never re-enables (adding a second) while open.
+  const menuReturnsToSidebar = !canGoBack && top.name === "home" && inConversation;
+  const menuHandled = canGoBack || menuReturnsToSidebar;
   useEffect(() => {
-    if (!canGoBack) {
+    if (!menuHandled) {
       TVEventControl.disableTVMenuKey();
       return;
     }
     TVEventControl.enableTVMenuKey();
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      back();
+      if (canGoBack) back();
+      else main.current?.focusSidebar();
       return true;
     });
     return () => subscription.remove();
-  }, [back, canGoBack]);
+  }, [back, canGoBack, menuHandled]);
 
   if (!catalog.isReady) return <View style={styles.root} />;
   return (
-    <View style={styles.root}>
-      {top.name === "thread" ? (
-        <ThreadScreen
-          route={top}
-          onBack={back}
-          onOpenSibling={(thread) => dispatch({ type: "replace", route: { ...top, thread } })}
-        />
-      ) : null}
-      {base.name === "home" ? (
-        <HomeScreen
-          hidden={top !== base}
-          onOpenConnections={() => push({ name: "connections" })}
-          onOpenEnvironment={openEnvironment}
-          onOpenThread={openThread}
-        />
-      ) : base.name === "connections" ? (
-        <ConnectionsScreen
-          onBack={canGoBack ? back : null}
-          onOpenEnvironment={openEnvironment}
-          onSignIn={() => push({ name: "signIn" })}
-        />
-      ) : base.name === "signIn" ? (
-        <SignInScreen onSignedIn={back} />
-      ) : base.name === "environment" ? (
-        <EnvironmentScreen
-          key={base.environmentId}
-          hidden={top !== base}
-          environmentId={base.environmentId}
-          onBack={back}
-          onOpenThread={openThread}
-        />
-      ) : null}
-    </View>
+    <TvNavigationContext value={navigation}>
+      <View style={styles.root}>
+        {shown[0].name === "home" ? (
+          <MainScreen
+            ref={main}
+            hidden={top.name !== "home"}
+            environmentFilter={environmentFilter}
+            onEnvironmentFilterChange={setEnvironmentFilter}
+            onOpenConnections={() => push({ name: "connections" })}
+            onConversationFocusChange={setInConversation}
+          />
+        ) : null}
+        {top.name === "connections" ? (
+          <ConnectionsScreen
+            onBack={canGoBack ? back : null}
+            onOpenEnvironment={openEnvironment}
+            onSignIn={() => push({ name: "signIn" })}
+          />
+        ) : top.name === "signIn" ? (
+          <SignInScreen onSignedIn={back} />
+        ) : top.name === "terminal" ? (
+          <TerminalScreen
+            key={`${top.environmentId}:${top.threadId}:${top.terminalId ?? ""}`}
+            environmentId={top.environmentId}
+            threadId={top.threadId}
+            {...(top.terminalId === undefined ? {} : { terminalId: top.terminalId })}
+            onClose={back}
+          />
+        ) : null}
+      </View>
+    </TvNavigationContext>
   );
 }
 

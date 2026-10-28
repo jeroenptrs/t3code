@@ -37,3 +37,21 @@ export function useDevSendMessage(ready: boolean, send: (text: string) => Promis
     void send(text);
   }, [ready, send, text]);
 }
+
+export type ThreadSheetKind = "git" | "terminal" | "agents";
+
+let devSheetOpened = false;
+
+/**
+ * Dev-only: EXPO_PUBLIC_TV_DEV_OPEN_SHEET=git|terminal|agents opens that thread header sheet once
+ * per launch, as soon as the opened thread has loaded, to see a sheet without a remote.
+ */
+export function useDevOpenSheet(ready: boolean, open: (sheet: ThreadSheetKind) => void) {
+  const sheet = __DEV__ ? process.env.EXPO_PUBLIC_TV_DEV_OPEN_SHEET : undefined;
+  useEffect(() => {
+    if (devSheetOpened || !ready) return;
+    if (sheet !== "git" && sheet !== "terminal" && sheet !== "agents") return;
+    devSheetOpened = true;
+    open(sheet);
+  }, [open, ready, sheet]);
+}

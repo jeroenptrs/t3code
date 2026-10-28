@@ -14,11 +14,12 @@ import {
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
+import { resolveThreadCurrentPullRequestLink } from "@t3tools/client-runtime/thread-pull-requests";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
-import type { statusColors } from "../../components/theme";
+import type { pullRequestColors, statusColors } from "../../components/theme";
 
-// The home list's partition and row status, following apps/mobile/src/features/threads/
+// The sidebar's partition and row status, following apps/mobile/src/features/threads/
 // threadListV2.ts with the working shelf on and without search, reordering, or pending tasks.
 
 export const SETTLED_INITIAL_COUNT = 10;
@@ -87,22 +88,24 @@ function resolveWokeAt(thread: EnvironmentThreadShell, now: string): string | nu
 export interface ThreadStatusChip {
   readonly label: string;
   readonly tone: keyof typeof statusColors;
+  /** Which live duration follows the label: time working, or time since the run ended. */
+  readonly duration: "working" | "waiting" | null;
 }
 
 const STATUS_CHIPS: Partial<Record<ThreadListStatus, ThreadStatusChip>> = {
-  approval: { label: "Approval", tone: "approval" },
-  input: { label: "Input", tone: "input" },
-  request: { label: "Request", tone: "request" },
-  working: { label: "Working", tone: "working" },
-  waiting: { label: "Waiting", tone: "waiting" },
-  failed: { label: "Failed", tone: "failed" },
-  limited: { label: "Limited", tone: "limited" },
+  approval: { label: "Approval", tone: "approval", duration: null },
+  input: { label: "Input", tone: "input", duration: null },
+  request: { label: "Request", tone: "request", duration: null },
+  working: { label: "Working", tone: "working", duration: "working" },
+  waiting: { label: "Waiting", tone: "waiting", duration: "waiting" },
+  failed: { label: "Failed", tone: "failed", duration: null },
+  limited: { label: "Limited", tone: "limited", duration: null },
 };
 
 // Shared objects, so a rebuilt list hands memoized rows the same chip.
-const GOAL_CHIP: ThreadStatusChip = { label: "Goal", tone: "working" };
-const WOKE_CHIP: ThreadStatusChip = { label: "Woke", tone: "approval" };
-const DONE_CHIP: ThreadStatusChip = { label: "Done", tone: "done" };
+const GOAL_CHIP: ThreadStatusChip = { label: "Goal", tone: "working", duration: "working" };
+const WOKE_CHIP: ThreadStatusChip = { label: "Woke", tone: "approval", duration: null };
+const DONE_CHIP: ThreadStatusChip = { label: "Done", tone: "done", duration: null };
 
 /** The chip a card row shows, as mobile's row picks it; null shows the time instead. */
 export function resolveThreadStatusChip(
@@ -113,6 +116,27 @@ export function resolveThreadStatusChip(
   if (status === "ready" && wokeAt !== null) return WOKE_CHIP;
   if (status === "working" && thread.goal?.status === "active") return GOAL_CHIP;
   return STATUS_CHIPS[status] ?? (threadHasUnseenCompletion(thread) ? DONE_CHIP : null);
+}
+
+export interface ThreadPullRequestBadge {
+  readonly number: number;
+  readonly tone: keyof typeof pullRequestColors;
+}
+
+/** The pull request a row shows: the thread's current link, else the branch's; muted until known. */
+export function threadPullRequestBadge(
+  thread: Pick<EnvironmentThreadShell, "pullRequests" | "linkedPullRequest" | "branchPullRequest">,
+): ThreadPullRequestBadge | null {
+  const link = resolveThreadCurrentPullRequestLink(thread.pullRequests);
+  if (link !== null) {
+    const snapshot = link.snapshot;
+    return {
+      number: link.number,
+      tone: snapshot === null || snapshot.isDraft ? "pending" : snapshot.state,
+    };
+  }
+  const fallback = thread.linkedPullRequest ?? thread.branchPullRequest;
+  return fallback ? { number: fallback.number, tone: "pending" } : null;
 }
 
 export function relativeTime(iso: string, nowMs: number): string {
@@ -126,20 +150,26 @@ export function relativeTime(iso: string, nowMs: number): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
-export type ThreadSection = "active" | "working" | "snoozed" | "settled";
+/** Pinned and active rows lead without a header; the shelves follow under theirs. */
+export type ThreadSection = "active" | ThreadShelf;
+export type ThreadShelf = "working" | "snoozed" | "settled";
 
-export const SECTION_LABELS: Record<ThreadSection, string> = {
-  active: "Active",
+export const SHELF_LABELS: Record<ThreadShelf, string> = {
   working: "Working",
   snoozed: "Snoozed",
   settled: "Settled",
 };
 
+/** Mobile's shelf header: the bare label while open, the count only once collapsed. */
+export function shelfHeaderLabel(shelf: ThreadShelf, count: number, expanded: boolean): string {
+  return expanded ? SHELF_LABELS[shelf] : `${SHELF_LABELS[shelf]} (${count})`;
+}
+
 export type ThreadListEntry =
   | {
       readonly type: "header";
       readonly key: string;
-      readonly section: ThreadSection;
+      readonly section: ThreadShelf;
       readonly count: number;
       readonly expanded: boolean;
     }
@@ -165,8 +195,12 @@ export interface ThreadSectionsInput {
   readonly now: string;
   readonly settlementEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly snoozeEnvironmentIds: ReadonlySet<EnvironmentId>;
-  readonly expanded: Readonly<Record<"working" | "snoozed" | "settled", boolean>>;
+  readonly expanded: Readonly<Record<ThreadShelf, boolean>>;
   readonly settledLimit: number;
+  /** `environmentId:threadId` of the open thread, which a collapsed shelf still lists. */
+  readonly selectedThreadKey?: string | null;
+  /** Threads with messages waiting to send, which stay out of Settled until they go. */
+  readonly queuedThreadKeys?: ReadonlySet<string>;
   readonly isWorking?: (thread: EnvironmentThreadShell) => boolean;
   readonly inboxReturnAt?: (thread: EnvironmentThreadShell) => number | undefined;
   /** Whether a settled row is loaded far enough to list; older settled rows load in pages. */
@@ -179,6 +213,10 @@ export interface ThreadSections {
   readonly entries: ReadonlyArray<ThreadListEntry>;
   /** The settled rows the shelf may list, before its limit; pages load until it is full. */
   readonly listedSettledThreads: ReadonlyArray<EnvironmentThreadShell>;
+}
+
+function threadKey(thread: EnvironmentThreadShell): string {
+  return `${thread.environmentId}:${thread.id}`;
 }
 
 export function buildThreadSections(input: ThreadSectionsInput): ThreadSections {
@@ -207,7 +245,8 @@ export function buildThreadSections(input: ThreadSectionsInput): ThreadSections 
       snoozed.push(thread);
     } else if (
       input.settlementEnvironmentIds.has(thread.environmentId) &&
-      thread.settledOverride === "settled"
+      thread.settledOverride === "settled" &&
+      input.queuedThreadKeys?.has(threadKey(thread)) !== true
     ) {
       settled.push(thread);
     } else if (thread.pinnedAt != null) {
@@ -225,7 +264,18 @@ export function buildThreadSections(input: ThreadSectionsInput): ThreadSections 
       ? orderedSettled
       : orderedSettled.filter(input.isListedSettled);
   const settledTotal = orderedSettled.length + (input.unloadedSettledCount ?? 0);
-  const pagedSettled = listedSettled.slice(0, input.settledLimit);
+  const limitedSettled = listedSettled.slice(0, input.settledLimit);
+  const selectedKey = input.selectedThreadKey ?? null;
+  const isSelected = (thread: EnvironmentThreadShell) => threadKey(thread) === selectedKey;
+  // A selected thread past the page still lists, as mobile's shelf keeps it.
+  const selectedSettled = limitedSettled.some(isSelected)
+    ? undefined
+    : orderedSettled.find(isSelected);
+  const pagedSettled =
+    selectedSettled === undefined ? limitedSettled : [...limitedSettled, selectedSettled];
+  /** A collapsed shelf lists only the selected thread, so the open thread never vanishes. */
+  const shown = <T extends EnvironmentThreadShell>(threads: ReadonlyArray<T>, expanded: boolean) =>
+    expanded ? threads : threads.filter(isSelected);
 
   const entries: ThreadListEntry[] = [];
   const card = (thread: EnvironmentThreadShell, section: ThreadSection, isPinned: boolean) => {
@@ -243,62 +293,56 @@ export function buildThreadSections(input: ThreadSectionsInput): ThreadSections 
       pinned: isPinned,
     });
   };
-  const header = (section: ThreadSection, count: number, expanded: boolean) =>
+  const header = (section: ThreadShelf, count: number, expanded: boolean) =>
     entries.push({ type: "header", key: `header:${section}`, section, count, expanded });
 
-  const activeThreads = [
-    ...sortPinnedThreadsByOrderKey(pinned),
-    ...sortInboxThreadsByReturn(active, input.inboxReturnAt),
-  ];
-  if (activeThreads.length > 0) {
-    header("active", activeThreads.length, true);
-    for (const thread of activeThreads) card(thread, "active", thread.pinnedAt != null);
+  for (const thread of sortPinnedThreadsByOrderKey(pinned)) card(thread, "active", true);
+  for (const thread of sortInboxThreadsByReturn(active, input.inboxReturnAt)) {
+    card(thread, "active", false);
   }
   if (working.length > 0) {
     header("working", working.length, input.expanded.working);
-    if (input.expanded.working) {
-      for (const thread of sortWorkingThreadsBySend(working)) card(thread, "working", false);
+    for (const thread of shown(sortWorkingThreadsBySend(working), input.expanded.working)) {
+      card(thread, "working", false);
     }
   }
   if (snoozed.length > 0) {
     header("snoozed", snoozed.length, input.expanded.snoozed);
-    if (input.expanded.snoozed) {
-      const ordered = [...snoozed].sort(
-        (left, right) =>
-          (Date.parse(left.snoozedUntil ?? "") || 0) - (Date.parse(right.snoozedUntil ?? "") || 0),
-      );
-      for (const thread of ordered) {
-        entries.push({
-          type: "thread",
-          key: `snoozed:${thread.environmentId}:${thread.id}`,
-          section: "snoozed",
-          thread,
-          chip: null,
-          timeLabel: thread.snoozedUntil ? snoozeWakeLabel(thread.snoozedUntil, { now }) : "",
-          pinned: false,
-        });
-      }
+    const ordered = [...snoozed].sort(
+      (left, right) =>
+        (Date.parse(left.snoozedUntil ?? "") || 0) - (Date.parse(right.snoozedUntil ?? "") || 0),
+    );
+    for (const thread of shown(ordered, input.expanded.snoozed)) {
+      entries.push({
+        type: "thread",
+        key: `snoozed:${thread.environmentId}:${thread.id}`,
+        section: "snoozed",
+        thread,
+        chip: null,
+        timeLabel: thread.snoozedUntil ? snoozeWakeLabel(thread.snoozedUntil, { now }) : "",
+        pinned: false,
+      });
     }
   }
   if (settledTotal > 0) {
     header("settled", settledTotal, input.expanded.settled);
-    if (input.expanded.settled) {
-      for (const thread of pagedSettled) {
-        entries.push({
-          type: "thread",
-          key: `settled:${thread.environmentId}:${thread.id}`,
-          section: "settled",
-          thread,
-          chip: null,
-          timeLabel: relativeTime(
-            resolveSettledThreadTimestamp(thread) ?? thread.updatedAt ?? thread.createdAt,
-            nowMs,
-          ),
-          pinned: false,
-        });
-      }
-      const hiddenCount = settledTotal - pagedSettled.length;
-      if (hiddenCount > 0) entries.push({ type: "more", key: "more", hiddenCount });
+    for (const thread of shown(pagedSettled, input.expanded.settled)) {
+      entries.push({
+        type: "thread",
+        key: `settled:${thread.environmentId}:${thread.id}`,
+        section: "settled",
+        thread,
+        chip: null,
+        timeLabel: relativeTime(
+          resolveSettledThreadTimestamp(thread) ?? thread.updatedAt ?? thread.createdAt,
+          nowMs,
+        ),
+        pinned: false,
+      });
+    }
+    const hiddenCount = Math.max(0, settledTotal - pagedSettled.length);
+    if (input.expanded.settled && hiddenCount > 0) {
+      entries.push({ type: "more", key: "more", hiddenCount });
     }
   }
   return { entries, listedSettledThreads: listedSettled };

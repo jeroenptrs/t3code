@@ -1,13 +1,23 @@
-import { useState, type ReactNode } from "react";
+import { useState, type ComponentRef, type ReactNode, type Ref } from "react";
 import { Pressable, StyleSheet, type StyleProp, type ViewStyle } from "react-native";
 
 import { colors } from "./theme";
+
+/** The host view; react-native-tvos adds `requestTVFocus` at runtime, which its types omit. */
+export type FocusableHost = ComponentRef<typeof Pressable> & {
+  readonly requestTVFocus?: () => void;
+};
 
 /**
  * A Pressable that shows where the Siri Remote's focus is. The ring sits inside its bounds and
  * there is no scale, so a focused item in a list is never overlapped by the sibling after it.
  */
-export function FocusablePressable(props: {
+export function FocusablePressable({
+  ref,
+  ...props
+}: {
+  /** The host view, for focus guide destinations and `requestTVFocus`. */
+  readonly ref?: Ref<FocusableHost>;
   readonly onPress?: () => void;
   readonly onFocus?: () => void;
   readonly disabled?: boolean;
@@ -19,6 +29,7 @@ export function FocusablePressable(props: {
   const [focused, setFocused] = useState(false);
   return (
     <Pressable
+      ref={ref}
       disabled={props.disabled}
       hasTVPreferredFocus={props.hasTVPreferredFocus}
       onPress={props.onPress}

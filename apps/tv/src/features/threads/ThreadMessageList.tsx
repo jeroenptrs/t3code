@@ -156,6 +156,30 @@ const NoticeRow = memo(function NoticeRow({
   );
 });
 
+const SubagentsRow = memo(function SubagentsRow({
+  focusRef,
+  ...props
+}: {
+  readonly focusRef: Ref<ViewInstance> | undefined;
+  readonly label: string;
+  readonly statusSummary: string;
+  readonly active: boolean;
+  readonly failed: boolean;
+  readonly preferred: boolean;
+}) {
+  return (
+    <FocusableBlock ref={focusRef} style={styles.toolRow} hasTVPreferredFocus={props.preferred}>
+      <Text style={styles.toolText} numberOfLines={1}>
+        <Text style={[styles.toolName, props.failed && styles.toolFailed]}>
+          {props.active ? "◌ " : props.failed ? "✕ " : "✓ "}
+          {props.label}
+        </Text>
+        {props.statusSummary ? `  ${props.statusSummary}` : ""}
+      </Text>
+    </FocusableBlock>
+  );
+});
+
 function Row({
   row,
   preferred,
@@ -193,6 +217,17 @@ function Row({
     case "notice":
       return (
         <NoticeRow focusRef={focusRef} text={row.text} tone={row.tone} preferred={preferred} />
+      );
+    case "subagents":
+      return (
+        <SubagentsRow
+          focusRef={focusRef}
+          label={row.label}
+          statusSummary={row.statusSummary}
+          active={row.active}
+          failed={row.failed}
+          preferred={preferred}
+        />
       );
   }
 }

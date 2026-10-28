@@ -11,7 +11,12 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadSections, type ThreadSectionsInput } from "./threadSections";
+import {
+  buildThreadSections,
+  shelfHeaderLabel,
+  threadPullRequestBadge,
+  type ThreadSectionsInput,
+} from "./threadSections";
 
 const NOW = "2026-06-02T12:00:00.000Z";
 const home = EnvironmentId.make("home");
@@ -118,7 +123,6 @@ describe("buildThreadSections", () => {
 
   it("lists threads in mobile's sections with a status colour per state", () => {
     expect(outline(build({ threads }).entries)).toEqual([
-      "# active 3",
       "done [Done:done]",
       "idle",
       "office-idle",
@@ -137,7 +141,6 @@ describe("buildThreadSections", () => {
       expanded: { working: false, snoozed: false, settled: false },
     });
     expect(outline(entries).filter((line) => line.startsWith("#"))).toEqual([
-      "# active 3",
       "# working 1",
       "# snoozed 1",
       "# settled 1",
@@ -146,13 +149,73 @@ describe("buildThreadSections", () => {
   });
 
   it("scopes to one environment and to a project", () => {
-    expect(outline(build({ threads, environmentId: office }).entries)).toEqual([
-      "# active 1",
-      "office-idle",
-    ]);
+    expect(outline(build({ threads, environmentId: office }).entries)).toEqual(["office-idle"]);
     expect(
       outline(build({ threads, projectRefs: [{ environmentId: home, projectId: docs }] }).entries),
     ).toEqual([]);
+  });
+
+  it("labels a shelf bare while open and with its count once collapsed", () => {
+    expect(shelfHeaderLabel("settled", 4, true)).toBe("Settled");
+    expect(shelfHeaderLabel("settled", 4, false)).toBe("Settled (4)");
+  });
+
+  it("keeps the selected thread listed under a collapsed shelf", () => {
+    const { entries } = build({
+      threads,
+      expanded: { working: false, snoozed: false, settled: false },
+      selectedThreadKey: `${home}:settled`,
+    });
+    expect(outline(entries).slice(-2)).toEqual(["# settled 1", "settled"]);
+    expect(outline(entries)).not.toContain("running [Working:working]");
+  });
+
+  it("lists a selected settled thread past the page", () => {
+    const settled = Array.from({ length: 3 }, (_, index) =>
+      thread(`settled-${index}`, {
+        settledOverride: "settled",
+        settledAt: `2026-06-01T1${index}:00:00.000Z`,
+      }),
+    );
+    const { entries } = build({
+      threads: settled,
+      settledLimit: 1,
+      selectedThreadKey: `${home}:settled-0`,
+    });
+    expect(outline(entries)).toEqual(["# settled 3", "settled-2", "settled-0", "more 1"]);
+  });
+
+  it("keeps a thread with queued messages out of Settled", () => {
+    const { entries } = build({
+      threads: [thread("queued", { settledOverride: "settled" })],
+      queuedThreadKeys: new Set([`${home}:queued`]),
+    });
+    expect(outline(entries)).toEqual(["queued"]);
+  });
+
+  it("skips subagent threads", () => {
+    const subagent = thread("child", {
+      lineage: {
+        rootThreadId: ThreadId.make("root"),
+        parentThreadId: ThreadId.make("root"),
+        relationshipToParent: "subagent",
+      },
+    });
+    expect(outline(build({ threads: [subagent] }).entries)).toEqual([]);
+  });
+
+  it("badges the current pull request, muted until its state is known", () => {
+    expect(threadPullRequestBadge(thread("plain"))).toBeNull();
+    const branchPullRequest = {
+      projectId: app,
+      repository: "t3/code",
+      number: 42,
+      url: "https://github.com/t3/code/pull/42",
+    };
+    expect(threadPullRequestBadge(thread("branch", { branchPullRequest }))).toEqual({
+      number: 42,
+      tone: "pending",
+    });
   });
 
   it("pages settled threads, counting older ones not loaded yet", () => {

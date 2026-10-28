@@ -3,13 +3,21 @@ import {
   deriveThreadActivityRun,
   deriveThreadStructureRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
-import type { ServerProvider } from "@t3tools/contracts";
+import { resolveSubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
+import { DEFAULT_SERVER_SETTINGS, type ServerProvider } from "@t3tools/contracts";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { StyleSheet, Text, TVFocusGuideView, useTVEventHandler, View } from "react-native";
 
 import { FocusablePressable } from "../components/FocusablePressable";
 import { colors, typography } from "../components/theme";
-import { useDevSendMessage } from "../features/threads/devOpenThread";
+import { SUBAGENT_TONE_COLORS } from "../features/subagents/subagentPresentation";
+import { SubagentsSheet } from "../features/subagents/SubagentsSheet";
+import {
+  useDevOpenSheet,
+  useDevSendMessage,
+  type ThreadSheetKind,
+} from "../features/threads/devOpenThread";
 import {
   resolveThreadDispatchMode,
   sendThreadMessage,
@@ -20,15 +28,19 @@ import {
   ThreadMessageList,
   type ThreadMessageListHandle,
 } from "../features/threads/ThreadMessageList";
+import { ThreadGitSheet } from "../features/threads/ThreadGitSheet";
 import { ThreadReplyBox } from "../features/threads/ThreadReplyBox";
+import { ThreadTerminalSheet } from "../features/threads/ThreadTerminalSheet";
 import { deriveThreadRows } from "../features/threads/threadRows";
-import { threadNeighbours, type Route, type ThreadRef } from "../navigation/stack";
+import type { ThreadRef } from "../navigation/stack";
 import {
   environmentProjects,
   environmentSummaries,
   environmentThreadShells,
   serverEnvironment,
 } from "../state/environments";
+
+const subagentWorking = SUBAGENT_TONE_COLORS.working;
 
 const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 
@@ -47,11 +59,13 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export function ThreadScreen(props: {
-  readonly route: Extract<Route, { name: "thread" }>;
+  readonly thread: ThreadRef;
+  /** Returns focus to the sidebar. */
   readonly onBack: () => void;
-  readonly onOpenSibling: (thread: ThreadRef) => void;
+  /** Shows another thread, a subagent's or a merge-back target; without it those cannot open. */
+  readonly onOpenThread?: (thread: ThreadRef) => void;
 }) {
-  const ref = props.route.thread;
+  const ref = props.thread;
   const { environmentId, threadId } = ref;
   // Reading the thread's state subscribes to its snapshot and live stream while this shows.
   const threadState = useAtomValue(environmentThreadDetails.stateAtom(ref));
@@ -65,17 +79,17 @@ export function ThreadScreen(props: {
   const projects = useAtomValue(environmentProjects.environmentProjectsAtom(environmentId));
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const environments = useAtomValue(environmentSummaries.environmentsAtom);
+  const detailWorktreePath = useAtomValue(environmentThreadDetails.worktreePathAtom(ref));
+  const turnSubagents = useAtomValue(environmentThreadDetails.turnSubagentsAtom(ref));
   const [sendError, setSendError] = useState<string | null>(null);
-  // After Previous or Next, focus stays on the header so the reader can keep stepping.
-  const [steppedFromHeader, setSteppedFromHeader] = useState(false);
-  const messageList = useRef<ThreadMessageListHandle>(null);
-  const { previous, next } = threadNeighbours(props.route);
-  const { onOpenSibling } = props;
-  const openSibling = (thread: ThreadRef) => {
-    setSteppedFromHeader(true);
-    setSendError(null);
-    onOpenSibling(thread);
+  const [sheet, setSheet] = useState<ThreadSheetKind | null>(null);
+  // The header button whose sheet last closed takes focus back.
+  const [lastSheet, setLastSheet] = useState<ThreadSheetKind | null>(null);
+  const closeSheet = () => {
+    setLastSheet(sheet);
+    setSheet(null);
   };
+  const messageList = useRef<ThreadMessageListHandle>(null);
   const focusLatest = useCallback(() => messageList.current?.focusLatest(), []);
   useTVEventHandler(
     useCallback(
@@ -111,7 +125,15 @@ export function ThreadScreen(props: {
 
   const title = thread?.title ?? shell?.title ?? "Thread";
   const projectId = thread?.projectId ?? shell?.projectId ?? null;
-  const projectTitle = projects.find((project) => project.id === projectId)?.title ?? "";
+  const project = projects.find((candidate) => candidate.id === projectId) ?? null;
+  const projectTitle = project?.title ?? "";
+  // The thread's checkout as mobile resolves it: its worktree, else the project root.
+  const worktreePath = detailWorktreePath ?? shell?.worktreePath ?? null;
+  const cwd = worktreePath ?? project?.workspaceRoot ?? null;
+  const agentsSegment = resolveSubagentPillSegment(turnSubagents);
+  const { onOpenThread } = props;
+  const openThread = (threadId: ThreadRef["threadId"]) =>
+    onOpenThread?.({ environmentId, threadId });
   const environmentLabel =
     environments.find((entry) => entry.environmentId === environmentId)?.environmentLabel ?? "";
   const isCompacting = useMemo(
@@ -144,6 +166,7 @@ export function ThreadScreen(props: {
   );
 
   useDevSendMessage(thread !== null && threadState.status === "live", send);
+  useDevOpenSheet(thread !== null && threadState.status === "live", setSheet);
 
   const loadError = threadState.error._tag === "Some" ? threadState.error.value : null;
   const emptyLabel =
@@ -171,19 +194,34 @@ export function ThreadScreen(props: {
               {threadState.status === "synchronizing" ? "  ·  Syncing…" : ""}
             </Text>
           </View>
+          {agentsSegment ? (
+            <FocusablePressable
+              style={styles.headerButton}
+              hasTVPreferredFocus={sheet === null && lastSheet === "agents"}
+              onPress={() => setSheet("agents")}
+            >
+              <Text style={styles.headerButtonLabel}>
+                <Text style={{ color: turnSubagents?.liveCount ? subagentWorking : colors.text }}>
+                  ●{" "}
+                </Text>
+                {`Agents ${agentsSegment.label}`}
+              </Text>
+            </FocusablePressable>
+          ) : null}
           <FocusablePressable
             style={styles.headerButton}
-            disabled={previous === null}
-            onPress={() => previous && openSibling(previous)}
+            disabled={cwd === null}
+            hasTVPreferredFocus={sheet === null && lastSheet === "git"}
+            onPress={() => setSheet("git")}
           >
-            <Text style={styles.headerButtonLabel}>‹ Previous</Text>
+            <Text style={styles.headerButtonLabel}>Git</Text>
           </FocusablePressable>
           <FocusablePressable
             style={styles.headerButton}
-            disabled={next === null}
-            onPress={() => next && openSibling(next)}
+            hasTVPreferredFocus={sheet === null && lastSheet === "terminal"}
+            onPress={() => setSheet("terminal")}
           >
-            <Text style={styles.headerButtonLabel}>Next ›</Text>
+            <Text style={styles.headerButtonLabel}>Terminal</Text>
           </FocusablePressable>
           <FocusablePressable style={styles.headerButton} onPress={focusLatest}>
             <Text style={styles.headerButtonLabel}>Latest</Text>
@@ -191,16 +229,17 @@ export function ThreadScreen(props: {
         </TVFocusGuideView>
         {loadError ? <Text style={styles.error}>{loadError}</Text> : null}
         <ThreadMessageList
-          key={`${environmentId}:${threadId}`}
+          key={`messages:${environmentId}:${threadId}`}
           ref={messageList}
           rows={rows}
-          claimInitialFocus={!steppedFromHeader}
+          // Selecting in the sidebar keeps focus there; Right enters the conversation.
+          claimInitialFocus={false}
           emptyLabel={emptyLabel}
           environmentId={environmentId}
           threadId={threadId}
         />
         <ThreadReplyBox
-          key={`${environmentId}:${threadId}`}
+          key={`reply:${environmentId}:${threadId}`}
           threadKey={`${environmentId}:${threadId}`}
           sendLabel={dispatchMode === "queue" ? "Queue" : "Send"}
           hint={
@@ -215,6 +254,38 @@ export function ThreadScreen(props: {
           onSend={send}
         />
       </View>
+      {sheet === "git" && cwd !== null && project !== null ? (
+        <ThreadGitSheet
+          environmentId={environmentId}
+          threadId={threadId}
+          cwd={cwd}
+          gitRootCwd={project.workspaceRoot}
+          worktreePath={worktreePath}
+          currentBranch={shell?.branch ?? null}
+          onOpenThread={openThread}
+          onClose={closeSheet}
+        />
+      ) : sheet === "terminal" ? (
+        <ThreadTerminalSheet
+          environmentId={environmentId}
+          threadId={threadId}
+          workspaceRoot={project?.workspaceRoot ?? null}
+          worktreePath={worktreePath}
+          projectScripts={
+            project
+              ? resolveProjectScripts(serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS, project)
+              : []
+          }
+          onClose={closeSheet}
+        />
+      ) : sheet === "agents" ? (
+        <SubagentsSheet
+          turn={turnSubagents}
+          onOpenThread={openThread}
+          canOpenThreads={onOpenThread !== undefined}
+          onClose={closeSheet}
+        />
+      ) : null}
     </View>
   );
 }

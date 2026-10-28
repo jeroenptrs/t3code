@@ -1,18 +1,30 @@
 import { useAtomValue } from "@effect/atom-react";
+import { secondTick } from "@t3tools/client-runtime/clock";
+import {
+  formatWorkingDurationLabel,
+  resolveThreadWorkingStartedAt,
+} from "@t3tools/client-runtime/state/models";
 import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { memo, useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { memo, useCallback, useMemo, useState, useSyncExternalStore, type Ref } from "react";
 import { FlatList, StyleSheet, Text, TVFocusGuideView, View } from "react-native";
 
-import { FocusablePressable } from "../../components/FocusablePressable";
-import { colors, statusColors } from "../../components/theme";
+import { FocusablePressable, type FocusableHost } from "../../components/FocusablePressable";
+import {
+  colors,
+  pullRequestColors,
+  statusColors,
+  typeScale,
+  typography,
+} from "../../components/theme";
 import {
   environmentProjects,
   environmentSummaries,
   environmentThreadShells,
+  providerNamesAtom,
   threadListCapabilitiesAtom,
 } from "../../state/environments";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
@@ -20,11 +32,12 @@ import type { ThreadRef } from "../../navigation/stack";
 import { useDevOpenThread } from "../threads/devOpenThread";
 import {
   buildThreadSections,
-  SECTION_LABELS,
   SETTLED_INITIAL_COUNT,
   SETTLED_PAGE_COUNT,
+  shelfHeaderLabel,
+  threadPullRequestBadge,
   type ThreadListEntry,
-  type ThreadSection,
+  type ThreadShelf,
   type ThreadStatusChip,
 } from "./threadSections";
 import { useListNow } from "./useListNow";
@@ -32,21 +45,29 @@ import { useListNow } from "./useListNow";
 // Module scope so a thread that just stopped working keeps its place across screens.
 const inboxReturns = createInboxReturnTracker();
 
-type Shelf = "working" | "snoozed" | "settled";
-
 interface FilterOption<T> {
   readonly value: T;
   readonly label: string;
 }
 
 /**
- * Threads across environments in mobile's Home sections (active, working, snoozed, settled),
- * with environment and project filters. `environmentId` fixes the scope to one environment.
+ * The sidebar's threads across environments in mobile's sections (pinned and active rows, then
+ * the Working, Snoozed, and Settled shelves), under environment and project filters.
  */
-export function ThreadSectionList(props: {
-  readonly environmentId: EnvironmentId | null;
-  /** Called with the threads the list shows, in order, so the thread view can step through them. */
-  readonly onOpenThread: (thread: ThreadRef, siblings: ReadonlyArray<ThreadRef>) => void;
+export function ThreadSectionList({
+  selectedRowRef,
+  filterRef,
+  ...props
+}: {
+  /** Controlled, so the `environment/<id>` link can set it. */
+  readonly environmentFilter: EnvironmentId | null;
+  readonly onEnvironmentFilterChange: (environmentId: EnvironmentId | null) => void;
+  readonly selectedThread: ThreadRef | null;
+  readonly onSelectThread: (thread: ThreadRef) => void;
+  /** Attached to the selected row while it is mounted, for focus guide destinations. */
+  readonly selectedRowRef: Ref<FocusableHost>;
+  /** The environment filter, where focus lands when no selected row is mounted. */
+  readonly filterRef: Ref<FocusableHost>;
 }) {
   // Quiet shells keep their identity while a run streams, so the list rebuilds only when a
   // thread's placement or status can change, never per streamed chunk.
@@ -56,14 +77,14 @@ export function ThreadSectionList(props: {
   const { settlementEnvironmentIds, snoozeEnvironmentIds } = useAtomValue(
     threadListCapabilitiesAtom,
   );
+  const providerNames = useAtomValue(providerNamesAtom);
   const now = useListNow(threads);
 
-  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<Record<Shelf, boolean>>({
+  const [expanded, setExpanded] = useState<Record<ThreadShelf, boolean>>({
     working: true,
     snoozed: false,
-    settled: false,
+    settled: true,
   });
   const [settledLimit, setSettledLimit] = useState(SETTLED_INITIAL_COUNT);
 
@@ -79,11 +100,14 @@ export function ThreadSectionList(props: {
     ],
     [environments],
   );
-  const scopeEnvironmentId =
-    props.environmentId ??
-    (environmentOptions.some((option) => option.value === selectedEnvironmentId)
-      ? selectedEnvironmentId
-      : null);
+  const scopeEnvironmentId = environmentOptions.some(
+    (option) => option.value === props.environmentFilter,
+  )
+    ? props.environmentFilter
+    : null;
+  const selectedKey = props.selectedThread
+    ? `${props.selectedThread.environmentId}:${props.selectedThread.threadId}`
+    : null;
 
   const projectGroups = useMemo(
     () =>
@@ -142,6 +166,7 @@ export function ThreadSectionList(props: {
     snoozeEnvironmentIds,
     expanded,
     settledLimit,
+    selectedThreadKey: selectedKey,
     isWorking: inbox.isWorking,
     inboxReturnAt: inbox.returnedAt,
     isListedSettled: olderSettled.isListed,
@@ -177,56 +202,41 @@ export function ThreadSectionList(props: {
       ),
     [projects],
   );
-  const showEnvironment = props.environmentId === null && environments.length > 1;
+  const showEnvironment = scopeEnvironmentId === null && environments.length > 1;
 
-  const toggleShelf = useCallback((shelf: Shelf) => {
+  const toggleShelf = useCallback((shelf: ThreadShelf) => {
     setExpanded((current) => ({ ...current, [shelf]: !current[shelf] }));
     if (shelf === "settled") setSettledLimit(SETTLED_INITIAL_COUNT);
   }, []);
   const showMore = useCallback(() => setSettledLimit((limit) => limit + SETTLED_PAGE_COUNT), []);
 
-  const { onOpenThread: openThread } = props;
-  const visibleThreads = sections.entries.flatMap((entry) =>
-    entry.type === "thread" ? [entry.thread] : [],
-  );
-  const visibleThreadIdsKey = visibleThreads.map((thread) => thread.id).join("\n");
+  const { onSelectThread } = props;
+  const visibleThreadIdsKey = sections.entries
+    .flatMap((entry) => (entry.type === "thread" ? [entry.thread.id] : []))
+    .join("\n");
   const visibleThreadIds = useMemo(
     () => (visibleThreadIdsKey === "" ? [] : (visibleThreadIdsKey.split("\n") as ThreadId[])),
     [visibleThreadIdsKey],
   );
   useDevOpenThread(visibleThreadIds, (threadId) => {
-    const thread = visibleThreads.find((candidate) => candidate.id === threadId);
-    if (thread) {
-      openThread(
-        { environmentId: thread.environmentId, threadId },
-        visibleThreads.map((visible) => ({
-          environmentId: visible.environmentId,
-          threadId: visible.id,
-        })),
-      );
+    const entry = sections.entries.find(
+      (candidate) => candidate.type === "thread" && candidate.thread.id === threadId,
+    );
+    if (entry?.type === "thread") {
+      onSelectThread({ environmentId: entry.thread.environmentId, threadId });
     }
   });
-
-  // Keyed by content so rows keep a stable callback until the listed threads change.
-  const siblingsKey = visibleThreads
-    .map((thread) => `${thread.environmentId}\t${thread.id}`)
-    .join("\n");
-  const onOpenThread = useCallback(
-    (thread: EnvironmentThreadShell) => {
-      const siblings = siblingsKey.split("\n").map((line): ThreadRef => {
-        const [environmentId, threadId] = line.split("\t") as [EnvironmentId, ThreadId];
-        return { environmentId, threadId };
-      });
-      openThread({ environmentId: thread.environmentId, threadId: thread.id }, siblings);
-    },
-    [openThread, siblingsKey],
+  const onSelect = useCallback(
+    (thread: EnvironmentThreadShell) =>
+      onSelectThread({ environmentId: thread.environmentId, threadId: thread.id }),
+    [onSelectThread],
   );
 
   const renderItem = ({ item }: { readonly item: ThreadListEntry }) => {
     if (item.type === "header") {
       return (
-        <SectionHeader
-          section={item.section}
+        <ShelfHeader
+          shelf={item.section}
           count={item.count}
           expanded={item.expanded}
           onToggle={toggleShelf}
@@ -235,23 +245,33 @@ export function ThreadSectionList(props: {
     }
     if (item.type === "more") {
       return (
-        <FocusablePressable style={styles.moreRow} onPress={showMore}>
+        <FocusablePressable
+          style={styles.moreRow}
+          focusedStyle={styles.rowFocused}
+          onPress={showMore}
+        >
           <Text style={styles.moreLabel}>
             {olderSettled.loading ? "Loading…" : `Show more (${item.hiddenCount})`}
           </Text>
         </FocusablePressable>
       );
     }
+    const selected = selectedKey === `${item.thread.environmentId}:${item.thread.id}`;
     return (
       <ThreadRow
+        ref={selected ? selectedRowRef : undefined}
         thread={item.thread}
         slim={item.section === "snoozed" || item.section === "settled"}
         chip={item.chip}
         timeLabel={item.timeLabel}
         pinned={item.pinned}
+        selected={selected}
         environmentLabel={showEnvironment ? environmentLabels.get(item.thread.environmentId) : null}
         projectTitle={projectTitles.get(`${item.thread.environmentId}:${item.thread.projectId}`)}
-        onOpen={onOpenThread}
+        providerName={providerNames.get(
+          `${item.thread.environmentId}:${item.thread.runtime?.providerInstanceId ?? item.thread.modelSelection.instanceId}`,
+        )}
+        onSelect={onSelect}
       />
     );
   };
@@ -263,16 +283,15 @@ export function ThreadSectionList(props: {
   return (
     <View style={styles.root}>
       <TVFocusGuideView style={styles.filters} autoFocus>
-        {props.environmentId === null ? (
-          <FilterChip
-            options={environmentOptions}
-            value={scopeEnvironmentId}
-            onChange={(value) => {
-              setSelectedEnvironmentId(value);
-              setSelectedProjectKey(null);
-            }}
-          />
-        ) : null}
+        <FilterChip
+          ref={filterRef}
+          options={environmentOptions}
+          value={scopeEnvironmentId}
+          onChange={(value) => {
+            props.onEnvironmentFilterChange(value);
+            setSelectedProjectKey(null);
+          }}
+        />
         <FilterChip
           options={projectOptions}
           value={selectedGroup?.key ?? null}
@@ -298,7 +317,11 @@ export function ThreadSectionList(props: {
 }
 
 /** A chip that cycles its options on select; tvOS has no native menus. */
-function FilterChip<T>(props: {
+function FilterChip<T>({
+  ref,
+  ...props
+}: {
+  readonly ref?: Ref<FocusableHost>;
   readonly options: ReadonlyArray<FilterOption<T>>;
   readonly value: T;
   readonly onChange: (value: T) => void;
@@ -310,6 +333,7 @@ function FilterChip<T>(props: {
   const active = index > 0;
   return (
     <FocusablePressable
+      ref={ref}
       style={[styles.chip, active && styles.chipActive]}
       onPress={() => props.onChange(props.options[(index + 1) % props.options.length]!.value)}
     >
@@ -321,107 +345,244 @@ function FilterChip<T>(props: {
   );
 }
 
-const SectionHeader = memo(function SectionHeader(props: {
-  readonly section: ThreadSection;
+/** Mobile's shelf divider: label, rule, and a chevron that points the way the shelf will move. */
+const ShelfHeader = memo(function ShelfHeader(props: {
+  readonly shelf: ThreadShelf;
   readonly count: number;
   readonly expanded: boolean;
-  readonly onToggle: (shelf: Shelf) => void;
+  readonly onToggle: (shelf: ThreadShelf) => void;
 }) {
-  const { section } = props;
-  const label = `${SECTION_LABELS[section]} · ${props.count}`;
-  if (section === "active") {
-    return <Text style={styles.sectionTitle}>{label}</Text>;
-  }
+  const snoozed = props.shelf === "snoozed";
   return (
-    <FocusablePressable style={styles.shelfHeader} onPress={() => props.onToggle(section)}>
-      <Text style={styles.sectionTitle}>
-        {props.expanded ? "▾ " : "▸ "}
-        {label}
+    <FocusablePressable
+      style={styles.shelfHeader}
+      focusedStyle={styles.rowFocused}
+      onPress={() => props.onToggle(props.shelf)}
+    >
+      <Text style={[styles.shelfLabel, snoozed && styles.shelfLabelSnoozed]}>
+        {shelfHeaderLabel(props.shelf, props.count, props.expanded)}
       </Text>
+      <View style={[styles.shelfRule, snoozed && styles.shelfRuleSnoozed]} />
+      <View style={[styles.chevron, props.expanded && styles.chevronUp]} />
     </FocusablePressable>
   );
 });
 
+/** A pushpin drawn in views, mobile's `pin` symbol; the TV has no symbol font to draw it with. */
+function PinGlyph(props: { readonly color: string }) {
+  return (
+    <View style={styles.pin}>
+      <View style={[styles.pinHead, { backgroundColor: props.color }]} />
+      <View style={[styles.pinBase, { backgroundColor: props.color }]} />
+      <View style={[styles.pinNeedle, { backgroundColor: props.color }]} />
+    </View>
+  );
+}
+
+/** Seconds since `startedAt`, on the shared one-second tick; only this text re-renders. */
+function LiveDuration(props: { readonly startedAt: string | null }) {
+  const startedAtMs = Date.parse(props.startedAt ?? "");
+  const live = Number.isFinite(startedAtMs);
+  const nowMs = useSyncExternalStore(
+    live ? secondTick.subscribe : subscribeNever,
+    secondTick.getSnapshot,
+  );
+  return live ? ` ${formatWorkingDurationLabel(nowMs - startedAtMs)}` : null;
+}
+
+const subscribeNever = () => () => undefined;
+
 // Rows take only values that change with what they show, so a rebuilt list re-renders just
-// the rows whose thread, status, or time changed.
-const ThreadRow = memo(function ThreadRow(props: {
+// the rows whose thread, status, time, or selection changed.
+const ThreadRow = memo(function ThreadRow({
+  ref,
+  ...props
+}: {
+  readonly ref?: Ref<FocusableHost>;
   readonly thread: EnvironmentThreadShell;
   readonly slim: boolean;
   readonly chip: ThreadStatusChip | null;
   readonly timeLabel: string;
   readonly pinned: boolean;
+  readonly selected: boolean;
   readonly environmentLabel: string | null | undefined;
   readonly projectTitle: string | undefined;
-  readonly onOpen: (thread: EnvironmentThreadShell) => void;
+  readonly providerName: string | undefined;
+  readonly onSelect: (thread: EnvironmentThreadShell) => void;
 }) {
-  const { thread, chip } = props;
+  const { thread, chip, selected } = props;
+  const rowStyle = [styles.row, selected && styles.rowSelected];
+  const focusedStyle = selected ? styles.rowSelected : styles.rowFocused;
+  const title = thread.title || "Untitled thread";
+  const mutedColor = selected ? colors.selectedTextMuted : colors.textTertiary;
+
+  if (props.slim) {
+    return (
+      <FocusablePressable
+        ref={ref}
+        style={rowStyle}
+        focusedStyle={focusedStyle}
+        onPress={() => props.onSelect(thread)}
+      >
+        <View style={styles.rowLine}>
+          <Text
+            style={[styles.slimTitle, selected && { color: colors.selectedText }]}
+            numberOfLines={1}
+          >
+            {title}
+          </Text>
+          <Text style={[styles.time, { color: mutedColor }]}>{props.timeLabel}</Text>
+        </View>
+      </FocusablePressable>
+    );
+  }
+
   const failure =
     (chip?.tone === "failed" || chip?.tone === "limited") && thread.runtime?.lastError
       ? thread.runtime.lastError
       : null;
-  const meta = [props.environmentLabel, props.projectTitle].filter(Boolean).join(" · ");
+  const pr = threadPullRequestBadge(thread);
+  const place = [props.projectTitle, props.environmentLabel].filter(Boolean).join(" · ");
+  // Mobile recedes rows a run is busy with until they need the reader again.
+  const recede = !selected && chip?.duration != null;
+  const chipColor =
+    chip === null ? mutedColor : selected ? colors.selectedText : statusColors[chip.tone];
   return (
     <FocusablePressable
-      style={[styles.row, props.slim && styles.slimRow]}
-      onPress={() => props.onOpen(thread)}
+      ref={ref}
+      style={rowStyle}
+      focusedStyle={focusedStyle}
+      onPress={() => props.onSelect(thread)}
     >
-      <View style={styles.rowLine}>
-        <Text
-          style={[styles.rowTitle, props.slim && styles.slimTitle]}
-          numberOfLines={props.slim ? 1 : 2}
-        >
-          {props.pinned ? "• " : ""}
-          {thread.title || "Untitled thread"}
-        </Text>
-        {chip ? (
-          <View style={[styles.chipBadge, { borderColor: statusColors[chip.tone] }]}>
-            <Text style={[styles.chipBadgeLabel, { color: statusColors[chip.tone] }]}>
-              {chip.label}
-            </Text>
+      <View style={recede ? styles.receded : undefined}>
+        <View style={styles.rowLine}>
+          <Text
+            style={[
+              styles.title,
+              recede && styles.titleReceded,
+              selected && { color: colors.selectedText },
+            ]}
+            numberOfLines={2}
+          >
+            {title}
+          </Text>
+          <View style={styles.trailing}>
+            {props.pinned ? <PinGlyph color={mutedColor} /> : null}
+            {chip ? (
+              <Text style={[styles.chipText, { color: chipColor }]}>
+                {chip.label}
+                {chip.duration === "working" ? (
+                  <LiveDuration startedAt={resolveThreadWorkingStartedAt(thread)} />
+                ) : chip.duration === "waiting" ? (
+                  <LiveDuration startedAt={thread.latestRun?.completedAt ?? null} />
+                ) : null}
+              </Text>
+            ) : (
+              <Text style={[styles.time, { color: mutedColor }]}>{props.timeLabel}</Text>
+            )}
           </View>
-        ) : (
-          <Text style={styles.time}>{props.timeLabel}</Text>
-        )}
+        </View>
+        <View style={styles.rowLine}>
+          {failure !== null ? (
+            <Text
+              style={[
+                styles.meta,
+                { color: selected ? colors.selectedTextMuted : statusColors[chip!.tone] },
+              ]}
+              numberOfLines={1}
+            >
+              {failure}
+            </Text>
+          ) : (
+            <Text style={[styles.meta, { color: mutedColor }]} numberOfLines={1}>
+              {place}
+            </Text>
+          )}
+          {pr ? (
+            <Text style={[styles.pullRequest, { color: pullRequestColors[pr.tone] }]}>
+              #{pr.number}
+            </Text>
+          ) : null}
+          {props.providerName ? (
+            <Text style={[styles.provider, { color: mutedColor }]} numberOfLines={1}>
+              {props.providerName}
+            </Text>
+          ) : null}
+        </View>
       </View>
-      {failure !== null ? (
-        <Text style={[styles.meta, { color: statusColors[chip!.tone] }]} numberOfLines={1}>
-          {failure}
-        </Text>
-      ) : meta.length > 0 ? (
-        <Text style={styles.meta} numberOfLines={1}>
-          {meta}
-        </Text>
-      ) : null}
     </FocusablePressable>
   );
 });
 
+const ROW_RADIUS = 22;
+
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  filters: { flexDirection: "row", gap: 20, marginBottom: 24 },
-  chip: { paddingHorizontal: 28, paddingVertical: 14, maxWidth: 640 },
+  filters: { flexDirection: "row", gap: 14, marginBottom: 16, paddingHorizontal: 8 },
+  chip: { flexShrink: 1, paddingHorizontal: 22, paddingVertical: 12 },
   chipActive: { borderColor: colors.accent },
-  chipLabel: { color: colors.text, fontSize: 26, fontWeight: "600" },
+  chipLabel: { color: colors.text, ...typeScale.xs, fontWeight: "600" },
   list: { flex: 1 },
-  listContent: { gap: 12, paddingBottom: 64, paddingHorizontal: 8, paddingTop: 8 },
-  sectionTitle: { color: colors.text, fontSize: 30, fontWeight: "700" },
+  listContent: { gap: 4, paddingBottom: 48, paddingHorizontal: 8, paddingTop: 4 },
   shelfHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 18,
+    backgroundColor: "transparent",
+    borderRadius: ROW_RADIUS,
+    marginTop: 20,
+    paddingHorizontal: 22,
+    paddingVertical: 10,
+  },
+  shelfLabel: { color: colors.textTertiary, ...typeScale.xs, fontWeight: "500" },
+  shelfLabelSnoozed: { color: colors.textMuted },
+  shelfRule: { flex: 1, height: 2, backgroundColor: colors.border },
+  shelfRuleSnoozed: { backgroundColor: "rgba(52, 107, 241, 0.2)" },
+  chevron: {
+    width: 14,
+    height: 14,
+    marginBottom: 6,
+    borderRightWidth: 3,
+    borderBottomWidth: 3,
+    borderColor: colors.textMuted,
+    transform: [{ rotate: "45deg" }],
+  },
+  chevronUp: { marginBottom: -6, transform: [{ rotate: "-135deg" }] },
+  row: {
+    backgroundColor: "transparent",
+    borderRadius: ROW_RADIUS,
+    gap: 6,
+    paddingHorizontal: 22,
+    paddingVertical: 16,
+  },
+  rowSelected: { backgroundColor: colors.selected },
+  rowFocused: { backgroundColor: colors.rowHover },
+  receded: { opacity: 0.55 },
+  rowLine: { flexDirection: "row", alignItems: "center", gap: 16 },
+  title: { flex: 1, color: colors.text, ...typeScale.base, fontWeight: "500" },
+  titleReceded: { fontWeight: "400" },
+  slimTitle: { flex: 1, color: colors.textMuted, ...typeScale.base },
+  trailing: { flexDirection: "row", alignItems: "center", gap: 12, alignSelf: "flex-start" },
+  chipText: { ...typeScale.xs, fontWeight: "700", fontVariant: ["tabular-nums"] },
+  time: {
+    ...typeScale.xs,
+    fontFamily: typography.monospaceFamily,
+    fontVariant: ["tabular-nums"],
+  },
+  meta: { flex: 1, ...typeScale.xs },
+  pullRequest: { ...typeScale.xs, fontFamily: typography.monospaceFamily },
+  provider: { ...typeScale.xs, flexShrink: 0, maxWidth: 200 },
+  pin: { width: 18, height: 22, alignItems: "center", transform: [{ rotate: "45deg" }] },
+  pinHead: { width: 10, height: 9, borderRadius: 2 },
+  pinBase: { width: 16, height: 3, borderRadius: 1.5 },
+  pinNeedle: { width: 2, height: 9 },
+  moreRow: {
     alignSelf: "flex-start",
     backgroundColor: "transparent",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginTop: 16,
+    borderRadius: ROW_RADIUS,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
   },
-  row: { paddingHorizontal: 28, paddingVertical: 18, gap: 6 },
-  slimRow: { paddingVertical: 12, opacity: 0.8 },
-  rowLine: { flexDirection: "row", alignItems: "center", gap: 24 },
-  rowTitle: { flex: 1, color: colors.text, fontSize: 30, fontWeight: "500" },
-  slimTitle: { color: colors.textMuted, fontWeight: "400" },
-  chipBadge: { borderWidth: 2, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 4 },
-  chipBadgeLabel: { fontSize: 22, fontWeight: "700" },
-  time: { color: colors.textMuted, fontSize: 24, fontVariant: ["tabular-nums"] },
-  meta: { color: colors.textMuted, fontSize: 24 },
-  moreRow: { alignSelf: "flex-start", paddingHorizontal: 28, paddingVertical: 14 },
-  moreLabel: { color: colors.text, fontSize: 26, fontWeight: "600" },
-  muted: { color: colors.textMuted, fontSize: 26 },
+  moreLabel: { color: colors.textMuted, ...typeScale.sm, fontWeight: "600" },
+  muted: { color: colors.textMuted, ...typeScale.sm, paddingHorizontal: 22 },
 });

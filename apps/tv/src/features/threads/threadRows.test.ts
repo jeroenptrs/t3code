@@ -49,4 +49,52 @@ describe("deriveThreadRows", () => {
     ]);
     expect(rows).toHaveLength(1);
   });
+
+  it("gives every row a unique key when a fork repeats its parent's item ids", () => {
+    const message = (sourceThreadId: string, id: string, text: string) =>
+      ({
+        sourceThreadId,
+        sourceItemId: id,
+        item: { id, type: "user_message", text, attachments: [] },
+      }) as unknown as Items[number];
+    const items = [
+      message("parent", "item-1", "inherited"),
+      message("fork", "item-1", "local"),
+      message("fork", "item-1", "repeated"),
+    ];
+    const keys = deriveThreadRows(items).map((row) => row.key);
+    expect(new Set(keys).size).toBe(3);
+    expect(deriveThreadRows(items).map((row) => row.key)).toEqual(keys);
+  });
+
+  it("groups consecutive subagents of one provider turn into one row", () => {
+    const subagent = (id: string, status: string) =>
+      ({
+        sourceThreadId: "thread",
+        sourceItemId: id,
+        item: {
+          id,
+          type: "subagent",
+          runId: "run-1",
+          providerTurnId: "turn-1",
+          status,
+          prompt: id,
+        },
+      }) as unknown as Items[number];
+    const rows = deriveThreadRows([
+      subagent("a", "running"),
+      subagent("b", "completed"),
+      subagent("c", "running"),
+    ]);
+    expect(rows).toEqual([
+      {
+        kind: "subagents",
+        key: "thread:a",
+        label: "Kicked off 3 subagents",
+        statusSummary: "2 working · 1 done",
+        active: true,
+        failed: false,
+      },
+    ]);
+  });
 });

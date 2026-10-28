@@ -3,6 +3,7 @@ import {
   createEnvironmentPresentationAtoms,
   createEnvironmentSummaryAtoms,
 } from "@t3tools/client-runtime/state/presentation";
+import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/server";
 import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
 import { createEnvironmentShellAtoms } from "@t3tools/client-runtime/state/shell";
@@ -97,3 +98,27 @@ export const threadListCapabilitiesAtom = Atom.make((get) => {
     snoozeEnvironmentIds: snooze.size === 0 ? NO_ENVIRONMENT_IDS : snooze,
   };
 }).pipe(Atom.withLabel("tv-thread-list-capabilities"));
+
+const NO_PROVIDER_NAMES: ReadonlyMap<string, string> = new Map();
+
+/** Provider display names by `environmentId:instanceId`, for the thread rows' provider label. */
+export const providerNamesAtom = Atom.make((get): ReadonlyMap<string, string> => {
+  const names = new Map<string, string>();
+  for (const environmentId of get(environmentCatalog.catalogValueAtom).entries.keys()) {
+    for (const provider of get(serverEnvironment.configValueAtom(environmentId))?.providers ?? []) {
+      names.set(
+        `${environmentId}:${provider.instanceId}`,
+        resolveProviderInstanceDisplayName(provider),
+      );
+    }
+  }
+  const previous = Option.getOrNull(get.self<ReadonlyMap<string, string>>());
+  if (
+    previous !== null &&
+    previous.size === names.size &&
+    [...names].every(([key, name]) => previous.get(key) === name)
+  ) {
+    return previous;
+  }
+  return names.size === 0 ? NO_PROVIDER_NAMES : names;
+}).pipe(Atom.withLabel("tv-provider-names"));

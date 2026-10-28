@@ -5,16 +5,20 @@ export interface ThreadRef {
   readonly threadId: ThreadId;
 }
 
+/**
+ * Screens above the main view. Threads are not routes: the main view's sidebar selects one and
+ * shows it beside the list, so Menu from a thread moves focus to the sidebar instead.
+ */
 export type Route =
   | { readonly name: "home" }
   | { readonly name: "connections" }
   | { readonly name: "signIn" }
-  | { readonly name: "environment"; readonly environmentId: EnvironmentId }
   | {
-      readonly name: "thread";
-      readonly thread: ThreadRef;
-      /** The list the thread was opened from, in its order then, for Previous and Next. */
-      readonly siblings: ReadonlyArray<ThreadRef>;
+      readonly name: "terminal";
+      readonly environmentId: EnvironmentId;
+      readonly threadId: ThreadId;
+      /** Omitted for the thread's default terminal. */
+      readonly terminalId?: string;
     };
 
 /** Root first. Never empty: the root has nowhere to go back to, so Menu exits from there. */
@@ -58,21 +62,4 @@ export function shownStack(stack: Stack, hasEnvironments: boolean): Stack {
 
 export function topOf(stack: Stack): Route {
   return stack[stack.length - 1]!;
-}
-
-/** The thread before and after `thread` in the list it was opened from. */
-export function threadNeighbours(route: Extract<Route, { name: "thread" }>): {
-  readonly previous: ThreadRef | null;
-  readonly next: ThreadRef | null;
-} {
-  const index = route.siblings.findIndex(
-    (sibling) =>
-      sibling.environmentId === route.thread.environmentId &&
-      sibling.threadId === route.thread.threadId,
-  );
-  if (index === -1) return { previous: null, next: null };
-  return {
-    previous: route.siblings[index - 1] ?? null,
-    next: route.siblings[index + 1] ?? null,
-  };
 }
