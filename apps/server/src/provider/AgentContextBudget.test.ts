@@ -7,10 +7,16 @@ import * as Layer from "effect/Layer";
 import { McpServer } from "effect/ai";
 
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
+import { CheckpointDiffQuery } from "../checkpointing/CheckpointDiffQuery.ts";
 import { ServerConfig } from "../config.ts";
+import { DiffWalkthroughService } from "../diffWalkthrough/DiffWalkthroughService.ts";
+import { DiffWalkthroughWriter } from "../diffWalkthrough/DiffWalkthroughWriter.ts";
 import { DeviceService } from "../device/DeviceService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import { JiraIdentities } from "../jira/JiraIdentities.ts";
+import { JiraProposals } from "../jira/JiraProposals.ts";
+import { JiraService } from "../jira/JiraService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import { PreviewAutomationBroker } from "../mcp/PreviewAutomationBroker.ts";
 import {
@@ -32,6 +38,7 @@ import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
 import { PullRequestReviewGuideService } from "../pullRequest/PullRequestReviewGuideService.ts";
+import { ReviewService } from "../review/ReviewService.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import { SecretRequests } from "../secrets/SecretRequests.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -75,6 +82,14 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ThreadManagementService)({}),
   Layer.mock(ThreadSearch)({}),
   Layer.mock(VcsStatusBroadcaster)({}),
+  // Fork MCP toolkits: Jira issues and diff walkthroughs.
+  Layer.mock(CheckpointDiffQuery)({}),
+  Layer.mock(DiffWalkthroughService)({}),
+  Layer.mock(DiffWalkthroughWriter)({}),
+  Layer.mock(JiraIdentities)({ configured: false, list: [], services: [] }),
+  Layer.mock(JiraProposals)({}),
+  Layer.mock(JiraService)({}),
+  Layer.mock(ReviewService)({}),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 const utf8Bytes = (text: string) => Buffer.byteLength(text, "utf8");
