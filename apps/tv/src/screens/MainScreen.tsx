@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentConnectionSummary } from "@t3tools/client-runtime/state/presentation";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useRef, useState } from "react";
@@ -16,7 +16,11 @@ import { ThreadActionsSheet } from "../features/threads/ThreadActionsSheet";
 import { useMenuOwner } from "../navigation/menuScope";
 import type { ThreadRef } from "../navigation/stack";
 import { tvAtomRegistry } from "../state/atom-registry";
-import { environmentSummaries, environmentThreadShells } from "../state/environments";
+import {
+  environmentSessionsAtom,
+  environmentSummaries,
+  environmentThreadShells,
+} from "../state/environments";
 import { ThreadScreen } from "./ThreadScreen";
 
 /** At 1920x1080; the conversation takes the rest. */
@@ -55,6 +59,7 @@ export function MainScreen(props: {
   readonly onOpenConnections: () => void;
 }) {
   const environments = useAtomValue(environmentSummaries.environmentsAtom);
+  useAtomMount(environmentSessionsAtom);
   const allConnected = environments.every((entry) => entry.connectionState === "connected");
   const [selectedThread, setSelectedThread] = useState<ThreadRef | null>(null);
   // Bumped per selection: the conversation moves focus to its newest message once per value.

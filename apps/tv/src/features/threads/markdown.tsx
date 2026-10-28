@@ -1,31 +1,13 @@
-import type { List, ListItem, PhrasingContent, Root, RootContent } from "mdast";
-import remarkParse from "remark-parse";
+import type { List, ListItem, PhrasingContent, Root, RootContent, Table } from "mdast";
 import type { ReactNode } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { unified } from "unified";
 
 import { colors, typography } from "../../components/theme";
+import { parseMarkdown, tableGrid, type TableRow } from "./markdownParse";
 
 // A markdown-lite renderer for the TV: paragraphs, headings, emphasis, inline and fenced code,
-// lists, quotes, and links as plain text. Plain React Native views, no native module. A
+// lists, task lists, tables, quotes, and links and footnotes as plain text. Plain React Native views, no native module. A
 // top-level image becomes its own block so the caller can render it as a focusable thumbnail.
-
-const parser = unified().use(remarkParse);
-
-const PARSE_CACHE_LIMIT = 200;
-const parseCache = new Map<string, Root>();
-
-function parseMarkdown(markdown: string): Root {
-  const cached = parseCache.get(markdown);
-  if (cached !== undefined) return cached;
-  const root = parser.parse(markdown);
-  if (parseCache.size >= PARSE_CACHE_LIMIT) {
-    const oldest = parseCache.keys().next().value;
-    if (oldest !== undefined) parseCache.delete(oldest);
-  }
-  parseCache.set(markdown, root);
-  return root;
-}
 
 function renderInline(nodes: ReadonlyArray<PhrasingContent>, keyPrefix: string): ReactNode[] {
   return nodes.map((node, index) => {
@@ -68,6 +50,8 @@ function renderInline(nodes: ReadonlyArray<PhrasingContent>, keyPrefix: string):
       case "image":
       case "imageReference":
         return node.alt ? `[${node.alt}]` : "";
+      case "footnoteReference":
+        return `[${node.label ?? node.identifier}]`;
       case "break":
         return "\n";
       case "html":
@@ -133,6 +117,33 @@ function ListItemView(props: {
   );
 }
 
+function renderTableRow(row: TableRow, key: string, header: boolean): ReactNode {
+  return (
+    <View
+      key={row.key}
+      style={[styles.tableRow, header ? styles.tableHeader : styles.tableBodyRow]}
+    >
+      {row.cells.map((cell) => (
+        <View key={cell.key} style={styles.tableCell}>
+          <Text style={[styles.tableText, header && styles.strong]}>
+            {renderInline(cell.content, `${key}.${cell.key}`)}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function renderTable(table: Table, key: string): ReactNode {
+  const { header, rows } = tableGrid(table);
+  return (
+    <View key={key} style={styles.table}>
+      {renderTableRow(header, key, true)}
+      {rows.map((row) => renderTableRow(row, key, false))}
+    </View>
+  );
+}
+
 function renderBlock(node: RootContent, key: string, nested = false): ReactNode {
   switch (node.type) {
     case "paragraph":
@@ -160,6 +171,17 @@ function renderBlock(node: RootContent, key: string, nested = false): ReactNode 
       return (
         <View key={key} style={styles.blockquote}>
           {node.children.map((child, index) => renderBlock(child, `${key}.${index}`, true))}
+        </View>
+      );
+    case "table":
+      return renderTable(node, key);
+    case "footnoteDefinition":
+      return (
+        <View key={key} style={styles.footnote}>
+          <Text style={styles.listMarker}>[{node.label ?? node.identifier}]</Text>
+          <View style={styles.listItemBody}>
+            {node.children.map((child, index) => renderBlock(child, `${key}.${index}`, true))}
+          </View>
         </View>
       );
     case "thematicBreak":
@@ -298,5 +320,17 @@ const styles = StyleSheet.create({
     paddingLeft: 20,
     gap: 8,
   },
+  table: {
+    borderColor: colors.inputBorder,
+    borderWidth: 2,
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  tableRow: { flexDirection: "row" },
+  tableHeader: { backgroundColor: colors.surface },
+  tableBodyRow: { borderTopWidth: 2, borderTopColor: colors.inputBorder },
+  tableCell: { flex: 1, flexBasis: 0, paddingHorizontal: 20, paddingVertical: 12 },
+  tableText: { color: colors.text, ...typography.code },
+  footnote: { flexDirection: "row", gap: 16 },
   rule: { height: 2, backgroundColor: colors.surfaceFocused, marginVertical: 8 },
 });

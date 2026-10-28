@@ -99,6 +99,16 @@ export const threadListCapabilitiesAtom = Atom.make((get) => {
   };
 }).pipe(Atom.withLabel("tv-thread-list-capabilities"));
 
+/**
+ * Mounted by the main screen so every environment's session stays loaded: thread actions check
+ * its scopes outside any component that reads it.
+ */
+export const environmentSessionsAtom = Atom.make((get) => {
+  for (const environmentId of get(environmentCatalog.catalogValueAtom).entries.keys()) {
+    get(environmentSession.sessionStateAtom(environmentId));
+  }
+}).pipe(Atom.withLabel("tv-environment-sessions"));
+
 const NO_PROVIDER_NAMES: ReadonlyMap<string, string> = new Map();
 
 /** Provider display names by `environmentId:instanceId`, for the thread rows' provider label. */

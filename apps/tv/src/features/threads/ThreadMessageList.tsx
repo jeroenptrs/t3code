@@ -349,7 +349,8 @@ function useThreadImageScope(
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
+  // Clips the feed to its own frame, so no row draws over the header or the toolbar.
+  root: { flex: 1, overflow: "hidden" },
   scroll: { flex: 1 },
   content: { gap: 20, paddingVertical: 24, paddingRight: 24 },
   empty: { color: colors.textMuted, ...typography.body },

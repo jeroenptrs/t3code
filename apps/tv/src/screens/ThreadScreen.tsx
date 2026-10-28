@@ -22,6 +22,7 @@ import { SUBAGENT_TONE_COLORS } from "../features/subagents/subagentPresentation
 import { SubagentsSheet } from "../features/subagents/SubagentsSheet";
 import {
   useDevOpenSheet,
+  useDevRunAction,
   useDevSendMessage,
   type ThreadSheetKind,
 } from "../features/threads/devOpenThread";
@@ -196,6 +197,7 @@ export function ThreadScreen(props: {
 
   useDevSendMessage(thread !== null && threadState.status === "live", send);
   useDevOpenSheet(thread !== null && threadState.status === "live", setSheet);
+  useDevRunAction(shell !== null || thread !== null, environmentId, threadId);
 
   const loadError = threadState.error._tag === "Some" ? threadState.error.value : null;
   const emptyLabel =
@@ -339,12 +341,13 @@ export function ThreadScreen(props: {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background, alignItems: "center" },
   column: { flex: 1, width: "100%", maxWidth: 1200, paddingTop: 48 },
-  header: { gap: 4, marginBottom: 12 },
+  // Opaque and above the list, so a feed that draws past its frame stays behind the title.
+  header: { gap: 4, paddingBottom: 12, backgroundColor: colors.background, zIndex: 1 },
   toolbar: { flexDirection: "row", alignItems: "center", gap: 20, paddingTop: 16 },
   headerSpacer: { flex: 1 },
   headerButton: { paddingHorizontal: 24, paddingVertical: 14 },
   headerButtonLabel: { color: colors.text, fontSize: 26, fontWeight: "600" },
-  title: { color: colors.text, fontSize: 44, fontWeight: "700" },
+  title: { color: colors.text, fontSize: 44, lineHeight: 54, fontWeight: "700" },
   meta: { color: colors.textMuted, ...typography.small },
   error: { color: colors.danger, ...typography.small },
 });

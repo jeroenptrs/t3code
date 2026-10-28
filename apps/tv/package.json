@@ -34,6 +34,7 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-native": "npm:react-native-tvos@0.88.0-0",
+    "remark-gfm": "catalog:",
     "remark-parse": "catalog:",
     "unified": "catalog:"
   },

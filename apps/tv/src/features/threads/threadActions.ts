@@ -18,7 +18,7 @@ import { tvAtomRegistry } from "../../state/atom-registry";
 import { environmentThreadShells, serverEnvironment } from "../../state/environments";
 import { threadCommands } from "./state";
 import type { ThreadActionCapabilities, ThreadActionId } from "./threadActionList";
-import { readEnvironmentScope } from "./vcs";
+import { awaitEnvironmentScope } from "./vcs";
 
 // Mobile's thread actions (apps/mobile/src/features/home/useThreadListActions.ts), without
 // undo, rename, or delete.
@@ -62,7 +62,7 @@ export async function runThreadAction(input: {
 }): Promise<string | null> {
   const { environmentId, threadId, action } = input;
   const title = FAILURE_TITLES[action];
-  if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+  if (!(await awaitEnvironmentScope(environmentId, AuthOrchestrationOperateScope))) {
     return `${title}: this connection cannot change threads.`;
   }
   const capabilities = readThreadActionCapabilities(environmentId);

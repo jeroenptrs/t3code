@@ -1,5 +1,13 @@
-import type { ThreadId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { useEffect } from "react";
+
+import { runThreadAction } from "./threadActions";
+import { THREAD_ACTION_LABELS, type ThreadActionId } from "./threadActionList";
+import { readEnvironmentScope } from "./vcs";
 
 let devThreadOpened = false;
 
@@ -71,4 +79,35 @@ export function useDevOpenNewThread(open: () => void) {
     devNewThreadOpened = true;
     open();
   }, [enabled, open]);
+}
+
+let devActionRun = false;
+
+const isThreadAction = (value: string): value is ThreadActionId =>
+  Object.hasOwn(THREAD_ACTION_LABELS, value);
+
+/**
+ * Dev-only: EXPO_PUBLIC_TV_DEV_RUN_ACTION=<action> (snooze, settle, pin, archive, or a reverse)
+ * runs that action on the opened thread through runThreadAction once per launch and logs the
+ * result. Snooze is for one hour.
+ */
+export function useDevRunAction(ready: boolean, environmentId: EnvironmentId, threadId: ThreadId) {
+  const action = __DEV__ ? process.env.EXPO_PUBLIC_TV_DEV_RUN_ACTION : undefined;
+  useEffect(() => {
+    if (devActionRun || !ready || !action || !isThreadAction(action)) return;
+    devActionRun = true;
+    const oneShot = readEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+    void runThreadAction({
+      environmentId,
+      threadId,
+      action,
+      ...(action === "snooze"
+        ? { snoozedUntil: new Date(Date.now() + 60 * 60_000).toISOString() }
+        : {}),
+    }).then((failure) =>
+      console.log(
+        `[tv-dev] ${action} ${threadId}: ${failure ?? "ok"} (one-shot scope read: ${oneShot})`,
+      ),
+    );
+  }, [action, environmentId, ready, threadId]);
 }
