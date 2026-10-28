@@ -14,6 +14,7 @@ import {
   threadActionState,
   type ThreadActionId,
 } from "./threadActionList";
+import type { ProjectRef } from "./NewThreadComposer";
 import { runThreadAction } from "./threadActions";
 import { ThreadSheet, type ThreadSheetRow } from "./ThreadSheet";
 
@@ -25,7 +26,8 @@ const customSnoozeUntil = (amount: string, unit: Unit) =>
 
 /**
  * Settle, snooze, pin, and archive for one thread, and their reverses, as mobile's row menu
- * offers them. Menu from the snooze lists returns to the actions.
+ * offers them, then New thread in the same project. Menu from the snooze lists returns to the
+ * actions.
  */
 export function ThreadActionsSheet(props: {
   readonly environmentId: EnvironmentId;
@@ -33,6 +35,7 @@ export function ThreadActionsSheet(props: {
   /** The shell leaves the list once archived; the open thread's projection still knows. */
   readonly archived?: boolean;
   readonly onClose: () => void;
+  readonly onNewThread?: (project: ProjectRef) => void;
 }) {
   const { environmentId, threadId } = props;
   const ref = useMemo(() => ({ environmentId, threadId }), [environmentId, threadId]);
@@ -134,15 +137,29 @@ export function ThreadActionsSheet(props: {
       },
     ];
   } else {
-    rows = actions.map((action): ThreadSheetRow => ({
-      key: `action:${action}`,
-      label: THREAD_ACTION_LABELS[action],
-      onPress: () => {
-        if (action !== "snooze") return void run(action);
-        setNotice(null);
-        setView("snooze");
-      },
-    }));
+    const { onNewThread } = props;
+    rows = [
+      ...actions.map((action): ThreadSheetRow => ({
+        key: `action:${action}`,
+        label: THREAD_ACTION_LABELS[action],
+        onPress: () => {
+          if (action !== "snooze") return void run(action);
+          setNotice(null);
+          setView("snooze");
+        },
+      })),
+      ...(onNewThread && shell !== null
+        ? [
+            {
+              key: "new-thread",
+              label: "New thread",
+              subtitle: "In the same project",
+              tone: "accent" as const,
+              onPress: () => onNewThread({ environmentId, projectId: shell.projectId }),
+            },
+          ]
+        : []),
+    ];
   }
 
   return (

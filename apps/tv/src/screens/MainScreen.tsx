@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentConnectionSummary } from "@t3tools/client-runtime/state/presentation";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useImperativeHandle, useRef, useState, type Ref } from "react";
+import { useRef, useState } from "react";
 import { StyleSheet, Text, TVFocusGuideView, View } from "react-native";
 
 import { FocusablePressable, type FocusableHost } from "../components/FocusablePressable";
@@ -10,9 +10,13 @@ import {
   ThreadSectionList,
   type ThreadSectionListHandle,
 } from "../features/home/ThreadSectionList";
+import { useDevOpenNewThread } from "../features/threads/devOpenThread";
+import { NewThreadComposer, type ProjectRef } from "../features/threads/NewThreadComposer";
 import { ThreadActionsSheet } from "../features/threads/ThreadActionsSheet";
+import { useMenuOwner } from "../navigation/menuScope";
 import type { ThreadRef } from "../navigation/stack";
-import { environmentSummaries } from "../state/environments";
+import { tvAtomRegistry } from "../state/atom-registry";
+import { environmentSummaries, environmentThreadShells } from "../state/environments";
 import { ThreadScreen } from "./ThreadScreen";
 
 /** At 1920x1080; the conversation takes the rest. */
@@ -38,45 +42,65 @@ export function connectionSummaryLabel(
   return parts.join(" · ");
 }
 
-export interface MainScreenHandle {
-  /** Moves focus to the selected sidebar row, or the filters when it is not listed. */
-  readonly focusSidebar: () => void;
-}
-
 /**
- * The sidebar of threads beside the selected conversation. Left from the conversation lands on
- * the selected row; selecting a thread, or Right into the conversation, lands on its newest
- * message (ThreadScreen's own guide).
+ * The sidebar of threads beside the selected conversation or the new-thread composer. Left from
+ * the conversation lands on the selected row; selecting a thread, or Right into the
+ * conversation, lands on its newest message (ThreadScreen's own guide). Menu from the right pane
+ * returns to the sidebar.
  */
-export function MainScreen({
-  ref,
-  ...props
-}: {
-  readonly ref?: Ref<MainScreenHandle>;
+export function MainScreen(props: {
   readonly hidden: boolean;
   readonly environmentFilter: EnvironmentId | null;
   readonly onEnvironmentFilterChange: (environmentId: EnvironmentId | null) => void;
   readonly onOpenConnections: () => void;
-  /** Whether focus is in the conversation, where Menu returns to the sidebar. */
-  readonly onConversationFocusChange: (focused: boolean) => void;
 }) {
   const environments = useAtomValue(environmentSummaries.environmentsAtom);
   const allConnected = environments.every((entry) => entry.connectionState === "connected");
   const [selectedThread, setSelectedThread] = useState<ThreadRef | null>(null);
   // Bumped per selection: the conversation moves focus to its newest message once per value.
   const [focusRequest, setFocusRequest] = useState(0);
+  const [actionsThread, setActionsThread] = useState<ThreadRef | null>(null);
+  // Which pane focus is in, from focus entering each side. Only the right pane owns Menu.
+  const [pane, setPane] = useState<"sidebar" | "conversation">("sidebar");
+  // Bumped per open, so each one starts a fresh composer.
+  const [newThread, setNewThread] = useState<{
+    readonly request: number;
+    readonly defaultProject: ProjectRef | null;
+  } | null>(null);
   const selectThread = (thread: ThreadRef) => {
     setSelectedThread(thread);
+    setNewThread(null);
     setFocusRequest((request) => request + 1);
+    setPane("conversation");
   };
-  const [actionsThread, setActionsThread] = useState<ThreadRef | null>(null);
+  const openNewThread = (project: ProjectRef | null) => {
+    const shell = selectedThread
+      ? tvAtomRegistry.get(environmentThreadShells.threadShellAtom(selectedThread))
+      : null;
+    setNewThread((current) => ({
+      request: (current?.request ?? 0) + 1,
+      defaultProject:
+        project ??
+        (shell ? { environmentId: shell.environmentId, projectId: shell.projectId } : null),
+    }));
+    setActionsThread(null);
+    setPane("conversation");
+  };
+  useDevOpenNewThread(() => openNewThread(null));
   const sectionList = useRef<ThreadSectionListHandle>(null);
   // State, not a ref: the sidebar guide re-renders with the row as its destination.
   const [selectedRow, setSelectedRow] = useState<FocusableHost | null>(null);
   const [filter, setFilter] = useState<FocusableHost | null>(null);
 
   const focusSidebar = () => (selectedRow ?? filter)?.requestTVFocus?.();
-  useImperativeHandle(ref, () => ({ focusSidebar }));
+  useMenuOwner(
+    "conversation",
+    () => {
+      setPane("sidebar");
+      focusSidebar();
+    },
+    pane === "conversation",
+  );
   const closeActions = () => {
     if (actionsThread !== null && !sectionList.current?.focusThread(actionsThread)) focusSidebar();
     setActionsThread(null);
@@ -89,6 +113,7 @@ export function MainScreen({
         style={styles.sidebar}
         autoFocus
         destinations={selectedRow ? [selectedRow] : undefined}
+        onFocusEnter={() => setPane("sidebar")}
       >
         <View style={styles.sidebarHeader}>
           <Text style={styles.title}>Threads</Text>
@@ -103,6 +128,7 @@ export function MainScreen({
           selectedThread={selectedThread}
           onSelectThread={selectThread}
           onThreadActions={setActionsThread}
+          onNewThread={openNewThread}
           onSelectedRowHost={setSelectedRow}
           filterRef={setFilter}
         />
@@ -115,19 +141,22 @@ export function MainScreen({
         </FocusablePressable>
       </TVFocusGuideView>
       {/* No autoFocus: a remembered child would win over ThreadScreen's newest-message guide. */}
-      <TVFocusGuideView
-        style={styles.conversation}
-        onFocusEnter={() => props.onConversationFocusChange(true)}
-        onFocusLeave={() => props.onConversationFocusChange(false)}
-      >
-        {selectedThread ? (
+      <TVFocusGuideView style={styles.conversation} onFocusEnter={() => setPane("conversation")}>
+        {newThread !== null ? (
+          <NewThreadComposer
+            key={newThread.request}
+            defaultProject={newThread.defaultProject}
+            environmentFilter={props.environmentFilter}
+            onStarted={selectThread}
+          />
+        ) : selectedThread ? (
           <ThreadScreen
             key={`${selectedThread.environmentId}:${selectedThread.threadId}`}
             thread={selectedThread}
             hidden={props.hidden || actionsThread !== null}
             focusRequest={focusRequest}
-            onBack={focusSidebar}
             onOpenThread={selectThread}
+            onNewThread={openNewThread}
           />
         ) : (
           <View style={styles.empty}>
@@ -141,6 +170,7 @@ export function MainScreen({
           environmentId={actionsThread.environmentId}
           threadId={actionsThread.threadId}
           onClose={closeActions}
+          onNewThread={openNewThread}
         />
       ) : null}
     </View>

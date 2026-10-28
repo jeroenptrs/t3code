@@ -3,11 +3,10 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import {
   useCallback,
   useEffect,
-  useEffectEvent,
   useMemo,
   useReducer,
-  useRef,
   useState,
+  useSyncExternalStore,
   type ComponentType,
   type ReactNode,
 } from "react";
@@ -17,10 +16,11 @@ import { colors } from "./components/theme";
 import { SignInScreen } from "./features/cloud/SignInScreen";
 import { startDevLaunch } from "./lib/devLaunch";
 import { parseTvLink } from "./lib/links";
+import { menuScope, useMenuOwner } from "./navigation/menuScope";
 import { INITIAL_STACK, shownStack, stackReducer, topOf, type Route } from "./navigation/stack";
 import { TvNavigationContext, type TvNavigation } from "./navigation/TvNavigation";
 import { ConnectionsScreen } from "./screens/ConnectionsScreen";
-import { MainScreen, type MainScreenHandle } from "./screens/MainScreen";
+import { MainScreen } from "./screens/MainScreen";
 import { TerminalScreen } from "./screens/TerminalScreen";
 import { tvAtomRegistry } from "./state/atom-registry";
 import { environmentCatalog } from "./state/environments";
@@ -52,8 +52,6 @@ function Screens() {
   const top = topOf(shown);
   const canGoBack = shown.length > 1;
   const [environmentFilter, setEnvironmentFilter] = useState<EnvironmentId | null>(null);
-  const [inConversation, setInConversation] = useState(false);
-  const main = useRef<MainScreenHandle>(null);
 
   const push = useCallback((route: Route) => dispatch({ type: "push", route }), []);
   const back = useCallback(() => dispatch({ type: "back" }), []);
@@ -95,26 +93,19 @@ function Screens() {
     };
   }, [openEnvironment]);
 
-  // tvOS exits on Menu unless the root holds the recognizer enableTVMenuKey adds; hold it while
-  // Menu can go back a route or to the sidebar. A full-screen image's Modal has its own; its
-  // focus counts as the conversation's, so this never re-enables (adding a second) while open.
-  const menuReturnsToSidebar = !canGoBack && top.name === "home" && inConversation;
-  const menuHandled = canGoBack || menuReturnsToSidebar;
+  // tvOS exits on Menu unless the root holds the recognizer enableTVMenuKey adds, so hold it
+  // exactly while something owns Menu. A full-screen image's Modal brings its own recognizer.
+  const menuHandled = useSyncExternalStore(menuScope.subscribe, menuScope.handlesMenu);
   useEffect(() => {
     if (menuHandled) TVEventControl.enableTVMenuKey();
     else TVEventControl.disableTVMenuKey();
   }, [menuHandled]);
-
-  const onMenu = useEffectEvent(() => {
-    if (!menuHandled) return false;
-    if (canGoBack) back();
-    else main.current?.focusSidebar();
-    return true;
-  });
-  // Registered once, so it stays the oldest handler: BackHandler calls the newest first, and an
-  // open sheet's handler must keep running before this one.
+  useMenuOwner("route", back, canGoBack);
+  // The app's only BackHandler subscription; every Menu press goes through the scope.
   useEffect(() => {
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => onMenu());
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () =>
+      menuScope.dispatch(),
+    );
     return () => subscription.remove();
   }, []);
 
@@ -124,12 +115,10 @@ function Screens() {
       <View style={styles.root}>
         {shown[0].name === "home" ? (
           <MainScreen
-            ref={main}
             hidden={top.name !== "home"}
             environmentFilter={environmentFilter}
             onEnvironmentFilterChange={setEnvironmentFilter}
             onOpenConnections={() => push({ name: "connections" })}
-            onConversationFocusChange={setInConversation}
           />
         ) : null}
         {top.name === "connections" ? (

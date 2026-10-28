@@ -57,3 +57,18 @@ export function useDevOpenSheet(ready: boolean, open: (sheet: ThreadSheetKind) =
     open(sheet);
   }, [open, ready, sheet]);
 }
+
+let devNewThreadOpened = false;
+
+/**
+ * Dev-only: EXPO_PUBLIC_TV_DEV_OPEN_NEW_THREAD=1 opens the new-thread composer once per launch.
+ * With EXPO_PUBLIC_TV_DEV_SEND_MESSAGE it starts the thread with that text as soon as it can.
+ */
+export function useDevOpenNewThread(open: () => void) {
+  const enabled = __DEV__ && process.env.EXPO_PUBLIC_TV_DEV_OPEN_NEW_THREAD === "1";
+  useEffect(() => {
+    if (devNewThreadOpened || !enabled) return;
+    devNewThreadOpened = true;
+    open();
+  }, [enabled, open]);
+}

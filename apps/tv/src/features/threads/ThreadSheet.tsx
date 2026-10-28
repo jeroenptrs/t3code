@@ -1,8 +1,9 @@
-import { useEffect, useEffectEvent, type ReactNode } from "react";
-import { BackHandler, ScrollView, StyleSheet, Text, TVFocusGuideView, View } from "react-native";
+import type { ReactNode } from "react";
+import { ScrollView, StyleSheet, Text, TVFocusGuideView, View } from "react-native";
 
 import { FocusablePressable } from "../../components/FocusablePressable";
 import { colors, typography } from "../../components/theme";
+import { useMenuOwner } from "../../navigation/menuScope";
 
 export interface ThreadSheetRow {
   readonly key: string;
@@ -17,10 +18,7 @@ export interface ThreadSheetRow {
   readonly onPress?: () => void;
 }
 
-/**
- * A focusable list over the right of the conversation. Focus stays inside while it is open, and
- * Menu calls `onClose` before the app's own Menu handler sees it.
- */
+/** A focusable list over the right of the conversation. Focus stays inside, and Menu calls `onClose`. */
 export function ThreadSheet(props: {
   readonly title: string;
   readonly subtitle?: string | null;
@@ -32,18 +30,9 @@ export function ThreadSheet(props: {
   readonly children?: ReactNode;
   readonly onClose: () => void;
 }) {
-  const onClose = useEffectEvent(() => props.onClose());
-  // The app holds the tvOS Menu key whenever focus is in the conversation, and the sheet keeps
-  // focus there, so it only needs to see Menu first: BackHandler calls the newest handler first.
-  useEffect(() => {
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      onClose();
-      return true;
-    });
-    return () => subscription.remove();
-  }, []);
+  useMenuOwner("sheet", props.onClose);
 
-  // Every row is a focus stop: with none, focus would leave the trap and Menu reach the app.
+  // Every row is a focus stop: with none, focus would leave the trap.
   const rows: ReadonlyArray<ThreadSheetRow> =
     props.rows.length > 0
       ? props.rows

@@ -6,18 +6,17 @@ import {
 import { resolveSubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
 import { DEFAULT_SERVER_SETTINGS, type ServerProvider } from "@t3tools/contracts";
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   StyleSheet,
   Text,
   TVFocusGuideView,
   useTVEventHandler,
   View,
-  type TextInput,
   type ViewInstance,
 } from "react-native";
 
-import { FocusablePressable, type FocusableHost } from "../components/FocusablePressable";
+import { FocusablePressable } from "../components/FocusablePressable";
 import { colors, typography } from "../components/theme";
 import { SUBAGENT_TONE_COLORS } from "../features/subagents/subagentPresentation";
 import { SubagentsSheet } from "../features/subagents/SubagentsSheet";
@@ -36,6 +35,7 @@ import {
   ThreadMessageList,
   type ThreadMessageListHandle,
 } from "../features/threads/ThreadMessageList";
+import type { ProjectRef } from "../features/threads/NewThreadComposer";
 import { ThreadActionsSheet } from "../features/threads/ThreadActionsSheet";
 import { ThreadGitSheet } from "../features/threads/ThreadGitSheet";
 import { ThreadReplyBox } from "../features/threads/ThreadReplyBox";
@@ -73,10 +73,9 @@ export function ThreadScreen(props: {
   readonly hidden: boolean;
   /** Each new value moves focus to the newest message once it has rendered. */
   readonly focusRequest: number;
-  /** Returns focus to the sidebar. */
-  readonly onBack: () => void;
   /** Shows another thread, a subagent's or a merge-back target; without it those cannot open. */
   readonly onOpenThread?: (thread: ThreadRef) => void;
+  readonly onNewThread?: (project: ProjectRef) => void;
 }) {
   const ref = props.thread;
   const { environmentId, threadId } = ref;
@@ -107,10 +106,7 @@ export function ThreadScreen(props: {
   const focusLatest = useCallback(() => messageList.current?.focusLatest(), []);
   const focusFirst = () => messageList.current?.focusFirst();
   // Focus guide destinations need mounted host views, so the hosts live in state.
-  const [backHost, setBackHost] = useState<FocusableHost | null>(null);
-  const [inputHost, setInputHost] = useState<ComponentRef<typeof TextInput> | null>(null);
   const [latestHost, setLatestHost] = useState<ViewInstance | null>(null);
-  const backDestinations = useMemo(() => (backHost ? [backHost] : undefined), [backHost]);
   // An empty list clears the guide; `undefined` would keep the last destination.
   const entryDestinations = useMemo(
     () => (latestHost !== null && sheet === null ? [latestHost] : []),
@@ -124,7 +120,6 @@ export function ThreadScreen(props: {
     focusedRequest.current = props.focusRequest;
     focusLatest();
   }, [focusLatest, latestHost, props.focusRequest, props.hidden, sheet]);
-  const replyDestinations = useMemo(() => (inputHost ? [inputHost] : undefined), [inputHost]);
   useTVEventHandler(
     useCallback(
       (event: { readonly eventType: string }) => {
@@ -214,23 +209,16 @@ export function ThreadScreen(props: {
     // Entering the conversation from outside lands on the newest message, whatever was focused last.
     <TVFocusGuideView style={styles.root} destinations={entryDestinations}>
       <View style={styles.column}>
-        {/* Up from Back wraps to the reply row, so a long thread is never a long walk. */}
-        <TVFocusGuideView style={styles.wrapGuide} destinations={replyDestinations} />
         <View style={styles.header}>
-          <FocusablePressable ref={setBackHost} style={styles.headerButton} onPress={props.onBack}>
-            <Text style={styles.headerButtonLabel}>‹ Back</Text>
-          </FocusablePressable>
-          <View style={styles.headerText}>
-            <Text style={styles.title} numberOfLines={1}>
-              {title}
-            </Text>
-            <Text style={styles.meta} numberOfLines={1}>
-              {[environmentLabel, projectTitle].filter(Boolean).join("  ·  ")}
-              {environmentLabel || projectTitle ? "  ·  " : ""}
-              <Text style={{ color: statusColor }}>{statusLabel}</Text>
-              {threadState.status === "synchronizing" ? "  ·  Syncing…" : ""}
-            </Text>
-          </View>
+          <Text style={styles.title} numberOfLines={1}>
+            {title}
+          </Text>
+          <Text style={styles.meta} numberOfLines={1}>
+            {[environmentLabel, projectTitle].filter(Boolean).join("  ·  ")}
+            {environmentLabel || projectTitle ? "  ·  " : ""}
+            <Text style={{ color: statusColor }}>{statusLabel}</Text>
+            {threadState.status === "synchronizing" ? "  ·  Syncing…" : ""}
+          </Text>
         </View>
         {loadError ? <Text style={styles.error}>{loadError}</Text> : null}
         <ThreadMessageList
@@ -302,10 +290,7 @@ export function ThreadScreen(props: {
           error={sendError}
           disabled={thread === null || threadState.status === "deleted"}
           onSend={send}
-          inputHost={setInputHost}
         />
-        {/* Down from the reply row wraps to Back. A sibling of the list, so its ScrollView never sees the press. */}
-        <TVFocusGuideView style={styles.wrapGuide} destinations={backDestinations} />
       </View>
       {sheet === "thread" ? (
         <ThreadActionsSheet
@@ -313,6 +298,7 @@ export function ThreadScreen(props: {
           threadId={threadId}
           archived={thread?.archivedAt != null}
           onClose={closeSheet}
+          {...(props.onNewThread ? { onNewThread: props.onNewThread } : {})}
         />
       ) : sheet === "git" && cwd !== null && project !== null ? (
         <ThreadGitSheet
@@ -353,10 +339,8 @@ export function ThreadScreen(props: {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background, alignItems: "center" },
   column: { flex: 1, width: "100%", maxWidth: 1200, paddingTop: 48 },
-  header: { flexDirection: "row", alignItems: "center", gap: 28, marginBottom: 12 },
-  headerText: { flex: 1, gap: 4 },
+  header: { gap: 4, marginBottom: 12 },
   toolbar: { flexDirection: "row", alignItems: "center", gap: 20, paddingTop: 16 },
-  wrapGuide: { height: 2, width: "100%" },
   headerSpacer: { flex: 1 },
   headerButton: { paddingHorizontal: 24, paddingVertical: 14 },
   headerButtonLabel: { color: colors.text, fontSize: 26, fontWeight: "600" },

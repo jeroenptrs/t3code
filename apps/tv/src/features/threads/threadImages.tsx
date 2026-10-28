@@ -17,6 +17,7 @@ import { Modal, Pressable, StyleSheet, Text, View, type ViewInstance } from "rea
 
 import { colors, typography } from "../../components/theme";
 import { connectionAtomRuntime } from "../../connection/runtime";
+import { useMenuOwner } from "../../navigation/menuScope";
 import { environmentPresentations, environmentSession } from "../../state/environments";
 import type { ThreadImageAttachment } from "./threadRows";
 
@@ -155,6 +156,8 @@ export const ThreadImage = memo(function ThreadImage({
         ? "Pair again with file access to see this image"
         : "Image unavailable";
   if (open && url === null) setOpen(false);
+  // The Modal's own recognizer closes it; owning Menu keeps a press from reaching the conversation.
+  useMenuOwner("imageViewer", () => setOpen(false), open);
 
   return (
     <>

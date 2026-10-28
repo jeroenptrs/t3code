@@ -39,6 +39,7 @@ import {
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import type { ThreadRef } from "../../navigation/stack";
 import { useDevOpenThread } from "../threads/devOpenThread";
+import type { ProjectRef } from "../threads/NewThreadComposer";
 import {
   buildThreadSections,
   SETTLED_INITIAL_COUNT,
@@ -82,6 +83,8 @@ export function ThreadSectionList({
   readonly onSelectThread: (thread: ThreadRef) => void;
   /** A long press on a row: the thread's actions, without opening it. */
   readonly onThreadActions: (thread: ThreadRef) => void;
+  /** Opens the new-thread composer, in the filtered project when there is one. */
+  readonly onNewThread: (project: ProjectRef | null) => void;
   /** Receives the selected row's host while it is mounted, for focus guide destinations. */
   readonly onSelectedRowHost: (host: FocusableHost | null) => void;
   /** The environment filter, where focus lands when no selected row is mounted. */
@@ -322,6 +325,18 @@ export function ThreadSectionList({
 
   return (
     <View style={styles.root}>
+      <FocusablePressable
+        style={styles.newThread}
+        focusedStyle={styles.rowFocused}
+        onPress={() => {
+          const ref = selectedGroup?.memberProjectRefs[0];
+          props.onNewThread(
+            ref ? { environmentId: ref.environmentId, projectId: ref.projectId } : null,
+          );
+        }}
+      >
+        <Text style={styles.newThreadLabel}>+ New thread</Text>
+      </FocusablePressable>
       <TVFocusGuideView style={styles.filters} autoFocus>
         <FilterChip
           ref={filterRef}
@@ -563,6 +578,15 @@ const ROW_RADIUS = 22;
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  newThread: {
+    backgroundColor: "transparent",
+    borderRadius: ROW_RADIUS,
+    marginBottom: 12,
+    marginHorizontal: 8,
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+  },
+  newThreadLabel: { color: colors.text, ...typeScale.sm, fontWeight: "600" },
   filters: { flexDirection: "row", gap: 14, marginBottom: 16, paddingHorizontal: 8 },
   chip: { flexShrink: 1, paddingHorizontal: 22, paddingVertical: 12 },
   chipActive: { borderColor: colors.accent },
