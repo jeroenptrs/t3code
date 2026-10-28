@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { memo, useContext, useMemo, useRef, useState } from "react";
+import { memo, useContext, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -10,6 +10,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   type ScrollViewInstance,
+  type ViewInstance,
 } from "react-native";
 
 import { Atom } from "effect/reactivity";
@@ -41,14 +42,18 @@ function AttachmentImages(props: { readonly images: ReadonlyArray<ThreadImageAtt
   );
 }
 
-const UserRow = memo(function UserRow(props: {
+const UserRow = memo(function UserRow({
+  focusRef,
+  ...props
+}: {
+  readonly focusRef: Ref<ViewInstance> | undefined;
   readonly text: string;
   readonly images: ReadonlyArray<ThreadImageAttachment>;
   readonly preferred: boolean;
 }) {
   return (
     <View style={styles.userGroup}>
-      <FocusableBlock style={styles.userRow} hasTVPreferredFocus={props.preferred}>
+      <FocusableBlock ref={focusRef} style={styles.userRow} hasTVPreferredFocus={props.preferred}>
         <Text style={styles.roleLabel}>You</Text>
         {props.text ? <Text style={styles.userText}>{props.text}</Text> : null}
       </FocusableBlock>
@@ -57,7 +62,11 @@ const UserRow = memo(function UserRow(props: {
   );
 });
 
-const AssistantRow = memo(function AssistantRow(props: {
+const AssistantRow = memo(function AssistantRow({
+  focusRef,
+  ...props
+}: {
+  readonly focusRef: Ref<ViewInstance> | undefined;
   readonly text: string;
   readonly images: ReadonlyArray<ThreadImageAttachment>;
   readonly streaming: boolean;
@@ -70,9 +79,11 @@ const AssistantRow = memo(function AssistantRow(props: {
       {blocks.map((block, index) => {
         // While streaming, blocks keep appending, so the flag stays on the first block.
         const preferred = props.preferred && index === (props.streaming ? 0 : blocks.length - 1);
+        const blockRef = index === blocks.length - 1 ? focusRef : undefined;
         return block.kind === "image" ? (
           <View key={block.key} style={styles.markdownImage}>
             <ThreadImage
+              ref={blockRef}
               source={markdownImageSource(block.href, scope)}
               label={block.alt || block.href}
               hasTVPreferredFocus={preferred}
@@ -81,6 +92,7 @@ const AssistantRow = memo(function AssistantRow(props: {
         ) : (
           <FocusableBlock
             key={block.key}
+            ref={blockRef}
             style={styles.assistantBlock}
             hasTVPreferredFocus={preferred}
           >
@@ -94,7 +106,11 @@ const AssistantRow = memo(function AssistantRow(props: {
   );
 });
 
-const ToolRow = memo(function ToolRow(props: {
+const ToolRow = memo(function ToolRow({
+  focusRef,
+  ...props
+}: {
+  readonly focusRef: Ref<ViewInstance> | undefined;
   readonly name: string;
   readonly preview: string;
   readonly status: string;
@@ -103,7 +119,7 @@ const ToolRow = memo(function ToolRow(props: {
   const failed = props.status === "failed";
   const running = props.status === "running" || props.status === "pending";
   return (
-    <FocusableBlock style={styles.toolRow} hasTVPreferredFocus={props.preferred}>
+    <FocusableBlock ref={focusRef} style={styles.toolRow} hasTVPreferredFocus={props.preferred}>
       <Text style={styles.toolText} numberOfLines={1}>
         <Text style={[styles.toolName, failed && styles.toolFailed]}>
           {running ? "◌ " : failed ? "✕ " : "✓ "}
@@ -115,13 +131,17 @@ const ToolRow = memo(function ToolRow(props: {
   );
 });
 
-const NoticeRow = memo(function NoticeRow(props: {
+const NoticeRow = memo(function NoticeRow({
+  focusRef,
+  ...props
+}: {
+  readonly focusRef: Ref<ViewInstance> | undefined;
   readonly text: string;
   readonly tone: "muted" | "warning" | "danger";
   readonly preferred: boolean;
 }) {
   return (
-    <FocusableBlock style={styles.noticeRow} hasTVPreferredFocus={props.preferred}>
+    <FocusableBlock ref={focusRef} style={styles.noticeRow} hasTVPreferredFocus={props.preferred}>
       <Text
         style={[
           styles.noticeText,
@@ -136,14 +156,24 @@ const NoticeRow = memo(function NoticeRow(props: {
   );
 });
 
-function Row(props: { readonly row: ThreadRow; readonly preferred: boolean }) {
-  const { row, preferred } = props;
+function Row({
+  row,
+  preferred,
+  focusRef,
+}: {
+  readonly row: ThreadRow;
+  readonly preferred: boolean;
+  readonly focusRef: Ref<ViewInstance> | undefined;
+}) {
   switch (row.kind) {
     case "user":
-      return <UserRow text={row.text} images={row.images} preferred={preferred} />;
+      return (
+        <UserRow focusRef={focusRef} text={row.text} images={row.images} preferred={preferred} />
+      );
     case "assistant":
       return (
         <AssistantRow
+          focusRef={focusRef}
           text={row.text}
           images={row.images}
           streaming={row.streaming}
@@ -152,10 +182,18 @@ function Row(props: { readonly row: ThreadRow; readonly preferred: boolean }) {
       );
     case "tool":
       return (
-        <ToolRow name={row.name} preview={row.preview} status={row.status} preferred={preferred} />
+        <ToolRow
+          focusRef={focusRef}
+          name={row.name}
+          preview={row.preview}
+          status={row.status}
+          preferred={preferred}
+        />
       );
     case "notice":
-      return <NoticeRow text={row.text} tone={row.tone} preferred={preferred} />;
+      return (
+        <NoticeRow focusRef={focusRef} text={row.text} tone={row.tone} preferred={preferred} />
+      );
   }
 }
 
@@ -163,8 +201,19 @@ function Row(props: { readonly row: ThreadRow; readonly preferred: boolean }) {
  * The thread feed. Every row, and every block of an assistant message, is a focus stop, so the
  * remote scrolls the list; it follows the end while the reader is there.
  */
-export function ThreadMessageList(props: {
+export interface ThreadMessageListHandle {
+  /** Scrolls to the end and moves focus to the newest message. */
+  readonly focusLatest: () => void;
+}
+
+export function ThreadMessageList({
+  ref,
+  ...props
+}: {
+  readonly ref?: Ref<ThreadMessageListHandle>;
   readonly rows: ReadonlyArray<ThreadRow>;
+  /** Whether the newest row takes focus when the rows first arrive. */
+  readonly claimInitialFocus?: boolean;
   readonly emptyLabel: string;
   /** Images resolve against this thread; without it they show as unavailable. */
   readonly environmentId?: EnvironmentId;
@@ -173,6 +222,19 @@ export function ThreadMessageList(props: {
   const imageScope = useThreadImageScope(props.environmentId, props.threadId);
   const scrollRef = useRef<ScrollViewInstance>(null);
   const followEnd = useRef(true);
+  const latestRef = useRef<ViewInstance>(null);
+  useImperativeHandle(
+    ref,
+    () => ({
+      focusLatest: () => {
+        followEnd.current = true;
+        scrollRef.current?.scrollToEnd({ animated: true });
+        // react-native-tvos adds requestTVFocus to View instances at runtime; its types omit it.
+        (latestRef.current as { requestTVFocus?: () => void } | null)?.requestTVFocus?.();
+      },
+    }),
+    [],
+  );
   // Focus starts on the newest row at open. Fixed after the first rows arrive, so rows
   // streamed in later never pull focus away from the reply box.
   const [initialFocusKey, setInitialFocusKey] = useState<string | null>(null);
@@ -202,8 +264,13 @@ export function ThreadMessageList(props: {
           {props.rows.length === 0 ? (
             <Text style={styles.empty}>{props.emptyLabel}</Text>
           ) : (
-            props.rows.map((row) => (
-              <Row key={row.key} row={row} preferred={row.key === initialFocusKey} />
+            props.rows.map((row, index) => (
+              <Row
+                key={row.key}
+                row={row}
+                preferred={props.claimInitialFocus !== false && row.key === initialFocusKey}
+                focusRef={index === props.rows.length - 1 ? latestRef : undefined}
+              />
             ))
           )}
         </ScrollView>

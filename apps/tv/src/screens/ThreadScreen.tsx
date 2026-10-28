@@ -3,9 +3,9 @@ import {
   deriveThreadActivityRun,
   deriveThreadStructureRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
-import type { EnvironmentId, ServerProvider, ThreadId } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { BackHandler, StyleSheet, Text, View } from "react-native";
+import type { ServerProvider } from "@t3tools/contracts";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { StyleSheet, Text, TVFocusGuideView, useTVEventHandler, View } from "react-native";
 
 import { FocusablePressable } from "../components/FocusablePressable";
 import { colors, typography } from "../components/theme";
@@ -16,11 +16,16 @@ import {
   threadIsCompacting,
 } from "../features/threads/sendThreadMessage";
 import { environmentThreadDetails } from "../features/threads/state";
-import { ThreadMessageList } from "../features/threads/ThreadMessageList";
+import {
+  ThreadMessageList,
+  type ThreadMessageListHandle,
+} from "../features/threads/ThreadMessageList";
 import { ThreadReplyBox } from "../features/threads/ThreadReplyBox";
 import { deriveThreadRows } from "../features/threads/threadRows";
+import { threadNeighbours, type Route, type ThreadRef } from "../navigation/stack";
 import {
   environmentProjects,
+  environmentSummaries,
   environmentThreadShells,
   serverEnvironment,
 } from "../state/environments";
@@ -42,14 +47,12 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export function ThreadScreen(props: {
-  readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
+  readonly route: Extract<Route, { name: "thread" }>;
   readonly onBack: () => void;
+  readonly onOpenSibling: (thread: ThreadRef) => void;
 }) {
-  const ref = useMemo(
-    () => ({ environmentId: props.environmentId, threadId: props.threadId }),
-    [props.environmentId, props.threadId],
-  );
+  const ref = props.route.thread;
+  const { environmentId, threadId } = ref;
   // Reading the thread's state subscribes to its snapshot and live stream while this shows.
   const threadState = useAtomValue(environmentThreadDetails.stateAtom(ref));
   // Replaced on every streamed delta, so assistant text updates live.
@@ -59,20 +62,29 @@ export function ThreadScreen(props: {
   const queueWorkflow = useAtomValue(environmentThreadDetails.queueWorkflowAtom(ref));
   const pendingRequests = useAtomValue(environmentThreadDetails.pendingRequestsAtom(ref));
   const shell = useAtomValue(environmentThreadShells.threadShellAtom(ref));
-  const projects = useAtomValue(environmentProjects.environmentProjectsAtom(props.environmentId));
-  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
+  const projects = useAtomValue(environmentProjects.environmentProjectsAtom(environmentId));
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const environments = useAtomValue(environmentSummaries.environmentsAtom);
   const [sendError, setSendError] = useState<string | null>(null);
-
-  // The remote's Menu button returns to the environment. Handlers run newest first, so this
-  // one runs before the app root's, which would return to the connections screen.
-  const { onBack } = props;
-  useEffect(() => {
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      onBack();
-      return true;
-    });
-    return () => subscription.remove();
-  }, [onBack]);
+  // After Previous or Next, focus stays on the header so the reader can keep stepping.
+  const [steppedFromHeader, setSteppedFromHeader] = useState(false);
+  const messageList = useRef<ThreadMessageListHandle>(null);
+  const { previous, next } = threadNeighbours(props.route);
+  const { onOpenSibling } = props;
+  const openSibling = (thread: ThreadRef) => {
+    setSteppedFromHeader(true);
+    setSendError(null);
+    onOpenSibling(thread);
+  };
+  const focusLatest = useCallback(() => messageList.current?.focusLatest(), []);
+  useTVEventHandler(
+    useCallback(
+      (event: { readonly eventType: string }) => {
+        if (event.eventType === "playPause") focusLatest();
+      },
+      [focusLatest],
+    ),
+  );
 
   const rows = useMemo(() => deriveThreadRows(visibleItems), [visibleItems]);
   const thread = structure?.projection.thread ?? null;
@@ -100,6 +112,8 @@ export function ThreadScreen(props: {
   const title = thread?.title ?? shell?.title ?? "Thread";
   const projectId = thread?.projectId ?? shell?.projectId ?? null;
   const projectTitle = projects.find((project) => project.id === projectId)?.title ?? "";
+  const environmentLabel =
+    environments.find((entry) => entry.environmentId === environmentId)?.environmentLabel ?? "";
   const isCompacting = useMemo(
     () => threadIsCompacting({ runtime, visibleItems }),
     [runtime, visibleItems],
@@ -117,7 +131,7 @@ export function ThreadScreen(props: {
       if (thread === null) return false;
       setSendError(null);
       const error = await sendThreadMessage({
-        environmentId: props.environmentId,
+        environmentId,
         thread,
         text,
         dispatchMode,
@@ -126,7 +140,7 @@ export function ThreadScreen(props: {
       setSendError(error);
       return error === null;
     },
-    [dispatchMode, props.environmentId, providers, thread],
+    [dispatchMode, environmentId, providers, thread],
   );
 
   useDevSendMessage(thread !== null && threadState.status === "live", send);
@@ -142,32 +156,52 @@ export function ThreadScreen(props: {
   return (
     <View style={styles.root}>
       <View style={styles.column}>
-        <View style={styles.header}>
-          <FocusablePressable style={styles.backButton} onPress={props.onBack}>
-            <Text style={styles.backLabel}>‹ Threads</Text>
+        <TVFocusGuideView style={styles.header} autoFocus>
+          <FocusablePressable style={styles.headerButton} onPress={props.onBack}>
+            <Text style={styles.headerButtonLabel}>‹ Back</Text>
           </FocusablePressable>
           <View style={styles.headerText}>
             <Text style={styles.title} numberOfLines={1}>
               {title}
             </Text>
             <Text style={styles.meta} numberOfLines={1}>
-              {projectTitle}
-              {projectTitle ? "  ·  " : ""}
+              {[environmentLabel, projectTitle].filter(Boolean).join("  ·  ")}
+              {environmentLabel || projectTitle ? "  ·  " : ""}
               <Text style={{ color: statusColor }}>{statusLabel}</Text>
               {threadState.status === "synchronizing" ? "  ·  Syncing…" : ""}
             </Text>
           </View>
-        </View>
+          <FocusablePressable
+            style={styles.headerButton}
+            disabled={previous === null}
+            onPress={() => previous && openSibling(previous)}
+          >
+            <Text style={styles.headerButtonLabel}>‹ Previous</Text>
+          </FocusablePressable>
+          <FocusablePressable
+            style={styles.headerButton}
+            disabled={next === null}
+            onPress={() => next && openSibling(next)}
+          >
+            <Text style={styles.headerButtonLabel}>Next ›</Text>
+          </FocusablePressable>
+          <FocusablePressable style={styles.headerButton} onPress={focusLatest}>
+            <Text style={styles.headerButtonLabel}>Latest</Text>
+          </FocusablePressable>
+        </TVFocusGuideView>
         {loadError ? <Text style={styles.error}>{loadError}</Text> : null}
         <ThreadMessageList
+          key={`${environmentId}:${threadId}`}
+          ref={messageList}
           rows={rows}
+          claimInitialFocus={!steppedFromHeader}
           emptyLabel={emptyLabel}
-          environmentId={props.environmentId}
-          threadId={props.threadId}
+          environmentId={environmentId}
+          threadId={threadId}
         />
         <ThreadReplyBox
-          key={`${props.environmentId}:${props.threadId}`}
-          threadKey={`${props.environmentId}:${props.threadId}`}
+          key={`${environmentId}:${threadId}`}
+          threadKey={`${environmentId}:${threadId}`}
           sendLabel={dispatchMode === "queue" ? "Queue" : "Send"}
           hint={
             dispatchMode === "auto"
@@ -188,10 +222,10 @@ export function ThreadScreen(props: {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background, alignItems: "center" },
   column: { flex: 1, width: "100%", maxWidth: 1200, paddingTop: 48 },
-  header: { flexDirection: "row", alignItems: "center", gap: 32, marginBottom: 12 },
-  headerText: { flex: 1, gap: 4 },
-  backButton: { paddingHorizontal: 24, paddingVertical: 14 },
-  backLabel: { color: colors.text, fontSize: 26, fontWeight: "600" },
+  header: { flexDirection: "row", alignItems: "center", gap: 20, marginBottom: 12 },
+  headerText: { flex: 1, gap: 4, marginHorizontal: 12 },
+  headerButton: { paddingHorizontal: 24, paddingVertical: 14 },
+  headerButtonLabel: { color: colors.text, fontSize: 26, fontWeight: "600" },
   title: { color: colors.text, fontSize: 44, fontWeight: "700" },
   meta: { color: colors.textMuted, ...typography.small },
   error: { color: colors.danger, ...typography.small },

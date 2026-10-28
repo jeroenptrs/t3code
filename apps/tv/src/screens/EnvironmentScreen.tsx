@@ -1,20 +1,20 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { useCallback, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
 import { ConnectionBadge } from "../components/ConnectionBadge";
 import { FocusablePressable } from "../components/FocusablePressable";
 import { colors } from "../components/theme";
 import { ThreadSectionList } from "../features/home/ThreadSectionList";
+import type { ThreadRef } from "../navigation/stack";
 import { environmentShell, environmentSummaries } from "../state/environments";
-import { ThreadScreen } from "./ThreadScreen";
 
 export function EnvironmentScreen(props: {
+  readonly hidden: boolean;
   readonly environmentId: EnvironmentId;
   readonly onBack: () => void;
+  readonly onOpenThread: (thread: ThreadRef, siblings: ReadonlyArray<ThreadRef>) => void;
 }) {
   const environments = useAtomValue(environmentSummaries.environmentsAtom);
   const environment = environments.find((entry) => entry.environmentId === props.environmentId);
@@ -22,40 +22,24 @@ export function EnvironmentScreen(props: {
   const shell = useAtomValue(environmentShell.stateValueAtom(props.environmentId));
   const shellError = Option.getOrNull(shell.error);
 
-  const [openThreadId, setOpenThreadId] = useState<ThreadId | null>(null);
-  const openThread = useCallback(
-    (thread: EnvironmentThreadShell) => setOpenThreadId(thread.id),
-    [],
-  );
-  const closeThread = useCallback(() => setOpenThreadId(null), []);
-
   return (
-    <>
-      {openThreadId !== null ? (
-        <ThreadScreen
-          environmentId={props.environmentId}
-          threadId={openThreadId}
-          onBack={closeThread}
-        />
-      ) : null}
-      {/* Hidden, not unmounted, under an open thread so filters and scroll survive Menu. */}
-      <View style={[styles.root, openThreadId !== null && styles.hidden]}>
-        <View style={styles.header}>
-          <FocusablePressable style={styles.backButton} onPress={props.onBack}>
-            <Text style={styles.buttonLabel}>‹ Home</Text>
-          </FocusablePressable>
-          <View style={styles.headerText}>
-            <Text style={styles.title}>{environment?.environmentLabel ?? "Environment"}</Text>
-            {environment ? <ConnectionBadge phase={environment.connectionState} /> : null}
-          </View>
-          <Text style={styles.muted}>
-            {shell.status === "synchronizing" ? "Syncing…" : ""}
-            {shellError ? ` ${shellError}` : ""}
-          </Text>
+    // Hidden, not unmounted, under an open thread so filters and scroll survive Menu.
+    <View style={[styles.root, props.hidden && styles.hidden]}>
+      <View style={styles.header}>
+        <FocusablePressable style={styles.backButton} onPress={props.onBack}>
+          <Text style={styles.buttonLabel}>‹ Back</Text>
+        </FocusablePressable>
+        <View style={styles.headerText}>
+          <Text style={styles.title}>{environment?.environmentLabel ?? "Environment"}</Text>
+          {environment ? <ConnectionBadge phase={environment.connectionState} /> : null}
         </View>
-        <ThreadSectionList environmentId={props.environmentId} onOpenThread={openThread} />
+        <Text style={styles.muted}>
+          {shell.status === "synchronizing" ? "Syncing…" : ""}
+          {shellError ? ` ${shellError}` : ""}
+        </Text>
       </View>
-    </>
+      <ThreadSectionList environmentId={props.environmentId} onOpenThread={props.onOpenThread} />
+    </View>
   );
 }
 

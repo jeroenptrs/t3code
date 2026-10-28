@@ -1,5 +1,11 @@
-import { memo, useState, type ReactNode } from "react";
-import { Pressable, StyleSheet, type StyleProp, type ViewStyle } from "react-native";
+import { memo, useState, type ReactNode, type Ref } from "react";
+import {
+  Pressable,
+  StyleSheet,
+  type StyleProp,
+  type ViewInstance,
+  type ViewStyle,
+} from "react-native";
 
 import { colors } from "./theme";
 
@@ -7,7 +13,11 @@ import { colors } from "./theme";
  * A focus stop for read-only content. A tvOS ScrollView moves only between focusable children,
  * so a feed made of these scrolls with the remote one block at a time.
  */
-export const FocusableBlock = memo(function FocusableBlock(props: {
+export const FocusableBlock = memo(function FocusableBlock({
+  ref,
+  ...props
+}: {
+  readonly ref?: Ref<ViewInstance>;
   readonly style?: StyleProp<ViewStyle>;
   readonly hasTVPreferredFocus?: boolean;
   readonly children: ReactNode;
@@ -15,6 +25,7 @@ export const FocusableBlock = memo(function FocusableBlock(props: {
   const [focused, setFocused] = useState(false);
   return (
     <Pressable
+      ref={ref}
       hasTVPreferredFocus={props.hasTVPreferredFocus}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}

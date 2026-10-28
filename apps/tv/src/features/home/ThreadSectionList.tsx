@@ -16,6 +16,7 @@ import {
   threadListCapabilitiesAtom,
 } from "../../state/environments";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
+import type { ThreadRef } from "../../navigation/stack";
 import { useDevOpenThread } from "../threads/devOpenThread";
 import {
   buildThreadSections,
@@ -44,7 +45,8 @@ interface FilterOption<T> {
  */
 export function ThreadSectionList(props: {
   readonly environmentId: EnvironmentId | null;
-  readonly onOpenThread: (thread: EnvironmentThreadShell) => void;
+  /** Called with the threads the list shows, in order, so the thread view can step through them. */
+  readonly onOpenThread: (thread: ThreadRef, siblings: ReadonlyArray<ThreadRef>) => void;
 }) {
   // Quiet shells keep their identity while a run streams, so the list rebuilds only when a
   // thread's placement or status can change, never per streamed chunk.
@@ -183,7 +185,7 @@ export function ThreadSectionList(props: {
   }, []);
   const showMore = useCallback(() => setSettledLimit((limit) => limit + SETTLED_PAGE_COUNT), []);
 
-  const { onOpenThread } = props;
+  const { onOpenThread: openThread } = props;
   const visibleThreads = sections.entries.flatMap((entry) =>
     entry.type === "thread" ? [entry.thread] : [],
   );
@@ -194,8 +196,31 @@ export function ThreadSectionList(props: {
   );
   useDevOpenThread(visibleThreadIds, (threadId) => {
     const thread = visibleThreads.find((candidate) => candidate.id === threadId);
-    if (thread) onOpenThread(thread);
+    if (thread) {
+      openThread(
+        { environmentId: thread.environmentId, threadId },
+        visibleThreads.map((visible) => ({
+          environmentId: visible.environmentId,
+          threadId: visible.id,
+        })),
+      );
+    }
   });
+
+  // Keyed by content so rows keep a stable callback until the listed threads change.
+  const siblingsKey = visibleThreads
+    .map((thread) => `${thread.environmentId}\t${thread.id}`)
+    .join("\n");
+  const onOpenThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      const siblings = siblingsKey.split("\n").map((line): ThreadRef => {
+        const [environmentId, threadId] = line.split("\t") as [EnvironmentId, ThreadId];
+        return { environmentId, threadId };
+      });
+      openThread({ environmentId: thread.environmentId, threadId: thread.id }, siblings);
+    },
+    [openThread, siblingsKey],
+  );
 
   const renderItem = ({ item }: { readonly item: ThreadListEntry }) => {
     if (item.type === "header") {

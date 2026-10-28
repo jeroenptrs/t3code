@@ -15,6 +15,8 @@ import { environmentCatalog, environmentSummaries } from "../state/environments"
 import { pairingFormAtom, submitPairingForm, updatePairingForm } from "../state/pairing-form";
 
 export function ConnectionsScreen(props: {
+  /** Null on the root, where Menu leaves the app. */
+  readonly onBack: (() => void) | null;
   readonly onOpenEnvironment: (environmentId: EnvironmentId) => void;
   readonly onSignIn: () => void;
 }) {
@@ -23,7 +25,14 @@ export function ConnectionsScreen(props: {
 
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>T3 Code</Text>
+      <View style={styles.header}>
+        {props.onBack ? (
+          <FocusablePressable style={styles.backButton} onPress={props.onBack}>
+            <Text style={styles.buttonLabel}>‹ Back</Text>
+          </FocusablePressable>
+        ) : null}
+        <Text style={styles.title}>T3 Code</Text>
+      </View>
       <View style={styles.columns}>
         <View style={styles.formColumn}>
           <PairingForm hasEnvironments={environments.length > 0} />
@@ -144,7 +153,9 @@ function EnvironmentRow(props: {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: 96, paddingVertical: 64 },
-  title: { color: colors.text, fontSize: 64, fontWeight: "700", marginBottom: 40 },
+  header: { flexDirection: "row", alignItems: "center", gap: 40, marginBottom: 40 },
+  backButton: { paddingHorizontal: 28, paddingVertical: 16 },
+  title: { color: colors.text, fontSize: 64, fontWeight: "700" },
   columns: { flexDirection: "row", gap: 64 },
   formColumn: { width: 720, gap: 32 },
   listColumn: { flex: 1, gap: 20 },

@@ -12,8 +12,8 @@ import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts"
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
-import { createContext, memo, useContext, useState } from "react";
-import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { createContext, memo, useContext, useState, type Ref } from "react";
+import { Modal, Pressable, StyleSheet, Text, View, type ViewInstance } from "react-native";
 
 import { colors, typography } from "../../components/theme";
 import { connectionAtomRuntime } from "../../connection/runtime";
@@ -129,7 +129,11 @@ function thumbnailSize(aspect: number) {
  * An inline image, bounded to a thumbnail and its own focus stop. Select opens it full screen;
  * Menu closes that view.
  */
-export const ThreadImage = memo(function ThreadImage(props: {
+export const ThreadImage = memo(function ThreadImage({
+  ref,
+  ...props
+}: {
+  readonly ref?: Ref<ViewInstance>;
   readonly source: ThreadImageSource | null;
   readonly label: string;
   readonly hasTVPreferredFocus?: boolean;
@@ -153,6 +157,7 @@ export const ThreadImage = memo(function ThreadImage(props: {
   return (
     <>
       <Pressable
+        ref={ref}
         hasTVPreferredFocus={props.hasTVPreferredFocus}
         disabled={url === null && state._tag !== "Loading"}
         onPress={() => {

@@ -1,15 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentConnectionSummary } from "@t3tools/client-runtime/state/presentation";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useCallback, useState } from "react";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { StyleSheet, Text, TVFocusGuideView, View } from "react-native";
 
 import { FocusablePressable } from "../components/FocusablePressable";
 import { colors } from "../components/theme";
 import { ThreadSectionList } from "../features/home/ThreadSectionList";
+import type { ThreadRef } from "../navigation/stack";
 import { environmentSummaries } from "../state/environments";
-import { ThreadScreen } from "./ThreadScreen";
 
 /** "2 of 3 connected · Reconnecting to Office", mobile's workspace status, compact. */
 export function connectionSummaryLabel(
@@ -32,60 +30,44 @@ export function connectionSummaryLabel(
 }
 
 export function HomeScreen(props: {
+  readonly hidden: boolean;
   readonly onOpenConnections: () => void;
   readonly onOpenEnvironment: (environmentId: EnvironmentId) => void;
+  readonly onOpenThread: (thread: ThreadRef, siblings: ReadonlyArray<ThreadRef>) => void;
 }) {
   const environments = useAtomValue(environmentSummaries.environmentsAtom);
-  const [openThread, setOpenThread] = useState<{
-    readonly environmentId: EnvironmentId;
-    readonly threadId: ThreadId;
-  } | null>(null);
-  const openThreadFromList = useCallback(
-    (thread: EnvironmentThreadShell) =>
-      setOpenThread({ environmentId: thread.environmentId, threadId: thread.id }),
-    [],
-  );
-  const closeThread = useCallback(() => setOpenThread(null), []);
   const allConnected = environments.every((entry) => entry.connectionState === "connected");
 
   return (
-    <>
-      {openThread !== null ? (
-        <ThreadScreen
-          environmentId={openThread.environmentId}
-          threadId={openThread.threadId}
-          onBack={closeThread}
-        />
-      ) : null}
-      {/* Hidden, not unmounted, under an open thread so filters and scroll survive Menu. */}
-      <View style={[styles.root, openThread !== null && styles.hidden]}>
-        <View style={styles.header}>
-          <View style={styles.headerText}>
-            <Text style={styles.title}>Threads</Text>
-            <Text style={[styles.status, !allConnected && styles.statusWarning]}>
-              {connectionSummaryLabel(environments)}
-            </Text>
-          </View>
-          <TVFocusGuideView style={styles.actions}>
-            {environments.map((environment) => (
-              <FocusablePressable
-                key={environment.environmentId}
-                style={styles.action}
-                onPress={() => props.onOpenEnvironment(environment.environmentId)}
-              >
-                <Text style={styles.actionLabel} numberOfLines={1}>
-                  {environment.environmentLabel}
-                </Text>
-              </FocusablePressable>
-            ))}
-            <FocusablePressable style={styles.action} onPress={props.onOpenConnections}>
-              <Text style={styles.actionLabel}>Connections</Text>
-            </FocusablePressable>
-          </TVFocusGuideView>
+    // Hidden, not unmounted, under an open thread so filters and scroll survive Menu.
+    <View style={[styles.root, props.hidden && styles.hidden]}>
+      <View style={styles.header}>
+        <View style={styles.headerText}>
+          <Text style={styles.title}>Threads</Text>
+          <Text style={[styles.status, !allConnected && styles.statusWarning]}>
+            {connectionSummaryLabel(environments)}
+          </Text>
         </View>
-        <ThreadSectionList environmentId={null} onOpenThread={openThreadFromList} />
+        {/* Connections leads, so moving up into the header always lands on the way out. */}
+        <TVFocusGuideView style={styles.actions} autoFocus>
+          <FocusablePressable style={styles.action} onPress={props.onOpenConnections}>
+            <Text style={styles.actionLabel}>Connections</Text>
+          </FocusablePressable>
+          {environments.map((environment) => (
+            <FocusablePressable
+              key={environment.environmentId}
+              style={styles.action}
+              onPress={() => props.onOpenEnvironment(environment.environmentId)}
+            >
+              <Text style={styles.actionLabel} numberOfLines={1}>
+                {environment.environmentLabel}
+              </Text>
+            </FocusablePressable>
+          ))}
+        </TVFocusGuideView>
       </View>
-    </>
+      <ThreadSectionList environmentId={null} onOpenThread={props.onOpenThread} />
+    </View>
   );
 }
 
