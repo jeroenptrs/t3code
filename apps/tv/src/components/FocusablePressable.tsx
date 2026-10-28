@@ -3,7 +3,10 @@ import { Pressable, StyleSheet, type StyleProp, type ViewStyle } from "react-nat
 
 import { colors } from "./theme";
 
-/** A Pressable that shows where the Siri Remote's focus is. */
+/**
+ * A Pressable that shows where the Siri Remote's focus is. The ring sits inside its bounds and
+ * there is no scale, so a focused item in a list is never overlapped by the sibling after it.
+ */
 export function FocusablePressable(props: {
   readonly onPress?: () => void;
   readonly onFocus?: () => void;
@@ -47,7 +50,6 @@ const styles = StyleSheet.create({
   focused: {
     backgroundColor: colors.surfaceFocused,
     borderColor: colors.accent,
-    transform: [{ scale: 1.03 }],
   },
   disabled: { opacity: 0.5 },
 });

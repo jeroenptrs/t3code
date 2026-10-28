@@ -6,10 +6,10 @@ import {
   type PressableProps,
   StyleSheet,
   Text,
-  TextInput,
-  type TextInputProps,
   View,
 } from "react-native";
+
+import { TvTextInput } from "../../components/TvTextInput";
 
 type Step = "email" | "code";
 
@@ -89,8 +89,8 @@ export function SignInScreen(props: { readonly onSignedIn?: () => void }) {
       <Text style={styles.title}>Sign in to T3 Connect</Text>
       {step === "email" ? (
         <>
-          <Text style={styles.label}>Email address</Text>
-          <FocusableInput
+          <TvTextInput
+            label="Email address"
             value={email}
             onChangeText={setEmail}
             placeholder="you@example.com"
@@ -109,8 +109,8 @@ export function SignInScreen(props: { readonly onSignedIn?: () => void }) {
         </>
       ) : (
         <>
-          <Text style={styles.label}>Enter the code sent to {email.trim()}</Text>
-          <FocusableInput
+          <TvTextInput
+            label={`Enter the code sent to ${email.trim()}`}
             value={code}
             onChangeText={setCode}
             placeholder="123456"
@@ -132,25 +132,6 @@ export function SignInScreen(props: { readonly onSignedIn?: () => void }) {
       {busy ? <ActivityIndicator style={styles.spinner} color="white" size="large" /> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
     </View>
-  );
-}
-
-function FocusableInput(props: TextInputProps) {
-  const [focused, setFocused] = useState(false);
-  return (
-    <TextInput
-      {...props}
-      placeholderTextColor="#6b6b78"
-      onFocus={(event) => {
-        setFocused(true);
-        props.onFocus?.(event);
-      }}
-      onBlur={(event) => {
-        setFocused(false);
-        props.onBlur?.(event);
-      }}
-      style={[styles.input, focused && styles.inputFocused]}
-    />
   );
 }
 
@@ -185,23 +166,11 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     justifyContent: "center",
+    gap: 32,
     paddingHorizontal: 240,
     backgroundColor: "#0b0b0f",
   },
-  title: { color: "white", fontSize: 64, fontWeight: "700", marginBottom: 48 },
-  label: { color: "#c8c8d0", fontSize: 32, marginBottom: 16 },
-  input: {
-    color: "white",
-    fontSize: 36,
-    paddingHorizontal: 24,
-    paddingVertical: 20,
-    borderRadius: 12,
-    borderWidth: 3,
-    borderColor: "#2a2a33",
-    backgroundColor: "#16161c",
-    marginBottom: 32,
-  },
-  inputFocused: { borderColor: "#5b5bf0" },
+  title: { color: "white", fontSize: 64, fontWeight: "700", marginBottom: 16 },
   row: { flexDirection: "row", gap: 32 },
   button: {
     alignSelf: "flex-start",
@@ -213,6 +182,6 @@ const styles = StyleSheet.create({
   buttonFocused: { backgroundColor: "#5b5bf0", transform: [{ scale: 1.08 }] },
   buttonDisabled: { opacity: 0.5 },
   buttonLabel: { color: "white", fontSize: 32, fontWeight: "600" },
-  spinner: { marginTop: 32, alignSelf: "flex-start" },
-  error: { color: "#ff7b7b", fontSize: 30, marginTop: 32 },
+  spinner: { alignSelf: "flex-start" },
+  error: { color: "#ff7b7b", fontSize: 30 },
 });

@@ -1,14 +1,26 @@
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import type { ChatAttachment, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
 type VisibleTurnItem = OrchestrationV2ThreadProjection["visibleTurnItems"][number];
 
+export interface ThreadImageAttachment {
+  readonly id: string;
+  readonly name: string;
+  readonly mimeType: string;
+}
+
 /** One row of the TV thread feed, derived from a visible turn item. */
 export type ThreadRow =
-  | { readonly kind: "user"; readonly key: string; readonly text: string }
+  | {
+      readonly kind: "user";
+      readonly key: string;
+      readonly text: string;
+      readonly images: ReadonlyArray<ThreadImageAttachment>;
+    }
   | {
       readonly kind: "assistant";
       readonly key: string;
       readonly text: string;
+      readonly images: ReadonlyArray<ThreadImageAttachment>;
       readonly streaming: boolean;
     }
   | {
@@ -26,6 +38,17 @@ export type ThreadRow =
     };
 
 const PREVIEW_LENGTH = 120;
+
+const NO_IMAGES: ReadonlyArray<ThreadImageAttachment> = [];
+
+function imageAttachments(
+  attachments: ReadonlyArray<ChatAttachment> | undefined,
+): ReadonlyArray<ThreadImageAttachment> {
+  const images = (attachments ?? [])
+    .filter((attachment) => attachment.mimeType.toLowerCase().startsWith("image/"))
+    .map(({ id, name, mimeType }) => ({ id, name, mimeType }));
+  return images.length > 0 ? images : NO_IMAGES;
+}
 
 function oneLine(value: string): string {
   const collapsed = value.replace(/\s+/g, " ").trim();
@@ -63,12 +86,31 @@ function toRow(entry: VisibleTurnItem): ThreadRow | null {
   const item = entry.item;
   switch (item.type) {
     case "user_message":
-      return { kind: "user", key: item.id, text: item.text };
-    case "assistant_message":
-      if (item.text.length === 0 && !item.streaming) return null;
-      return { kind: "assistant", key: item.id, text: item.text, streaming: item.streaming };
+      return {
+        kind: "user",
+        key: item.id,
+        text: item.text,
+        images: imageAttachments(item.attachments),
+      };
+    case "assistant_message": {
+      const images = imageAttachments(item.attachments);
+      if (item.text.length === 0 && images.length === 0 && !item.streaming) return null;
+      return {
+        kind: "assistant",
+        key: item.id,
+        text: item.text,
+        images,
+        streaming: item.streaming,
+      };
+    }
     case "proposed_plan":
-      return { kind: "assistant", key: item.id, text: item.markdown, streaming: item.streaming };
+      return {
+        kind: "assistant",
+        key: item.id,
+        text: item.markdown,
+        images: NO_IMAGES,
+        streaming: item.streaming,
+      };
     case "command_execution":
       return tool(item, "Run", item.input);
     case "dynamic_tool":

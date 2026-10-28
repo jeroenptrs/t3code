@@ -159,7 +159,12 @@ export function ThreadScreen(props: {
           </View>
         </View>
         {loadError ? <Text style={styles.error}>{loadError}</Text> : null}
-        <ThreadMessageList rows={rows} emptyLabel={emptyLabel} />
+        <ThreadMessageList
+          rows={rows}
+          emptyLabel={emptyLabel}
+          environmentId={props.environmentId}
+          threadId={props.threadId}
+        />
         <ThreadReplyBox
           key={`${props.environmentId}:${props.threadId}`}
           threadKey={`${props.environmentId}:${props.threadId}`}

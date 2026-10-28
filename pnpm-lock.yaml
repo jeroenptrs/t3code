@@ -1024,6 +1024,9 @@ importers:
       expo-file-system:
         specifier: ~58.0.9
         version: 58.0.9(expo@58.0.14)(react-native-tvos@0.88.0-0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react-native-tvos@0.88.0-0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))
+      expo-image:
+        specifier: ~58.0.15
+        version: 58.0.15(expo@58.0.14)(react-native-tvos@0.88.0-0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react-native-tvos@0.88.0-0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       expo-network:
         specifier: 58.0.3
         version: 58.0.3(patch_hash=cd09b6d1744dde4efa081b5619ebcff38877d98f7502a51cab121629dece8237)(expo@58.0.14)(react@19.3.0)
@@ -1070,6 +1073,9 @@ importers:
       metro-resolver:
         specifier: 0.87.1
         version: 0.87.1
+      sharp:
+        specifier: 0.35.4
+        version: 0.35.4(@types/node@24.12.4)
       typescript:
         specifier: 'catalog:'
         version: '@tsc-rs/typescript@0.8.0'
@@ -18746,6 +18752,13 @@ snapshots:
     dependencies:
       expo: 58.0.14(277a83826bb26ba15256633fefeb0bc2)
       expo-image-loader: 58.0.3(expo@58.0.14)
+
+  expo-image@58.0.15(expo@58.0.14)(react-native-tvos@0.88.0-0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react-native-tvos@0.88.0-0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0):
+    dependencies:
+      expo: 58.0.14(85c9c20c692cd0410c053472c3f62cea)
+      react: 19.3.0
+      react-native: react-native-tvos@0.88.0-0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react-native-tvos@0.88.0-0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
+      sf-symbols-typescript: 2.2.0
 
   expo-image@58.0.15(expo@58.0.14)(react-native@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0):
     dependencies:

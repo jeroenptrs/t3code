@@ -7,7 +7,8 @@ import { unified } from "unified";
 import { colors, typography } from "../../components/theme";
 
 // A markdown-lite renderer for the TV: paragraphs, headings, emphasis, inline and fenced code,
-// lists, quotes, and links as plain text. Plain React Native views, no native module.
+// lists, quotes, and links as plain text. Plain React Native views, no native module. A
+// top-level image becomes its own block so the caller can render it as a focusable thumbnail.
 
 const parser = unified().use(remarkParse);
 
@@ -180,23 +181,65 @@ function renderBlock(node: RootContent, key: string, nested = false): ReactNode 
   }
 }
 
+export type MarkdownBlock =
+  | { readonly kind: "element"; readonly key: string; readonly element: ReactNode }
+  | { readonly kind: "image"; readonly key: string; readonly href: string; readonly alt: string };
+
+function isBlankText(node: PhrasingContent): boolean {
+  return (node.type === "text" && node.value.trim() === "") || node.type === "break";
+}
+
+/** A paragraph's images split out as image blocks, with the text runs between them kept. */
+function splitParagraphImages(nodes: ReadonlyArray<PhrasingContent>, key: string): MarkdownBlock[] {
+  const blocks: MarkdownBlock[] = [];
+  let run: PhrasingContent[] = [];
+  const flush = () => {
+    if (run.some((node) => !isBlankText(node))) {
+      const runKey = `${key}.t${blocks.length}`;
+      blocks.push({
+        kind: "element",
+        key: runKey,
+        element: <Text style={styles.paragraph}>{renderInline(run, runKey)}</Text>,
+      });
+    }
+    run = [];
+  };
+  for (const node of nodes) {
+    if (node.type === "image") {
+      flush();
+      blocks.push({
+        kind: "image",
+        key: `${key}.i${blocks.length}`,
+        href: node.url,
+        alt: node.alt ?? "",
+      });
+    } else {
+      run.push(node);
+    }
+  }
+  flush();
+  return blocks;
+}
+
 /**
  * The top-level blocks of `markdown`, each a separate element so the caller can make each one
  * a focus stop. A top-level list yields one block per item, so a long list scrolls item by item.
  */
-export function renderMarkdownBlocks(markdown: string): ReadonlyArray<{
-  readonly key: string;
-  readonly element: ReactNode;
-}> {
+export function renderMarkdownBlocks(markdown: string): ReadonlyArray<MarkdownBlock> {
   const root = parseMarkdown(markdown);
-  const blocks: Array<{ key: string; element: ReactNode }> = [];
+  const blocks: Array<MarkdownBlock> = [];
   root.children.forEach((node, index) => {
     const key = `b${index}`;
+    if (node.type === "paragraph" && node.children.some((child) => child.type === "image")) {
+      blocks.push(...splitParagraphImages(node.children, key));
+      return;
+    }
     if (node.type === "list") {
       const start = node.start ?? 1;
       node.children.forEach((item, itemIndex) => {
         const itemKey = `${key}.${itemIndex}`;
         blocks.push({
+          kind: "element",
           key: itemKey,
           element: (
             <ListItemView
@@ -211,7 +254,7 @@ export function renderMarkdownBlocks(markdown: string): ReadonlyArray<{
       return;
     }
     const element = renderBlock(node, key);
-    if (element !== null) blocks.push({ key, element });
+    if (element !== null) blocks.push({ kind: "element", key, element });
   });
   return blocks;
 }

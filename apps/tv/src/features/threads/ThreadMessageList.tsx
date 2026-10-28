@@ -1,4 +1,6 @@
-import { memo, useMemo, useRef, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { memo, useContext, useMemo, useRef, useState } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -10,43 +12,83 @@ import {
   type ScrollViewInstance,
 } from "react-native";
 
+import { Atom } from "effect/reactivity";
+
 import { FocusableBlock } from "../../components/FocusableBlock";
 import { colors, typography } from "../../components/theme";
+import { environmentProjects, environmentThreadShells } from "../../state/environments";
 import { renderMarkdownBlocks } from "./markdown";
-import type { ThreadRow } from "./threadRows";
+import {
+  attachmentImageSource,
+  markdownImageSource,
+  ThreadImage,
+  ThreadImageScopeContext,
+  type ThreadImageScope,
+} from "./threadImages";
+import type { ThreadImageAttachment, ThreadRow } from "./threadRows";
 
 // Within this distance of the end, new and streamed content keeps the list pinned to the end.
 const FOLLOW_THRESHOLD_PX = 160;
 
+function AttachmentImages(props: { readonly images: ReadonlyArray<ThreadImageAttachment> }) {
+  if (props.images.length === 0) return null;
+  return (
+    <View style={styles.images}>
+      {props.images.map((image) => (
+        <ThreadImage key={image.id} source={attachmentImageSource(image)} label={image.name} />
+      ))}
+    </View>
+  );
+}
+
 const UserRow = memo(function UserRow(props: {
   readonly text: string;
+  readonly images: ReadonlyArray<ThreadImageAttachment>;
   readonly preferred: boolean;
 }) {
   return (
-    <FocusableBlock style={styles.userRow} hasTVPreferredFocus={props.preferred}>
-      <Text style={styles.roleLabel}>You</Text>
-      <Text style={styles.userText}>{props.text}</Text>
-    </FocusableBlock>
+    <View style={styles.userGroup}>
+      <FocusableBlock style={styles.userRow} hasTVPreferredFocus={props.preferred}>
+        <Text style={styles.roleLabel}>You</Text>
+        {props.text ? <Text style={styles.userText}>{props.text}</Text> : null}
+      </FocusableBlock>
+      <AttachmentImages images={props.images} />
+    </View>
   );
 });
 
 const AssistantRow = memo(function AssistantRow(props: {
   readonly text: string;
+  readonly images: ReadonlyArray<ThreadImageAttachment>;
   readonly streaming: boolean;
   readonly preferred: boolean;
 }) {
+  const scope = useContext(ThreadImageScopeContext);
   const blocks = useMemo(() => renderMarkdownBlocks(props.text), [props.text]);
   return (
     <View style={styles.assistantRow}>
-      {blocks.map((block, index) => (
-        <FocusableBlock
-          key={block.key}
-          style={styles.assistantBlock}
-          hasTVPreferredFocus={props.preferred && index === blocks.length - 1}
-        >
-          {block.element}
-        </FocusableBlock>
-      ))}
+      {blocks.map((block, index) => {
+        // While streaming, blocks keep appending, so the flag stays on the first block.
+        const preferred = props.preferred && index === (props.streaming ? 0 : blocks.length - 1);
+        return block.kind === "image" ? (
+          <View key={block.key} style={styles.markdownImage}>
+            <ThreadImage
+              source={markdownImageSource(block.href, scope)}
+              label={block.alt || block.href}
+              hasTVPreferredFocus={preferred}
+            />
+          </View>
+        ) : (
+          <FocusableBlock
+            key={block.key}
+            style={styles.assistantBlock}
+            hasTVPreferredFocus={preferred}
+          >
+            {block.element}
+          </FocusableBlock>
+        );
+      })}
+      <AttachmentImages images={props.images} />
       {props.streaming ? <Text style={styles.streaming}>▍ Writing…</Text> : null}
     </View>
   );
@@ -98,9 +140,16 @@ function Row(props: { readonly row: ThreadRow; readonly preferred: boolean }) {
   const { row, preferred } = props;
   switch (row.kind) {
     case "user":
-      return <UserRow text={row.text} preferred={preferred} />;
+      return <UserRow text={row.text} images={row.images} preferred={preferred} />;
     case "assistant":
-      return <AssistantRow text={row.text} streaming={row.streaming} preferred={preferred} />;
+      return (
+        <AssistantRow
+          text={row.text}
+          images={row.images}
+          streaming={row.streaming}
+          preferred={preferred}
+        />
+      );
     case "tool":
       return (
         <ToolRow name={row.name} preview={row.preview} status={row.status} preferred={preferred} />
@@ -117,7 +166,11 @@ function Row(props: { readonly row: ThreadRow; readonly preferred: boolean }) {
 export function ThreadMessageList(props: {
   readonly rows: ReadonlyArray<ThreadRow>;
   readonly emptyLabel: string;
+  /** Images resolve against this thread; without it they show as unavailable. */
+  readonly environmentId?: EnvironmentId;
+  readonly threadId?: ThreadId;
 }) {
+  const imageScope = useThreadImageScope(props.environmentId, props.threadId);
   const scrollRef = useRef<ScrollViewInstance>(null);
   const followEnd = useRef(true);
   // Focus starts on the newest row at open. Fixed after the first rows arrive, so rows
@@ -134,27 +187,57 @@ export function ThreadMessageList(props: {
   };
 
   return (
-    <TVFocusGuideView style={styles.root} autoFocus>
-      <ScrollView
-        ref={scrollRef}
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        onScroll={onScroll}
-        scrollEventThrottle={100}
-        onContentSizeChange={() => {
-          if (followEnd.current) scrollRef.current?.scrollToEnd({ animated: false });
-        }}
-      >
-        {props.rows.length === 0 ? (
-          <Text style={styles.empty}>{props.emptyLabel}</Text>
-        ) : (
-          props.rows.map((row) => (
-            <Row key={row.key} row={row} preferred={row.key === initialFocusKey} />
-          ))
-        )}
-      </ScrollView>
-    </TVFocusGuideView>
+    <ThreadImageScopeContext.Provider value={imageScope}>
+      <TVFocusGuideView style={styles.root} autoFocus>
+        <ScrollView
+          ref={scrollRef}
+          style={styles.scroll}
+          contentContainerStyle={styles.content}
+          onScroll={onScroll}
+          scrollEventThrottle={100}
+          onContentSizeChange={() => {
+            if (followEnd.current) scrollRef.current?.scrollToEnd({ animated: false });
+          }}
+        >
+          {props.rows.length === 0 ? (
+            <Text style={styles.empty}>{props.emptyLabel}</Text>
+          ) : (
+            props.rows.map((row) => (
+              <Row key={row.key} row={row} preferred={row.key === initialFocusKey} />
+            ))
+          )}
+        </ScrollView>
+      </TVFocusGuideView>
+    </ThreadImageScopeContext.Provider>
   );
+}
+
+const NO_SHELL = Atom.make(null);
+const NO_PROJECTS = Atom.make<ReadonlyArray<never>>([]);
+
+/** The thread's cwd, its worktree or else its project root, the way mobile resolves it. */
+function useThreadImageScope(
+  environmentId: EnvironmentId | undefined,
+  threadId: ThreadId | undefined,
+): ThreadImageScope | null {
+  const ref = useMemo(
+    () =>
+      environmentId === undefined || threadId === undefined ? null : { environmentId, threadId },
+    [environmentId, threadId],
+  );
+  const shell = useAtomValue(
+    ref === null ? NO_SHELL : environmentThreadShells.threadShellAtom(ref),
+  );
+  const projects = useAtomValue(
+    environmentId === undefined
+      ? NO_PROJECTS
+      : environmentProjects.environmentProjectsAtom(environmentId),
+  );
+  const workspaceRoot =
+    shell?.worktreePath ??
+    projects.find((project) => project.id === shell?.projectId)?.workspaceRoot ??
+    null;
+  return useMemo(() => (ref === null ? null : { ...ref, workspaceRoot }), [ref, workspaceRoot]);
 }
 
 const styles = StyleSheet.create({
@@ -162,6 +245,9 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   content: { gap: 20, paddingVertical: 24, paddingRight: 24 },
   empty: { color: colors.textMuted, ...typography.body },
+  images: { flexDirection: "row", flexWrap: "wrap", gap: 16, paddingLeft: 30 },
+  markdownImage: { paddingLeft: 30 },
+  userGroup: { gap: 12 },
   roleLabel: { color: colors.textMuted, ...typography.small, fontWeight: "600" },
   userRow: {
     backgroundColor: colors.surface,

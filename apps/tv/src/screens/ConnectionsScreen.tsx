@@ -2,11 +2,12 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentConnectionSummary } from "@t3tools/client-runtime/state/presentation";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { ScrollView, StyleSheet, Text, TextInput, TVFocusGuideView, View } from "react-native";
+import { ScrollView, StyleSheet, Text, TVFocusGuideView, View } from "react-native";
 
 import { ConnectionBadge } from "../components/ConnectionBadge";
 import { FocusablePressable } from "../components/FocusablePressable";
 import { colors } from "../components/theme";
+import { TvTextInput } from "../components/TvTextInput";
 import { CloudAccountCard } from "../features/cloud/CloudAccountCard";
 import { CloudEnvironmentList } from "../features/cloud/CloudEnvironmentList";
 import { tvAtomRegistry } from "../state/atom-registry";
@@ -63,25 +64,21 @@ function PairingForm(props: { readonly hasEnvironments: boolean }) {
         Run `t3 pair` on the host, or open Settings → Connections in T3 Code, and enter the host and
         pairing code it shows.
       </Text>
-      <Text style={styles.label}>Host</Text>
-      <TextInput
-        style={styles.input}
+      <TvTextInput
+        label="Host"
         value={host}
         onChangeText={(value) => updatePairingForm({ host: value })}
         placeholder="192.168.1.20:3773"
-        placeholderTextColor={colors.textMuted}
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType="url"
         hasTVPreferredFocus={!props.hasEnvironments}
       />
-      <Text style={styles.label}>Pairing code</Text>
-      <TextInput
-        style={styles.input}
+      <TvTextInput
+        label="Pairing code"
         value={code}
         onChangeText={(value) => updatePairingForm({ code: value })}
         placeholder="Pairing code"
-        placeholderTextColor={colors.textMuted}
         autoCapitalize="none"
         autoCorrect={false}
       />
@@ -153,15 +150,6 @@ const styles = StyleSheet.create({
   listColumn: { flex: 1, gap: 20 },
   card: { backgroundColor: colors.surface, borderRadius: 24, padding: 40, gap: 16 },
   sectionTitle: { color: colors.text, fontSize: 38, fontWeight: "600", marginBottom: 8 },
-  label: { color: colors.textMuted, fontSize: 26, marginTop: 8 },
-  input: {
-    color: colors.text,
-    backgroundColor: colors.background,
-    borderRadius: 12,
-    fontSize: 30,
-    paddingHorizontal: 24,
-    paddingVertical: 18,
-  },
   button: {
     marginTop: 24,
     alignItems: "center",

@@ -12,6 +12,12 @@ const bundleIdentifier =
   repoEnv.T3CODE_TV_BUNDLE_ID?.trim() ||
   (phoneBundleIdentifier ? `${phoneBundleIdentifier}.tv` : "com.t3tools.t3code.tv");
 
+const iconLayers = (size: string) => ({
+  front: `./assets/icon-front-${size}.png`,
+  middle: `./assets/icon-middle-${size}.png`,
+  back: `./assets/icon-back-${size}.png`,
+});
+
 const config: ExpoConfig = {
   name: "T3 Code TV",
   slug: "t3-code-tv",
@@ -20,7 +26,24 @@ const config: ExpoConfig = {
     bundleIdentifier,
     ...(appleTeamId ? { appleTeamId } : {}),
   },
-  plugins: [["@react-native-tvos/config-tv", { isTV: true }]],
+  plugins: [
+    [
+      "@react-native-tvos/config-tv",
+      {
+        isTV: true,
+        // Generated from the nightly icon by `vp run icons:generate`; layers give the parallax.
+        appleTVImages: {
+          iconLayers: iconLayers("1280x768"),
+          iconSmallLayers: iconLayers("400x240"),
+          iconSmall2xLayers: iconLayers("800x480"),
+          topShelf: "./assets/top-shelf-1920x720.png",
+          topShelf2x: "./assets/top-shelf-3840x1440.png",
+          topShelfWide: "./assets/top-shelf-2320x720.png",
+          topShelfWide2x: "./assets/top-shelf-4640x1440.png",
+        },
+      },
+    ],
+  ],
   // Same shape as apps/mobile/app.config.ts, read by src/features/cloud/publicConfig.ts.
   extra: {
     relay: {
