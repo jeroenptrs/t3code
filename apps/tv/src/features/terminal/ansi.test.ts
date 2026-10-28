@@ -51,7 +51,7 @@ describe("createAnsiParser", () => {
   });
 
   it("keeps unchanged lines by identity and the newest lines past the cap", () => {
-    const parser = createAnsiParser(3);
+    const parser = createAnsiParser({ maxLines: 3 });
     parser.write("a\nb\n");
     const first = parser.lines();
     parser.write("c");
@@ -60,5 +60,11 @@ describe("createAnsiParser", () => {
     expect(second[1]).toBe(first[1]);
     parser.write("\nd\ne");
     expect(parser.lines().map(text)).toEqual(["c", "d", "e"]);
+  });
+
+  it("wraps a line longer than the grid onto successive lines", () => {
+    const parser = createAnsiParser({ cols: 4 });
+    parser.write("abcdefghij\r\n1234\r\nxy");
+    expect(parser.lines().map(text)).toEqual(["abcd", "efgh", "ij", "1234", "xy"]);
   });
 });

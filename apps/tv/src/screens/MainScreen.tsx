@@ -106,6 +106,7 @@ export function MainScreen({
           <ThreadScreen
             key={`${selectedThread.environmentId}:${selectedThread.threadId}`}
             thread={selectedThread}
+            hidden={props.hidden}
             onBack={focusSidebar}
             onOpenThread={setSelectedThread}
           />

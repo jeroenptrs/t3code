@@ -3,6 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useMemo,
   useReducer,
   useRef,
@@ -100,18 +101,22 @@ function Screens() {
   const menuReturnsToSidebar = !canGoBack && top.name === "home" && inConversation;
   const menuHandled = canGoBack || menuReturnsToSidebar;
   useEffect(() => {
-    if (!menuHandled) {
-      TVEventControl.disableTVMenuKey();
-      return;
-    }
-    TVEventControl.enableTVMenuKey();
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (canGoBack) back();
-      else main.current?.focusSidebar();
-      return true;
-    });
+    if (menuHandled) TVEventControl.enableTVMenuKey();
+    else TVEventControl.disableTVMenuKey();
+  }, [menuHandled]);
+
+  const onMenu = useEffectEvent(() => {
+    if (!menuHandled) return false;
+    if (canGoBack) back();
+    else main.current?.focusSidebar();
+    return true;
+  });
+  // Registered once, so it stays the oldest handler: BackHandler calls the newest first, and an
+  // open sheet's handler must keep running before this one.
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => onMenu());
     return () => subscription.remove();
-  }, [back, canGoBack, menuHandled]);
+  }, []);
 
   if (!catalog.isReady) return <View style={styles.root} />;
   return (

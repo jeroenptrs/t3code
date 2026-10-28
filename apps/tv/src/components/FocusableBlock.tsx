@@ -19,6 +19,7 @@ export const FocusableBlock = memo(function FocusableBlock({
 }: {
   readonly ref?: Ref<ViewInstance>;
   readonly style?: StyleProp<ViewStyle>;
+  readonly focusedStyle?: StyleProp<ViewStyle>;
   readonly hasTVPreferredFocus?: boolean;
   readonly children: ReactNode;
 }) {
@@ -29,7 +30,7 @@ export const FocusableBlock = memo(function FocusableBlock({
       hasTVPreferredFocus={props.hasTVPreferredFocus}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
-      style={[styles.base, props.style, focused && styles.focused]}
+      style={[styles.base, props.style, focused && styles.focused, focused && props.focusedStyle]}
     >
       {props.children}
     </Pressable>

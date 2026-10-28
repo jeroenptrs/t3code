@@ -28,11 +28,12 @@ const EMPTY_STATE: TerminalLinesState = { lines: [], status: "closed", error: nu
  */
 export function useTerminalLines(
   atom: Atom.Atom<AsyncResult.AsyncResult<TerminalBufferState, unknown>> | null,
+  cols: number,
 ): TerminalLinesState {
   const [state, setState] = useState(EMPTY_STATE);
   useEffect(() => {
     if (atom === null) return;
-    const parser = createAnsiParser();
+    const parser = createAnsiParser({ cols });
     let cursor = INITIAL_TERMINAL_OUTPUT_CURSOR;
     let status: TerminalLinesState["status"] = "closed";
     let error: string | null = null;
@@ -68,6 +69,6 @@ export function useTerminalLines(
       unsubscribe();
       if (timer !== null) clearTimeout(timer);
     };
-  }, [atom]);
+  }, [atom, cols]);
   return state;
 }

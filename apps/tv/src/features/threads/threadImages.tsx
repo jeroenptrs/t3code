@@ -142,6 +142,7 @@ export const ThreadImage = memo(function ThreadImage({
   const [focused, setFocused] = useState(false);
   const [open, setOpen] = useState(false);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const [viewerFailedUrl, setViewerFailedUrl] = useState<string | null>(null);
   const [loadedAspect, setLoadedAspect] = useState<number | null>(null);
   const dimensions = state._tag === "Success" ? state.imageDimensions : undefined;
   const aspect =
@@ -153,6 +154,7 @@ export const ThreadImage = memo(function ThreadImage({
       : state._tag === "Failure" && state.reason === "missing-file-access"
         ? "Pair again with file access to see this image"
         : "Image unavailable";
+  if (open && url === null) setOpen(false);
 
   return (
     <>
@@ -193,12 +195,22 @@ export const ThreadImage = memo(function ThreadImage({
       {url !== null ? (
         <Modal visible={open} animationType="fade" onRequestClose={() => setOpen(false)}>
           <View style={styles.viewer}>
-            <Image
-              source={{ uri: url }}
-              style={styles.fill}
-              contentFit="contain"
-              accessibilityLabel={props.label}
-            />
+            {viewerFailedUrl === url ? (
+              <View style={styles.viewerPlaceholder}>
+                <Text style={styles.placeholderText}>Image unavailable</Text>
+                <Text style={styles.placeholderName} numberOfLines={1}>
+                  {props.label}
+                </Text>
+              </View>
+            ) : (
+              <Image
+                source={{ uri: url }}
+                style={styles.fill}
+                contentFit="contain"
+                accessibilityLabel={props.label}
+                onError={() => setViewerFailedUrl(url)}
+              />
+            )}
             <Text style={styles.viewerHint}>Press Menu to close</Text>
           </View>
         </Modal>
@@ -221,6 +233,7 @@ const styles = StyleSheet.create({
   placeholderText: { color: colors.textMuted, ...typography.small },
   placeholderName: { color: colors.text, ...typography.small },
   viewer: { flex: 1, backgroundColor: "#000" },
+  viewerPlaceholder: { flex: 1, justifyContent: "center", alignItems: "center", gap: 8 },
   viewerHint: {
     position: "absolute",
     bottom: 36,

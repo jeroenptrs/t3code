@@ -228,7 +228,14 @@ export function ThreadGitSheet(props: {
       setNotice({ text: failureMessage(created.cause, "Git action failed."), tone: "danger" });
       return;
     }
-    await setThreadBranch(created.value.refName);
+    const branchSet = await setThreadBranch(created.value.refName);
+    if (AsyncResult.isFailure(branchSet)) {
+      setNotice({
+        text: failureMessage(branchSet.cause, "Failed to update the thread branch."),
+        tone: "danger",
+      });
+      return;
+    }
     await runAction({ action });
   };
 
@@ -345,6 +352,7 @@ export function ThreadGitSheet(props: {
           label: file.path,
           subtitle: `+${file.insertions} −${file.deletions}`,
         }))}
+        emptyLabel={gitStatus === null ? "Checking status…" : "Nothing to review"}
         onClose={close}
       />
     );

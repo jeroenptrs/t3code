@@ -8,7 +8,7 @@ export interface ThreadSheetRow {
   readonly key: string;
   readonly label: string;
   readonly subtitle?: string | null;
-  /** Dimmed and skipped by focus: a status line, or an action that cannot run now. */
+  /** Dimmed and inert: a status line, or an action that cannot run now. Still a focus stop. */
   readonly disabled?: boolean;
   readonly tone?: "default" | "danger" | "accent";
   /** A status dot before the label. */
@@ -26,6 +26,8 @@ export function ThreadSheet(props: {
   readonly subtitle?: string | null;
   readonly notice?: { readonly text: string; readonly tone: "muted" | "danger" } | null;
   readonly rows: ReadonlyArray<ThreadSheetRow>;
+  /** Shown as the only row when `rows` is empty, so focus has somewhere to stay. */
+  readonly emptyLabel?: string;
   readonly onClose: () => void;
 }) {
   const onClose = useEffectEvent(() => props.onClose());
@@ -39,7 +41,12 @@ export function ThreadSheet(props: {
     return () => subscription.remove();
   }, []);
 
-  const firstFocusable = props.rows.find((row) => !row.disabled)?.key;
+  // Every row is a focus stop: with none, focus would leave the trap and Menu reach the app.
+  const rows: ReadonlyArray<ThreadSheetRow> =
+    props.rows.length > 0
+      ? props.rows
+      : [{ key: "empty", label: props.emptyLabel ?? "Nothing here" }];
+  const preferredKey = (rows.find((row) => !row.disabled) ?? rows[0]!).key;
   return (
     <View style={styles.overlay}>
       <View style={styles.scrim} />
@@ -68,8 +75,8 @@ export function ThreadSheet(props: {
           </Text>
         ) : null}
         <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-          {props.rows.map((row) => (
-            <SheetRow key={row.key} row={row} preferred={row.key === firstFocusable} />
+          {rows.map((row) => (
+            <SheetRow key={row.key} row={row} preferred={row.key === preferredKey} />
           ))}
         </ScrollView>
         <Text style={styles.hint}>Menu closes</Text>
@@ -97,12 +104,13 @@ function SheetRow(props: { readonly row: ThreadSheetRow; readonly preferred: boo
       </View>
     </View>
   );
-  if (row.disabled) return <View style={[styles.row, styles.disabledRow]}>{content}</View>;
+  // Not Pressable's `disabled`: tvOS skips disabled views, so a sheet of them would lose focus.
+  const onPress = row.disabled ? undefined : row.onPress;
   return (
     <FocusablePressable
-      style={styles.row}
+      style={[styles.row, row.disabled && styles.disabledRow]}
       hasTVPreferredFocus={props.preferred}
-      {...(row.onPress ? { onPress: row.onPress } : {})}
+      {...(onPress ? { onPress } : {})}
     >
       {content}
     </FocusablePressable>
@@ -126,7 +134,7 @@ const styles = StyleSheet.create({
   list: { flex: 1 },
   listContent: { gap: 10, paddingVertical: 12 },
   row: { paddingHorizontal: 24, paddingVertical: 16, borderRadius: 16 },
-  disabledRow: { opacity: 0.6, borderWidth: 3, borderColor: "transparent" },
+  disabledRow: { opacity: 0.5 },
   rowContent: { flexDirection: "row", alignItems: "center", gap: 16 },
   rowText: { flex: 1, gap: 4 },
   rowLabel: { ...typography.body, fontWeight: "600" },

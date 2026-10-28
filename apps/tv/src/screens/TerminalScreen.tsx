@@ -152,7 +152,7 @@ export function TerminalScreen(props: {
           : null,
     [attachInput, canOperate, environmentId, observing, terminalId, threadId],
   );
-  const terminal = useTerminalLines(outputAtom);
+  const terminal = useTerminalLines(outputAtom, grid.cols);
   const followingRef = useRef(true);
   const [command, setCommand] = useState("");
   const isRunning = terminal.status === "running" || terminal.status === "starting";

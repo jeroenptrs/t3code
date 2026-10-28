@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from "react-native";
 
 import { FocusablePressable } from "../../components/FocusablePressable";
 import { TvTextInput } from "../../components/TvTextInput";
-import { colors, typography } from "../../components/theme";
+import { colors, conversation, typography } from "../../components/theme";
 
 // Text whose send failed after its reply box closed, by thread, so reopening the thread restores it.
 const unsentTextByThread = new Map<string, string>();
@@ -53,7 +53,7 @@ export function ThreadReplyBox(props: {
       return;
     }
     setSending(false);
-    if (sent) setText("");
+    if (sent) setText((current) => (current.trim() === sentText ? "" : current));
   };
 
   return (
@@ -73,6 +73,7 @@ export function ThreadReplyBox(props: {
         </View>
         <FocusablePressable
           style={styles.sendButton}
+          focusedStyle={styles.sendButtonFocused}
           disabled={!canSend}
           onPress={() => void send()}
         >
@@ -85,9 +86,24 @@ export function ThreadReplyBox(props: {
 
 const styles = StyleSheet.create({
   root: { gap: 10, paddingTop: 16, paddingBottom: 40 },
-  row: { flexDirection: "row", alignItems: "center", gap: 24 },
+  // Static on purpose: TvTextInput's parents must not change style with focus.
+  row: {
+    ...conversation.composer,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+    borderWidth: 2,
+    borderRadius: 36,
+    padding: 10,
+  },
   inputColumn: { flex: 1 },
-  sendButton: { paddingHorizontal: 44, paddingVertical: 22 },
+  sendButton: {
+    paddingHorizontal: 40,
+    paddingVertical: 18,
+    borderRadius: 28,
+    backgroundColor: colors.accent,
+  },
+  sendButtonFocused: { backgroundColor: colors.accent, borderColor: colors.text },
   sendLabel: { color: colors.text, fontSize: 30, fontWeight: "700" },
   hint: { color: colors.textMuted, ...typography.small },
   error: { color: colors.danger, ...typography.small },

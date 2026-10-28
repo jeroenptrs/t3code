@@ -150,7 +150,15 @@ export interface AnsiParser {
   lines(): ReadonlyArray<AnsiLine>;
 }
 
-export function createAnsiParser(maxLines = MAX_TERMINAL_LINES): AnsiParser {
+export function createAnsiParser(
+  options: {
+    readonly maxLines?: number;
+    /** The grid width: a longer line wraps onto the next, as the shell's terminal wraps it. */
+    readonly cols?: number;
+  } = {},
+): AnsiParser {
+  const maxLines = options.maxLines ?? MAX_TERMINAL_LINES;
+  const cols = options.cols ?? Number.POSITIVE_INFINITY;
   let committed: AnsiLine[] = [];
   let nextId = 0;
   let chars: string[] = [];
@@ -182,17 +190,6 @@ export function createAnsiParser(maxLines = MAX_TERMINAL_LINES): AnsiParser {
     currentLine = null;
   };
 
-  const put = (char: string) => {
-    while (chars.length < column) {
-      chars.push(" ");
-      styles.push(PLAIN_STYLE);
-    }
-    chars[column] = char;
-    styles[column] = style;
-    column += 1;
-    touch();
-  };
-
   const newline = () => {
     committed.push({ id: nextId, spans: toSpans() });
     nextId += 1;
@@ -202,6 +199,19 @@ export function createAnsiParser(maxLines = MAX_TERMINAL_LINES): AnsiParser {
     touch();
     // Trim in batches so a long stream does not shift the array on every line.
     if (committed.length > maxLines + 200) committed = committed.slice(-(maxLines - 1));
+  };
+
+  const put = (char: string) => {
+    // Wraps on the character after the last column, so a full-width line then a newline is one line.
+    if (column >= cols) newline();
+    while (chars.length < column) {
+      chars.push(" ");
+      styles.push(PLAIN_STYLE);
+    }
+    chars[column] = char;
+    styles[column] = style;
+    column += 1;
+    touch();
   };
 
   const eraseInLine = (mode: number) => {

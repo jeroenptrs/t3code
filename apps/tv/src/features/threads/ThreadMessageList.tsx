@@ -16,7 +16,7 @@ import {
 import { Atom } from "effect/reactivity";
 
 import { FocusableBlock } from "../../components/FocusableBlock";
-import { colors, typography } from "../../components/theme";
+import { colors, conversation, typography } from "../../components/theme";
 import { environmentProjects, environmentThreadShells } from "../../state/environments";
 import { renderMarkdownBlocks } from "./markdown";
 import {
@@ -31,12 +31,21 @@ import type { ThreadImageAttachment, ThreadRow } from "./threadRows";
 // Within this distance of the end, new and streamed content keeps the list pinned to the end.
 const FOLLOW_THRESHOLD_PX = 160;
 
-function AttachmentImages(props: { readonly images: ReadonlyArray<ThreadImageAttachment> }) {
+function AttachmentImages(props: {
+  readonly images: ReadonlyArray<ThreadImageAttachment>;
+  readonly align?: "end";
+  readonly lastRef?: Ref<ViewInstance> | undefined;
+}) {
   if (props.images.length === 0) return null;
   return (
-    <View style={styles.images}>
-      {props.images.map((image) => (
-        <ThreadImage key={image.id} source={attachmentImageSource(image)} label={image.name} />
+    <View style={[styles.images, props.align === "end" && styles.imagesEnd]}>
+      {props.images.map((image, index) => (
+        <ThreadImage
+          key={image.id}
+          ref={index === props.images.length - 1 ? props.lastRef : undefined}
+          source={attachmentImageSource(image)}
+          label={image.name}
+        />
       ))}
     </View>
   );
@@ -53,11 +62,21 @@ const UserRow = memo(function UserRow({
 }) {
   return (
     <View style={styles.userGroup}>
-      <FocusableBlock ref={focusRef} style={styles.userRow} hasTVPreferredFocus={props.preferred}>
-        <Text style={styles.roleLabel}>You</Text>
-        {props.text ? <Text style={styles.userText}>{props.text}</Text> : null}
-      </FocusableBlock>
-      <AttachmentImages images={props.images} />
+      {props.text ? (
+        <FocusableBlock
+          ref={focusRef}
+          style={styles.userBubble}
+          focusedStyle={styles.userBubbleFocused}
+          hasTVPreferredFocus={props.preferred}
+        >
+          <Text style={styles.userText}>{props.text}</Text>
+        </FocusableBlock>
+      ) : null}
+      <AttachmentImages
+        images={props.images}
+        align="end"
+        lastRef={props.text ? undefined : focusRef}
+      />
     </View>
   );
 });
@@ -348,16 +367,24 @@ const styles = StyleSheet.create({
   content: { gap: 20, paddingVertical: 24, paddingRight: 24 },
   empty: { color: colors.textMuted, ...typography.body },
   images: { flexDirection: "row", flexWrap: "wrap", gap: 16, paddingLeft: 30 },
+  imagesEnd: { justifyContent: "flex-end", paddingLeft: 0 },
   markdownImage: { paddingLeft: 30 },
-  userGroup: { gap: 12 },
-  roleLabel: { color: colors.textMuted, ...typography.small, fontWeight: "600" },
-  userRow: {
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    paddingVertical: 20,
-    paddingRight: 28,
-    gap: 6,
-    marginTop: 16,
+  // Mobile's user bubble: right-aligned, at most 85% of the feed.
+  userGroup: { gap: 12, alignItems: "flex-end", marginTop: 16 },
+  userBubble: {
+    ...conversation.userBubble,
+    maxWidth: "85%",
+    paddingHorizontal: 30,
+    paddingVertical: 22,
+    borderWidth: 3,
+    borderLeftWidth: 3,
+    borderColor: "transparent",
+    borderLeftColor: "transparent",
+  },
+  userBubbleFocused: {
+    backgroundColor: conversation.userBubble.backgroundColor,
+    borderColor: colors.accent,
+    borderLeftColor: colors.accent,
   },
   userText: { color: colors.text, ...typography.body },
   assistantRow: { gap: 14 },

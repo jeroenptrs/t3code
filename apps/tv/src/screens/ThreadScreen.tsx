@@ -60,6 +60,8 @@ const STATUS_LABELS: Record<string, string> = {
 
 export function ThreadScreen(props: {
   readonly thread: ThreadRef;
+  /** Under another route. An open sheet unmounts so its Menu handler cannot act there. */
+  readonly hidden: boolean;
   /** Returns focus to the sidebar. */
   readonly onBack: () => void;
   /** Shows another thread, a subagent's or a merge-back target; without it those cannot open. */
@@ -82,7 +84,8 @@ export function ThreadScreen(props: {
   const detailWorktreePath = useAtomValue(environmentThreadDetails.worktreePathAtom(ref));
   const turnSubagents = useAtomValue(environmentThreadDetails.turnSubagentsAtom(ref));
   const [sendError, setSendError] = useState<string | null>(null);
-  const [sheet, setSheet] = useState<ThreadSheetKind | null>(null);
+  const [openSheet, setSheet] = useState<ThreadSheetKind | null>(null);
+  const sheet = props.hidden ? null : openSheet;
   // The header button whose sheet last closed takes focus back.
   const [lastSheet, setLastSheet] = useState<ThreadSheetKind | null>(null);
   const closeSheet = () => {
@@ -179,21 +182,22 @@ export function ThreadScreen(props: {
   return (
     <View style={styles.root}>
       <View style={styles.column}>
+        <View style={styles.headerText}>
+          <Text style={styles.title} numberOfLines={1}>
+            {title}
+          </Text>
+          <Text style={styles.meta} numberOfLines={1}>
+            {[environmentLabel, projectTitle].filter(Boolean).join("  ·  ")}
+            {environmentLabel || projectTitle ? "  ·  " : ""}
+            <Text style={{ color: statusColor }}>{statusLabel}</Text>
+            {threadState.status === "synchronizing" ? "  ·  Syncing…" : ""}
+          </Text>
+        </View>
         <TVFocusGuideView style={styles.header} autoFocus>
           <FocusablePressable style={styles.headerButton} onPress={props.onBack}>
             <Text style={styles.headerButtonLabel}>‹ Back</Text>
           </FocusablePressable>
-          <View style={styles.headerText}>
-            <Text style={styles.title} numberOfLines={1}>
-              {title}
-            </Text>
-            <Text style={styles.meta} numberOfLines={1}>
-              {[environmentLabel, projectTitle].filter(Boolean).join("  ·  ")}
-              {environmentLabel || projectTitle ? "  ·  " : ""}
-              <Text style={{ color: statusColor }}>{statusLabel}</Text>
-              {threadState.status === "synchronizing" ? "  ·  Syncing…" : ""}
-            </Text>
-          </View>
+          <View style={styles.headerSpacer} />
           {agentsSegment ? (
             <FocusablePressable
               style={styles.headerButton}
@@ -210,7 +214,7 @@ export function ThreadScreen(props: {
           ) : null}
           <FocusablePressable
             style={styles.headerButton}
-            disabled={cwd === null}
+            disabled={cwd === null || project === null}
             hasTVPreferredFocus={sheet === null && lastSheet === "git"}
             onPress={() => setSheet("git")}
           >
@@ -294,7 +298,8 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background, alignItems: "center" },
   column: { flex: 1, width: "100%", maxWidth: 1200, paddingTop: 48 },
   header: { flexDirection: "row", alignItems: "center", gap: 20, marginBottom: 12 },
-  headerText: { flex: 1, gap: 4, marginHorizontal: 12 },
+  headerText: { gap: 4, marginBottom: 16 },
+  headerSpacer: { flex: 1 },
   headerButton: { paddingHorizontal: 24, paddingVertical: 14 },
   headerButtonLabel: { color: colors.text, fontSize: 26, fontWeight: "600" },
   title: { color: colors.text, fontSize: 44, fontWeight: "700" },
