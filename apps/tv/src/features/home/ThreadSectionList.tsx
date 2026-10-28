@@ -9,7 +9,16 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { memo, useCallback, useMemo, useState, useSyncExternalStore, type Ref } from "react";
+import {
+  memo,
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type Ref,
+} from "react";
 import { FlatList, StyleSheet, Text, TVFocusGuideView, View } from "react-native";
 
 import { FocusablePressable, type FocusableHost } from "../../components/FocusablePressable";
@@ -50,22 +59,31 @@ interface FilterOption<T> {
   readonly label: string;
 }
 
+export interface ThreadSectionListHandle {
+  /** Moves focus to the thread's row; false when the row is not mounted. */
+  readonly focusThread: (thread: ThreadRef) => boolean;
+}
+
 /**
  * The sidebar's threads across environments in mobile's sections (pinned and active rows, then
  * the Working, Snoozed, and Settled shelves), under environment and project filters.
  */
 export function ThreadSectionList({
-  selectedRowRef,
+  ref,
+  onSelectedRowHost,
   filterRef,
   ...props
 }: {
+  readonly ref?: Ref<ThreadSectionListHandle>;
   /** Controlled, so the `environment/<id>` link can set it. */
   readonly environmentFilter: EnvironmentId | null;
   readonly onEnvironmentFilterChange: (environmentId: EnvironmentId | null) => void;
   readonly selectedThread: ThreadRef | null;
   readonly onSelectThread: (thread: ThreadRef) => void;
-  /** Attached to the selected row while it is mounted, for focus guide destinations. */
-  readonly selectedRowRef: Ref<FocusableHost>;
+  /** A long press on a row: the thread's actions, without opening it. */
+  readonly onThreadActions: (thread: ThreadRef) => void;
+  /** Receives the selected row's host while it is mounted, for focus guide destinations. */
+  readonly onSelectedRowHost: (host: FocusableHost | null) => void;
   /** The environment filter, where focus lands when no selected row is mounted. */
   readonly filterRef: Ref<FocusableHost>;
 }) {
@@ -210,7 +228,23 @@ export function ThreadSectionList({
   }, []);
   const showMore = useCallback(() => setSettledLimit((limit) => limit + SETTLED_PAGE_COUNT), []);
 
-  const { onSelectThread } = props;
+  const { onSelectThread, onThreadActions } = props;
+  const rowHosts = useRef(new Map<string, FocusableHost>());
+  const registerRowHost = useCallback(
+    (key: string, selected: boolean, host: FocusableHost | null) => {
+      if (host === null) rowHosts.current.delete(key);
+      else rowHosts.current.set(key, host);
+      if (selected) onSelectedRowHost(host);
+    },
+    [onSelectedRowHost],
+  );
+  useImperativeHandle(ref, () => ({
+    focusThread: (thread) => {
+      const host = rowHosts.current.get(`${thread.environmentId}:${thread.threadId}`);
+      host?.requestTVFocus?.();
+      return host !== undefined;
+    },
+  }));
   const visibleThreadIdsKey = sections.entries
     .flatMap((entry) => (entry.type === "thread" ? [entry.thread.id] : []))
     .join("\n");
@@ -230,6 +264,11 @@ export function ThreadSectionList({
     (thread: EnvironmentThreadShell) =>
       onSelectThread({ environmentId: thread.environmentId, threadId: thread.id }),
     [onSelectThread],
+  );
+  const onLongPress = useCallback(
+    (thread: EnvironmentThreadShell) =>
+      onThreadActions({ environmentId: thread.environmentId, threadId: thread.id }),
+    [onThreadActions],
   );
 
   const renderItem = ({ item }: { readonly item: ThreadListEntry }) => {
@@ -259,7 +298,6 @@ export function ThreadSectionList({
     const selected = selectedKey === `${item.thread.environmentId}:${item.thread.id}`;
     return (
       <ThreadRow
-        ref={selected ? selectedRowRef : undefined}
         thread={item.thread}
         slim={item.section === "snoozed" || item.section === "settled"}
         chip={item.chip}
@@ -272,6 +310,8 @@ export function ThreadSectionList({
           `${item.thread.environmentId}:${item.thread.runtime?.providerInstanceId ?? item.thread.modelSelection.instanceId}`,
         )}
         onSelect={onSelect}
+        onLongPress={onLongPress}
+        registerHost={registerRowHost}
       />
     );
   };
@@ -394,11 +434,7 @@ const subscribeNever = () => () => undefined;
 
 // Rows take only values that change with what they show, so a rebuilt list re-renders just
 // the rows whose thread, status, time, or selection changed.
-const ThreadRow = memo(function ThreadRow({
-  ref,
-  ...props
-}: {
-  readonly ref?: Ref<FocusableHost>;
+const ThreadRow = memo(function ThreadRow(props: {
   readonly thread: EnvironmentThreadShell;
   readonly slim: boolean;
   readonly chip: ThreadStatusChip | null;
@@ -409,8 +445,15 @@ const ThreadRow = memo(function ThreadRow({
   readonly projectTitle: string | undefined;
   readonly providerName: string | undefined;
   readonly onSelect: (thread: EnvironmentThreadShell) => void;
+  readonly onLongPress: (thread: EnvironmentThreadShell) => void;
+  readonly registerHost: (key: string, selected: boolean, host: FocusableHost | null) => void;
 }) {
-  const { thread, chip, selected } = props;
+  const { thread, chip, selected, registerHost } = props;
+  const hostKey = `${thread.environmentId}:${thread.id}`;
+  const hostRef = useCallback(
+    (host: FocusableHost | null) => registerHost(hostKey, selected, host),
+    [hostKey, registerHost, selected],
+  );
   const rowStyle = [styles.row, selected && styles.rowSelected];
   const focusedStyle = selected ? styles.rowSelected : styles.rowFocused;
   const title = thread.title || "Untitled thread";
@@ -419,10 +462,11 @@ const ThreadRow = memo(function ThreadRow({
   if (props.slim) {
     return (
       <FocusablePressable
-        ref={ref}
+        ref={hostRef}
         style={rowStyle}
         focusedStyle={focusedStyle}
         onPress={() => props.onSelect(thread)}
+        onLongPress={() => props.onLongPress(thread)}
       >
         <View style={styles.rowLine}>
           <Text
@@ -449,10 +493,11 @@ const ThreadRow = memo(function ThreadRow({
     chip === null ? mutedColor : selected ? colors.selectedText : statusColors[chip.tone];
   return (
     <FocusablePressable
-      ref={ref}
+      ref={hostRef}
       style={rowStyle}
       focusedStyle={focusedStyle}
       onPress={() => props.onSelect(thread)}
+      onLongPress={() => props.onLongPress(thread)}
     >
       <View style={recede ? styles.receded : undefined}>
         <View style={styles.rowLine}>

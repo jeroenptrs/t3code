@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { memo, useContext, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
+import { memo, useContext, useImperativeHandle, useMemo, useRef, type Ref } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -57,7 +57,6 @@ const UserRow = memo(function UserRow({
   readonly focusRef: Ref<ViewInstance> | undefined;
   readonly text: string;
   readonly images: ReadonlyArray<ThreadImageAttachment>;
-  readonly preferred: boolean;
 }) {
   return (
     <View style={styles.userGroup}>
@@ -66,7 +65,6 @@ const UserRow = memo(function UserRow({
           ref={focusRef}
           style={styles.userBubble}
           focusedStyle={styles.userBubbleFocused}
-          hasTVPreferredFocus={props.preferred}
         >
           <Text style={styles.userText}>{props.text}</Text>
         </FocusableBlock>
@@ -88,15 +86,12 @@ const AssistantRow = memo(function AssistantRow({
   readonly text: string;
   readonly images: ReadonlyArray<ThreadImageAttachment>;
   readonly streaming: boolean;
-  readonly preferred: boolean;
 }) {
   const scope = useContext(ThreadImageScopeContext);
   const blocks = useMemo(() => renderMarkdownBlocks(props.text), [props.text]);
   return (
     <View style={styles.assistantRow}>
       {blocks.map((block, index) => {
-        // While streaming, blocks keep appending, so the flag stays on the first block.
-        const preferred = props.preferred && index === (props.streaming ? 0 : blocks.length - 1);
         const blockRef = index === blocks.length - 1 ? focusRef : undefined;
         return block.kind === "image" ? (
           <View key={block.key} style={styles.markdownImage}>
@@ -104,16 +99,10 @@ const AssistantRow = memo(function AssistantRow({
               ref={blockRef}
               source={markdownImageSource(block.href, scope)}
               label={block.alt || block.href}
-              hasTVPreferredFocus={preferred}
             />
           </View>
         ) : (
-          <FocusableBlock
-            key={block.key}
-            ref={blockRef}
-            style={styles.assistantBlock}
-            hasTVPreferredFocus={preferred}
-          >
+          <FocusableBlock key={block.key} ref={blockRef} style={styles.assistantBlock}>
             {block.element}
           </FocusableBlock>
         );
@@ -132,12 +121,11 @@ const ToolRow = memo(function ToolRow({
   readonly name: string;
   readonly preview: string;
   readonly status: string;
-  readonly preferred: boolean;
 }) {
   const failed = props.status === "failed";
   const running = props.status === "running" || props.status === "pending";
   return (
-    <FocusableBlock ref={focusRef} style={styles.toolRow} hasTVPreferredFocus={props.preferred}>
+    <FocusableBlock ref={focusRef} style={styles.toolRow}>
       <Text style={styles.toolText} numberOfLines={1}>
         <Text style={[styles.toolName, failed && styles.toolFailed]}>
           {running ? "◌ " : failed ? "✕ " : "✓ "}
@@ -156,10 +144,9 @@ const NoticeRow = memo(function NoticeRow({
   readonly focusRef: Ref<ViewInstance> | undefined;
   readonly text: string;
   readonly tone: "muted" | "warning" | "danger";
-  readonly preferred: boolean;
 }) {
   return (
-    <FocusableBlock ref={focusRef} style={styles.noticeRow} hasTVPreferredFocus={props.preferred}>
+    <FocusableBlock ref={focusRef} style={styles.noticeRow}>
       <Text
         style={[
           styles.noticeText,
@@ -183,10 +170,9 @@ const SubagentsRow = memo(function SubagentsRow({
   readonly statusSummary: string;
   readonly active: boolean;
   readonly failed: boolean;
-  readonly preferred: boolean;
 }) {
   return (
-    <FocusableBlock ref={focusRef} style={styles.toolRow} hasTVPreferredFocus={props.preferred}>
+    <FocusableBlock ref={focusRef} style={styles.toolRow}>
       <Text style={styles.toolText} numberOfLines={1}>
         <Text style={[styles.toolName, props.failed && styles.toolFailed]}>
           {props.active ? "◌ " : props.failed ? "✕ " : "✓ "}
@@ -200,18 +186,14 @@ const SubagentsRow = memo(function SubagentsRow({
 
 function Row({
   row,
-  preferred,
   focusRef,
 }: {
   readonly row: ThreadRow;
-  readonly preferred: boolean;
   readonly focusRef: Ref<ViewInstance> | undefined;
 }) {
   switch (row.kind) {
     case "user":
-      return (
-        <UserRow focusRef={focusRef} text={row.text} images={row.images} preferred={preferred} />
-      );
+      return <UserRow focusRef={focusRef} text={row.text} images={row.images} />;
     case "assistant":
       return (
         <AssistantRow
@@ -219,23 +201,14 @@ function Row({
           text={row.text}
           images={row.images}
           streaming={row.streaming}
-          preferred={preferred}
         />
       );
     case "tool":
       return (
-        <ToolRow
-          focusRef={focusRef}
-          name={row.name}
-          preview={row.preview}
-          status={row.status}
-          preferred={preferred}
-        />
+        <ToolRow focusRef={focusRef} name={row.name} preview={row.preview} status={row.status} />
       );
     case "notice":
-      return (
-        <NoticeRow focusRef={focusRef} text={row.text} tone={row.tone} preferred={preferred} />
-      );
+      return <NoticeRow focusRef={focusRef} text={row.text} tone={row.tone} />;
     case "subagents":
       return (
         <SubagentsRow
@@ -244,7 +217,6 @@ function Row({
           statusSummary={row.statusSummary}
           active={row.active}
           failed={row.failed}
-          preferred={preferred}
         />
       );
   }
@@ -272,8 +244,10 @@ export function ThreadMessageList({
 }: {
   readonly ref?: Ref<ThreadMessageListHandle>;
   readonly rows: ReadonlyArray<ThreadRow>;
-  /** Whether the newest row takes focus when the rows first arrive. */
-  readonly claimInitialFocus?: boolean;
+  /** The newest block's host, owned by the parent so it can be a focus guide destination. */
+  readonly latestHost: ViewInstance | null;
+  /** A state setter (stable) that receives the newest block's host. */
+  readonly latestHostRef: (host: ViewInstance | null) => void;
   readonly emptyLabel: string;
   /** Images resolve against this thread; without it they show as unavailable. */
   readonly environmentId?: EnvironmentId;
@@ -282,7 +256,7 @@ export function ThreadMessageList({
   const imageScope = useThreadImageScope(props.environmentId, props.threadId);
   const scrollRef = useRef<ScrollViewInstance>(null);
   const followEnd = useRef(true);
-  const latestRef = useRef<ViewInstance>(null);
+  const { latestHost, latestHostRef } = props;
   const firstRef = useRef<ViewInstance>(null);
   useImperativeHandle(
     ref,
@@ -290,22 +264,16 @@ export function ThreadMessageList({
       focusLatest: () => {
         followEnd.current = true;
         scrollRef.current?.scrollToEnd({ animated: true });
-        requestTVFocus(latestRef.current);
+        requestTVFocus(latestHost);
       },
       focusFirst: () => {
         followEnd.current = false;
         scrollRef.current?.scrollTo({ y: 0, animated: true });
-        requestTVFocus(firstRef.current ?? latestRef.current);
+        requestTVFocus(firstRef.current ?? latestHost);
       },
     }),
-    [],
+    [latestHost],
   );
-  // Focus starts on the newest row at open. Fixed after the first rows arrive, so rows
-  // streamed in later never pull focus away from the reply box.
-  const [initialFocusKey, setInitialFocusKey] = useState<string | null>(null);
-  if (initialFocusKey === null && props.rows.length > 0) {
-    setInitialFocusKey(props.rows[props.rows.length - 1]!.key);
-  }
 
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
@@ -335,10 +303,13 @@ export function ThreadMessageList({
               <Row
                 key={row.key}
                 row={row}
-                preferred={props.claimInitialFocus !== false && row.key === initialFocusKey}
                 // A row's ref lands on its last block; a first row is usually a one-block prompt.
                 focusRef={
-                  index === props.rows.length - 1 ? latestRef : index === 0 ? firstRef : undefined
+                  index === props.rows.length - 1
+                    ? latestHostRef
+                    : index === 0
+                      ? firstRef
+                      : undefined
                 }
               />
             ))

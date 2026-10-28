@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent } from "react";
+import { useEffect, useEffectEvent, type ReactNode } from "react";
 import { BackHandler, ScrollView, StyleSheet, Text, TVFocusGuideView, View } from "react-native";
 
 import { FocusablePressable } from "../../components/FocusablePressable";
@@ -28,6 +28,8 @@ export function ThreadSheet(props: {
   readonly rows: ReadonlyArray<ThreadSheetRow>;
   /** Shown as the only row when `rows` is empty, so focus has somewhere to stay. */
   readonly emptyLabel?: string;
+  /** Above the rows, such as a text field. */
+  readonly children?: ReactNode;
   readonly onClose: () => void;
 }) {
   const onClose = useEffectEvent(() => props.onClose());
@@ -74,6 +76,7 @@ export function ThreadSheet(props: {
             {props.notice.text}
           </Text>
         ) : null}
+        {props.children}
         <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
           {rows.map((row) => (
             <SheetRow key={row.key} row={row} preferred={row.key === preferredKey} />

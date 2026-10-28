@@ -6,7 +6,7 @@ import {
 import { resolveSubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
 import { DEFAULT_SERVER_SETTINGS, type ServerProvider } from "@t3tools/contracts";
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
-import { useCallback, useMemo, useRef, useState, type ComponentRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from "react";
 import {
   StyleSheet,
   Text,
@@ -14,6 +14,7 @@ import {
   useTVEventHandler,
   View,
   type TextInput,
+  type ViewInstance,
 } from "react-native";
 
 import { FocusablePressable, type FocusableHost } from "../components/FocusablePressable";
@@ -35,6 +36,7 @@ import {
   ThreadMessageList,
   type ThreadMessageListHandle,
 } from "../features/threads/ThreadMessageList";
+import { ThreadActionsSheet } from "../features/threads/ThreadActionsSheet";
 import { ThreadGitSheet } from "../features/threads/ThreadGitSheet";
 import { ThreadReplyBox } from "../features/threads/ThreadReplyBox";
 import { ThreadTerminalSheet } from "../features/threads/ThreadTerminalSheet";
@@ -69,6 +71,8 @@ export function ThreadScreen(props: {
   readonly thread: ThreadRef;
   /** Under another route. An open sheet unmounts so its Menu handler cannot act there. */
   readonly hidden: boolean;
+  /** Each new value moves focus to the newest message once it has rendered. */
+  readonly focusRequest: number;
   /** Returns focus to the sidebar. */
   readonly onBack: () => void;
   /** Shows another thread, a subagent's or a merge-back target; without it those cannot open. */
@@ -105,7 +109,21 @@ export function ThreadScreen(props: {
   // Focus guide destinations need mounted host views, so the hosts live in state.
   const [backHost, setBackHost] = useState<FocusableHost | null>(null);
   const [inputHost, setInputHost] = useState<ComponentRef<typeof TextInput> | null>(null);
+  const [latestHost, setLatestHost] = useState<ViewInstance | null>(null);
   const backDestinations = useMemo(() => (backHost ? [backHost] : undefined), [backHost]);
+  // An empty list clears the guide; `undefined` would keep the last destination.
+  const entryDestinations = useMemo(
+    () => (latestHost !== null && sheet === null ? [latestHost] : []),
+    [latestHost, sheet],
+  );
+  const focusedRequest = useRef(0);
+  // Native focus can move only once the newest block is mounted.
+  useEffect(() => {
+    if (latestHost === null || sheet !== null || props.hidden) return;
+    if (focusedRequest.current === props.focusRequest) return;
+    focusedRequest.current = props.focusRequest;
+    focusLatest();
+  }, [focusLatest, latestHost, props.focusRequest, props.hidden, sheet]);
   const replyDestinations = useMemo(() => (inputHost ? [inputHost] : undefined), [inputHost]);
   useTVEventHandler(
     useCallback(
@@ -193,7 +211,8 @@ export function ThreadScreen(props: {
         : "Loading thread…";
 
   return (
-    <View style={styles.root}>
+    // Entering the conversation from outside lands on the newest message, whatever was focused last.
+    <TVFocusGuideView style={styles.root} destinations={entryDestinations}>
       <View style={styles.column}>
         {/* Up from Back wraps to the reply row, so a long thread is never a long walk. */}
         <TVFocusGuideView style={styles.wrapGuide} destinations={replyDestinations} />
@@ -218,13 +237,20 @@ export function ThreadScreen(props: {
           key={`messages:${environmentId}:${threadId}`}
           ref={messageList}
           rows={rows}
-          // Selecting in the sidebar keeps focus there; Right enters the conversation.
-          claimInitialFocus={false}
+          latestHost={latestHost}
+          latestHostRef={setLatestHost}
           emptyLabel={emptyLabel}
           environmentId={environmentId}
           threadId={threadId}
         />
         <TVFocusGuideView style={styles.toolbar} autoFocus>
+          <FocusablePressable
+            style={styles.headerButton}
+            hasTVPreferredFocus={sheet === null && lastSheet === "thread"}
+            onPress={() => setSheet("thread")}
+          >
+            <Text style={styles.headerButtonLabel}>Thread</Text>
+          </FocusablePressable>
           {agentsSegment ? (
             <FocusablePressable
               style={styles.headerButton}
@@ -281,7 +307,14 @@ export function ThreadScreen(props: {
         {/* Down from the reply row wraps to Back. A sibling of the list, so its ScrollView never sees the press. */}
         <TVFocusGuideView style={styles.wrapGuide} destinations={backDestinations} />
       </View>
-      {sheet === "git" && cwd !== null && project !== null ? (
+      {sheet === "thread" ? (
+        <ThreadActionsSheet
+          environmentId={environmentId}
+          threadId={threadId}
+          archived={thread?.archivedAt != null}
+          onClose={closeSheet}
+        />
+      ) : sheet === "git" && cwd !== null && project !== null ? (
         <ThreadGitSheet
           environmentId={environmentId}
           threadId={threadId}
@@ -313,7 +346,7 @@ export function ThreadScreen(props: {
           onClose={closeSheet}
         />
       ) : null}
-    </View>
+    </TVFocusGuideView>
   );
 }
 

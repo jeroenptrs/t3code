@@ -1,12 +1,16 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentConnectionSummary } from "@t3tools/client-runtime/state/presentation";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useImperativeHandle, useState, type Ref } from "react";
+import { useImperativeHandle, useRef, useState, type Ref } from "react";
 import { StyleSheet, Text, TVFocusGuideView, View } from "react-native";
 
 import { FocusablePressable, type FocusableHost } from "../components/FocusablePressable";
 import { colors, typeScale } from "../components/theme";
-import { ThreadSectionList } from "../features/home/ThreadSectionList";
+import {
+  ThreadSectionList,
+  type ThreadSectionListHandle,
+} from "../features/home/ThreadSectionList";
+import { ThreadActionsSheet } from "../features/threads/ThreadActionsSheet";
 import type { ThreadRef } from "../navigation/stack";
 import { environmentSummaries } from "../state/environments";
 import { ThreadScreen } from "./ThreadScreen";
@@ -40,9 +44,9 @@ export interface MainScreenHandle {
 }
 
 /**
- * The sidebar of threads beside the selected conversation. Both panes are focus guides, so
- * left and right cross between them from any row: into the sidebar lands on the selected row,
- * into the conversation lands where focus last was there.
+ * The sidebar of threads beside the selected conversation. Left from the conversation lands on
+ * the selected row; selecting a thread, or Right into the conversation, lands on its newest
+ * message (ThreadScreen's own guide).
  */
 export function MainScreen({
   ref,
@@ -59,12 +63,24 @@ export function MainScreen({
   const environments = useAtomValue(environmentSummaries.environmentsAtom);
   const allConnected = environments.every((entry) => entry.connectionState === "connected");
   const [selectedThread, setSelectedThread] = useState<ThreadRef | null>(null);
+  // Bumped per selection: the conversation moves focus to its newest message once per value.
+  const [focusRequest, setFocusRequest] = useState(0);
+  const selectThread = (thread: ThreadRef) => {
+    setSelectedThread(thread);
+    setFocusRequest((request) => request + 1);
+  };
+  const [actionsThread, setActionsThread] = useState<ThreadRef | null>(null);
+  const sectionList = useRef<ThreadSectionListHandle>(null);
   // State, not a ref: the sidebar guide re-renders with the row as its destination.
   const [selectedRow, setSelectedRow] = useState<FocusableHost | null>(null);
   const [filter, setFilter] = useState<FocusableHost | null>(null);
 
   const focusSidebar = () => (selectedRow ?? filter)?.requestTVFocus?.();
   useImperativeHandle(ref, () => ({ focusSidebar }));
+  const closeActions = () => {
+    if (actionsThread !== null && !sectionList.current?.focusThread(actionsThread)) focusSidebar();
+    setActionsThread(null);
+  };
 
   return (
     // Hidden, not unmounted, under another route so selection, filters, and scroll survive.
@@ -81,11 +97,13 @@ export function MainScreen({
           </Text>
         </View>
         <ThreadSectionList
+          ref={sectionList}
           environmentFilter={props.environmentFilter}
           onEnvironmentFilterChange={props.onEnvironmentFilterChange}
           selectedThread={selectedThread}
-          onSelectThread={setSelectedThread}
-          selectedRowRef={setSelectedRow}
+          onSelectThread={selectThread}
+          onThreadActions={setActionsThread}
+          onSelectedRowHost={setSelectedRow}
           filterRef={setFilter}
         />
         <FocusablePressable
@@ -96,9 +114,9 @@ export function MainScreen({
           <Text style={styles.connectionsLabel}>Connections</Text>
         </FocusablePressable>
       </TVFocusGuideView>
+      {/* No autoFocus: a remembered child would win over ThreadScreen's newest-message guide. */}
       <TVFocusGuideView
         style={styles.conversation}
-        autoFocus
         onFocusEnter={() => props.onConversationFocusChange(true)}
         onFocusLeave={() => props.onConversationFocusChange(false)}
       >
@@ -106,9 +124,10 @@ export function MainScreen({
           <ThreadScreen
             key={`${selectedThread.environmentId}:${selectedThread.threadId}`}
             thread={selectedThread}
-            hidden={props.hidden}
+            hidden={props.hidden || actionsThread !== null}
+            focusRequest={focusRequest}
             onBack={focusSidebar}
-            onOpenThread={setSelectedThread}
+            onOpenThread={selectThread}
           />
         ) : (
           <View style={styles.empty}>
@@ -116,6 +135,14 @@ export function MainScreen({
           </View>
         )}
       </TVFocusGuideView>
+      {actionsThread !== null && !props.hidden ? (
+        <ThreadActionsSheet
+          key={`${actionsThread.environmentId}:${actionsThread.threadId}`}
+          environmentId={actionsThread.environmentId}
+          threadId={actionsThread.threadId}
+          onClose={closeActions}
+        />
+      ) : null}
     </View>
   );
 }

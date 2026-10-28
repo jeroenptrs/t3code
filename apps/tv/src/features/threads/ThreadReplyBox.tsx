@@ -73,8 +73,10 @@ export function ThreadReplyBox({
             onChangeText={setText}
             placeholder="Reply… (select to type or dictate)"
             editable={!props.disabled}
-            returnKeyType="send"
-            onSubmitEditing={() => void send()}
+            // Done closes the keyboard and keeps the text; tvOS returns focus to this field,
+            // with Send one press right. Only Send sends.
+            returnKeyType="done"
+            submitBehavior="blurAndSubmit"
           />
         </View>
         <FocusablePressable

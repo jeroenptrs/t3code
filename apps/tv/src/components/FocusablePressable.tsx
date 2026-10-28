@@ -19,6 +19,8 @@ export function FocusablePressable({
   /** The host view, for focus guide destinations and `requestTVFocus`. */
   readonly ref?: Ref<FocusableHost>;
   readonly onPress?: () => void;
+  /** After the select button is held; the press that follows does not also call `onPress`. */
+  readonly onLongPress?: () => void;
   readonly onFocus?: () => void;
   readonly disabled?: boolean;
   readonly hasTVPreferredFocus?: boolean;
@@ -33,6 +35,7 @@ export function FocusablePressable({
       disabled={props.disabled}
       hasTVPreferredFocus={props.hasTVPreferredFocus}
       onPress={props.onPress}
+      onLongPress={props.onLongPress}
       onFocus={() => {
         setFocused(true);
         props.onFocus?.();

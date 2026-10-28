@@ -98,7 +98,7 @@ export function SignInScreen(props: { readonly onSignedIn?: () => void }) {
             autoCorrect={false}
             keyboardType="email-address"
             textContentType="emailAddress"
-            onSubmitEditing={() => void sendCode()}
+            returnKeyType="done"
           />
           <FocusableButton
             label="Send code"
@@ -116,7 +116,7 @@ export function SignInScreen(props: { readonly onSignedIn?: () => void }) {
             placeholder="123456"
             keyboardType="number-pad"
             textContentType="oneTimeCode"
-            onSubmitEditing={() => void verifyCode()}
+            returnKeyType="done"
           />
           <View style={styles.row}>
             <FocusableButton
