@@ -1,3 +1,4 @@
+import type { ComponentRef, Ref } from "react";
 import { StyleSheet, Text, TextInput, View, type TextInputProps } from "react-native";
 
 import { colors, typography } from "./theme";
@@ -7,16 +8,26 @@ import { colors, typography } from "./theme";
  * focus lift, and shadow, so neither the input nor its wrapper gets a border or background.
  * Width comes from the parent.
  */
-export function TvTextInput(
-  props: Omit<TextInputProps, "style" | "placeholderTextColor"> & { readonly label?: string },
-) {
-  const { label, ...inputProps } = props;
+export function TvTextInput({
+  ref,
+  label,
+  ...inputProps
+}: Omit<TextInputProps, "style" | "placeholderTextColor"> & {
+  readonly label?: string;
+  /** The native field, for focus guide destinations. */
+  readonly ref?: Ref<ComponentRef<typeof TextInput>>;
+}) {
   // Nothing here may change with focus: a style that adds a stacking context (transform,
   // opacity) to the input's parent re-parents the native field and dismisses the keyboard.
   return (
     <View style={styles.root}>
       {label ? <Text style={styles.label}>{label}</Text> : null}
-      <TextInput {...inputProps} style={styles.input} placeholderTextColor={colors.textMuted} />
+      <TextInput
+        {...inputProps}
+        ref={ref}
+        style={styles.input}
+        placeholderTextColor={colors.textMuted}
+      />
     </View>
   );
 }

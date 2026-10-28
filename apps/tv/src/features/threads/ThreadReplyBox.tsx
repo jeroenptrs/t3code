@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState, type ComponentRef, type Ref } from "react";
+import { StyleSheet, Text, View, type TextInput } from "react-native";
 
 import { FocusablePressable } from "../../components/FocusablePressable";
 import { TvTextInput } from "../../components/TvTextInput";
@@ -13,13 +13,18 @@ const unsentTextByThread = new Map<string, string>();
  * Remote dictation and the iPhone's Continuity keyboard. The text stays in the input until the
  * server accepts it, and stays there with the error shown if the server refuses it.
  */
-export function ThreadReplyBox(props: {
+export function ThreadReplyBox({
+  inputHost,
+  ...props
+}: {
   readonly threadKey: string;
   readonly sendLabel: string;
   readonly hint: string | null;
   readonly error: string | null;
   readonly disabled: boolean;
   readonly onSend: (text: string) => Promise<boolean>;
+  /** The input's native field, so a focus guide can send focus to it. */
+  readonly inputHost?: Ref<ComponentRef<typeof TextInput>>;
 }) {
   const [text, setText] = useState(() => unsentTextByThread.get(props.threadKey) ?? "");
   const [sending, setSending] = useState(false);
@@ -63,6 +68,7 @@ export function ThreadReplyBox(props: {
       <View style={styles.row}>
         <View style={styles.inputColumn}>
           <TvTextInput
+            ref={inputHost}
             value={text}
             onChangeText={setText}
             placeholder="Reply… (select to type or dictate)"

@@ -5,7 +5,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TVFocusGuideView,
   View,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -258,6 +257,13 @@ function Row({
 export interface ThreadMessageListHandle {
   /** Scrolls to the end and moves focus to the newest message. */
   readonly focusLatest: () => void;
+  /** Scrolls to the start and moves focus to the first message. */
+  readonly focusFirst: () => void;
+}
+
+// react-native-tvos adds requestTVFocus to View instances at runtime; its types omit it.
+function requestTVFocus(view: ViewInstance | null) {
+  (view as { requestTVFocus?: () => void } | null)?.requestTVFocus?.();
 }
 
 export function ThreadMessageList({
@@ -277,14 +283,19 @@ export function ThreadMessageList({
   const scrollRef = useRef<ScrollViewInstance>(null);
   const followEnd = useRef(true);
   const latestRef = useRef<ViewInstance>(null);
+  const firstRef = useRef<ViewInstance>(null);
   useImperativeHandle(
     ref,
     () => ({
       focusLatest: () => {
         followEnd.current = true;
         scrollRef.current?.scrollToEnd({ animated: true });
-        // react-native-tvos adds requestTVFocus to View instances at runtime; its types omit it.
-        (latestRef.current as { requestTVFocus?: () => void } | null)?.requestTVFocus?.();
+        requestTVFocus(latestRef.current);
+      },
+      focusFirst: () => {
+        followEnd.current = false;
+        scrollRef.current?.scrollTo({ y: 0, animated: true });
+        requestTVFocus(firstRef.current ?? latestRef.current);
       },
     }),
     [],
@@ -304,7 +315,9 @@ export function ThreadMessageList({
 
   return (
     <ThreadImageScopeContext.Provider value={imageScope}>
-      <TVFocusGuideView style={styles.root} autoFocus>
+      {/* No autoFocus guide: with nothing remembered it enters at the top-leading block, the
+          first message. Plain geometry enters from the toolbar at the nearest, newest block. */}
+      <View style={styles.root}>
         <ScrollView
           ref={scrollRef}
           style={styles.scroll}
@@ -323,12 +336,15 @@ export function ThreadMessageList({
                 key={row.key}
                 row={row}
                 preferred={props.claimInitialFocus !== false && row.key === initialFocusKey}
-                focusRef={index === props.rows.length - 1 ? latestRef : undefined}
+                // A row's ref lands on its last block; a first row is usually a one-block prompt.
+                focusRef={
+                  index === props.rows.length - 1 ? latestRef : index === 0 ? firstRef : undefined
+                }
               />
             ))
           )}
         </ScrollView>
-      </TVFocusGuideView>
+      </View>
     </ThreadImageScopeContext.Provider>
   );
 }

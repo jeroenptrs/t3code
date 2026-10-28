@@ -6,10 +6,17 @@ import {
 import { resolveSubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
 import { DEFAULT_SERVER_SETTINGS, type ServerProvider } from "@t3tools/contracts";
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
-import { useCallback, useMemo, useRef, useState } from "react";
-import { StyleSheet, Text, TVFocusGuideView, useTVEventHandler, View } from "react-native";
+import { useCallback, useMemo, useRef, useState, type ComponentRef } from "react";
+import {
+  StyleSheet,
+  Text,
+  TVFocusGuideView,
+  useTVEventHandler,
+  View,
+  type TextInput,
+} from "react-native";
 
-import { FocusablePressable } from "../components/FocusablePressable";
+import { FocusablePressable, type FocusableHost } from "../components/FocusablePressable";
 import { colors, typography } from "../components/theme";
 import { SUBAGENT_TONE_COLORS } from "../features/subagents/subagentPresentation";
 import { SubagentsSheet } from "../features/subagents/SubagentsSheet";
@@ -86,7 +93,7 @@ export function ThreadScreen(props: {
   const [sendError, setSendError] = useState<string | null>(null);
   const [openSheet, setSheet] = useState<ThreadSheetKind | null>(null);
   const sheet = props.hidden ? null : openSheet;
-  // The header button whose sheet last closed takes focus back.
+  // The toolbar button whose sheet last closed takes focus back.
   const [lastSheet, setLastSheet] = useState<ThreadSheetKind | null>(null);
   const closeSheet = () => {
     setLastSheet(sheet);
@@ -94,6 +101,12 @@ export function ThreadScreen(props: {
   };
   const messageList = useRef<ThreadMessageListHandle>(null);
   const focusLatest = useCallback(() => messageList.current?.focusLatest(), []);
+  const focusFirst = () => messageList.current?.focusFirst();
+  // Focus guide destinations need mounted host views, so the hosts live in state.
+  const [backHost, setBackHost] = useState<FocusableHost | null>(null);
+  const [inputHost, setInputHost] = useState<ComponentRef<typeof TextInput> | null>(null);
+  const backDestinations = useMemo(() => (backHost ? [backHost] : undefined), [backHost]);
+  const replyDestinations = useMemo(() => (inputHost ? [inputHost] : undefined), [inputHost]);
   useTVEventHandler(
     useCallback(
       (event: { readonly eventType: string }) => {
@@ -182,22 +195,36 @@ export function ThreadScreen(props: {
   return (
     <View style={styles.root}>
       <View style={styles.column}>
-        <View style={styles.headerText}>
-          <Text style={styles.title} numberOfLines={1}>
-            {title}
-          </Text>
-          <Text style={styles.meta} numberOfLines={1}>
-            {[environmentLabel, projectTitle].filter(Boolean).join("  ·  ")}
-            {environmentLabel || projectTitle ? "  ·  " : ""}
-            <Text style={{ color: statusColor }}>{statusLabel}</Text>
-            {threadState.status === "synchronizing" ? "  ·  Syncing…" : ""}
-          </Text>
-        </View>
-        <TVFocusGuideView style={styles.header} autoFocus>
-          <FocusablePressable style={styles.headerButton} onPress={props.onBack}>
+        {/* Up from Back wraps to the reply row, so a long thread is never a long walk. */}
+        <TVFocusGuideView style={styles.wrapGuide} destinations={replyDestinations} />
+        <View style={styles.header}>
+          <FocusablePressable ref={setBackHost} style={styles.headerButton} onPress={props.onBack}>
             <Text style={styles.headerButtonLabel}>‹ Back</Text>
           </FocusablePressable>
-          <View style={styles.headerSpacer} />
+          <View style={styles.headerText}>
+            <Text style={styles.title} numberOfLines={1}>
+              {title}
+            </Text>
+            <Text style={styles.meta} numberOfLines={1}>
+              {[environmentLabel, projectTitle].filter(Boolean).join("  ·  ")}
+              {environmentLabel || projectTitle ? "  ·  " : ""}
+              <Text style={{ color: statusColor }}>{statusLabel}</Text>
+              {threadState.status === "synchronizing" ? "  ·  Syncing…" : ""}
+            </Text>
+          </View>
+        </View>
+        {loadError ? <Text style={styles.error}>{loadError}</Text> : null}
+        <ThreadMessageList
+          key={`messages:${environmentId}:${threadId}`}
+          ref={messageList}
+          rows={rows}
+          // Selecting in the sidebar keeps focus there; Right enters the conversation.
+          claimInitialFocus={false}
+          emptyLabel={emptyLabel}
+          environmentId={environmentId}
+          threadId={threadId}
+        />
+        <TVFocusGuideView style={styles.toolbar} autoFocus>
           {agentsSegment ? (
             <FocusablePressable
               style={styles.headerButton}
@@ -227,21 +254,14 @@ export function ThreadScreen(props: {
           >
             <Text style={styles.headerButtonLabel}>Terminal</Text>
           </FocusablePressable>
+          <View style={styles.headerSpacer} />
+          <FocusablePressable style={styles.headerButton} onPress={focusFirst}>
+            <Text style={styles.headerButtonLabel}>Top</Text>
+          </FocusablePressable>
           <FocusablePressable style={styles.headerButton} onPress={focusLatest}>
             <Text style={styles.headerButtonLabel}>Latest</Text>
           </FocusablePressable>
         </TVFocusGuideView>
-        {loadError ? <Text style={styles.error}>{loadError}</Text> : null}
-        <ThreadMessageList
-          key={`messages:${environmentId}:${threadId}`}
-          ref={messageList}
-          rows={rows}
-          // Selecting in the sidebar keeps focus there; Right enters the conversation.
-          claimInitialFocus={false}
-          emptyLabel={emptyLabel}
-          environmentId={environmentId}
-          threadId={threadId}
-        />
         <ThreadReplyBox
           key={`reply:${environmentId}:${threadId}`}
           threadKey={`${environmentId}:${threadId}`}
@@ -256,7 +276,10 @@ export function ThreadScreen(props: {
           error={sendError}
           disabled={thread === null || threadState.status === "deleted"}
           onSend={send}
+          inputHost={setInputHost}
         />
+        {/* Down from the reply row wraps to Back. A sibling of the list, so its ScrollView never sees the press. */}
+        <TVFocusGuideView style={styles.wrapGuide} destinations={backDestinations} />
       </View>
       {sheet === "git" && cwd !== null && project !== null ? (
         <ThreadGitSheet
@@ -297,8 +320,10 @@ export function ThreadScreen(props: {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background, alignItems: "center" },
   column: { flex: 1, width: "100%", maxWidth: 1200, paddingTop: 48 },
-  header: { flexDirection: "row", alignItems: "center", gap: 20, marginBottom: 12 },
-  headerText: { gap: 4, marginBottom: 16 },
+  header: { flexDirection: "row", alignItems: "center", gap: 28, marginBottom: 12 },
+  headerText: { flex: 1, gap: 4 },
+  toolbar: { flexDirection: "row", alignItems: "center", gap: 20, paddingTop: 16 },
+  wrapGuide: { height: 2, width: "100%" },
   headerSpacer: { flex: 1 },
   headerButton: { paddingHorizontal: 24, paddingVertical: 14 },
   headerButtonLabel: { color: colors.text, fontSize: 26, fontWeight: "600" },
