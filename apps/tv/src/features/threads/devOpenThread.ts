@@ -3,7 +3,7 @@ import {
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
-import { useEffect } from "react";
+import { useEffect, useEffectEvent } from "react";
 
 import { runThreadAction } from "./threadActions";
 import { THREAD_ACTION_LABELS, type ThreadActionId } from "./threadActionList";
@@ -110,4 +110,26 @@ export function useDevRunAction(ready: boolean, environmentId: EnvironmentId, th
       ),
     );
   }, [action, environmentId, ready, threadId]);
+}
+
+let devRowFocused = false;
+
+/**
+ * Dev-only: EXPO_PUBLIC_TV_DEV_FOCUS_ROW=<index> moves focus to that sidebar row once per
+ * launch, a few seconds after it mounts so a thread opened by EXPO_PUBLIC_TV_DEV_OPEN_THREAD
+ * has taken focus first.
+ */
+export function useDevFocusRow(
+  rowKeys: ReadonlyArray<string>,
+  focusRow: (key: string) => boolean,
+): void {
+  const index = __DEV__ ? Number(process.env.EXPO_PUBLIC_TV_DEV_FOCUS_ROW ?? "") : Number.NaN;
+  const key = Number.isInteger(index) ? rowKeys[index] : undefined;
+  const focus = useEffectEvent(focusRow);
+  useEffect(() => {
+    if (devRowFocused || key === undefined) return;
+    devRowFocused = true;
+    const timer = setTimeout(() => console.log(`[tv-dev] focus row ${key}: ${focus(key)}`), 3000);
+    return () => clearTimeout(timer);
+  }, [key]);
 }

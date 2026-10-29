@@ -1,7 +1,7 @@
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentConnectionSummary } from "@t3tools/client-runtime/state/presentation";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useRef, useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { StyleSheet, Text, TVFocusGuideView, View } from "react-native";
 
 import { FocusablePressable, type FocusableHost } from "../components/FocusablePressable";
@@ -13,7 +13,8 @@ import {
 import { useDevOpenNewThread } from "../features/threads/devOpenThread";
 import { NewThreadComposer, type ProjectRef } from "../features/threads/NewThreadComposer";
 import { ThreadActionsSheet } from "../features/threads/ThreadActionsSheet";
-import { sidebarOwnsMenu, useMenuOwner } from "../navigation/menuScope";
+import { useMenuOwner } from "../navigation/menuScope";
+import { paneFocus, reportConversationFocus, reportSidebarFocus } from "../navigation/paneFocus";
 import type { ThreadRef } from "../navigation/stack";
 import { tvAtomRegistry } from "../state/atom-registry";
 import {
@@ -66,9 +67,7 @@ export function MainScreen(props: {
   // 0 asks for no move, for a selection made while focus stays in the sidebar.
   const [focusRequest, setFocusRequest] = useState(0);
   const [actionsThread, setActionsThread] = useState<ThreadRef | null>(null);
-  // Which pane focus is in, from focus entering each side.
-  const [pane, setPane] = useState<"sidebar" | "conversation">("sidebar");
-  const [sidebarAtTop, setSidebarAtTop] = useState(false);
+  const menuOwners = useSyncExternalStore(paneFocus.subscribe, paneFocus.owners);
   // Bumped per open, so each one starts a fresh composer.
   const [newThread, setNewThread] = useState<{
     readonly request: number;
@@ -78,12 +77,10 @@ export function MainScreen(props: {
     setSelectedThread(thread);
     setNewThread(null);
     setFocusRequest((request) => request + 1);
-    setPane("conversation");
   };
   const replaceSelection = (thread: ThreadRef | null) => {
     setSelectedThread(thread);
     setFocusRequest(0);
-    setPane("sidebar");
   };
   const openNewThread = (project: ProjectRef | null) => {
     const shell = selectedThread
@@ -96,7 +93,6 @@ export function MainScreen(props: {
         (shell ? { environmentId: shell.environmentId, projectId: shell.projectId } : null),
     }));
     setActionsThread(null);
-    setPane("conversation");
   };
   useDevOpenNewThread(() => openNewThread(null));
   const sectionList = useRef<ThreadSectionListHandle>(null);
@@ -105,19 +101,8 @@ export function MainScreen(props: {
   const [filter, setFilter] = useState<FocusableHost | null>(null);
 
   const focusSidebar = () => (selectedRow ?? filter)?.requestTVFocus?.();
-  useMenuOwner(
-    "conversation",
-    () => {
-      setPane("sidebar");
-      focusSidebar();
-    },
-    pane === "conversation",
-  );
-  useMenuOwner(
-    "sidebar",
-    () => sectionList.current?.focusTop(),
-    sidebarOwnsMenu(pane, sidebarAtTop),
-  );
+  useMenuOwner("conversation", focusSidebar, menuOwners === "conversation");
+  useMenuOwner("sidebar", () => sectionList.current?.focusTop(), menuOwners === "sidebar");
   const closeActions = () => {
     if (actionsThread !== null && !sectionList.current?.focusThread(actionsThread)) focusSidebar();
     setActionsThread(null);
@@ -130,7 +115,6 @@ export function MainScreen(props: {
         style={styles.sidebar}
         autoFocus
         destinations={selectedRow ? [selectedRow] : undefined}
-        onFocusEnter={() => setPane("sidebar")}
       >
         <View style={styles.sidebarHeader}>
           <Text style={styles.title}>Threads</Text>
@@ -149,18 +133,19 @@ export function MainScreen(props: {
           onSelectedRowHost={setSelectedRow}
           filterRef={setFilter}
           onSelectionReplaced={replaceSelection}
-          onFocusAtTopChange={setSidebarAtTop}
         />
         <FocusablePressable
           style={styles.connections}
           focusedStyle={styles.connectionsFocused}
+          onFocus={() => reportSidebarFocus("connections")}
           onPress={props.onOpenConnections}
         >
           <Text style={styles.connectionsLabel}>Connections</Text>
         </FocusablePressable>
       </TVFocusGuideView>
       {/* No autoFocus: a remembered child would win over ThreadScreen's newest-message guide. */}
-      <TVFocusGuideView style={styles.conversation} onFocusEnter={() => setPane("conversation")}>
+      {/* Every focus inside, not just entry: any one of them must clear a stale sidebar owner. */}
+      <TVFocusGuideView style={styles.conversation} onFocusCapture={reportConversationFocus}>
         {newThread !== null ? (
           <NewThreadComposer
             key={newThread.request}

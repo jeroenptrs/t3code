@@ -21,14 +21,6 @@ const LAYERS: Record<MenuOwnerKind, number> = {
   imageViewer: 3,
 };
 
-/**
- * The sidebar takes Menu back to its first item while focus is in it anywhere else. On that
- * item it declines, so with no other owner Menu exits the app.
- */
-export function sidebarOwnsMenu(pane: "sidebar" | "conversation", focusAtTop: boolean): boolean {
-  return pane === "sidebar" && !focusAtTop;
-}
-
 export function createMenuScope() {
   let stack: ReadonlyArray<MenuOwner> = [];
   const listeners = new Set<() => void>();
@@ -50,6 +42,7 @@ export function createMenuScope() {
       };
     },
     top: (): MenuOwner | null => stack.at(-1) ?? null,
+    kinds: (): ReadonlyArray<MenuOwnerKind> => stack.map((owner) => owner.kind),
     /** Whether App holds the Menu key: false only at the root, where Menu exits. */
     handlesMenu: (): boolean => stack.length > 0,
     /** Sends a Menu press to the top owner; false when there is none. */

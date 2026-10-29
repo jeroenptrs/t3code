@@ -25,6 +25,7 @@ import {
 import { FlatList, StyleSheet, Text, TVFocusGuideView, View } from "react-native";
 
 import { FocusablePressable, type FocusableHost } from "../../components/FocusablePressable";
+import { NEW_THREAD_FOCUS_KEY, reportSidebarFocus } from "../../navigation/paneFocus";
 import {
   colors,
   pullRequestColors,
@@ -41,7 +42,7 @@ import {
 } from "../../state/environments";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import type { ThreadRef } from "../../navigation/stack";
-import { useDevOpenThread } from "../threads/devOpenThread";
+import { useDevFocusRow, useDevOpenThread } from "../threads/devOpenThread";
 import type { ProjectRef } from "../threads/NewThreadComposer";
 import type { ThreadActionId } from "../threads/threadActionList";
 import { subscribeThreadActions, type ThreadActionEvent } from "../threads/threadActions";
@@ -119,8 +120,6 @@ export function ThreadSectionList({
   readonly filterRef: Ref<FocusableHost>;
   /** An action moved the selected row: select the row that took its place, null for none. */
   readonly onSelectionReplaced: (thread: ThreadRef | null) => void;
-  /** Whether focus is on the sidebar's first item. */
-  readonly onFocusAtTopChange: (atTop: boolean) => void;
 }) {
   // Quiet shells keep their identity while a run streams, so the list rebuilds only when a
   // thread's placement or status can change, never per streamed chunk.
@@ -263,7 +262,7 @@ export function ThreadSectionList({
   }, []);
   const showMore = useCallback(() => setSettledLimit((limit) => limit + SETTLED_PAGE_COUNT), []);
 
-  const { onSelectThread, onThreadActions, onSelectionReplaced, onFocusAtTopChange } = props;
+  const { onSelectThread, onThreadActions, onSelectionReplaced } = props;
   const rowHosts = useRef(new Map<string, FocusableHost>());
   const registerRowHost = useCallback(
     (key: string, selected: boolean, host: FocusableHost | null) => {
@@ -365,6 +364,12 @@ export function ThreadSectionList({
       onSelectThread({ environmentId: entry.thread.environmentId, threadId });
     }
   });
+  useDevFocusRow(
+    sections.entries.flatMap((entry) =>
+      entry.type === "thread" ? [`${entry.thread.environmentId}:${entry.thread.id}`] : [],
+    ),
+    focusKey,
+  );
   const onSelect = useCallback(
     (thread: EnvironmentThreadShell) =>
       onSelectThread({ environmentId: thread.environmentId, threadId: thread.id }),
@@ -394,6 +399,7 @@ export function ThreadSectionList({
         <FocusablePressable
           style={styles.moreRow}
           focusedStyle={styles.rowFocused}
+          onFocus={() => reportSidebarFocus("show-more")}
           onPress={showMore}
         >
           <Text style={styles.moreLabel}>
@@ -433,8 +439,7 @@ export function ThreadSectionList({
         ref={newThreadHost}
         style={styles.newThread}
         focusedStyle={styles.rowFocused}
-        onFocus={() => onFocusAtTopChange(true)}
-        onBlur={() => onFocusAtTopChange(false)}
+        onFocus={() => reportSidebarFocus(NEW_THREAD_FOCUS_KEY)}
         onPress={() => {
           const ref = selectedGroup?.memberProjectRefs[0];
           props.onNewThread(
@@ -447,6 +452,7 @@ export function ThreadSectionList({
       <TVFocusGuideView style={styles.filters} autoFocus>
         <FilterChip
           ref={filterRef}
+          focusKey="filter-environment"
           options={environmentOptions}
           value={scopeEnvironmentId}
           onChange={(value) => {
@@ -455,6 +461,7 @@ export function ThreadSectionList({
           }}
         />
         <FilterChip
+          focusKey="filter-project"
           options={projectOptions}
           value={selectedGroup?.key ?? null}
           onChange={setSelectedProjectKey}
@@ -485,6 +492,7 @@ function FilterChip<T>({
   ...props
 }: {
   readonly ref?: Ref<FocusableHost>;
+  readonly focusKey: string;
   readonly options: ReadonlyArray<FilterOption<T>>;
   readonly value: T;
   readonly onChange: (value: T) => void;
@@ -498,6 +506,7 @@ function FilterChip<T>({
     <FocusablePressable
       ref={ref}
       style={[styles.chip, active && styles.chipActive]}
+      onFocus={() => reportSidebarFocus(props.focusKey)}
       onPress={() => props.onChange(props.options[(index + 1) % props.options.length]!.value)}
     >
       <Text style={styles.chipLabel} numberOfLines={1}>
@@ -520,6 +529,7 @@ const ShelfHeader = memo(function ShelfHeader(props: {
     <FocusablePressable
       style={styles.shelfHeader}
       focusedStyle={styles.rowFocused}
+      onFocus={() => reportSidebarFocus(`shelf:${props.shelf}`)}
       onPress={() => props.onToggle(props.shelf)}
     >
       <Text style={[styles.shelfLabel, snoozed && styles.shelfLabelSnoozed]}>
@@ -588,6 +598,7 @@ const ThreadRow = memo(function ThreadRow(props: {
         ref={hostRef}
         style={rowStyle}
         focusedStyle={focusedStyle}
+        onFocus={() => reportSidebarFocus(hostKey)}
         onPress={() => props.onSelect(thread)}
         onLongPress={() => props.onLongPress(thread)}
       >
@@ -619,6 +630,7 @@ const ThreadRow = memo(function ThreadRow(props: {
       ref={hostRef}
       style={rowStyle}
       focusedStyle={focusedStyle}
+      onFocus={() => reportSidebarFocus(hostKey)}
       onPress={() => props.onSelect(thread)}
       onLongPress={() => props.onLongPress(thread)}
     >

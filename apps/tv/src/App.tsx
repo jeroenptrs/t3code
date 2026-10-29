@@ -100,6 +100,15 @@ function Screens() {
     if (menuHandled) TVEventControl.enableTVMenuKey();
     else TVEventControl.disableTVMenuKey();
   }, [menuHandled]);
+  useEffect(() => {
+    if (!__DEV__ || process.env.EXPO_PUBLIC_TV_DEV_LOG_MENU !== "1") return;
+    return menuScope.subscribe(() =>
+      console.log(
+        `[tv-dev] menu owners [${menuScope.kinds().join(", ")}], ` +
+          `menu key ${menuScope.handlesMenu() ? "held" : "released (Menu exits)"}`,
+      ),
+    );
+  }, []);
   useMenuOwner("route", back, canGoBack);
   // The app's only BackHandler subscription; every Menu press goes through the scope.
   useEffect(() => {
