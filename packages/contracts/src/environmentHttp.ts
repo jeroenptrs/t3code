@@ -658,6 +658,9 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
+  // No in-app client calls this route, but the Slack credential rotator
+  // (apps/slack/src/rotateCredentialMain.ts) lists sessions through it over plain
+  // HTTP. Upstream once removed it as unreachable; keep it on fork syncs.
   .add(
     HttpApiEndpoint.get("clients", "/api/auth/clients", {
       headers: OptionalBearerHeaders,
