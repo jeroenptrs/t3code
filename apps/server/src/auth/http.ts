@@ -570,6 +570,19 @@ export const layer = HttpApiBuilder.group(
         ),
       )
       .handle(
+        "clients",
+        Effect.fn("environment.auth.clients")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const session = yield* requireEnvironmentScope(AuthAccessReadScope);
+            return yield* serverAuth.listClientSessions(session.sessionId);
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("client_sessions_load_failed", error),
+          ),
+        ),
+      )
+      .handle(
         "revokeClient",
         Effect.fn("environment.auth.revokeClient")(
           function* (args) {
