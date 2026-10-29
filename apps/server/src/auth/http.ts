@@ -347,7 +347,8 @@ export const layer = HttpApiBuilder.group(
     const sessions = yield* SessionStore.SessionStore;
     const users = yield* UserRegistry.UserRegistry;
 
-    return handlers
+    return (
+      handlers
       .handle(
         "session",
         Effect.fn("environment.auth.session")(
@@ -411,7 +412,9 @@ export const layer = HttpApiBuilder.group(
                     path: "/",
                     sameSite: "lax",
                   }),
-                ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")))
+                  ).pipe(
+                    Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")),
+                  )
               : selectedCookie;
 
             yield* HttpEffect.appendPreResponseHandler((_request, response) =>
@@ -440,7 +443,8 @@ export const layer = HttpApiBuilder.group(
             const requestedScopes =
               args.payload.scope === undefined
                 ? undefined
-                : (parseOAuthScope(args.payload.scope)?.filter(Schema.is(AuthGrantScope)) ?? null);
+                  : (parseOAuthScope(args.payload.scope)?.filter(Schema.is(AuthGrantScope)) ??
+                    null);
             if (requestedScopes === null || requestedScopes?.length === 0) {
               return yield* failEnvironmentInvalidRequest("invalid_scope");
             }
@@ -574,6 +578,7 @@ export const layer = HttpApiBuilder.group(
           ),
         ),
       )
+        // Kept for the Slack credential rotator; see the route in contracts.
       .handle(
         "clients",
         Effect.fn("environment.auth.clients")(
@@ -713,6 +718,7 @@ export const layer = HttpApiBuilder.group(
             failEnvironmentInternal("user_sessions_revoke_failed", error),
           ),
         ),
+        )
       );
   }),
 );
