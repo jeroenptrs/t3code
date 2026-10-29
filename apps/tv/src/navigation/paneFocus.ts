@@ -8,8 +8,20 @@ export type PaneFocus =
   | { readonly pane: "conversation" }
   | null;
 
-/** The sidebar's first item, where Menu exits instead of returning to the top. */
+/** The sidebar's first item, where Menu exits. */
 export const NEW_THREAD_FOCUS_KEY = "new-thread";
+
+/**
+ * Where a sidebar Menu press sends focus: from the first thread row to "+ New thread", from
+ * anywhere else to the first thread row. With no thread rows, straight to "+ New thread".
+ */
+export function sidebarMenuTarget(
+  focus: PaneFocus,
+  firstThreadKey: string | null,
+): "first-thread" | "new-thread" {
+  if (firstThreadKey === null) return "new-thread";
+  return focus?.pane === "sidebar" && focus.key === firstThreadKey ? "new-thread" : "first-thread";
+}
 
 /** Which main screen owners hold Menu, as one value so a row-to-row move changes nothing. */
 export type PaneMenuOwners = "none" | "sidebar" | "conversation";
@@ -23,6 +35,7 @@ export function paneMenuOwners(focus: PaneFocus): PaneMenuOwners {
 export function createPaneFocus() {
   let focus: PaneFocus = null;
   let owners: PaneMenuOwners = "none";
+  let firstThreadKey: string | null = null;
   const listeners = new Set<() => void>();
   return {
     report(next: PaneFocus): void {
@@ -33,6 +46,12 @@ export function createPaneFocus() {
       for (const listener of listeners) listener();
     },
     focus: (): PaneFocus => focus,
+    /** The first thread row in the sidebar's flattened list; null when it lists none. */
+    setFirstThreadKey(key: string | null): void {
+      firstThreadKey = key;
+    },
+    firstThreadKey: (): string | null => firstThreadKey,
+    sidebarMenuTarget: () => sidebarMenuTarget(focus, firstThreadKey),
     owners: (): PaneMenuOwners => owners,
     subscribe(listener: () => void): () => void {
       listeners.add(listener);

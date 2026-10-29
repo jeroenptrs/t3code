@@ -48,10 +48,10 @@ export function connectionSummaryLabel(
 }
 
 /**
- * The sidebar of threads beside the selected conversation or the new-thread composer. Left from
- * the conversation lands on the selected row; selecting a thread, or Right into the
- * conversation, lands on its newest message (ThreadScreen's own guide). Menu from the right pane
- * returns to the sidebar, and from the sidebar returns to its top; at the top Menu exits.
+ * The sidebar of threads beside the selected conversation or the new-thread composer. Left
+ * lands on the selected row; Right lands on the newest message (ThreadScreen's own guide).
+ * Menu from the conversation returns to the sidebar; in the sidebar it goes to the first thread
+ * row, then "+ New thread", then exits.
  */
 export function MainScreen(props: {
   readonly hidden: boolean;
@@ -102,7 +102,11 @@ export function MainScreen(props: {
 
   const focusSidebar = () => (selectedRow ?? filter)?.requestTVFocus?.();
   useMenuOwner("conversation", focusSidebar, menuOwners === "conversation");
-  useMenuOwner("sidebar", () => sectionList.current?.focusTop(), menuOwners === "sidebar");
+  const onSidebarMenu = () => {
+    if (paneFocus.sidebarMenuTarget() === "new-thread") sectionList.current?.focusTop();
+    else sectionList.current?.focusFirstThread();
+  };
+  useMenuOwner("sidebar", onSidebarMenu, menuOwners === "sidebar");
   const closeActions = () => {
     if (actionsThread !== null && !sectionList.current?.focusThread(actionsThread)) focusSidebar();
     setActionsThread(null);

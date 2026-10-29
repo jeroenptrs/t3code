@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createMenuScope } from "./menuScope";
-import { createPaneFocus, NEW_THREAD_FOCUS_KEY, type PaneMenuOwners } from "./paneFocus";
+import {
+  createPaneFocus,
+  NEW_THREAD_FOCUS_KEY,
+  sidebarMenuTarget,
+  type PaneMenuOwners,
+} from "./paneFocus";
 
 /** MainScreen's two owners, pushed and popped from the pane focus the way its effects do. */
 function setup() {
@@ -63,5 +68,54 @@ describe("paneFocus", () => {
     focus.report({ pane: "sidebar", key: "shelf:settled" });
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(focus.focus()).toEqual({ pane: "sidebar", key: "shelf:settled" });
+  });
+
+  describe("sidebar Menu", () => {
+    it("goes to the first thread row from a deeper row, a shelf header, or a filter", () => {
+      const { scope, focus } = setup();
+      focus.setFirstThreadKey("env:first");
+      for (const key of [
+        "env:third",
+        "shelf:settled",
+        "show-more",
+        "connections",
+        "filter-project",
+      ]) {
+        focus.report({ pane: "sidebar", key });
+        expect(scope.kinds()).toEqual(["sidebar"]);
+        expect(focus.sidebarMenuTarget()).toBe("first-thread");
+      }
+    });
+
+    it("goes to New thread from the first thread row", () => {
+      const { scope, focus } = setup();
+      focus.setFirstThreadKey("env:first");
+      focus.report({ pane: "sidebar", key: "env:first" });
+      expect(scope.kinds()).toEqual(["sidebar"]);
+      expect(focus.sidebarMenuTarget()).toBe("new-thread");
+    });
+
+    it("exits from New thread", () => {
+      const { scope, focus } = setup();
+      focus.setFirstThreadKey("env:first");
+      focus.report({ pane: "sidebar", key: "env:third" });
+      focus.report({ pane: "sidebar", key: NEW_THREAD_FOCUS_KEY });
+      expect(scope.handlesMenu()).toBe(false);
+    });
+
+    it("follows the first thread row as sections change", () => {
+      const { focus } = setup();
+      focus.setFirstThreadKey("env:first");
+      focus.report({ pane: "sidebar", key: "env:second" });
+      expect(focus.sidebarMenuTarget()).toBe("first-thread");
+      focus.setFirstThreadKey("env:second");
+      expect(focus.sidebarMenuTarget()).toBe("new-thread");
+    });
+
+    it("goes to New thread when the list has no thread rows", () => {
+      expect(sidebarMenuTarget({ pane: "sidebar", key: "filter-environment" }, null)).toBe(
+        "new-thread",
+      );
+    });
   });
 });

@@ -25,7 +25,7 @@ import {
 import { FlatList, StyleSheet, Text, TVFocusGuideView, View } from "react-native";
 
 import { FocusablePressable, type FocusableHost } from "../../components/FocusablePressable";
-import { NEW_THREAD_FOCUS_KEY, reportSidebarFocus } from "../../navigation/paneFocus";
+import { NEW_THREAD_FOCUS_KEY, paneFocus, reportSidebarFocus } from "../../navigation/paneFocus";
 import {
   colors,
   pullRequestColors,
@@ -92,6 +92,8 @@ export interface ThreadSectionListHandle {
   readonly focusThread: (thread: ThreadRef) => boolean;
   /** Scrolls to the top and focuses the first item, "+ New thread". */
   readonly focusTop: () => void;
+  /** Scrolls to the top and focuses the first thread row, or "+ New thread" when there is none. */
+  readonly focusFirstThread: () => void;
 }
 
 /**
@@ -264,11 +266,17 @@ export function ThreadSectionList({
 
   const { onSelectThread, onThreadActions, onSelectionReplaced } = props;
   const rowHosts = useRef(new Map<string, FocusableHost>());
+  // A row Menu asked to focus before the list had mounted it again, focused as it mounts.
+  const pendingRowFocus = useRef<string | null>(null);
   const registerRowHost = useCallback(
     (key: string, selected: boolean, host: FocusableHost | null) => {
       if (host === null) rowHosts.current.delete(key);
       else rowHosts.current.set(key, host);
       if (selected) onSelectedRowHost(host);
+      if (host !== null && pendingRowFocus.current === key) {
+        pendingRowFocus.current = null;
+        host.requestTVFocus?.();
+      }
     },
     [onSelectedRowHost],
   );
@@ -303,6 +311,12 @@ export function ThreadSectionList({
     if (event.phase === "success") rerender();
   });
   useEffect(() => subscribeThreadActions(onThreadAction), []);
+  const firstThreadEntry = sections.entries.find((entry) => entry.type === "thread");
+  const firstThreadKey =
+    firstThreadEntry?.type === "thread"
+      ? `${firstThreadEntry.thread.environmentId}:${firstThreadEntry.thread.id}`
+      : null;
+  useEffect(() => paneFocus.setFirstThreadKey(firstThreadKey), [firstThreadKey]);
   // Resolves once the action succeeded and the rebuilt list no longer has the row in its section.
   useEffect(() => {
     const pending = follow.current;
@@ -345,8 +359,17 @@ export function ThreadSectionList({
       return focusKey(redirect ? redirect.targetKey : key);
     },
     focusTop: () => {
+      pendingRowFocus.current = null;
       list.current?.scrollToOffset({ offset: 0, animated: false });
       newThreadHost.current?.requestTVFocus?.();
+    },
+    focusFirstThread: () => {
+      list.current?.scrollToOffset({ offset: 0, animated: false });
+      if (firstThreadKey === null) {
+        newThreadHost.current?.requestTVFocus?.();
+        return;
+      }
+      pendingRowFocus.current = focusKey(firstThreadKey) ? null : firstThreadKey;
     },
   }));
   const visibleThreadIdsKey = sections.entries
