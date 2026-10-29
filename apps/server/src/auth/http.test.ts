@@ -149,6 +149,24 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
           expect(restrictedCookies).toHaveLength(1);
           expect(restrictedCookies[0]).toMatch(/^t3_session_/);
           expect(restrictedCookies[0]).not.toContain("t3_dev_session_");
+
+          const clientsResponse = await environmentA.handler(
+            new Request("http://127.0.0.1/api/auth/clients", {
+              headers: { cookie: devCookieHeader },
+            }),
+            requestContext,
+          );
+          expect(clientsResponse.status).toBe(200);
+          expect(await clientsResponse.json()).toEqual(
+            expect.arrayContaining([expect.objectContaining({ current: true })]),
+          );
+          const restrictedClientsResponse = await environmentA.handler(
+            new Request("http://127.0.0.1/api/auth/clients", {
+              headers: { cookie: restrictedCookies[0]!.split(";", 1)[0]! },
+            }),
+            requestContext,
+          );
+          expect(restrictedClientsResponse.status).toBe(403);
         }),
       ([environmentA, environmentB]) =>
         Effect.promise(() => Promise.all([environmentA.dispose(), environmentB.dispose()])),
