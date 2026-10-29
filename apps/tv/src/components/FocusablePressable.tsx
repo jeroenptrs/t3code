@@ -22,6 +22,7 @@ export function FocusablePressable({
   /** After the select button is held; the press that follows does not also call `onPress`. */
   readonly onLongPress?: () => void;
   readonly onFocus?: () => void;
+  readonly onBlur?: () => void;
   readonly disabled?: boolean;
   readonly hasTVPreferredFocus?: boolean;
   readonly style?: StyleProp<ViewStyle>;
@@ -40,7 +41,10 @@ export function FocusablePressable({
         setFocused(true);
         props.onFocus?.();
       }}
-      onBlur={() => setFocused(false)}
+      onBlur={() => {
+        setFocused(false);
+        props.onBlur?.();
+      }}
       style={[
         styles.base,
         props.style,

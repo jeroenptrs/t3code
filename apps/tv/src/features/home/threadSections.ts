@@ -347,3 +347,52 @@ export function buildThreadSections(input: ThreadSectionsInput): ThreadSections 
   }
   return { entries, listedSettledThreads: listedSettled };
 }
+
+/** A thread row's place in the flattened list, captured before an action may move it. */
+export interface ThreadRowPlace {
+  readonly threadKey: string;
+  readonly section: ThreadSection;
+  readonly index: number;
+}
+
+export function captureThreadRowPlace(
+  entries: ReadonlyArray<ThreadListEntry>,
+  threadKey: string,
+): ThreadRowPlace | null {
+  const index = entries.findIndex(
+    (entry) =>
+      entry.type === "thread" && `${entry.thread.environmentId}:${entry.thread.id}` === threadKey,
+  );
+  const entry = entries[index];
+  return entry?.type === "thread" ? { threadKey, section: entry.section, index } : null;
+}
+
+export type RowAfterMove =
+  | { readonly moved: false }
+  /** `thread` is null when no thread row is left to take the place. */
+  | { readonly moved: true; readonly thread: EnvironmentThreadShell | null };
+
+/**
+ * The thread row that took a moved row's place: the first at or after its old index once the
+ * moved row is left out, else the nearest before it. Not moved while the row keeps its section.
+ */
+export function resolveRowAfterMove(
+  entries: ReadonlyArray<ThreadListEntry>,
+  place: ThreadRowPlace,
+): RowAfterMove {
+  const isMoved = (entry: ThreadListEntry) =>
+    entry.type === "thread" &&
+    `${entry.thread.environmentId}:${entry.thread.id}` === place.threadKey;
+  const current = entries.find(isMoved);
+  if (current?.type === "thread" && current.section === place.section) return { moved: false };
+  const rest = entries.filter((entry) => !isMoved(entry));
+  for (let index = place.index; index < rest.length; index++) {
+    const entry = rest[index]!;
+    if (entry.type === "thread") return { moved: true, thread: entry.thread };
+  }
+  for (let index = Math.min(place.index, rest.length) - 1; index >= 0; index--) {
+    const entry = rest[index]!;
+    if (entry.type === "thread") return { moved: true, thread: entry.thread };
+  }
+  return { moved: true, thread: null };
+}

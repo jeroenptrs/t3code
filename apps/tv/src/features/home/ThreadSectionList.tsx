@@ -12,8 +12,11 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   memo,
   useCallback,
+  useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useMemo,
+  useReducer,
   useRef,
   useState,
   useSyncExternalStore,
@@ -40,13 +43,18 @@ import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/ol
 import type { ThreadRef } from "../../navigation/stack";
 import { useDevOpenThread } from "../threads/devOpenThread";
 import type { ProjectRef } from "../threads/NewThreadComposer";
+import type { ThreadActionId } from "../threads/threadActionList";
+import { subscribeThreadActions, type ThreadActionEvent } from "../threads/threadActions";
 import {
   buildThreadSections,
+  captureThreadRowPlace,
+  resolveRowAfterMove,
   SETTLED_INITIAL_COUNT,
   SETTLED_PAGE_COUNT,
   shelfHeaderLabel,
   threadPullRequestBadge,
   type ThreadListEntry,
+  type ThreadRowPlace,
   type ThreadShelf,
   type ThreadStatusChip,
 } from "./threadSections";
@@ -55,14 +63,34 @@ import { useListNow } from "./useListNow";
 // Module scope so a thread that just stopped working keeps its place across screens.
 const inboxReturns = createInboxReturnTracker();
 
+/** Actions that take a row out of its section; pinning keeps it among the active rows. */
+const MOVING_ACTIONS: ReadonlySet<ThreadActionId> = new Set([
+  "settle",
+  "unsettle",
+  "snooze",
+  "unsnooze",
+  "archive",
+]);
+
+interface PendingFollow {
+  readonly place: ThreadRowPlace;
+  readonly selected: boolean;
+  readonly succeeded: boolean;
+}
+
 interface FilterOption<T> {
   readonly value: T;
   readonly label: string;
 }
 
 export interface ThreadSectionListHandle {
-  /** Moves focus to the thread's row; false when the row is not mounted. */
+  /**
+   * Moves focus to the thread's row, or to the row that took its place after an action moved
+   * it; false when neither is mounted.
+   */
   readonly focusThread: (thread: ThreadRef) => boolean;
+  /** Scrolls to the top and focuses the first item, "+ New thread". */
+  readonly focusTop: () => void;
 }
 
 /**
@@ -89,6 +117,10 @@ export function ThreadSectionList({
   readonly onSelectedRowHost: (host: FocusableHost | null) => void;
   /** The environment filter, where focus lands when no selected row is mounted. */
   readonly filterRef: Ref<FocusableHost>;
+  /** An action moved the selected row: select the row that took its place, null for none. */
+  readonly onSelectionReplaced: (thread: ThreadRef | null) => void;
+  /** Whether focus is on the sidebar's first item. */
+  readonly onFocusAtTopChange: (atTop: boolean) => void;
 }) {
   // Quiet shells keep their identity while a run streams, so the list rebuilds only when a
   // thread's placement or status can change, never per streamed chunk.
@@ -231,7 +263,7 @@ export function ThreadSectionList({
   }, []);
   const showMore = useCallback(() => setSettledLimit((limit) => limit + SETTLED_PAGE_COUNT), []);
 
-  const { onSelectThread, onThreadActions } = props;
+  const { onSelectThread, onThreadActions, onSelectionReplaced, onFocusAtTopChange } = props;
   const rowHosts = useRef(new Map<string, FocusableHost>());
   const registerRowHost = useCallback(
     (key: string, selected: boolean, host: FocusableHost | null) => {
@@ -241,11 +273,81 @@ export function ThreadSectionList({
     },
     [onSelectedRowHost],
   );
+  const newThreadHost = useRef<FocusableHost>(null);
+  const list = useRef<FlatList<ThreadListEntry>>(null);
+
+  // A moving action's row place, from dispatch until the row has left its section.
+  const follow = useRef<PendingFollow | null>(null);
+  const [, rerender] = useReducer((tick: number) => tick + 1, 0);
+  // The row to focus once the selection that replaced a moved row has rendered.
+  const focusOnSelection = useRef<{ readonly key: string | null } | null>(null);
+  // Where the last follow sent focus, for the actions sheet that ran it as it closes.
+  const lastFollow = useRef<{ readonly threadKey: string; readonly targetKey: string | null }>(
+    null,
+  );
+  const focusKey = (key: string | null) => {
+    const host = key === null ? newThreadHost.current : rowHosts.current.get(key);
+    host?.requestTVFocus?.();
+    return host != null;
+  };
+  const onThreadAction = useEffectEvent((event: ThreadActionEvent) => {
+    const key = `${event.environmentId}:${event.threadId}`;
+    if (event.phase === "start") {
+      if (!MOVING_ACTIONS.has(event.action)) return;
+      const place = captureThreadRowPlace(sections.entries, key);
+      follow.current = place && { place, selected: key === selectedKey, succeeded: false };
+      return;
+    }
+    if (follow.current?.place.threadKey !== key) return;
+    follow.current = event.phase === "success" ? { ...follow.current, succeeded: true } : null;
+    // The list may have rebuilt before the action resolved; render once more to resolve.
+    if (event.phase === "success") rerender();
+  });
+  useEffect(() => subscribeThreadActions(onThreadAction), []);
+  // Resolves once the action succeeded and the rebuilt list no longer has the row in its section.
+  useEffect(() => {
+    const pending = follow.current;
+    if (pending?.succeeded) {
+      const result = resolveRowAfterMove(sections.entries, pending.place);
+      if (result.moved) {
+        follow.current = null;
+        const target = result.thread
+          ? { environmentId: result.thread.environmentId, threadId: result.thread.id }
+          : null;
+        const targetKey = target ? `${target.environmentId}:${target.threadId}` : null;
+        lastFollow.current = { threadKey: pending.place.threadKey, targetKey };
+        if (__DEV__ && process.env.EXPO_PUBLIC_TV_DEV_RUN_ACTION) {
+          console.log(
+            `[tv-dev] follow ${pending.place.threadKey} from index ${pending.place.index}: ` +
+              `${pending.selected ? "select" : "focus"} ${targetKey ?? "+ New thread"}`,
+          );
+        }
+        if (pending.selected) {
+          focusOnSelection.current = { key: targetKey };
+          onSelectionReplaced(target);
+        } else {
+          focusKey(targetKey);
+        }
+      }
+    }
+    // After the replaced selection renders, so the conversation it closed holds no focus trap.
+    if (focusOnSelection.current !== null && focusOnSelection.current.key === selectedKey) {
+      focusKey(focusOnSelection.current.key);
+      focusOnSelection.current = null;
+    }
+  });
+
   useImperativeHandle(ref, () => ({
     focusThread: (thread) => {
-      const host = rowHosts.current.get(`${thread.environmentId}:${thread.threadId}`);
-      host?.requestTVFocus?.();
-      return host !== undefined;
+      const key = `${thread.environmentId}:${thread.threadId}`;
+      if (follow.current?.place.threadKey === key) return true;
+      const redirect = lastFollow.current?.threadKey === key ? lastFollow.current : null;
+      lastFollow.current = null;
+      return focusKey(redirect ? redirect.targetKey : key);
+    },
+    focusTop: () => {
+      list.current?.scrollToOffset({ offset: 0, animated: false });
+      newThreadHost.current?.requestTVFocus?.();
     },
   }));
   const visibleThreadIdsKey = sections.entries
@@ -269,8 +371,10 @@ export function ThreadSectionList({
     [onSelectThread],
   );
   const onLongPress = useCallback(
-    (thread: EnvironmentThreadShell) =>
-      onThreadActions({ environmentId: thread.environmentId, threadId: thread.id }),
+    (thread: EnvironmentThreadShell) => {
+      lastFollow.current = null;
+      onThreadActions({ environmentId: thread.environmentId, threadId: thread.id });
+    },
     [onThreadActions],
   );
 
@@ -326,8 +430,11 @@ export function ThreadSectionList({
   return (
     <View style={styles.root}>
       <FocusablePressable
+        ref={newThreadHost}
         style={styles.newThread}
         focusedStyle={styles.rowFocused}
+        onFocus={() => onFocusAtTopChange(true)}
+        onBlur={() => onFocusAtTopChange(false)}
         onPress={() => {
           const ref = selectedGroup?.memberProjectRefs[0];
           props.onNewThread(
@@ -360,6 +467,7 @@ export function ThreadSectionList({
       ) : (
         <TVFocusGuideView style={styles.list} autoFocus>
           <FlatList
+            ref={list}
             data={sections.entries}
             keyExtractor={(entry) => entry.key}
             renderItem={renderItem}

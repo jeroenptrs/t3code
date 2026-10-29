@@ -4,7 +4,7 @@ import { useEffect, useEffectEvent } from "react";
  * Who answers the Siri Remote's Menu button. With no owner the app is at its root and tvOS
  * exits on Menu; with one, App holds the Menu key and sends each press to the top owner.
  */
-export type MenuOwnerKind = "conversation" | "route" | "sheet" | "imageViewer";
+export type MenuOwnerKind = "sidebar" | "conversation" | "route" | "sheet" | "imageViewer";
 
 export interface MenuOwner {
   readonly kind: MenuOwnerKind;
@@ -12,13 +12,22 @@ export interface MenuOwner {
 }
 
 // Effects run children first, so a sheet can push before the conversation it sits in. Layers
-// keep overlays above routes, and routes above the conversation, whatever the push order.
+// keep overlays above routes, and routes above the conversation and sidebar, whatever the push order.
 const LAYERS: Record<MenuOwnerKind, number> = {
-  conversation: 0,
-  route: 1,
-  sheet: 2,
-  imageViewer: 2,
+  sidebar: 0,
+  conversation: 1,
+  route: 2,
+  sheet: 3,
+  imageViewer: 3,
 };
+
+/**
+ * The sidebar takes Menu back to its first item while focus is in it anywhere else. On that
+ * item it declines, so with no other owner Menu exits the app.
+ */
+export function sidebarOwnsMenu(pane: "sidebar" | "conversation", focusAtTop: boolean): boolean {
+  return pane === "sidebar" && !focusAtTop;
+}
 
 export function createMenuScope() {
   let stack: ReadonlyArray<MenuOwner> = [];

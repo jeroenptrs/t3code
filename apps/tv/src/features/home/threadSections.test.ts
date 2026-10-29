@@ -13,6 +13,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildThreadSections,
+  captureThreadRowPlace,
+  resolveRowAfterMove,
   shelfHeaderLabel,
   threadPullRequestBadge,
   type ThreadSectionsInput,
@@ -227,5 +229,56 @@ describe("buildThreadSections", () => {
     );
     const { entries } = build({ threads: settled, settledLimit: 2, unloadedSettledCount: 5 });
     expect(outline(entries)).toEqual(["# settled 8", "settled-2", "settled-1", "more 6"]);
+  });
+});
+
+describe("resolveRowAfterMove", () => {
+  const settle = (shell: EnvironmentThreadShell) => ({
+    ...shell,
+    settledOverride: "settled" as const,
+    settledAt: "2026-06-02T11:00:00.000Z",
+  });
+  const resolvedId = (result: ReturnType<typeof resolveRowAfterMove>) =>
+    result.moved ? (result.thread?.id ?? null) : "not moved";
+
+  it("waits while the row keeps its section", () => {
+    const threads = [thread("a"), thread("b")];
+    const place = captureThreadRowPlace(build({ threads }).entries, `${home}:a`)!;
+    expect(resolvedId(resolveRowAfterMove(build({ threads }).entries, place))).toBe("not moved");
+  });
+
+  it("takes the row that slid into a settled row's place, not the row on its shelf", () => {
+    const threads = [thread("a"), thread("b"), thread("c")];
+    const place = captureThreadRowPlace(build({ threads }).entries, `${home}:b`)!;
+    const after = build({ threads: [threads[0]!, settle(threads[1]!), threads[2]!] }).entries;
+    expect(resolvedId(resolveRowAfterMove(after, place))).toBe("c");
+  });
+
+  it("skips a shelf header to the next row, and falls back to the previous row", () => {
+    const threads = [
+      thread("a"),
+      thread("b"),
+      thread("s1", { snoozedUntil: "2026-06-03T09:00:00.000Z" }),
+      thread("s2", { snoozedUntil: "2026-06-03T10:00:00.000Z" }),
+    ];
+    const entries = build({ threads }).entries;
+    const woken = (shell: EnvironmentThreadShell) => ({ ...shell, snoozedUntil: null });
+    const firstPlace = captureThreadRowPlace(entries, `${home}:s1`)!;
+    const afterFirst = build({
+      threads: [threads[0]!, threads[1]!, woken(threads[2]!), threads[3]!],
+    });
+    expect(resolvedId(resolveRowAfterMove(afterFirst.entries, firstPlace))).toBe("s2");
+    const lastPlace = captureThreadRowPlace(entries, `${home}:s2`)!;
+    const afterLast = build({
+      threads: [threads[0]!, threads[1]!, threads[2]!, woken(threads[3]!)],
+    });
+    expect(resolvedId(resolveRowAfterMove(afterLast.entries, lastPlace))).toBe("s1");
+  });
+
+  it("finds no row once an archived row was the last one", () => {
+    const only = thread("only");
+    const place = captureThreadRowPlace(build({ threads: [only] }).entries, `${home}:only`)!;
+    const after = build({ threads: [{ ...only, archivedAt: "2026-06-02T11:00:00.000Z" }] });
+    expect(resolvedId(resolveRowAfterMove(after.entries, place))).toBeNull();
   });
 });

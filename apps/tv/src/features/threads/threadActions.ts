@@ -49,6 +49,25 @@ const FAILURE_TITLES: Record<ThreadActionId, string> = {
 
 const inFlight = new Set<string>();
 
+export interface ThreadActionEvent {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly action: ThreadActionId;
+  readonly phase: "start" | "success" | "failure";
+}
+
+const listeners = new Set<(event: ThreadActionEvent) => void>();
+
+/** Hears each dispatched action as it starts and ends, whichever surface ran it. */
+export function subscribeThreadActions(listener: (event: ThreadActionEvent) => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+const emit = (event: ThreadActionEvent) => {
+  for (const listener of listeners) listener(event);
+};
+
 /**
  * Runs `action` with mobile's checks: the operate scope, the server capability, archive only
  * when no turn runs, snooze only when nothing waits. Resolves to a failure notice, or null.
@@ -97,8 +116,11 @@ export async function runThreadAction(input: {
   const key = `${environmentId}:${threadId}`;
   if (inFlight.has(key)) return null;
   inFlight.add(key);
+  emit({ environmentId, threadId, action, phase: "start" });
+  let succeeded = false;
   try {
     const result = await dispatch(input, capabilities.pinReorder);
+    succeeded = AsyncResult.isSuccess(result);
     if (AsyncResult.isSuccess(result)) return null;
     const error = Cause.squash(result.cause);
     return error instanceof Error && error.message.trim().length > 0
@@ -106,6 +128,7 @@ export async function runThreadAction(input: {
       : `${title}.`;
   } finally {
     inFlight.delete(key);
+    emit({ environmentId, threadId, action, phase: succeeded ? "success" : "failure" });
   }
 }
 

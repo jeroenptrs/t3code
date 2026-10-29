@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { createMenuScope } from "./menuScope";
+import { createMenuScope, sidebarOwnsMenu } from "./menuScope";
 
 describe("menuScope", () => {
   it("lets Menu exit only when nothing owns it", () => {
@@ -59,5 +59,29 @@ describe("menuScope", () => {
     unsubscribe();
     scope.push({ kind: "route", onMenu: () => {} });
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets the sidebar take Menu away from its top and decline at the top", () => {
+    const pressAt = (focusAtTop: boolean) => {
+      const scope = createMenuScope();
+      const onMenu = vi.fn();
+      if (sidebarOwnsMenu("sidebar", focusAtTop)) scope.push({ kind: "sidebar", onMenu });
+      return { handled: scope.handlesMenu(), dispatched: scope.dispatch(), onMenu };
+    };
+    const away = pressAt(false);
+    expect(away.handled).toBe(true);
+    expect(away.dispatched).toBe(true);
+    expect(away.onMenu).toHaveBeenCalledTimes(1);
+    const atTop = pressAt(true);
+    expect(atTop.handled).toBe(false);
+    expect(atTop.dispatched).toBe(false);
+    expect(sidebarOwnsMenu("conversation", false)).toBe(false);
+  });
+
+  it("keeps the sidebar below the conversation", () => {
+    const scope = createMenuScope();
+    scope.push({ kind: "conversation", onMenu: () => {} });
+    scope.push({ kind: "sidebar", onMenu: () => {} });
+    expect(scope.top()?.kind).toBe("conversation");
   });
 });

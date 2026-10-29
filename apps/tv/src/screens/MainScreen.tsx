@@ -13,7 +13,7 @@ import {
 import { useDevOpenNewThread } from "../features/threads/devOpenThread";
 import { NewThreadComposer, type ProjectRef } from "../features/threads/NewThreadComposer";
 import { ThreadActionsSheet } from "../features/threads/ThreadActionsSheet";
-import { useMenuOwner } from "../navigation/menuScope";
+import { sidebarOwnsMenu, useMenuOwner } from "../navigation/menuScope";
 import type { ThreadRef } from "../navigation/stack";
 import { tvAtomRegistry } from "../state/atom-registry";
 import {
@@ -50,7 +50,7 @@ export function connectionSummaryLabel(
  * The sidebar of threads beside the selected conversation or the new-thread composer. Left from
  * the conversation lands on the selected row; selecting a thread, or Right into the
  * conversation, lands on its newest message (ThreadScreen's own guide). Menu from the right pane
- * returns to the sidebar.
+ * returns to the sidebar, and from the sidebar returns to its top; at the top Menu exits.
  */
 export function MainScreen(props: {
   readonly hidden: boolean;
@@ -63,10 +63,12 @@ export function MainScreen(props: {
   const allConnected = environments.every((entry) => entry.connectionState === "connected");
   const [selectedThread, setSelectedThread] = useState<ThreadRef | null>(null);
   // Bumped per selection: the conversation moves focus to its newest message once per value.
+  // 0 asks for no move, for a selection made while focus stays in the sidebar.
   const [focusRequest, setFocusRequest] = useState(0);
   const [actionsThread, setActionsThread] = useState<ThreadRef | null>(null);
-  // Which pane focus is in, from focus entering each side. Only the right pane owns Menu.
+  // Which pane focus is in, from focus entering each side.
   const [pane, setPane] = useState<"sidebar" | "conversation">("sidebar");
+  const [sidebarAtTop, setSidebarAtTop] = useState(false);
   // Bumped per open, so each one starts a fresh composer.
   const [newThread, setNewThread] = useState<{
     readonly request: number;
@@ -77,6 +79,11 @@ export function MainScreen(props: {
     setNewThread(null);
     setFocusRequest((request) => request + 1);
     setPane("conversation");
+  };
+  const replaceSelection = (thread: ThreadRef | null) => {
+    setSelectedThread(thread);
+    setFocusRequest(0);
+    setPane("sidebar");
   };
   const openNewThread = (project: ProjectRef | null) => {
     const shell = selectedThread
@@ -105,6 +112,11 @@ export function MainScreen(props: {
       focusSidebar();
     },
     pane === "conversation",
+  );
+  useMenuOwner(
+    "sidebar",
+    () => sectionList.current?.focusTop(),
+    sidebarOwnsMenu(pane, sidebarAtTop),
   );
   const closeActions = () => {
     if (actionsThread !== null && !sectionList.current?.focusThread(actionsThread)) focusSidebar();
@@ -136,6 +148,8 @@ export function MainScreen(props: {
           onNewThread={openNewThread}
           onSelectedRowHost={setSelectedRow}
           filterRef={setFilter}
+          onSelectionReplaced={replaceSelection}
+          onFocusAtTopChange={setSidebarAtTop}
         />
         <FocusablePressable
           style={styles.connections}

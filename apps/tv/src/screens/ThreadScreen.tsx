@@ -197,7 +197,7 @@ export function ThreadScreen(props: {
 
   useDevSendMessage(thread !== null && threadState.status === "live", send);
   useDevOpenSheet(thread !== null && threadState.status === "live", setSheet);
-  useDevRunAction(shell !== null || thread !== null, environmentId, threadId);
+  useDevRunAction(threadState.status === "live", environmentId, threadId);
 
   const loadError = threadState.error._tag === "Some" ? threadState.error.value : null;
   const emptyLabel =
