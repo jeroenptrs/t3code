@@ -182,8 +182,9 @@ user-bound sessions and startup prints no administrator pairing token. A service
 can still mint them; Slack's credential rotation depends on that. With users
 unable to mint, every such session descends from the host CLI. T3 Connect is a
 separate path: once an environment is linked, the linked cloud account obtains
-pairing credentials through the relay without any environment session. An
-environment that must admit only Entra users must not be linked.
+pairing credentials through the relay without any environment session. While
+Entra is on, the [relay mint](../../apps/server/src/cloud/CloudLink.ts) grants
+those credentials the `operator` role's scopes, never the management scopes.
 
 Changing a user's access, including revoking their sessions, needs
 `access:write` and a session that is itself a user, so the audit log can name
