@@ -179,10 +179,12 @@ reason and Entra's error code. An expired client secret is the usual cause. Crea
 update `T3CODE_ENTRA_CLIENT_SECRET`, and restart T3. Host commands under `npx t3@latest auth` keep
 working while sign-in is broken.
 
-## T3 Connect bypasses Entra sign-in
+## A T3 Connect link gets Operator access
 
 If this environment is linked to T3 Connect, the linked T3 Connect account can reach it without
-Entra sign-in. If the portal must admit only Entra users, do not link it. To remove an existing link,
+Entra sign-in. While Entra sign-in is on, that account gets Operator access, not Administrator
+access. Operators are still effectively administrators, as described in step 5, so link the portal
+only when you trust the T3 Connect account that way. To remove an existing link,
 run `npx t3@latest connect unlink` on the host and deregister the environment from your T3 Connect
 account.
 

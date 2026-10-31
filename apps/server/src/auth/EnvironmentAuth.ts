@@ -5,6 +5,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthAdministrativeClientScopes,
   AuthStandardClientScopes,
+  AuthUserRoleScopes,
   type AuthAccessTokenResult,
   type AuthBrowserSessionResult,
   type AuthClientMetadata,
@@ -1372,7 +1373,8 @@ export const make = Effect.gen(function* () {
       }
     }
     const issued = yield* createPairingLink({
-      scopes: AuthStandardClientScopes,
+      // A linked cloud account has no Entra identity, so it never gets management scopes.
+      scopes: entraSignIn ? AuthUserRoleScopes.operator : AuthStandardClientScopes,
       subject: CLOUD_CONNECT_SUBJECT,
       // Long enough for someone to notice the request and approve it.
       ttl: mustWait ? Duration.minutes(10) : Duration.minutes(2),
