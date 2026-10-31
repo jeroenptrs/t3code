@@ -192,9 +192,11 @@ holds the flow in memory under its `state`, since the sign-in finishes in a
 browser the client does not control, and the unchanged callback binds the user
 to that session instead of issuing a cookie, so the app registration needs
 nothing new. The user's role then replaces the credential's scopes, and the
-session expires within the user session lifetime; a link's DPoP token lives an
-hour, so a link signs in again after each renewal. Sign-out clears the binding
-and keeps the session. Like a device-code flow, whoever completes the URL binds
+session expires within the user session lifetime. A DPoP client also binds its
+proof key for that lifetime, so the hourly T3 Connect renewal, which proves the
+same key, mints a session for the same user, capped at the binding's expiry.
+Sign-out clears the session's user and the key's binding, and revoking a user's
+sessions deletes their key bindings, so a renewal cannot rebind them. Like a device-code flow, whoever completes the URL binds
 their identity to the requesting session, so only hand it to people you trust.
 
 Changing a user's access, including revoking their sessions, needs

@@ -186,8 +186,7 @@ Entra sign-in. While Entra sign-in is on, that account gets Operator access, not
 access. Operators are still effectively administrators, as described in step 5, so link the portal
 only when you trust the T3 Connect account that way. Someone using the linked account can choose
 **Sign in with Microsoft** in the sidebar's account menu to work with their own role instead; the
-sign-in lasts until the link renews its credential, at most an hour, and **Sign out** returns it to
-Operator access. To remove an existing link,
+sign-in lasts 12 hours on that device, and **Sign out** returns it to Operator access. To remove an existing link,
 run `npx t3@latest connect unlink` on the host and deregister the environment from your T3 Connect
 account.
 
