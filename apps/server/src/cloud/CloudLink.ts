@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import {
   AuthStandardClientScopes,
+  AuthUserRoleScopes,
   EnvironmentAuthenticatedPrincipal,
   type EnvironmentCloudLinkStateResult,
   type EnvironmentCloudPreferencesRequest,
@@ -1578,7 +1579,9 @@ const make = Effect.gen(function* () {
 
       const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
       const issued = yield* environmentAuth.createPairingLink({
-        scopes: AuthStandardClientScopes,
+        // A linked cloud account has no Entra identity, so it never gets management scopes.
+        scopes:
+          config.entraSignIn === undefined ? AuthStandardClientScopes : AuthUserRoleScopes.operator,
         subject: "cloud-connect",
         ttl: Duration.minutes(2),
         label: "T3 Connect connect",
