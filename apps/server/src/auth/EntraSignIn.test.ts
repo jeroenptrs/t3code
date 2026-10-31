@@ -20,6 +20,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -37,6 +38,7 @@ import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from "jose";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EntraSignIn from "./EntraSignIn.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
@@ -180,6 +182,7 @@ const configLayer = (entra: boolean, callbackPath: `/${string}`) =>
 const makeLayer = (options?: { readonly entra?: boolean; readonly callbackPath?: `/${string}` }) =>
   EntraSignIn.layer.pipe(
     Layer.provideMerge(EnvironmentAuth.layer),
+    Layer.provide(ManagedPolicy.layerTest()),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provide(ServerEnvironment.layerIdentity),
@@ -586,8 +589,8 @@ it.layer(NodeServices.layer)("EntraSignIn", (it) => {
       );
       const socket = yield* auth.authenticateWebSocketUpgrade(
         {
-          url: `/ws?wsTicket=${ticket.ticket}`,
-          originalUrl: `/ws?wsTicket=${ticket.ticket}`,
+          url: `/ws?wsTicket=${Redacted.value(ticket.ticket)}`,
+          originalUrl: `/ws?wsTicket=${Redacted.value(ticket.ticket)}`,
           headers: { host: "t3.example.com" },
           cookies: {},
         } as unknown as AuthRequest,
@@ -823,12 +826,47 @@ it.layer(NodeServices.layer)("EntraSignIn", (it) => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
+  it.effect("revoking a stepped-up session ends that device's step-up, siblings included", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const key = makeDpopKey();
+      const linked = yield* renewLink(key.thumbprint);
+      yield* (yield* stepUp(linked.session, "1")).complete;
+      const renewed = (yield* renewLink(key.thumbprint)).session;
+      expect(renewed.user).toBeDefined();
+
+      expect(yield* sessions.revoke(renewed.sessionId)).toBe(true);
+
+      const sibling = yield* sessions.getActive(linked.session.sessionId);
+      expect(Option.getOrThrow(sibling).scopes).toEqual(AuthUserRoleScopes.operator);
+      expect((yield* renewLink(key.thumbprint)).session.user).toBeUndefined();
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("revoking other sessions ends their step-ups but keeps the caller's device", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const kept = makeDpopKey();
+      const revoked = makeDpopKey();
+      yield* (yield* stepUp((yield* renewLink(kept.thumbprint)).session, "1")).complete;
+      yield* (yield* stepUp((yield* renewLink(revoked.thumbprint)).session, "2")).complete;
+      const current = (yield* renewLink(kept.thumbprint)).session;
+
+      yield* sessions.revokeAllExcept(current.sessionId);
+
+      expect((yield* renewLink(kept.thumbprint)).session.user).toBeDefined();
+      expect((yield* renewLink(revoked.thumbprint)).session.user).toBeUndefined();
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
   it.effect("signing out a stepped-up device keeps later renewals at Operator", () =>
     Effect.gen(function* () {
       const auth = yield* EnvironmentAuth.EnvironmentAuth;
       const key = makeDpopKey();
       const linked = yield* renewLink(key.thumbprint);
       yield* (yield* stepUp(linked.session, "1")).complete;
+      const older = yield* renewLink(key.thumbprint);
+      expect(older.session.user).toBeDefined();
       const host = "t3.example.com";
       const signOut = yield* auth.signOut({
         method: "POST",
@@ -847,6 +885,9 @@ it.layer(NodeServices.layer)("EntraSignIn", (it) => {
       } as unknown as AuthRequest);
       expect(signOut.signedOut).toBe(true);
 
+      const sessions = yield* SessionStore.SessionStore;
+      const sibling = yield* sessions.getActive(older.session.sessionId);
+      expect(Option.getOrThrow(sibling).scopes).toEqual(AuthUserRoleScopes.operator);
       const renewed = (yield* renewLink(key.thumbprint)).session;
       expect(renewed.user).toBeUndefined();
       expect(renewed.scopes).toEqual(AuthUserRoleScopes.operator);
@@ -894,8 +935,8 @@ it.layer(NodeServices.layer)("EntraSignIn", (it) => {
         const socket = yield* Effect.result(
           auth.authenticateWebSocketUpgrade(
             {
-              url: `/ws?wsTicket=${ticket.ticket}`,
-              originalUrl: `/ws?wsTicket=${ticket.ticket}`,
+              url: `/ws?wsTicket=${Redacted.value(ticket.ticket)}`,
+              originalUrl: `/ws?wsTicket=${Redacted.value(ticket.ticket)}`,
               headers: { host: "t3.example.com" },
               cookies: {},
             } as unknown as AuthRequest,
