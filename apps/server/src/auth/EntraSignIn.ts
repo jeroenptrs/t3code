@@ -131,6 +131,8 @@ export class EntraSignIn extends Context.Service<
       readonly sessionId: AuthSessionId;
       readonly method: ServerAuthSessionMethod;
       readonly userId?: AuthUserId;
+      /** A DPoP client's key; the binding then outlives this session's renewals. */
+      readonly proofKeyThumbprint?: string;
     }) => Effect.Effect<
       { readonly authorizationUrl: string },
       EntraSignInDisabledError | EntraStepUpRefusedError
@@ -197,6 +199,7 @@ const decodeFlowClaims = Schema.decodeUnknownOption(Schema.fromJsonString(FlowCl
 
 interface StepUpFlow {
   readonly sessionId: AuthSessionId;
+  readonly proofKeyThumbprint?: string;
   readonly nonce: string;
   readonly verifier: string;
   readonly exp: number;
@@ -327,6 +330,7 @@ const make = Effect.gen(function* () {
       const state = randomToken();
       const flow: StepUpFlow = {
         sessionId: session.sessionId,
+        ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
         nonce: randomToken(),
         verifier: randomToken(),
         exp: now + Duration.toMillis(FLOW_TTL),
@@ -512,7 +516,12 @@ const make = Effect.gen(function* () {
       }
       const user = yield* recordCallbackSignIn(input, flow);
       const bound = yield* sessions
-        .bindUser({ sessionId: flow.sessionId, userId: user.userId, ttl: ENTRA_SESSION_TTL })
+        .bindUser({
+          sessionId: flow.sessionId,
+          userId: user.userId,
+          ttl: ENTRA_SESSION_TTL,
+          ...(flow.proofKeyThumbprint ? { proofKeyThumbprint: flow.proofKeyThumbprint } : {}),
+        })
         .pipe(
           Effect.mapError((cause) =>
             fail("internal_error", "Could not bind the session to the user.", cause),
