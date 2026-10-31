@@ -121,6 +121,7 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
             .handle("approveConnectDevice", () => unexpectedEndpoint("auth.approveConnectDevice"))
             .handle("revokeConnectDevice", () => unexpectedEndpoint("auth.revokeConnectDevice"))
             .handle("signOut", () => unexpectedEndpoint("auth.signOut"))
+            .handle("entraStepUp", () => unexpectedEndpoint("auth.entraStepUp"))
             .handle("users", () => unexpectedEndpoint("auth.users"))
             .handle("userAccessChanges", () => unexpectedEndpoint("auth.userAccessChanges"))
             .handle("approveUser", () => unexpectedEndpoint("auth.approveUser"))

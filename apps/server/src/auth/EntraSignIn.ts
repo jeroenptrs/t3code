@@ -5,6 +5,9 @@ import {
   AuthUserIdentity,
   EntraSignInFailureReason,
   type AuthClientMetadata,
+  type AuthSessionId,
+  type AuthUserId,
+  type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -57,10 +60,23 @@ export class EntraSignInError extends Schema.TaggedError<EntraSignInError>()("En
   reason: EntraSignInFailureReason,
   /** Safe for logs: never contains tokens, codes, or secrets. */
   detail: Schema.String,
+  /** The callback belonged to a step-up, so there is no browser session to return to. */
+  stepUp: Schema.optionalKey(Schema.Literal(true)),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
     return `Entra sign-in failed (${this.reason}).`;
+  }
+}
+
+export class EntraStepUpRefusedError extends Schema.TaggedError<EntraStepUpRefusedError>()(
+  "EntraStepUpRefusedError",
+  { reason: Schema.Literals(["session_already_bound", "browser_sign_in_required"]) },
+) {
+  override get message(): string {
+    return this.reason === "session_already_bound"
+      ? "This session is already signed in as a user."
+      : "Browser sessions sign in through the Entra sign-in page.";
   }
 }
 
@@ -80,10 +96,17 @@ export interface EntraSignInStart {
   readonly flowCookieMaxAge: Duration.Duration;
 }
 
-export interface EntraSignInCompleted {
-  readonly session: SessionStore.IssuedSession;
-  readonly returnTo: string;
-}
+export type EntraSignInCompleted =
+  | {
+      readonly kind: "browser";
+      readonly session: SessionStore.IssuedSession;
+      readonly returnTo: string;
+    }
+  | {
+      /** An existing session was bound to the user; no cookie is set. */
+      readonly kind: "stepUp";
+      readonly userLabel: string;
+    };
 
 export class EntraSignIn extends Context.Service<
   EntraSignIn,
@@ -99,9 +122,24 @@ export class EntraSignIn extends Context.Service<
       readonly returnTo: string | null;
     }) => Effect.Effect<EntraSignInStart, EntraSignInDisabledError>;
     /**
-     * Validates the callback against the flow cookie, redeems the code,
-     * verifies the ID token, records the sign-in, and issues a browser
-     * session bound to the user.
+     * Starts a flow that binds the calling session, one with no user such as
+     * a T3 Connect link, to whoever signs in. The flow is held server-side by
+     * its state, because the sign-in finishes in a browser the session's
+     * client does not control.
+     */
+    readonly startStepUp: (session: {
+      readonly sessionId: AuthSessionId;
+      readonly method: ServerAuthSessionMethod;
+      readonly userId?: AuthUserId;
+    }) => Effect.Effect<
+      { readonly authorizationUrl: string },
+      EntraSignInDisabledError | EntraStepUpRefusedError
+    >;
+    /**
+     * Validates the callback against the flow cookie or a pending step-up,
+     * redeems the code, verifies the ID token, and records the sign-in. A
+     * browser flow issues a session bound to the user; a step-up binds the
+     * user to the session that started it.
      */
     readonly complete: (input: {
       readonly code: string | null;
@@ -157,6 +195,13 @@ type FlowClaims = typeof FlowClaims.Type;
 const encodeFlowClaims = Schema.encodeSync(Schema.fromJsonString(FlowClaims));
 const decodeFlowClaims = Schema.decodeUnknownOption(Schema.fromJsonString(FlowClaims));
 
+interface StepUpFlow {
+  readonly sessionId: AuthSessionId;
+  readonly nonce: string;
+  readonly verifier: string;
+  readonly exp: number;
+}
+
 const TokenResponse = Schema.Struct({ id_token: Schema.String });
 const decodeTokenResponse = Schema.decodeUnknownEffect(TokenResponse);
 const TokenErrorResponse = Schema.Struct({
@@ -188,6 +233,7 @@ const disabled = EntraSignIn.of({
   callbackPath: ServerConfig.DEFAULT_ENTRA_CALLBACK_PATH,
   secureCookies: false,
   start: () => Effect.fail(new EntraSignInDisabledError()),
+  startStepUp: () => Effect.fail(new EntraSignInDisabledError()),
   complete: () => Effect.fail(new EntraSignInDisabledError()),
 });
 
@@ -208,6 +254,10 @@ const make = Effect.gen(function* () {
   const redirectUri = new URL(config.callbackPath, config.publicUrl).toString();
   const flowCookieName = `${sessions.cookieName}_entra_flow`;
   const keysRef = yield* Ref.make<{ keys: JSONWebKeySet; fetchedAt: number } | null>(null);
+  // Keyed by state. One pending step-up per session, so the map stays as
+  // small as the set of sessions; a restart forgets them, and the person
+  // starts again.
+  const stepUpsRef = yield* Ref.make(new Map<string, StepUpFlow>());
 
   const signFlow = (claims: FlowClaims) => {
     const payload = base64UrlEncode(encodeFlowClaims(claims));
@@ -227,36 +277,82 @@ const make = Effect.gen(function* () {
     );
   };
 
+  const authorizationUrl = (flow: {
+    readonly state: string;
+    readonly nonce: string;
+    readonly verifier: string;
+  }) => {
+    const url = new URL(`${tenantBase}/oauth2/v2.0/authorize`);
+    url.search = new URLSearchParams({
+      client_id: config.clientId,
+      response_type: "code",
+      redirect_uri: redirectUri,
+      response_mode: "query",
+      scope: "openid profile email",
+      state: flow.state,
+      nonce: flow.nonce,
+      code_challenge: pkceChallenge(flow.verifier),
+      code_challenge_method: "S256",
+    }).toString();
+    return url.toString();
+  };
+
   const start: EntraSignIn["Service"]["start"] = (input) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
-      const verifier = randomToken();
       const claims: FlowClaims = {
         v: 1,
         state: randomToken(),
         nonce: randomToken(),
-        verifier,
+        verifier: randomToken(),
         returnTo: sanitizeReturnPath(input.returnTo),
         exp: now + Duration.toMillis(FLOW_TTL),
       };
-      const url = new URL(`${tenantBase}/oauth2/v2.0/authorize`);
-      url.search = new URLSearchParams({
-        client_id: config.clientId,
-        response_type: "code",
-        redirect_uri: redirectUri,
-        response_mode: "query",
-        scope: "openid profile email",
-        state: claims.state,
-        nonce: claims.nonce,
-        code_challenge: pkceChallenge(verifier),
-        code_challenge_method: "S256",
-      }).toString();
       return {
-        authorizationUrl: url.toString(),
+        authorizationUrl: authorizationUrl(claims),
         flowCookie: signFlow(claims),
         flowCookieMaxAge: FLOW_TTL,
       } satisfies EntraSignInStart;
     }).pipe(Effect.withSpan("EntraSignIn.start"));
+
+  const startStepUp: EntraSignIn["Service"]["startStepUp"] = Effect.fn("EntraSignIn.startStepUp")(
+    function* (session) {
+      if (session.method === "browser-session-cookie") {
+        return yield* new EntraStepUpRefusedError({ reason: "browser_sign_in_required" });
+      }
+      if (session.userId !== undefined) {
+        return yield* new EntraStepUpRefusedError({ reason: "session_already_bound" });
+      }
+      const now = yield* Clock.currentTimeMillis;
+      const state = randomToken();
+      const flow: StepUpFlow = {
+        sessionId: session.sessionId,
+        nonce: randomToken(),
+        verifier: randomToken(),
+        exp: now + Duration.toMillis(FLOW_TTL),
+      };
+      yield* Ref.update(stepUpsRef, (current) => {
+        const next = new Map(
+          Array.from(current).filter(
+            ([, pending]) => pending.exp > now && pending.sessionId !== session.sessionId,
+          ),
+        );
+        next.set(state, flow);
+        return next;
+      });
+      return { authorizationUrl: authorizationUrl({ ...flow, state }) };
+    },
+  );
+
+  /** Removes the step-up for `state`, so each one completes at most once. */
+  const takeStepUp = (state: string | null) =>
+    Ref.modify(stepUpsRef, (current): [StepUpFlow | undefined, Map<string, StepUpFlow>] => {
+      const flow = state === null ? undefined : current.get(state);
+      if (flow === undefined || state === null) return [undefined, current];
+      const next = new Map(current);
+      next.delete(state);
+      return [flow, next];
+    });
 
   const redeemCode = (code: string, verifier: string) =>
     Effect.gen(function* () {
@@ -382,9 +478,75 @@ const make = Effect.gen(function* () {
       };
     });
 
+  /** Checks the callback's outcome, redeems the code, and records who signed in. */
+  const recordCallbackSignIn = Effect.fn("EntraSignIn.recordCallbackSignIn")(function* (
+    input: { readonly code: string | null; readonly error: string | null },
+    flow: { readonly verifier: string; readonly nonce: string },
+  ) {
+    if (input.error !== null) {
+      return yield* fail(
+        "provider_error",
+        `Entra returned ${PROVIDER_ERROR_CODE.test(input.error) ? input.error : "an error"}.`,
+      );
+    }
+    if (input.code === null) {
+      return yield* fail("provider_error", "Entra returned no authorization code.");
+    }
+    const idToken = yield* redeemCode(input.code, flow.verifier);
+    const signedIn = yield* verifyIdToken(idToken, flow.nonce);
+    return yield* users
+      .recordSignIn(signedIn)
+      .pipe(
+        Effect.mapError((cause) => fail("internal_error", "Could not record the sign-in.", cause)),
+      );
+  });
+
+  const completeStepUp = Effect.fn("EntraSignIn.completeStepUp")(
+    function* (
+      input: { readonly code: string | null; readonly error: string | null },
+      flow: StepUpFlow,
+      now: number,
+    ) {
+      if (flow.exp <= now) {
+        return yield* fail("invalid_state", "The step-up flow expired.");
+      }
+      const user = yield* recordCallbackSignIn(input, flow);
+      const bound = yield* sessions
+        .bindUser({ sessionId: flow.sessionId, userId: user.userId, ttl: ENTRA_SESSION_TTL })
+        .pipe(
+          Effect.mapError((cause) =>
+            fail("internal_error", "Could not bind the session to the user.", cause),
+          ),
+        );
+      if (!bound) {
+        return yield* fail(
+          "invalid_state",
+          "The session that started this step-up has ended or is already bound.",
+        );
+      }
+      return {
+        kind: "stepUp",
+        userLabel: user.displayName ?? user.email ?? "your account",
+      } satisfies EntraSignInCompleted;
+    },
+    Effect.mapError(
+      (error) =>
+        new EntraSignInError({
+          reason: error.reason,
+          detail: error.detail,
+          stepUp: true,
+          ...(error.cause === undefined ? {} : { cause: error.cause }),
+        }),
+    ),
+  );
+
   const complete: EntraSignIn["Service"]["complete"] = (input) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
+      const stepUp = yield* takeStepUp(input.state);
+      if (stepUp !== undefined) {
+        return yield* completeStepUp(input, stepUp, now);
+      }
       const flow = readFlow(input.flowCookie, now);
       if (Option.isNone(flow)) {
         return yield* fail("invalid_state", "Sign-in flow cookie is missing, expired, or invalid.");
@@ -392,24 +554,7 @@ const make = Effect.gen(function* () {
       if (input.state === null || input.state !== flow.value.state) {
         return yield* fail("invalid_state", "Callback state does not match this browser's flow.");
       }
-      if (input.error !== null) {
-        return yield* fail(
-          "provider_error",
-          `Entra returned ${PROVIDER_ERROR_CODE.test(input.error) ? input.error : "an error"}.`,
-        );
-      }
-      if (input.code === null) {
-        return yield* fail("provider_error", "Entra returned no authorization code.");
-      }
-      const idToken = yield* redeemCode(input.code, flow.value.verifier);
-      const signedIn = yield* verifyIdToken(idToken, flow.value.nonce);
-      const user = yield* users
-        .recordSignIn(signedIn)
-        .pipe(
-          Effect.mapError((cause) =>
-            fail("internal_error", "Could not record the sign-in.", cause),
-          ),
-        );
+      const user = yield* recordCallbackSignIn(input, flow.value);
       const session = yield* sessions
         .issue({
           method: "browser-session-cookie",
@@ -432,7 +577,11 @@ const make = Effect.gen(function* () {
             fail("internal_error", "Could not issue the browser session.", cause),
           ),
         );
-      return { session, returnTo: flow.value.returnTo } satisfies EntraSignInCompleted;
+      return {
+        kind: "browser",
+        session,
+        returnTo: flow.value.returnTo,
+      } satisfies EntraSignInCompleted;
     }).pipe(Effect.withSpan("EntraSignIn.complete"));
 
   return EntraSignIn.of({
@@ -441,6 +590,7 @@ const make = Effect.gen(function* () {
     callbackPath: config.callbackPath,
     secureCookies: config.publicUrl.protocol === "https:",
     start,
+    startStepUp,
     complete,
   });
 });
