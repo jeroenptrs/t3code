@@ -1076,6 +1076,7 @@ export const make = Effect.gen(function* () {
                   ? {
                       proofKeyThumbprint: input.proofKeyThumbprint,
                       ttl: Duration.hours(1),
+                      inheritStepUp: entraSignIn,
                     }
                   : {}),
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
@@ -1085,6 +1086,7 @@ export const make = Effect.gen(function* () {
                 },
               })
               .pipe(
+                Effect.map((issued) => ({ ...issued, grantedScopes })),
                 Effect.mapError(
                   (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
                 ),
@@ -1105,7 +1107,9 @@ export const make = Effect.gen(function* () {
                       (session.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1000,
                     ),
                   ),
-                  scope: encodeOAuthScope(session.scopes),
+                  // The grant, not the session's current scopes: a renewal that
+                  // inherits a pending user's step-up has none, and `scope` cannot be empty.
+                  scope: encodeOAuthScope(session.grantedScopes),
                 }) satisfies AuthAccessTokenResult,
             ),
           ),
@@ -1484,7 +1488,12 @@ export const make = Effect.gen(function* () {
       : authenticateRequest(request).pipe(
           Effect.flatMap((session) =>
             session.method !== "browser-session-cookie" && session.userId !== undefined
-              ? sessions.unbindUser(session.sessionId)
+              ? sessions.unbindUser({
+                  sessionId: session.sessionId,
+                  ...(session.proofKeyThumbprint
+                    ? { proofKeyThumbprint: session.proofKeyThumbprint }
+                    : {}),
+                })
               : Effect.succeed(false),
           ),
           Effect.catchIf(isServerAuthCredentialError, () => Effect.succeed(false)),
@@ -1512,8 +1521,8 @@ export const make = Effect.gen(function* () {
         signOutBoundSession(request).pipe(
           Effect.map((unbound) => ({
             signedOut: unbound || revoked.some(Boolean),
-        cookieNames: authCookieNames,
-      })),
+            cookieNames: authCookieNames,
+          })),
         ),
       ),
       Effect.mapError((cause) => new ServerAuthSignOutError({ cause })),
