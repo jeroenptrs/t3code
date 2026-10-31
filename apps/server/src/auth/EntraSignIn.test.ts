@@ -1,6 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no RSA signature verification or sync hashing.
-import * as NodeCrypto from "node:crypto";
+import * as NodeCryptoBuiltin from "node:crypto";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   computeDpopAccessTokenHash,
@@ -16,10 +17,11 @@ import {
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import type * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -33,10 +35,10 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
-import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from "jose";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as EntraSignIn from "./EntraSignIn.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
@@ -64,15 +66,18 @@ const identity = (suffix: string): AuthUserIdentity => ({
 // each authorization code once, only with the PKCE verifier it was issued for.
 // ---------------------------------------------------------------------------
 
-const tenantKey = await generateKeyPair("RS256");
-const strangerKey = await generateKeyPair("RS256");
-const rotatedKey = await generateKeyPair("RS256");
-const publicJwk = { ...(await exportJWK(tenantKey.publicKey)), kid: "tenant-key", alg: "RS256" };
-const rotatedJwk = {
-  ...(await exportJWK(rotatedKey.publicKey)),
-  kid: "rotated-key",
+type JWTPayload = Record<string, unknown>;
+const rsaKeyPair = () => NodeCryptoBuiltin.generateKeyPairSync("rsa", { modulusLength: 2048 });
+const tenantKey = rsaKeyPair();
+const strangerKey = rsaKeyPair();
+const rotatedKey = rsaKeyPair();
+const publicJwkOf = (key: NodeCryptoBuiltin.KeyObject, kid: string) => ({
+  ...key.export({ format: "jwk" }),
+  kid,
   alg: "RS256",
-};
+});
+const publicJwk = publicJwkOf(tenantKey.publicKey, "tenant-key");
+const rotatedJwk = publicJwkOf(rotatedKey.publicKey, "rotated-key");
 /** The keys the fake tenant publishes right now. */
 let publishedKeys: ReadonlyArray<typeof publicJwk> = [publicJwk];
 /** Each code redeems only with the verifier and redirect URI its authorization request used. */
@@ -91,22 +96,30 @@ const signIdToken = (
     readonly key?: "tenant" | "stranger" | "rotated";
   },
 ) =>
-  new SignJWT({ tid: TENANT, ...claims })
-    .setProtectedHeader({
+  Promise.resolve().then(() => {
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const header = encode({
       alg: "RS256",
       kid: options?.key === "rotated" ? "rotated-key" : "tenant-key",
-    })
-    .setIssuer(options?.issuer ?? ISSUER)
-    .setAudience(options?.audience ?? CLIENT_ID)
-    .setIssuedAt()
-    .setExpirationTime(options?.expiresAt ?? "10m")
-    .sign(
+    });
+    const payload = encode({
+      tid: TENANT,
+      ...claims,
+      iss: options?.issuer ?? ISSUER,
+      aud: options?.audience ?? CLIENT_ID,
+      // Seconds on the TestClock, which starts at the epoch.
+      iat: 0,
+      exp: options?.expiresAt ?? 4_102_444_800,
+    });
+    const key =
       options?.key === "stranger"
         ? strangerKey.privateKey
         : options?.key === "rotated"
           ? rotatedKey.privateKey
-          : tenantKey.privateKey,
-    );
+          : tenantKey.privateKey;
+    const signature = NodeCryptoBuiltin.sign("sha256", Buffer.from(`${header}.${payload}`), key);
+    return `${header}.${payload}.${signature.toString("base64url")}`;
+  });
 
 const jsonResponse = (
   request: Parameters<typeof HttpClientResponse.fromWeb>[0],
@@ -134,7 +147,9 @@ const fakeEntraHttpClient = Layer.succeed(
         const issued = issuedCodes.get(code);
         issuedCodes.delete(code);
         const verifier = form.get("code_verifier") ?? "";
-        const challenge = NodeCrypto.createHash("sha256").update(verifier).digest("base64url");
+        const challenge = NodeCryptoBuiltin.createHash("sha256")
+          .update(verifier)
+          .digest("base64url");
         if (
           issued === undefined ||
           issued.challenge !== challenge ||
@@ -180,6 +195,7 @@ const configLayer = (entra: boolean, callbackPath: `/${string}`) =>
 const makeLayer = (options?: { readonly entra?: boolean; readonly callbackPath?: `/${string}` }) =>
   EntraSignIn.layer.pipe(
     Layer.provideMerge(EnvironmentAuth.layer),
+    Layer.provide(ManagedPolicy.layerTest()),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provide(ServerEnvironment.layerIdentity),
@@ -250,7 +266,9 @@ const issueLinkedSession = SessionStore.SessionStore.pipe(
 );
 
 const makeDpopKey = () => {
-  const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const { privateKey, publicKey } = NodeCryptoBuiltin.generateKeyPairSync("ec", {
+    namedCurve: "P-256",
+  });
   const publicJwk = publicKey.export({ format: "jwk" }) as DpopPublicJwk;
   return {
     thumbprint: computeDpopJwkThumbprint(publicJwk),
@@ -260,11 +278,11 @@ const makeDpopKey = () => {
       const payload = encode({
         htm: input.method,
         htu: input.url,
-        jti: NodeCrypto.randomUUID(),
+        jti: NodeCryptoBuiltin.randomUUID(),
         iat: input.iat,
         ath: computeDpopAccessTokenHash(input.token),
       });
-      const signature = NodeCrypto.sign("sha256", Buffer.from(`${header}.${payload}`), {
+      const signature = NodeCryptoBuiltin.sign("sha256", Buffer.from(`${header}.${payload}`), {
         key: privateKey,
         dsaEncoding: "ieee-p1363",
       }).toString("base64url");
@@ -371,7 +389,7 @@ it("honors only same-origin relative return paths", () => {
   }
 });
 
-it.layer(NodeServices.layer)("EntraSignIn", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("EntraSignIn", (it) => {
   it.effect("starts a PKCE authorization request for the configured tenant only", () =>
     Effect.gen(function* () {
       const entra = yield* EntraSignIn.EntraSignIn;
@@ -438,8 +456,6 @@ it.layer(NodeServices.layer)("EntraSignIn", (it) => {
     () =>
       Effect.gen(function* () {
         const oid = objectId("1");
-        // Seconds since the epoch, long past: jose checks expiry against wall time.
-        const past = 1_000_000;
         const failures = [
           yield* expectFailure(
             completeSignIn({ oid }, { tamper: (flow) => ({ ...flow, nonce: "replayed-nonce" }) }),
@@ -455,8 +471,10 @@ it.layer(NodeServices.layer)("EntraSignIn", (it) => {
           ),
           yield* expectFailure(completeSignIn({ oid, tid: OTHER_TENANT })),
           yield* expectFailure(completeSignIn({ oid }, { key: "stranger" })),
-          yield* expectFailure(completeSignIn({ oid }, { expiresAt: past })),
           yield* expectFailure(completeSignIn({ oid: "not-a-guid" })),
+          yield* TestClock.adjust("1 hour").pipe(
+            Effect.andThen(expectFailure(completeSignIn({ oid }, { expiresAt: 600 }))),
+          ),
         ];
         expect(failures).toEqual(Array(failures.length).fill("invalid_id_token"));
         const registry = yield* UserRegistry.UserRegistry;
@@ -586,8 +604,8 @@ it.layer(NodeServices.layer)("EntraSignIn", (it) => {
       );
       const socket = yield* auth.authenticateWebSocketUpgrade(
         {
-          url: `/ws?wsTicket=${ticket.ticket}`,
-          originalUrl: `/ws?wsTicket=${ticket.ticket}`,
+          url: `/ws?wsTicket=${Redacted.value(ticket.ticket)}`,
+          originalUrl: `/ws?wsTicket=${Redacted.value(ticket.ticket)}`,
           headers: { host: "t3.example.com" },
           cookies: {},
         } as unknown as AuthRequest,
@@ -823,12 +841,47 @@ it.layer(NodeServices.layer)("EntraSignIn", (it) => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
+  it.effect("revoking a stepped-up session ends that device's step-up, siblings included", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const key = makeDpopKey();
+      const linked = yield* renewLink(key.thumbprint);
+      yield* (yield* stepUp(linked.session, "1")).complete;
+      const renewed = (yield* renewLink(key.thumbprint)).session;
+      expect(renewed.user).toBeDefined();
+
+      expect(yield* sessions.revoke(renewed.sessionId)).toBe(true);
+
+      const sibling = yield* sessions.getActive(linked.session.sessionId);
+      expect(Option.getOrThrow(sibling).scopes).toEqual(AuthUserRoleScopes.operator);
+      expect((yield* renewLink(key.thumbprint)).session.user).toBeUndefined();
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("revoking other sessions ends their step-ups but keeps the caller's device", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const kept = makeDpopKey();
+      const revoked = makeDpopKey();
+      yield* (yield* stepUp((yield* renewLink(kept.thumbprint)).session, "1")).complete;
+      yield* (yield* stepUp((yield* renewLink(revoked.thumbprint)).session, "2")).complete;
+      const current = (yield* renewLink(kept.thumbprint)).session;
+
+      yield* sessions.revokeAllExcept(current.sessionId);
+
+      expect((yield* renewLink(kept.thumbprint)).session.user).toBeDefined();
+      expect((yield* renewLink(revoked.thumbprint)).session.user).toBeUndefined();
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
   it.effect("signing out a stepped-up device keeps later renewals at Operator", () =>
     Effect.gen(function* () {
       const auth = yield* EnvironmentAuth.EnvironmentAuth;
       const key = makeDpopKey();
       const linked = yield* renewLink(key.thumbprint);
       yield* (yield* stepUp(linked.session, "1")).complete;
+      const older = yield* renewLink(key.thumbprint);
+      expect(older.session.user).toBeDefined();
       const host = "t3.example.com";
       const signOut = yield* auth.signOut({
         method: "POST",
@@ -847,6 +900,9 @@ it.layer(NodeServices.layer)("EntraSignIn", (it) => {
       } as unknown as AuthRequest);
       expect(signOut.signedOut).toBe(true);
 
+      const sessions = yield* SessionStore.SessionStore;
+      const sibling = yield* sessions.getActive(older.session.sessionId);
+      expect(Option.getOrThrow(sibling).scopes).toEqual(AuthUserRoleScopes.operator);
       const renewed = (yield* renewLink(key.thumbprint)).session;
       expect(renewed.user).toBeUndefined();
       expect(renewed.scopes).toEqual(AuthUserRoleScopes.operator);
@@ -894,8 +950,8 @@ it.layer(NodeServices.layer)("EntraSignIn", (it) => {
         const socket = yield* Effect.result(
           auth.authenticateWebSocketUpgrade(
             {
-              url: `/ws?wsTicket=${ticket.ticket}`,
-              originalUrl: `/ws?wsTicket=${ticket.ticket}`,
+              url: `/ws?wsTicket=${Redacted.value(ticket.ticket)}`,
+              originalUrl: `/ws?wsTicket=${Redacted.value(ticket.ticket)}`,
               headers: { host: "t3.example.com" },
               cookies: {},
             } as unknown as AuthRequest,
@@ -961,13 +1017,13 @@ const withWebHandler = <A>(
       Layer.provide(Layer.succeedContext(context)),
       Layer.provideMerge(
         HttpPlatform.layer.pipe(
-          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           Layer.provideMerge(Etag.layerWeak),
         ),
       ),
     );
     const requestContext = yield* Effect.context<
-      | Crypto.Crypto
+      | Digest.Digest
       | ServerSecretStore.ServerSecretStore
       | EntraSignIn.EntraSignIn
       | SessionStore.SessionStore
@@ -1000,346 +1056,349 @@ const cookiePair = (response: Response, name: string) =>
     .find((cookie) => cookie.startsWith(`${name}=`))
     ?.split(";", 1)[0];
 
-it.layer(NodeServices.layer)("Entra sign-in HTTP routes", (it) => {
-  it.effect("signs a browser in through start and callback, then signs it out", () =>
-    Effect.gen(function* () {
-      const sessions = yield* SessionStore.SessionStore;
-      const entra = yield* EntraSignIn.EntraSignIn;
-      yield* withWebHandler(async (fetch) => {
-        const start = await fetch("/api/auth/entra/start?returnTo=%2Fthreads%2Ft-1", {
-          redirect: "manual",
-        });
-        expect(start.status).toBe(302);
-        const authorize = new URL(start.headers.get("location") ?? "");
-        const flowCookie = cookiePair(start, entra.flowCookieName);
-        expect(start.headers.getSetCookie().join()).toMatch(/HttpOnly.*Secure|Secure.*HttpOnly/);
-        expect(start.headers.getSetCookie().join()).toContain("Path=/api/auth/entra/callback");
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+  "Entra sign-in HTTP routes",
+  (it) => {
+    it.effect("signs a browser in through start and callback, then signs it out", () =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const entra = yield* EntraSignIn.EntraSignIn;
+        yield* withWebHandler(async (fetch) => {
+          const start = await fetch("/api/auth/entra/start?returnTo=%2Fthreads%2Ft-1", {
+            redirect: "manual",
+          });
+          expect(start.status).toBe(302);
+          const authorize = new URL(start.headers.get("location") ?? "");
+          const flowCookie = cookiePair(start, entra.flowCookieName);
+          expect(start.headers.getSetCookie().join()).toMatch(/HttpOnly.*Secure|Secure.*HttpOnly/);
+          expect(start.headers.getSetCookie().join()).toContain("Path=/api/auth/entra/callback");
 
-        const code = `code-${++codeCounter}`;
-        issuedCodes.set(code, {
-          idToken: await signIdToken({
-            oid: objectId("1"),
-            nonce: authorize.searchParams.get("nonce"),
-            name: "Ada",
-          }),
-          challenge: authorize.searchParams.get("code_challenge") ?? "",
-          redirectUri: authorize.searchParams.get("redirect_uri"),
-        });
-        const callback = await fetch(
-          `/api/auth/entra/callback?code=${code}&state=${authorize.searchParams.get("state")}`,
-          { cookie: flowCookie ?? "" },
-        );
-        expect(callback.status).toBe(302);
-        expect(callback.headers.get("location")).toBe("/threads/t-1");
-        const sessionCookie = cookiePair(callback, sessions.cookieName);
-        expect(sessionCookie).toBeDefined();
-        expect(callback.headers.getSetCookie().join()).toMatch(
-          new RegExp(`${entra.flowCookieName}=;.*Max-Age=0`),
-        );
+          const code = `code-${++codeCounter}`;
+          issuedCodes.set(code, {
+            idToken: await signIdToken({
+              oid: objectId("1"),
+              nonce: authorize.searchParams.get("nonce"),
+              name: "Ada",
+            }),
+            challenge: authorize.searchParams.get("code_challenge") ?? "",
+            redirectUri: authorize.searchParams.get("redirect_uri"),
+          });
+          const callback = await fetch(
+            `/api/auth/entra/callback?code=${code}&state=${authorize.searchParams.get("state")}`,
+            { cookie: flowCookie ?? "" },
+          );
+          expect(callback.status).toBe(302);
+          expect(callback.headers.get("location")).toBe("/threads/t-1");
+          const sessionCookie = cookiePair(callback, sessions.cookieName);
+          expect(sessionCookie).toBeDefined();
+          expect(callback.headers.getSetCookie().join()).toMatch(
+            new RegExp(`${entra.flowCookieName}=;.*Max-Age=0`),
+          );
 
-        const session = await fetch("/api/auth/session", { cookie: sessionCookie ?? "" });
-        expect(await session.json()).toMatchObject({
-          authenticated: true,
-          scopes: [],
-          user: { status: "pending", displayName: "Ada" },
-        });
-
-        const replay = await fetch(
-          `/api/auth/entra/callback?code=${code}&state=${authorize.searchParams.get("state")}`,
-          { cookie: flowCookie ?? "" },
-        );
-        expect(replay.headers.get("location")).toBe("/?signInError=token_exchange_failed");
-
-        const signOut = await fetch("/api/auth/sign-out", {
-          method: "POST",
-          cookie: sessionCookie ?? "",
-        });
-        expect(await signOut.json()).toEqual({ signedOut: true });
-        expect(signOut.headers.getSetCookie().join()).toMatch(
-          new RegExp(`${sessions.cookieName}=;.*Max-Age=0`),
-        );
-        const after = await fetch("/api/auth/session", { cookie: sessionCookie ?? "" });
-        expect(await after.json()).toMatchObject({ authenticated: false });
-      });
-    }).pipe(Effect.provide(makeLayer())),
-  );
-
-  it.effect("serves a configured callback path ahead of the SPA fallback", () =>
-    Effect.gen(function* () {
-      const sessions = yield* SessionStore.SessionStore;
-      const entra = yield* EntraSignIn.EntraSignIn;
-      yield* withWebHandler(async (fetch) => {
-        const start = await fetch("/api/auth/entra/start", { redirect: "manual" });
-        expect(start.status).toBe(302);
-        const authorize = new URL(start.headers.get("location") ?? "");
-        expect(authorize.searchParams.get("redirect_uri")).toBe(`${PUBLIC_URL}/auth/callback`);
-        const flowSetCookie = start.headers
-          .getSetCookie()
-          .find((cookie) => cookie.startsWith(`${entra.flowCookieName}=`));
-        expect(flowSetCookie).toContain("Path=/auth/callback");
-        const flowCookie = cookiePair(start, entra.flowCookieName) ?? "";
-
-        const callbackQuery = (code: string) =>
-          `?code=${code}&state=${authorize.searchParams.get("state")}`;
-        const code = `code-${++codeCounter}`;
-        issuedCodes.set(code, {
-          idToken: await signIdToken({
-            oid: objectId("1"),
-            nonce: authorize.searchParams.get("nonce"),
-          }),
-          challenge: authorize.searchParams.get("code_challenge") ?? "",
-          redirectUri: authorize.searchParams.get("redirect_uri"),
-        });
-
-        // The old default path falls through to the SPA like any unknown page.
-        const oldPath = await fetch(`/api/auth/entra/callback${callbackQuery(code)}`, {
-          cookie: flowCookie,
-        });
-        expect(await oldPath.text()).toBe("index.html");
-        expect(oldPath.headers.getSetCookie()).toEqual([]);
-
-        const callback = await fetch(`/auth/callback${callbackQuery(code)}`, {
-          cookie: flowCookie,
-        });
-        expect(callback.status).toBe(302);
-        expect(callback.headers.get("location")).toBe("/");
-        expect(cookiePair(callback, sessions.cookieName)).toBeDefined();
-        const expired = callback.headers
-          .getSetCookie()
-          .find((cookie) => cookie.startsWith(`${entra.flowCookieName}=`));
-        expect(expired).toMatch(/Max-Age=0/);
-        expect(expired).toContain("Path=/auth/callback");
-      });
-    }).pipe(Effect.provide(makeLayer({ callbackPath: "/auth/callback" }))),
-  );
-
-  it.effect("refuses a pairing credential at the browser-session route", () =>
-    Effect.gen(function* () {
-      const auth = yield* EnvironmentAuth.EnvironmentAuth;
-      const pairing = yield* auth.issuePairingCredential();
-      yield* withWebHandler(async (fetch) => {
-        const response = await fetch("/api/auth/browser-session", {
-          method: "POST",
-          body: JSON.stringify({ credential: pairing.credential }),
-        });
-        expect(response.status).toBe(401);
-        expect(response.headers.getSetCookie()).toEqual([]);
-      });
-    }).pipe(Effect.provide(makeLayer())),
-  );
-
-  it.effect("only administrators who signed in as users can change user access", () =>
-    Effect.gen(function* () {
-      const auth = yield* EnvironmentAuth.EnvironmentAuth;
-      const sessions = yield* SessionStore.SessionStore;
-      const registry = yield* UserRegistry.UserRegistry;
-      yield* registry.provisionAdministratorFromHost(identity("1"));
-      const administrator = yield* signInAs("1");
-      const operatorSession = yield* signInAs("2");
-      yield* signInAs("3");
-      const users = yield* registry.list();
-      const userId = (suffix: string) =>
-        users.find((user) => user.identity.objectId === objectId(suffix))!.userId;
-      yield* registry.approve({ userId: userId("2"), role: "operator", actor: hostCli });
-      const serviceToken = yield* auth.issueSession({ label: "rotator" });
-
-      const asCookie = (token: string) => `${sessions.cookieName}=${token}`;
-      yield* withWebHandler(async (fetch) => {
-        const approve = (credential: { cookie?: string; bearer?: string }, role = "reader") =>
-          fetch("/api/auth/users/approve", {
-            method: "POST",
-            body: JSON.stringify({ userId: userId("3"), role }),
-            ...(credential.cookie ? { cookie: credential.cookie } : {}),
-            ...(credential.bearer
-              ? { headers: { authorization: `Bearer ${credential.bearer}` } }
-              : {}),
+          const session = await fetch("/api/auth/session", { cookie: sessionCookie ?? "" });
+          expect(await session.json()).toMatchObject({
+            authenticated: true,
+            scopes: [],
+            user: { status: "pending", displayName: "Ada" },
           });
 
-        const asOperator = await approve({ cookie: asCookie(operatorSession.session.token) });
-        expect(asOperator.status).toBe(403);
-        expect(await asOperator.json()).toMatchObject({ requiredScope: "access:write" });
+          const replay = await fetch(
+            `/api/auth/entra/callback?code=${code}&state=${authorize.searchParams.get("state")}`,
+            { cookie: flowCookie ?? "" },
+          );
+          expect(replay.headers.get("location")).toBe("/?signInError=token_exchange_failed");
 
-        const asService = await approve({ bearer: serviceToken.token });
-        expect(asService.status).toBe(403);
-        expect(await asService.json()).toMatchObject({ reason: "user_session_required" });
-
-        const asAdministrator = await approve({ cookie: asCookie(administrator.session.token) });
-        expect(asAdministrator.status).toBe(200);
-        expect(await asAdministrator.json()).toMatchObject({ status: "active", role: "reader" });
-
-        const again = await approve({ cookie: asCookie(administrator.session.token) });
-        expect(again.status).toBe(409);
-        expect(await again.json()).toMatchObject({ reason: "invalid_transition" });
-
-        const lastAdministrator = await fetch("/api/auth/users/disable", {
-          method: "POST",
-          body: JSON.stringify({ userId: userId("1") }),
-          cookie: asCookie(administrator.session.token),
+          const signOut = await fetch("/api/auth/sign-out", {
+            method: "POST",
+            cookie: sessionCookie ?? "",
+          });
+          expect(await signOut.json()).toEqual({ signedOut: true });
+          expect(signOut.headers.getSetCookie().join()).toMatch(
+            new RegExp(`${sessions.cookieName}=;.*Max-Age=0`),
+          );
+          const after = await fetch("/api/auth/session", { cookie: sessionCookie ?? "" });
+          expect(await after.json()).toMatchObject({ authenticated: false });
         });
-        expect(lastAdministrator.status).toBe(409);
-        expect(await lastAdministrator.json()).toMatchObject({ reason: "last_administrator" });
+      }).pipe(Effect.provide(makeLayer())),
+    );
 
-        const changes = await fetch(`/api/auth/users/access-changes?userId=${userId("3")}`, {
-          cookie: asCookie(administrator.session.token),
+    it.effect("serves a configured callback path ahead of the SPA fallback", () =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const entra = yield* EntraSignIn.EntraSignIn;
+        yield* withWebHandler(async (fetch) => {
+          const start = await fetch("/api/auth/entra/start", { redirect: "manual" });
+          expect(start.status).toBe(302);
+          const authorize = new URL(start.headers.get("location") ?? "");
+          expect(authorize.searchParams.get("redirect_uri")).toBe(`${PUBLIC_URL}/auth/callback`);
+          const flowSetCookie = start.headers
+            .getSetCookie()
+            .find((cookie) => cookie.startsWith(`${entra.flowCookieName}=`));
+          expect(flowSetCookie).toContain("Path=/auth/callback");
+          const flowCookie = cookiePair(start, entra.flowCookieName) ?? "";
+
+          const callbackQuery = (code: string) =>
+            `?code=${code}&state=${authorize.searchParams.get("state")}`;
+          const code = `code-${++codeCounter}`;
+          issuedCodes.set(code, {
+            idToken: await signIdToken({
+              oid: objectId("1"),
+              nonce: authorize.searchParams.get("nonce"),
+            }),
+            challenge: authorize.searchParams.get("code_challenge") ?? "",
+            redirectUri: authorize.searchParams.get("redirect_uri"),
+          });
+
+          // The old default path falls through to the SPA like any unknown page.
+          const oldPath = await fetch(`/api/auth/entra/callback${callbackQuery(code)}`, {
+            cookie: flowCookie,
+          });
+          expect(await oldPath.text()).toBe("index.html");
+          expect(oldPath.headers.getSetCookie()).toEqual([]);
+
+          const callback = await fetch(`/auth/callback${callbackQuery(code)}`, {
+            cookie: flowCookie,
+          });
+          expect(callback.status).toBe(302);
+          expect(callback.headers.get("location")).toBe("/");
+          expect(cookiePair(callback, sessions.cookieName)).toBeDefined();
+          const expired = callback.headers
+            .getSetCookie()
+            .find((cookie) => cookie.startsWith(`${entra.flowCookieName}=`));
+          expect(expired).toMatch(/Max-Age=0/);
+          expect(expired).toContain("Path=/auth/callback");
         });
-        expect(await changes.json()).toMatchObject([
-          { actor: { type: "user", userId: userId("1") }, status: "active", role: "reader" },
-        ]);
+      }).pipe(Effect.provide(makeLayer({ callbackPath: "/auth/callback" }))),
+    );
 
-        const listAsOperator = await fetch("/api/auth/users", {
-          cookie: asCookie(operatorSession.session.token),
+    it.effect("refuses a pairing credential at the browser-session route", () =>
+      Effect.gen(function* () {
+        const auth = yield* EnvironmentAuth.EnvironmentAuth;
+        const pairing = yield* auth.issuePairingCredential();
+        yield* withWebHandler(async (fetch) => {
+          const response = await fetch("/api/auth/browser-session", {
+            method: "POST",
+            body: JSON.stringify({ credential: pairing.credential }),
+          });
+          expect(response.status).toBe(401);
+          expect(response.headers.getSetCookie()).toEqual([]);
         });
-        expect(listAsOperator.status).toBe(403);
+      }).pipe(Effect.provide(makeLayer())),
+    );
 
-        const revokeAsService = await fetch("/api/auth/users/revoke-sessions", {
-          method: "POST",
-          body: JSON.stringify({ userId: userId("2") }),
-          headers: { authorization: `Bearer ${serviceToken.token}` },
+    it.effect("only administrators who signed in as users can change user access", () =>
+      Effect.gen(function* () {
+        const auth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const registry = yield* UserRegistry.UserRegistry;
+        yield* registry.provisionAdministratorFromHost(identity("1"));
+        const administrator = yield* signInAs("1");
+        const operatorSession = yield* signInAs("2");
+        yield* signInAs("3");
+        const users = yield* registry.list();
+        const userId = (suffix: string) =>
+          users.find((user) => user.identity.objectId === objectId(suffix))!.userId;
+        yield* registry.approve({ userId: userId("2"), role: "operator", actor: hostCli });
+        const serviceToken = yield* auth.issueSession({ label: "rotator" });
+
+        const asCookie = (token: string) => `${sessions.cookieName}=${token}`;
+        yield* withWebHandler(async (fetch) => {
+          const approve = (credential: { cookie?: string; bearer?: string }, role = "reader") =>
+            fetch("/api/auth/users/approve", {
+              method: "POST",
+              body: JSON.stringify({ userId: userId("3"), role }),
+              ...(credential.cookie ? { cookie: credential.cookie } : {}),
+              ...(credential.bearer
+                ? { headers: { authorization: `Bearer ${credential.bearer}` } }
+                : {}),
+            });
+
+          const asOperator = await approve({ cookie: asCookie(operatorSession.session.token) });
+          expect(asOperator.status).toBe(403);
+          expect(await asOperator.json()).toMatchObject({ requiredScope: "access:write" });
+
+          const asService = await approve({ bearer: serviceToken.token });
+          expect(asService.status).toBe(403);
+          expect(await asService.json()).toMatchObject({ reason: "user_session_required" });
+
+          const asAdministrator = await approve({ cookie: asCookie(administrator.session.token) });
+          expect(asAdministrator.status).toBe(200);
+          expect(await asAdministrator.json()).toMatchObject({ status: "active", role: "reader" });
+
+          const again = await approve({ cookie: asCookie(administrator.session.token) });
+          expect(again.status).toBe(409);
+          expect(await again.json()).toMatchObject({ reason: "invalid_transition" });
+
+          const lastAdministrator = await fetch("/api/auth/users/disable", {
+            method: "POST",
+            body: JSON.stringify({ userId: userId("1") }),
+            cookie: asCookie(administrator.session.token),
+          });
+          expect(lastAdministrator.status).toBe(409);
+          expect(await lastAdministrator.json()).toMatchObject({ reason: "last_administrator" });
+
+          const changes = await fetch(`/api/auth/users/access-changes?userId=${userId("3")}`, {
+            cookie: asCookie(administrator.session.token),
+          });
+          expect(await changes.json()).toMatchObject([
+            { actor: { type: "user", userId: userId("1") }, status: "active", role: "reader" },
+          ]);
+
+          const listAsOperator = await fetch("/api/auth/users", {
+            cookie: asCookie(operatorSession.session.token),
+          });
+          expect(listAsOperator.status).toBe(403);
+
+          const revokeAsService = await fetch("/api/auth/users/revoke-sessions", {
+            method: "POST",
+            body: JSON.stringify({ userId: userId("2") }),
+            headers: { authorization: `Bearer ${serviceToken.token}` },
+          });
+          expect(revokeAsService.status).toBe(403);
+          expect(await revokeAsService.json()).toMatchObject({ reason: "user_session_required" });
         });
-        expect(revokeAsService.status).toBe(403);
-        expect(await revokeAsService.json()).toMatchObject({ reason: "user_session_required" });
-      });
-    }).pipe(Effect.provide(makeLayer())),
-  );
+      }).pipe(Effect.provide(makeLayer())),
+    );
 
-  it.effect("with Entra on, signed-in users cannot mint pairing credentials over HTTP", () =>
-    Effect.gen(function* () {
-      const auth = yield* EnvironmentAuth.EnvironmentAuth;
-      const sessions = yield* SessionStore.SessionStore;
-      const registry = yield* UserRegistry.UserRegistry;
-      yield* registry.provisionAdministratorFromHost(identity("1"));
-      const administrator = yield* signInAs("1");
-      // Slack's rotator: a host-issued service session that renews the daemon's credential.
-      const rotator = yield* auth.issueSession({ label: "t3-slack-rotator" });
-      yield* withWebHandler(async (fetch) => {
-        const mint = (credential: { cookie: string } | { headers: Record<string, string> }) =>
-          fetch("/api/auth/pairing-token", {
+    it.effect("with Entra on, signed-in users cannot mint pairing credentials over HTTP", () =>
+      Effect.gen(function* () {
+        const auth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const registry = yield* UserRegistry.UserRegistry;
+        yield* registry.provisionAdministratorFromHost(identity("1"));
+        const administrator = yield* signInAs("1");
+        // Slack's rotator: a host-issued service session that renews the daemon's credential.
+        const rotator = yield* auth.issueSession({ label: "t3-slack-rotator" });
+        yield* withWebHandler(async (fetch) => {
+          const mint = (credential: { cookie: string } | { headers: Record<string, string> }) =>
+            fetch("/api/auth/pairing-token", {
+              method: "POST",
+              body: JSON.stringify({ label: "keep me", scopes: ["orchestration:read"] }),
+              ...credential,
+            });
+
+          const asAdministrator = await mint({
+            cookie: `${sessions.cookieName}=${administrator.session.token}`,
+          });
+          expect(asAdministrator.status).toBe(403);
+          expect(await asAdministrator.json()).toMatchObject({ reason: "host_cli_required" });
+
+          const asRotator = await mint({ headers: { authorization: `Bearer ${rotator.token}` } });
+          expect(asRotator.status).toBe(200);
+        });
+        expect((yield* auth.listPairingLinks()).map((link) => link.label)).toEqual(["keep me"]);
+      }).pipe(Effect.provide(makeLayer())),
+    );
+
+    it.effect("a linked session steps up over HTTP and then cannot mint pairing credentials", () =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const registry = yield* UserRegistry.UserRegistry;
+        yield* registry.provisionAdministratorFromHost(identity("1"));
+        const linked = yield* issueLinkedSession;
+        const browser = yield* signInAs("2");
+        const asLinked = { authorization: `Bearer ${linked.token}` };
+        const startStepUp = (
+          fetch: (path: string, init?: RequestInit) => Promise<Response>,
+          init: RequestInit,
+        ) => fetch("/api/auth/entra/step-up", { method: "POST", ...init });
+        const tenantCode = (authorizationUrl: string) =>
+          tenantCallbackFor(authorizationUrl, { oid: objectId("1"), name: "Ada <script>" });
+        yield* withWebHandler(async (fetch) => {
+          const fromBrowser = await fetch("/api/auth/entra/step-up", {
+            method: "POST",
+            cookie: `${sessions.cookieName}=${browser.session.token}`,
+          });
+          expect(fromBrowser.status).toBe(403);
+          expect(await fromBrowser.json()).toMatchObject({ reason: "browser_sign_in_required" });
+
+          const started = await startStepUp(fetch, { headers: asLinked });
+          expect(started.status).toBe(200);
+          const { authorizationUrl } = (await started.json()) as { authorizationUrl: string };
+          const { code, state } = await tenantCode(authorizationUrl);
+
+          // The callback opens in a browser that never saw the app: no flow cookie.
+          const callback = await fetch(`/api/auth/entra/callback?code=${code}&state=${state}`);
+          expect(callback.status).toBe(200);
+          expect(callback.headers.get("content-type")).toContain("text/html");
+          const page = await callback.text();
+          expect(page).toContain("Ada &lt;script&gt;");
+          expect(cookiePair(callback, sessions.cookieName)).toBeUndefined();
+
+          const session = await fetch("/api/auth/session", { headers: asLinked });
+          expect(await session.json()).toMatchObject({
+            authenticated: true,
+            sessionMethod: "dpop-access-token",
+            user: { status: "active", role: "administrator" },
+            permissions: AuthUserRoleScopes.administrator,
+          });
+
+          const again = await startStepUp(fetch, { headers: asLinked });
+          expect(await again.json()).toMatchObject({ reason: "session_already_bound" });
+
+          // Bound to a user, the link follows the user rules for access changes.
+          const mint = await fetch("/api/auth/pairing-token", {
             method: "POST",
             body: JSON.stringify({ label: "keep me", scopes: ["orchestration:read"] }),
-            ...credential,
+            headers: asLinked,
           });
+          expect(mint.status).toBe(403);
+          expect(await mint.json()).toMatchObject({ reason: "host_cli_required" });
 
-        const asAdministrator = await mint({
-          cookie: `${sessions.cookieName}=${administrator.session.token}`,
+          const replay = await fetch(`/api/auth/entra/callback?code=${code}&state=${state}`, {
+            redirect: "manual",
+          });
+          expect(replay.headers.get("location")).toBe("/?signInError=invalid_state");
         });
-        expect(asAdministrator.status).toBe(403);
-        expect(await asAdministrator.json()).toMatchObject({ reason: "host_cli_required" });
+      }).pipe(Effect.provide(makeLayer())),
+    );
 
-        const asRotator = await mint({ headers: { authorization: `Bearer ${rotator.token}` } });
-        expect(asRotator.status).toBe(200);
-      });
-      expect((yield* auth.listPairingLinks()).map((link) => link.label)).toEqual(["keep me"]);
-    }).pipe(Effect.provide(makeLayer())),
-  );
-
-  it.effect("a linked session steps up over HTTP and then cannot mint pairing credentials", () =>
-    Effect.gen(function* () {
-      const sessions = yield* SessionStore.SessionStore;
-      const registry = yield* UserRegistry.UserRegistry;
-      yield* registry.provisionAdministratorFromHost(identity("1"));
-      const linked = yield* issueLinkedSession;
-      const browser = yield* signInAs("2");
-      const asLinked = { authorization: `Bearer ${linked.token}` };
-      const startStepUp = (
-        fetch: (path: string, init?: RequestInit) => Promise<Response>,
-        init: RequestInit,
-      ) => fetch("/api/auth/entra/step-up", { method: "POST", ...init });
-      const tenantCode = (authorizationUrl: string) =>
-        tenantCallbackFor(authorizationUrl, { oid: objectId("1"), name: "Ada <script>" });
-      yield* withWebHandler(async (fetch) => {
-        const fromBrowser = await fetch("/api/auth/entra/step-up", {
-          method: "POST",
-          cookie: `${sessions.cookieName}=${browser.session.token}`,
+    it.effect("without Entra, administrators still mint pairing credentials over HTTP", () =>
+      Effect.gen(function* () {
+        const auth = yield* EnvironmentAuth.EnvironmentAuth;
+        const serviceToken = yield* auth.issueSession({ label: "admin" });
+        yield* withWebHandler(async (fetch) => {
+          const response = await fetch("/api/auth/pairing-token", {
+            method: "POST",
+            body: JSON.stringify({ label: "phone" }),
+            headers: { authorization: `Bearer ${serviceToken.token}` },
+          });
+          expect(response.status).toBe(200);
+          const stepUp = await fetch("/api/auth/entra/step-up", {
+            method: "POST",
+            headers: { authorization: `Bearer ${serviceToken.token}` },
+          });
+          expect(stepUp.status).toBe(403);
+          expect(await stepUp.json()).toMatchObject({ reason: "entra_sign_in_disabled" });
         });
-        expect(fromBrowser.status).toBe(403);
-        expect(await fromBrowser.json()).toMatchObject({ reason: "browser_sign_in_required" });
+        expect(yield* auth.listPairingLinks()).toHaveLength(1);
+      }).pipe(Effect.provide(makeLayer({ entra: false }))),
+    );
 
-        const started = await startStepUp(fetch, { headers: asLinked });
-        expect(started.status).toBe(200);
-        const { authorizationUrl } = (await started.json()) as { authorizationUrl: string };
-        const { code, state } = await tenantCode(authorizationUrl);
-
-        // The callback opens in a browser that never saw the app: no flow cookie.
-        const callback = await fetch(`/api/auth/entra/callback?code=${code}&state=${state}`);
-        expect(callback.status).toBe(200);
-        expect(callback.headers.get("content-type")).toContain("text/html");
-        const page = await callback.text();
-        expect(page).toContain("Ada &lt;script&gt;");
-        expect(cookiePair(callback, sessions.cookieName)).toBeUndefined();
-
-        const session = await fetch("/api/auth/session", { headers: asLinked });
-        expect(await session.json()).toMatchObject({
-          authenticated: true,
-          sessionMethod: "dpop-access-token",
-          user: { status: "active", role: "administrator" },
-          permissions: AuthUserRoleScopes.administrator,
+    it.effect("sign-out revokes a pairing-derived browser session Entra no longer admits", () =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const legacy = yield* sessions.issue({
+          method: "browser-session-cookie",
+          subject: "one-time-token",
         });
-
-        const again = await startStepUp(fetch, { headers: asLinked });
-        expect(await again.json()).toMatchObject({ reason: "session_already_bound" });
-
-        // Bound to a user, the link follows the user rules for access changes.
-        const mint = await fetch("/api/auth/pairing-token", {
-          method: "POST",
-          body: JSON.stringify({ label: "keep me", scopes: ["orchestration:read"] }),
-          headers: asLinked,
+        yield* withWebHandler(async (fetch) => {
+          const signOut = await fetch("/api/auth/sign-out", {
+            method: "POST",
+            cookie: `${sessions.cookieName}=${legacy.token}`,
+          });
+          expect(await signOut.json()).toEqual({ signedOut: true });
+          const cleared = signOut.headers.getSetCookie().join();
+          for (const name of [
+            sessions.cookieName,
+            sessions.legacyCookieName ?? sessions.cookieName,
+          ]) {
+            expect(cleared).toMatch(new RegExp(`${name}=;.*Max-Age=0`));
+          }
         });
-        expect(mint.status).toBe(403);
-        expect(await mint.json()).toMatchObject({ reason: "host_cli_required" });
-
-        const replay = await fetch(`/api/auth/entra/callback?code=${code}&state=${state}`, {
-          redirect: "manual",
-        });
-        expect(replay.headers.get("location")).toBe("/?signInError=invalid_state");
-      });
-    }).pipe(Effect.provide(makeLayer())),
-  );
-
-  it.effect("without Entra, administrators still mint pairing credentials over HTTP", () =>
-    Effect.gen(function* () {
-      const auth = yield* EnvironmentAuth.EnvironmentAuth;
-      const serviceToken = yield* auth.issueSession({ label: "admin" });
-      yield* withWebHandler(async (fetch) => {
-        const response = await fetch("/api/auth/pairing-token", {
-          method: "POST",
-          body: JSON.stringify({ label: "phone" }),
-          headers: { authorization: `Bearer ${serviceToken.token}` },
-        });
-        expect(response.status).toBe(200);
-        const stepUp = await fetch("/api/auth/entra/step-up", {
-          method: "POST",
-          headers: { authorization: `Bearer ${serviceToken.token}` },
-        });
-        expect(stepUp.status).toBe(403);
-        expect(await stepUp.json()).toMatchObject({ reason: "entra_sign_in_disabled" });
-      });
-      expect(yield* auth.listPairingLinks()).toHaveLength(1);
-    }).pipe(Effect.provide(makeLayer({ entra: false }))),
-  );
-
-  it.effect("sign-out revokes a pairing-derived browser session Entra no longer admits", () =>
-    Effect.gen(function* () {
-      const sessions = yield* SessionStore.SessionStore;
-      const legacy = yield* sessions.issue({
-        method: "browser-session-cookie",
-        subject: "one-time-token",
-      });
-      yield* withWebHandler(async (fetch) => {
-        const signOut = await fetch("/api/auth/sign-out", {
-          method: "POST",
-          cookie: `${sessions.cookieName}=${legacy.token}`,
-        });
-        expect(await signOut.json()).toEqual({ signedOut: true });
-        const cleared = signOut.headers.getSetCookie().join();
-        for (const name of [
-          sessions.cookieName,
-          sessions.legacyCookieName ?? sessions.cookieName,
-        ]) {
-          expect(cleared).toMatch(new RegExp(`${name}=;.*Max-Age=0`));
-        }
-      });
-      const verified = yield* Effect.result(sessions.verify(legacy.token));
-      expect(Result.isFailure(verified)).toBe(true);
-    }).pipe(Effect.provide(makeLayer())),
-  );
-});
+        const verified = yield* Effect.result(sessions.verify(legacy.token));
+        expect(Result.isFailure(verified)).toBe(true);
+      }).pipe(Effect.provide(makeLayer())),
+    );
+  },
+);
