@@ -1693,6 +1693,20 @@ export const make = Effect.gen(function* () {
     ...(devAuth ? [devAuth.cookieName] : []),
   ];
 
+  // A session that stepped up to a user (a T3 Connect link, say) keeps
+  // working: sign-out clears the binding and it is back to its own scopes.
+  const signOutBoundSession = (request: HttpServerRequest.HttpServerRequest) =>
+    request.headers.authorization === undefined
+      ? Effect.succeed(false)
+      : authenticateRequest(request).pipe(
+          Effect.flatMap((session) =>
+            session.method !== "browser-session-cookie" && session.userId !== undefined
+              ? sessions.unbindUser(session.sessionId)
+              : Effect.succeed(false),
+          ),
+          Effect.catchIf(isServerAuthCredentialError, () => Effect.succeed(false)),
+        );
+
   // Verifies without the portal policy, so a pairing-derived browser session
   // that Entra no longer admits is still revoked rather than left active.
   const signOut: EnvironmentAuth["Service"]["signOut"] = (request) =>
@@ -1711,10 +1725,14 @@ export const make = Effect.gen(function* () {
           ),
         ),
     ).pipe(
-      Effect.map((revoked) => ({
-        signedOut: revoked.some(Boolean),
+      Effect.flatMap((revoked) =>
+        signOutBoundSession(request).pipe(
+          Effect.map((unbound) => ({
+            signedOut: unbound || revoked.some(Boolean),
         cookieNames: authCookieNames,
       })),
+        ),
+      ),
       Effect.mapError((cause) => new ServerAuthSignOutError({ cause })),
       Effect.withSpan("EnvironmentAuth.signOut"),
     );
@@ -1741,8 +1759,11 @@ export const make = Effect.gen(function* () {
         // commits in between is caught by one or the other.
         yield* Effect.forkScoped(
           sessions.streamChanges.pipe(
-            Stream.filter(
-              (change) => change.type === "clientRemoved" && change.sessionId === session.sessionId,
+            Stream.filter((change) =>
+              change.type === "clientRemoved"
+                ? change.sessionId === session.sessionId
+                : change.accessChanged === true &&
+                  change.clientSession.sessionId === session.sessionId,
             ),
             Stream.take(1),
             Stream.runForEach(() => signal),
