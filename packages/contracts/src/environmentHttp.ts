@@ -43,6 +43,7 @@ import {
 } from "./auth.ts";
 import {
   AuthSessionState,
+  AuthEntraStepUpResult,
   AuthSignOutResult,
   AuthUser,
   AuthUserAccessChange,
@@ -142,15 +143,17 @@ export const EnvironmentAuthInvalidReason = Schema.Literals([
 export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.Type;
 
 /**
- * - `user_session_required`: changing user access needs a session signed in as
- *   a user, so the audit log can name who did it
- * - `host_cli_required`: with Entra sign-in on, a signed-in user cannot mint
- *   a credential that is not bound to them; the host CLI issues those
+ * - `user_session_required`: user access changes need a user's session, for the audit log
+ * - `host_cli_required`: with Entra on, a user cannot mint a credential not bound to them
+ * - `entra_sign_in_disabled`, `session_already_bound`, `browser_sign_in_required`: step-up refusals
  */
 export const EnvironmentOperationForbiddenReason = Schema.Literals([
   "current_session_revoke_not_allowed",
   "user_session_required",
   "host_cli_required",
+  "entra_sign_in_disabled",
+  "session_already_bound",
+  "browser_sign_in_required",
 ]);
 export type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
 
@@ -763,6 +766,13 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
       success: AuthSignOutResult,
       error: [EnvironmentInternalError],
     }),
+  )
+  .add(
+    HttpApiEndpoint.post("entraStepUp", "/api/auth/entra/step-up", {
+      headers: OptionalBearerHeaders,
+      success: AuthEntraStepUpResult,
+      error: [EnvironmentOperationForbiddenError],
+    }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
     HttpApiEndpoint.get("users", "/api/auth/users", {
