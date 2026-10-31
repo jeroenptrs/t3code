@@ -3,6 +3,11 @@ import * as NodeCrypto from "node:crypto";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  computeDpopAccessTokenHash,
+  computeDpopJwkThumbprint,
+  type DpopPublicJwk,
+} from "@t3tools/shared/dpop";
+import {
   AuthStandardClientScopes,
   AuthUserRoleScopes,
   EnvironmentHttpApi,
@@ -12,6 +17,7 @@ import {
 import { expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -243,6 +249,48 @@ const issueLinkedSession = SessionStore.SessionStore.pipe(
   ),
 );
 
+const makeDpopKey = () => {
+  const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const publicJwk = publicKey.export({ format: "jwk" }) as DpopPublicJwk;
+  return {
+    thumbprint: computeDpopJwkThumbprint(publicJwk),
+    sign: (input: { method: string; url: string; token: string; iat: number }) => {
+      const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+      const header = encode({ typ: "dpop+jwt", alg: "ES256", jwk: publicJwk });
+      const payload = encode({
+        htm: input.method,
+        htu: input.url,
+        jti: NodeCrypto.randomUUID(),
+        iat: input.iat,
+        ath: computeDpopAccessTokenHash(input.token),
+      });
+      const signature = NodeCrypto.sign("sha256", Buffer.from(`${header}.${payload}`), {
+        key: privateKey,
+        dsaEncoding: "ieee-p1363",
+      }).toString("base64url");
+      return `${header}.${payload}.${signature}`;
+    },
+  };
+};
+
+/** What the relay mint does each hour: a fresh DPoP session for the device's key. */
+const renewLink = (proofKeyThumbprint: string) =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const sessions = yield* SessionStore.SessionStore;
+    const pairing = yield* auth.issuePairingCredential({ label: "T3 Connect" });
+    const exchanged = yield* auth.exchangeBootstrapCredentialForAccessToken(
+      pairing.credential,
+      AuthUserRoleScopes.operator,
+      { deviceType: "desktop" },
+      { proofKeyThumbprint },
+    );
+    return {
+      token: exchanged.access_token,
+      session: yield* sessions.verify(exchanged.access_token),
+    };
+  });
+
 /** Has the fake tenant issue a code for this authorization URL; returns the callback input. */
 const tenantCallbackFor = async (authorizationUrl: string, claims: JWTPayload) => {
   const authorize = new URL(authorizationUrl);
@@ -258,12 +306,16 @@ const tenantCallback = (authorizationUrl: string, claims: JWTPayload) =>
   Effect.promise(() => tenantCallbackFor(authorizationUrl, claims));
 
 /** Steps `session` up through the fake tenant, signing in as `suffix`. */
-const stepUp = (session: { readonly sessionId: AuthSessionId }, suffix: string) =>
+const stepUp = (
+  session: { readonly sessionId: AuthSessionId; readonly proofKeyThumbprint?: string },
+  suffix: string,
+) =>
   Effect.gen(function* () {
     const entra = yield* EntraSignIn.EntraSignIn;
     const started = yield* entra.startStepUp({
       sessionId: session.sessionId,
       method: "dpop-access-token",
+      ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
     });
     const callback = yield* tenantCallback(started.authorizationUrl, { oid: objectId(suffix) });
     const complete = entra.complete({
@@ -725,6 +777,79 @@ it.layer(NodeServices.layer)("EntraSignIn", (it) => {
       const after = yield* auth.authenticateHttpRequest(request);
       expect(after.userId).toBeUndefined();
       expect(after.scopes).toEqual(AuthUserRoleScopes.operator);
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("a device that stepped up stays signed in across renewals for the user lifetime", () =>
+    Effect.gen(function* () {
+      const registry = yield* UserRegistry.UserRegistry;
+      yield* registry.provisionAdministratorFromHost(identity("1"));
+      const first = yield* renewLink("key-a");
+      yield* (yield* stepUp(first.session, "1")).complete;
+      const boundAt = yield* Clock.currentTimeMillis;
+
+      const renewed = (yield* renewLink("key-a")).session;
+      expect(renewed.user?.role).toBe("administrator");
+      expect(renewed.scopes).toEqual(AuthUserRoleScopes.administrator);
+      const otherDevice = (yield* renewLink("key-b")).session;
+      expect(otherDevice.user).toBeUndefined();
+      expect(otherDevice.scopes).toEqual(AuthUserRoleScopes.operator);
+
+      // Near the end of the lifetime, a renewal is capped at the binding's expiry.
+      yield* TestClock.adjust(Duration.minutes(690));
+      const late = (yield* renewLink("key-a")).session;
+      expect(late.user?.role).toBe("administrator");
+      expect(late.expiresAt?.epochMilliseconds).toBe(
+        boundAt + Duration.toMillis(Duration.hours(12)),
+      );
+
+      yield* TestClock.adjust(Duration.hours(1));
+      expect((yield* renewLink("key-a")).session.user).toBeUndefined();
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("revoking a user's sessions also ends their devices' step-up", () =>
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const first = yield* renewLink("key-a");
+      yield* (yield* stepUp(first.session, "1")).complete;
+      const userId = (yield* renewLink("key-a")).session.user!.userId;
+
+      expect(yield* auth.revokeUserSessions(userId)).toBe(2);
+
+      const renewed = (yield* renewLink("key-a")).session;
+      expect(renewed.user).toBeUndefined();
+      expect(renewed.scopes).toEqual(AuthUserRoleScopes.operator);
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("signing out a stepped-up device keeps later renewals at Operator", () =>
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const key = makeDpopKey();
+      const linked = yield* renewLink(key.thumbprint);
+      yield* (yield* stepUp(linked.session, "1")).complete;
+      const host = "t3.example.com";
+      const signOut = yield* auth.signOut({
+        method: "POST",
+        url: "/api/auth/sign-out",
+        cookies: {},
+        headers: {
+          host,
+          authorization: `DPoP ${linked.token}`,
+          dpop: key.sign({
+            method: "POST",
+            url: `http://${host}/api/auth/sign-out`,
+            token: linked.token,
+            iat: Math.floor((yield* DateTime.now).epochMilliseconds / 1_000),
+          }),
+        },
+      } as unknown as AuthRequest);
+      expect(signOut.signedOut).toBe(true);
+
+      const renewed = (yield* renewLink(key.thumbprint)).session;
+      expect(renewed.user).toBeUndefined();
+      expect(renewed.scopes).toEqual(AuthUserRoleScopes.operator);
     }).pipe(Effect.provide(makeLayer())),
   );
 
