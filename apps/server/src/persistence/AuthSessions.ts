@@ -122,8 +122,29 @@ export const BindAuthSessionUserInput = Schema.Struct({
   userId: AuthUserId,
   now: Schema.DateTimeUtcFromString,
   latestExpiresAt: Schema.DateTimeUtcFromString,
+  /** Also binds this device key until `latestExpiresAt`, so its renewed sessions inherit the user. */
+  proofKeyThumbprint: Schema.optionalKey(Schema.String),
 });
 export type BindAuthSessionUserInput = typeof BindAuthSessionUserInput.Type;
+
+export const UnbindAuthSessionUserInput = Schema.Struct({
+  sessionId: AuthSessionId,
+  proofKeyThumbprint: Schema.optionalKey(Schema.String),
+});
+export type UnbindAuthSessionUserInput = typeof UnbindAuthSessionUserInput.Type;
+
+export const CreateInheritingStepUpInput = Schema.Struct({
+  session: CreateAuthSessionInput,
+  proofKeyThumbprint: Schema.String,
+});
+export type CreateInheritingStepUpInput = typeof CreateInheritingStepUpInput.Type;
+
+const StepUpBindingRequest = Schema.Struct({
+  proofKeyThumbprint: Schema.String,
+  userId: AuthUserId,
+  expiresAt: Schema.DateTimeUtcFromString,
+  now: Schema.DateTimeUtcFromString,
+});
 
 export const RevokeAuthSessionsByProofKeyInput = Schema.Struct({
   proofKeyThumbprint: Schema.String,
@@ -178,10 +199,17 @@ export class AuthSessionRepository extends Context.Service<
     readonly bindUser: (
       input: BindAuthSessionUserInput,
     ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
-    /** Clears an active session's user. False when it had none. */
+    /** Clears an active session's user and the device key's binding. False when it had no user. */
     readonly unbindUser: (
-      input: GetAuthSessionByIdInput,
+      input: UnbindAuthSessionUserInput,
     ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
+    /**
+     * Creates a session that takes the user of a live binding for its device
+     * key, capped at the binding's expiry. Returns the user, or null.
+     */
+    readonly createInheritingStepUp: (
+      input: CreateInheritingStepUpInput,
+    ) => Effect.Effect<AuthUserId | null, AuthSessionRepositoryError>;
     readonly getProofKeyThumbprint: (
       input: GetAuthSessionByIdInput,
     ) => Effect.Effect<Option.Option<string>, AuthSessionRepositoryError>;
@@ -507,6 +535,78 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const writeStepUpBinding = SqlSchema.void({
+    Request: StepUpBindingRequest,
+    execute: ({ proofKeyThumbprint, userId, expiresAt, now }) =>
+      sql`
+        DELETE FROM fork_auth_step_up_bindings WHERE expires_at <= ${now}
+      `.pipe(
+        Effect.andThen(
+          sql`
+            INSERT INTO fork_auth_step_up_bindings (proof_key_thumbprint, user_id, expires_at)
+            VALUES (${proofKeyThumbprint}, ${userId}, ${expiresAt})
+            ON CONFLICT(proof_key_thumbprint) DO UPDATE SET
+              user_id = excluded.user_id,
+              expires_at = excluded.expires_at
+          `,
+        ),
+      ),
+  });
+
+  const deleteStepUpBinding = (proofKeyThumbprint: string) =>
+    sql`DELETE FROM fork_auth_step_up_bindings WHERE proof_key_thumbprint = ${proofKeyThumbprint}`;
+
+  // One statement, so a binding deleted by a concurrent revocation is either
+  // seen and inherited before it, or not at all.
+  const insertInheritingStepUp = SqlSchema.findAll({
+    Request: CreateInheritingStepUpInput,
+    Result: Schema.Struct({ userId: Schema.NullOr(AuthUserId) }),
+    execute: ({ session, proofKeyThumbprint }) =>
+      sql`
+        INSERT INTO auth_sessions (
+          session_id,
+          subject,
+          scopes,
+          method,
+          client_label,
+          client_ip_address,
+          client_user_agent,
+          client_device_type,
+          client_os,
+          client_browser,
+          issued_at,
+          expires_at,
+          revoked_at,
+          proof_key_thumbprint,
+          user_id
+        )
+        SELECT
+          ${session.sessionId},
+          ${session.subject},
+          ${JSON.stringify(session.scopes)},
+          ${session.method},
+          ${session.client.label},
+          ${session.client.ipAddress},
+          ${session.client.userAgent},
+          ${session.client.deviceType},
+          ${session.client.os},
+          ${session.client.browser},
+          ${session.issuedAt},
+          CASE
+            WHEN b.expires_at IS NOT NULL AND b.expires_at < ${session.expiresAt} THEN b.expires_at
+            ELSE ${session.expiresAt}
+          END,
+          NULL,
+          ${session.proofKeyThumbprint ?? null},
+          b.user_id
+        FROM (SELECT 1) AS one
+        LEFT JOIN fork_auth_step_up_bindings b
+          ON b.proof_key_thumbprint = ${proofKeyThumbprint}
+          AND b.expires_at > ${session.issuedAt}
+        RETURNING user_id AS "userId"
+      `,
+  });
+
   const unbindUserRows = SqlSchema.findAll({
     Request: GetAuthSessionByIdInput,
     Result: Schema.Struct({ sessionId: AuthSessionId }),
@@ -655,8 +755,17 @@ export const make = Effect.gen(function* () {
       Effect.map((rows) => rows.map((row) => row.sessionId)),
     );
 
+  // Deleting the user's device bindings with the sessions keeps a renewal from rebinding them.
   const revokeAllForUser: AuthSessionRepository["Service"]["revokeAllForUser"] = (input) =>
+    sql
+      .withTransaction(
     revokeUserSessionRows(input).pipe(
+          Effect.tap(
+            () => sql`DELETE FROM fork_auth_step_up_bindings WHERE user_id = ${input.userId}`,
+          ),
+        ),
+      )
+      .pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "AuthSessionRepository.revokeAllForUser:query",
@@ -678,7 +787,22 @@ export const make = Effect.gen(function* () {
     );
 
   const bindUser: AuthSessionRepository["Service"]["bindUser"] = (input) =>
+    sql
+      .withTransaction(
     bindUserRows(input).pipe(
+          Effect.tap((rows) =>
+            rows.length > 0 && input.proofKeyThumbprint !== undefined
+              ? writeStepUpBinding({
+                  proofKeyThumbprint: input.proofKeyThumbprint,
+                  userId: input.userId,
+                  expiresAt: input.latestExpiresAt,
+                  now: input.now,
+                })
+              : Effect.void,
+          ),
+        ),
+      )
+      .pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "AuthSessionRepository.bindUser:query",
@@ -690,7 +814,17 @@ export const make = Effect.gen(function* () {
     );
 
   const unbindUser: AuthSessionRepository["Service"]["unbindUser"] = (input) =>
-    unbindUserRows(input).pipe(
+    sql
+      .withTransaction(
+        unbindUserRows({ sessionId: input.sessionId }).pipe(
+          Effect.tap(() =>
+            input.proofKeyThumbprint === undefined
+              ? Effect.void
+              : deleteStepUpBinding(input.proofKeyThumbprint),
+          ),
+        ),
+      )
+      .pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "AuthSessionRepository.unbindUser:query",
@@ -699,6 +833,20 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.map((rows) => rows.length > 0),
+    );
+
+  const createInheritingStepUp: AuthSessionRepository["Service"]["createInheritingStepUp"] = (
+    input,
+  ) =>
+    insertInheritingStepUp(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.createInheritingStepUp:query",
+          "AuthSessionRepository.createInheritingStepUp:decodeRows",
+          { sessionId: input.session.sessionId },
+        ),
+      ),
+      Effect.map((rows) => rows[0]?.userId ?? null),
     );
 
   const getProofKeyThumbprint: AuthSessionRepository["Service"]["getProofKeyThumbprint"] = (
@@ -730,6 +878,7 @@ export const make = Effect.gen(function* () {
   return {
     create,
     createReplacingActive,
+    createInheritingStepUp,
     createIfAbsent,
     getById,
     listActive,
