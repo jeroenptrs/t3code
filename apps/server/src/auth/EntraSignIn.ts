@@ -20,18 +20,17 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import { createLocalJWKSet, errors as JoseErrors, jwtVerify, type JSONWebKeySet } from "jose";
+import * as Signature from "effect/crypto/Signature";
+import * as JoseError from "effect/jose/JoseError";
+import * as Jwks from "effect/jose/Jwks";
+import * as Jwt from "effect/jose/Jwt";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as UserRegistry from "./UserRegistry.ts";
-import {
-  base64UrlDecodeUtf8,
-  base64UrlEncode,
-  signPayload,
-  timingSafeEqualBase64Url,
-} from "./utils.ts";
+import { base64UrlDecodeUtf8, base64UrlEncode } from "./utils.ts";
+import * as PayloadSigner from "./PayloadSigner.ts";
 
 const ENTRA_AUTHORITY = "https://login.microsoftonline.com";
 const FLOW_SIGNING_SECRET_NAME = "entra-sign-in-flow-key";
@@ -44,7 +43,7 @@ const KEYS_REFRESH_COOLDOWN = Duration.minutes(1);
 const KEYS_MAX_AGE = Duration.hours(24);
 /** OAuth error codes are short snake_case words; anything else is not logged verbatim. */
 const PROVIDER_ERROR_CODE = /^[a-z0-9_]{1,64}$/;
-const ID_TOKEN_CLOCK_TOLERANCE_SECONDS = 60;
+const ID_TOKEN_CLOCK_TOLERANCE = Duration.seconds(60);
 const MAX_RETURN_PATH_LENGTH = 2048;
 
 export class EntraSignInDisabledError extends Schema.TaggedError<EntraSignInDisabledError>()(
@@ -79,12 +78,6 @@ export class EntraStepUpRefusedError extends Schema.TaggedError<EntraStepUpRefus
       : "Browser sessions sign in through the Entra sign-in page.";
   }
 }
-
-/** A jose verification failure; `code` is jose's stable error code. */
-class IdTokenVerificationError extends Schema.TaggedError<IdTokenVerificationError>()(
-  "IdTokenVerificationError",
-  { code: Schema.String, cause: Schema.Defect() },
-) {}
 
 const fail = (reason: EntraSignInFailureReason, detail: string, cause?: unknown) =>
   new EntraSignInError({ reason, detail, ...(cause === undefined ? {} : { cause }) });
@@ -131,6 +124,8 @@ export class EntraSignIn extends Context.Service<
       readonly sessionId: AuthSessionId;
       readonly method: ServerAuthSessionMethod;
       readonly userId?: AuthUserId;
+      /** A DPoP client's key; the binding then outlives this session's renewals. */
+      readonly proofKeyThumbprint?: string;
     }) => Effect.Effect<
       { readonly authorizationUrl: string },
       EntraSignInDisabledError | EntraStepUpRefusedError
@@ -197,6 +192,7 @@ const decodeFlowClaims = Schema.decodeUnknownOption(Schema.fromJsonString(FlowCl
 
 interface StepUpFlow {
   readonly sessionId: AuthSessionId;
+  readonly proofKeyThumbprint?: string;
   readonly nonce: string;
   readonly verifier: string;
   readonly exp: number;
@@ -209,10 +205,15 @@ const TokenErrorResponse = Schema.Struct({
   error_codes: Schema.optional(Schema.Array(Schema.Number)),
 });
 const decodeTokenErrorResponse = Schema.decodeUnknownOption(TokenErrorResponse);
-const KeySetResponse = Schema.Struct({
-  keys: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
+const decodeKeySetResponse = Schema.decodeUnknownEffect(Jwks.KeySet);
+const IdTokenClaims = Schema.Struct({
+  nonce: Schema.String,
+  tid: Schema.String,
+  oid: Schema.String,
+  email: Schema.optionalKey(Schema.Unknown),
+  preferred_username: Schema.optionalKey(Schema.Unknown),
+  name: Schema.optionalKey(Schema.Unknown),
 });
-const decodeKeySetResponse = Schema.decodeUnknownEffect(KeySetResponse);
 const decodeIdentity = Schema.decodeUnknownOption(AuthUserIdentity);
 
 const randomToken = () => NodeCrypto.randomBytes(32).toString("base64url");
@@ -253,29 +254,36 @@ const make = Effect.gen(function* () {
   const issuer = `${tenantBase}/v2.0`;
   const redirectUri = new URL(config.callbackPath, config.publicUrl).toString();
   const flowCookieName = `${sessions.cookieName}_entra_flow`;
-  const keysRef = yield* Ref.make<{ keys: JSONWebKeySet; fetchedAt: number } | null>(null);
+  const signature = yield* Signature.Signature;
+  const keysRef = yield* Ref.make<{ keys: Jwks.KeySet; fetchedAt: number } | null>(null);
   // Keyed by state. One pending step-up per session, so the map stays as
   // small as the set of sessions; a restart forgets them, and the person
   // starts again.
   const stepUpsRef = yield* Ref.make(new Map<string, StepUpFlow>());
 
-  const signFlow = (claims: FlowClaims) => {
-    const payload = base64UrlEncode(encodeFlowClaims(claims));
-    return `${payload}.${signPayload(payload, flowSigningKey)}`;
-  };
+  const flowSigner = yield* PayloadSigner.fromSecret(flowSigningKey);
 
-  const readFlow = (cookie: string | undefined, now: number): Option.Option<FlowClaims> => {
+  const signFlow = Effect.fn("EntraSignIn.signFlow")(function* (claims: FlowClaims) {
+    const payload = base64UrlEncode(encodeFlowClaims(claims));
+    const signature = yield* flowSigner.sign(payload);
+    return `${payload}.${signature}`;
+  });
+
+  const readFlow = Effect.fn("EntraSignIn.readFlow")(function* (
+    cookie: string | undefined,
+    now: number,
+  ) {
     const [payload, signature] = cookie?.split(".") ?? [];
     if (!payload || !signature) {
-      return Option.none();
+      return Option.none<FlowClaims>();
     }
-    if (!timingSafeEqualBase64Url(signature, signPayload(payload, flowSigningKey))) {
-      return Option.none();
+    if (!(yield* flowSigner.verify(payload, signature))) {
+      return Option.none<FlowClaims>();
     }
     return decodeFlowClaims(base64UrlDecodeUtf8(payload)).pipe(
       Option.filter((claims) => claims.exp > now),
     );
-  };
+  });
 
   const authorizationUrl = (flow: {
     readonly state: string;
@@ -310,7 +318,7 @@ const make = Effect.gen(function* () {
       };
       return {
         authorizationUrl: authorizationUrl(claims),
-        flowCookie: signFlow(claims),
+        flowCookie: yield* signFlow(claims),
         flowCookieMaxAge: FLOW_TTL,
       } satisfies EntraSignInStart;
     }).pipe(Effect.withSpan("EntraSignIn.start"));
@@ -327,6 +335,7 @@ const make = Effect.gen(function* () {
       const state = randomToken();
       const flow: StepUpFlow = {
         sessionId: session.sessionId,
+        ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
         nonce: randomToken(),
         verifier: randomToken(),
         exp: now + Duration.toMillis(FLOW_TTL),
@@ -417,29 +426,28 @@ const make = Effect.gen(function* () {
       Effect.mapError(keysUnavailable),
     );
     const entry = {
-      keys: keySet as unknown as JSONWebKeySet,
+      keys: keySet,
       fetchedAt: yield* Clock.currentTimeMillis,
     };
     yield* Ref.set(keysRef, entry);
     return entry;
   });
 
-  const verifyWithKeys = (idToken: string, keys: JSONWebKeySet) =>
-    Effect.tryPromise({
-      try: () =>
-        jwtVerify(idToken, createLocalJWKSet(keys), {
+  const verifyWithKeys = (idToken: string, keys: Jwks.KeySet) =>
+    Jwks.makeLocal(keys).pipe(
+      Effect.flatMap((jwks) =>
+        Jwt.verifyWithKeySet(IdTokenClaims, idToken, {
           issuer,
           audience: config.clientId,
           algorithms: ["RS256"],
-          clockTolerance: ID_TOKEN_CLOCK_TOLERANCE_SECONDS,
-          requiredClaims: ["exp", "iat", "nonce", "tid", "oid"],
-        }),
-      catch: (cause) =>
-        new IdTokenVerificationError({
-          code: cause instanceof JoseErrors.JOSEError ? cause.code : "unknown",
-          cause,
-        }),
-    });
+          clockTolerance: ID_TOKEN_CLOCK_TOLERANCE,
+          requiredClaims: ["exp", "iat"],
+        }).pipe(
+          Effect.provideService(Jwks.Jwks, jwks),
+          Effect.provideService(Signature.Signature, signature),
+        ),
+      ),
+    );
 
   const verifyIdToken = (idToken: string, nonce: string) =>
     Effect.gen(function* () {
@@ -452,18 +460,20 @@ const make = Effect.gen(function* () {
       const verified = yield* verifyWithKeys(idToken, keys.keys).pipe(
         Effect.catchIf(
           (error) =>
-            error.code === JoseErrors.JWKSNoMatchingKey.code &&
+            JoseError.isJoseError(error) &&
+            error.reason._tag === "KeyNotFound" &&
             now - keys.fetchedAt >= Duration.toMillis(KEYS_REFRESH_COOLDOWN),
           () => fetchKeys.pipe(Effect.flatMap((fresh) => verifyWithKeys(idToken, fresh.keys))),
         ),
-        Effect.catchTags({
-          IdTokenVerificationError: (error) =>
-            Effect.fail(
-              fail("invalid_id_token", `ID token rejected (${error.code}).`, error.cause),
-            ),
-        }),
+        Effect.mapError((error) =>
+          fail(
+            "invalid_id_token",
+            `ID token rejected (${JoseError.isJoseError(error) ? error.reason._tag : "invalid claims"}).`,
+            error,
+          ),
+        ),
       );
-      const claims = verified.payload;
+      const claims = verified.claims;
       if (claims.nonce !== nonce) {
         return yield* fail("invalid_id_token", "ID token nonce does not match this sign-in.");
       }
@@ -512,7 +522,12 @@ const make = Effect.gen(function* () {
       }
       const user = yield* recordCallbackSignIn(input, flow);
       const bound = yield* sessions
-        .bindUser({ sessionId: flow.sessionId, userId: user.userId, ttl: ENTRA_SESSION_TTL })
+        .bindUser({
+          sessionId: flow.sessionId,
+          userId: user.userId,
+          ttl: ENTRA_SESSION_TTL,
+          ...(flow.proofKeyThumbprint ? { proofKeyThumbprint: flow.proofKeyThumbprint } : {}),
+        })
         .pipe(
           Effect.mapError((cause) =>
             fail("internal_error", "Could not bind the session to the user.", cause),
@@ -547,7 +562,7 @@ const make = Effect.gen(function* () {
       if (stepUp !== undefined) {
         return yield* completeStepUp(input, stepUp, now);
       }
-      const flow = readFlow(input.flowCookie, now);
+      const flow = yield* readFlow(input.flowCookie, now);
       if (Option.isNone(flow)) {
         return yield* fail("invalid_state", "Sign-in flow cookie is missing, expired, or invalid.");
       }
