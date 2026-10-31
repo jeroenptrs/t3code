@@ -186,6 +186,17 @@ pairing credentials through the relay without any environment session. While
 Entra is on, the [relay mint](../../apps/server/src/cloud/CloudLink.ts) grants
 those credentials the `operator` role's scopes, never the management scopes.
 
+A session with no user that is not a browser cookie, such as a T3 Connect
+link, can step up. [EntraSignIn](../../apps/server/src/auth/EntraSignIn.ts)
+holds the flow in memory under its `state`, since the sign-in finishes in a
+browser the client does not control, and the unchanged callback binds the user
+to that session instead of issuing a cookie, so the app registration needs
+nothing new. The user's role then replaces the credential's scopes, and the
+session expires within the user session lifetime; a link's DPoP token lives an
+hour, so a link signs in again after each renewal. Sign-out clears the binding
+and keeps the session. Like a device-code flow, whoever completes the URL binds
+their identity to the requesting session, so only hand it to people you trust.
+
 Changing a user's access, including revoking their sessions, needs
 `access:write` and a session that is itself a user, so the audit log can name
 who made the change. The registry, not the transport, refuses to remove the

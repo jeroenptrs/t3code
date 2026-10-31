@@ -247,6 +247,10 @@
       "types": "./src/state/deviceHubAccess.ts",
       "default": "./src/state/deviceHubAccess.ts"
     },
+    "./state/entraStepUp": {
+      "types": "./src/state/entraStepUp.ts",
+      "default": "./src/state/entraStepUp.ts"
+    },
     "./state/peerLinks": {
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"

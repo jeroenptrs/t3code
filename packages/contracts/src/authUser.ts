@@ -213,6 +213,16 @@ export const AuthUserSessionsRevokeResult = Schema.Struct({
 });
 export type AuthUserSessionsRevokeResult = typeof AuthUserSessionsRevokeResult.Type;
 
+/**
+ * Where to send the person to sign in with Microsoft for a session that has
+ * no user, such as a T3 Connect link. Open it in a browser; when it finishes,
+ * the session carries that user's role.
+ */
+export const AuthEntraStepUpResult = Schema.Struct({
+  authorizationUrl: Schema.String,
+});
+export type AuthEntraStepUpResult = typeof AuthEntraStepUpResult.Type;
+
 export const AuthSignOutResult = Schema.Struct({
   signedOut: Schema.Boolean,
 });

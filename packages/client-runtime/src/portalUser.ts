@@ -55,6 +55,25 @@ export function resolvePortalAccess(session: AuthSessionState): PortalAccess {
   return { kind: "not-portal" };
 }
 
+/**
+ * A session on an Entra environment that is not a browser cookie (a T3 Connect
+ * link, say) has no user until the person signs in with Microsoft from the app.
+ * Null when that does not apply.
+ */
+export function linkedPortalAccess(
+  session: AuthSessionState | null,
+): "can-sign-in" | "signed-in" | null {
+  if (
+    session?.authenticated !== true ||
+    session.auth.entraSignIn !== true ||
+    session.sessionMethod === undefined ||
+    session.sessionMethod === "browser-session-cookie"
+  ) {
+    return null;
+  }
+  return session.user === undefined ? "can-sign-in" : "signed-in";
+}
+
 /** The Users settings page needs Entra sign-in on and `access:read`. */
 export function canReadPortalUsers(session: AuthSessionState | null): boolean {
   return (
