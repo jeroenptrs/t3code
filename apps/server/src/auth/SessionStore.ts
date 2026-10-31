@@ -406,6 +406,11 @@ export class SessionStore extends Context.Service<
       readonly user?: AuthSessions.AuthSessionUserRecord;
       readonly client?: AuthClientMetadata;
       readonly proofKeyThumbprint?: string;
+      /**
+       * With a proof key, takes the user of that key's live step-up binding,
+       * capped at the binding's expiry. Ignored when replacing sessions.
+       */
+      readonly inheritStepUp?: boolean;
       readonly runtimeModeCeiling?: RuntimeMode;
       readonly peerLink?: boolean;
       readonly replaceActiveForSubjectAndMethod?: boolean;
@@ -459,11 +464,17 @@ export class SessionStore extends Context.Service<
       readonly sessionId: AuthSessionId;
       readonly userId: AuthUserId;
       readonly ttl: Duration.Duration;
+      /** Binds the device key too, so sessions renewed with it inherit the user for `ttl`. */
+      readonly proofKeyThumbprint?: string;
     }) => Effect.Effect<boolean, SessionCredentialInternalError>;
-    /** Clears the binding, so the session is back to the scopes it was issued with. */
-    readonly unbindUser: (
-      sessionId: AuthSessionId,
-    ) => Effect.Effect<boolean, SessionCredentialInternalError>;
+    /**
+     * Clears the binding, so the session is back to the scopes it was issued
+     * with, and drops the device key's binding so renewals stay unbound.
+     */
+    readonly unbindUser: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly proofKeyThumbprint?: string;
+    }) => Effect.Effect<boolean, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
   }
@@ -755,16 +766,64 @@ const make = Effect.gen(function* () {
         expiresAt,
         ...(user ? { userId: user.userId } : {}),
       } satisfies AuthSessions.CreateAuthSessionInput;
+      const replacing =
+        input?.replaceSessionId !== undefined || input?.replaceActiveForSubjectAndMethod === true;
+      const inheritFromKey =
+        !replacing && user === undefined && input?.inheritStepUp === true
+          ? input.proofKeyThumbprint
+          : undefined;
+      if (inheritFromKey !== undefined) {
+        const inherited = yield* authSessions
+          .createInheritingStepUp({ session: sessionRecord, proofKeyThumbprint: inheritFromKey })
+          .pipe(
+            Effect.flatMap((userId) =>
+              userId === null
+                ? Effect.succeedNone
+                : authSessions
+                    .getById({ sessionId })
+                    .pipe(Effect.map(Option.filter((row) => row.user !== null))),
+            ),
+            Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })),
+          );
+        if (Option.isSome(inherited)) {
+          const row = inherited.value;
+          const inheritedScopes = sessionScopes(row);
+          yield* emitUpsert(
+            toAuthClientSession({
+              sessionId,
+              subject: claims.sub,
+              scopes: inheritedScopes,
+              method: claims.method,
+              client,
+              issuedAt,
+              expiresAt: row.expiresAt,
+              lastConnectedAt: null,
+              connected: false,
+            }),
+          );
+          return {
+            sessionId,
+            token: `${encodedPayload}.${signature}`,
+            method: claims.method,
+            client,
+            expiresAt: row.expiresAt,
+            scopes: inheritedScopes,
+            ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
+          } satisfies IssuedSession;
+        }
+      }
       const replacedSessionIds = yield* (
-        input?.replaceSessionId !== undefined || input?.replaceActiveForSubjectAndMethod
-          ? authSessions.createReplacingActive({
-              session: sessionRecord,
-              revokedAt: issuedAt,
-              ...(input.replaceSessionId !== undefined
-                ? { replaceSessionId: input.replaceSessionId }
-                : {}),
-            })
-          : authSessions.create(sessionRecord).pipe(Effect.as([] as ReadonlyArray<AuthSessionId>))
+        inheritFromKey !== undefined
+          ? Effect.succeed([] as ReadonlyArray<AuthSessionId>)
+          : replacing
+            ? authSessions.createReplacingActive({
+                session: sessionRecord,
+                revokedAt: issuedAt,
+                ...(input?.replaceSessionId !== undefined
+                  ? { replaceSessionId: input.replaceSessionId }
+                  : {}),
+              })
+            : authSessions.create(sessionRecord).pipe(Effect.as([] as ReadonlyArray<AuthSessionId>))
       ).pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })));
       if (replacedSessionIds.length > 0) {
         yield* Ref.update(connectedSessionsRef, (current) => {
@@ -1156,6 +1215,9 @@ const make = Effect.gen(function* () {
           userId: input.userId,
           now,
           latestExpiresAt: DateTime.add(now, { milliseconds: Duration.toMillis(input.ttl) }),
+          ...(input.proofKeyThumbprint === undefined
+            ? {}
+            : { proofKeyThumbprint: input.proofKeyThumbprint }),
         })
         .pipe(
           Effect.flatMap((bound) =>
@@ -1174,13 +1236,18 @@ const make = Effect.gen(function* () {
   );
 
   const unbindUser: SessionStore["Service"]["unbindUser"] = Effect.fn("SessionStore.unbindUser")(
-    function* (sessionId) {
-      return yield* authSessions.unbindUser({ sessionId }).pipe(
-        Effect.flatMap((unbound) =>
-          unbound ? publishAccessChange(sessionId).pipe(Effect.as(true)) : Effect.succeed(false),
-        ),
-        Effect.mapError((cause) => new SessionRevocationError({ sessionId, cause })),
-      );
+    function* ({ sessionId, proofKeyThumbprint }) {
+      return yield* authSessions
+        .unbindUser({
+          sessionId,
+          ...(proofKeyThumbprint === undefined ? {} : { proofKeyThumbprint }),
+        })
+        .pipe(
+          Effect.flatMap((unbound) =>
+            unbound ? publishAccessChange(sessionId).pipe(Effect.as(true)) : Effect.succeed(false),
+          ),
+          Effect.mapError((cause) => new SessionRevocationError({ sessionId, cause })),
+        );
     },
     Effect.uninterruptible,
   );
