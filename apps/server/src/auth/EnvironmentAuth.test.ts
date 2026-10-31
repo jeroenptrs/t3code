@@ -3,6 +3,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   authScopeResponse,
   AuthAdministrativeClientScopes,
+  AuthStandardClientScopes,
+  AuthUserRoleScopes,
   connectDeviceVerificationCode,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -635,6 +637,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           .pipe(Effect.flip);
         expect(reused._tag).toBe("ServerAuthInvalidCredentialError");
       }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect.each([
+      { entraSignIn: false, expected: AuthStandardClientScopes },
+      { entraSignIn: true, expected: AuthUserRoleScopes.operator },
+    ])(
+      "a T3 Connect credential with Entra sign-in $entraSignIn grants the matching scopes",
+      (case_) =>
+        Effect.gen(function* () {
+          const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+          yield* serverAuth.issueConnectCredential({
+            proofKeyThumbprint: "Kq3vZ8sYbTn0eW1pLr5uXc7dHf9gJm2aQs4tVw6yBzE",
+            requireApproval: false,
+          });
+          const links = yield* serverAuth.listPairingLinks();
+          expect(links.map((link) => link.permissions)).toEqual([case_.expected]);
+        }).pipe(
+          Effect.provide(
+            layerEnvironmentAuth(
+              case_.entraSignIn ? { entraSignIn: {} as ServerConfig.EntraSignInConfig } : {},
+            ),
+          ),
+        ),
     );
 
     it.effect.each([
