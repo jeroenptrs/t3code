@@ -107,6 +107,14 @@ export const RevokeUserAuthSessionsInput = Schema.Struct({
 });
 export type RevokeUserAuthSessionsInput = typeof RevokeUserAuthSessionsInput.Type;
 
+export const BindAuthSessionUserInput = Schema.Struct({
+  sessionId: AuthSessionId,
+  userId: AuthUserId,
+  now: Schema.DateTimeUtcFromString,
+  latestExpiresAt: Schema.DateTimeUtcFromString,
+});
+export type BindAuthSessionUserInput = typeof BindAuthSessionUserInput.Type;
+
 export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
   sessionId: AuthSessionId,
   lastConnectedAt: Schema.DateTimeUtcFromString,
@@ -143,6 +151,17 @@ export class AuthSessionRepository extends Context.Service<
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
+    /**
+     * Binds an active session that has no user, shortening its expiry to
+     * `latestExpiresAt` when that is sooner. False when nothing matched.
+     */
+    readonly bindUser: (
+      input: BindAuthSessionUserInput,
+    ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
+    /** Clears an active session's user. False when it had none. */
+    readonly unbindUser: (
+      input: GetAuthSessionByIdInput,
+    ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
   }
 >()("t3/persistence/AuthSessions/AuthSessionRepository") {}
 
@@ -404,6 +423,36 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const bindUserRows = SqlSchema.findAll({
+    Request: BindAuthSessionUserInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ sessionId, userId, now, latestExpiresAt }) =>
+      sql`
+        UPDATE auth_sessions
+        SET user_id = ${userId},
+          expires_at = MIN(expires_at, ${latestExpiresAt})
+        WHERE session_id = ${sessionId}
+          AND user_id IS NULL
+          AND revoked_at IS NULL
+          AND expires_at > ${now}
+        RETURNING session_id AS "sessionId"
+      `,
+  });
+
+  const unbindUserRows = SqlSchema.findAll({
+    Request: GetAuthSessionByIdInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ sessionId }) =>
+      sql`
+        UPDATE auth_sessions
+        SET user_id = NULL
+        WHERE session_id = ${sessionId}
+          AND user_id IS NOT NULL
+          AND revoked_at IS NULL
+        RETURNING session_id AS "sessionId"
+      `,
+  });
+
   const create: AuthSessionRepository["Service"]["create"] = (input) =>
     createSessionRow(input).pipe(
       Effect.mapError(
@@ -548,6 +597,30 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const bindUser: AuthSessionRepository["Service"]["bindUser"] = (input) =>
+    bindUserRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.bindUser:query",
+          "AuthSessionRepository.bindUser:decodeRows",
+          { sessionId: input.sessionId },
+        ),
+      ),
+      Effect.map((rows) => rows.length > 0),
+    );
+
+  const unbindUser: AuthSessionRepository["Service"]["unbindUser"] = (input) =>
+    unbindUserRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.unbindUser:query",
+          "AuthSessionRepository.unbindUser:decodeRows",
+          { sessionId: input.sessionId },
+        ),
+      ),
+      Effect.map((rows) => rows.length > 0),
+    );
+
   return {
     create,
     createReplacingActive,
@@ -558,6 +631,8 @@ export const make = Effect.gen(function* () {
     revokeAllExcept,
     revokeAllForUser,
     setLastConnectedAt,
+    bindUser,
+    unbindUser,
   } satisfies AuthSessionRepository["Service"];
 });
 
