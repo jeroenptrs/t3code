@@ -6,9 +6,11 @@ import {
   AuthStandardClientScopes,
   AuthUserRoleScopes,
   EnvironmentHttpApi,
+  type AuthSessionId,
   type AuthUserIdentity,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -219,13 +221,58 @@ const completeSignIn = (
       challenge: authorize.searchParams.get("code_challenge") ?? "",
       redirectUri: authorize.searchParams.get("redirect_uri"),
     });
-    return yield* entra.complete({
+    const completed = yield* entra.complete({
       code,
       state: flow.state,
       error: null,
       flowCookie: flow.flowCookie,
       client: { deviceType: "desktop" },
     });
+    if (completed.kind !== "browser") throw new Error("expected a browser sign-in");
+    return completed;
+  });
+
+/** A T3 Connect link's session: DPoP-method, operator scopes, no user. */
+const issueLinkedSession = SessionStore.SessionStore.pipe(
+  Effect.flatMap((sessions) =>
+    sessions.issue({
+      method: "dpop-access-token",
+      subject: "cloud-connect",
+      scopes: AuthUserRoleScopes.operator,
+    }),
+  ),
+);
+
+/** Has the fake tenant issue a code for this authorization URL; returns the callback input. */
+const tenantCallbackFor = async (authorizationUrl: string, claims: JWTPayload) => {
+  const authorize = new URL(authorizationUrl);
+  const code = `code-${++codeCounter}`;
+  issuedCodes.set(code, {
+    idToken: await signIdToken({ nonce: authorize.searchParams.get("nonce"), ...claims }),
+    challenge: authorize.searchParams.get("code_challenge") ?? "",
+    redirectUri: authorize.searchParams.get("redirect_uri"),
+  });
+  return { code, state: authorize.searchParams.get("state") };
+};
+const tenantCallback = (authorizationUrl: string, claims: JWTPayload) =>
+  Effect.promise(() => tenantCallbackFor(authorizationUrl, claims));
+
+/** Steps `session` up through the fake tenant, signing in as `suffix`. */
+const stepUp = (session: { readonly sessionId: AuthSessionId }, suffix: string) =>
+  Effect.gen(function* () {
+    const entra = yield* EntraSignIn.EntraSignIn;
+    const started = yield* entra.startStepUp({
+      sessionId: session.sessionId,
+      method: "dpop-access-token",
+    });
+    const callback = yield* tenantCallback(started.authorizationUrl, { oid: objectId(suffix) });
+    const complete = entra.complete({
+      ...callback,
+      error: null,
+      flowCookie: undefined,
+      client: { deviceType: "desktop" },
+    });
+    return { complete, callback };
   });
 
 const signInAs = (suffix: string, labels?: { readonly name?: string; readonly email?: string }) =>
@@ -570,6 +617,117 @@ it.layer(NodeServices.layer)("EntraSignIn", (it) => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
+  it.effect("a linked session steps up to the user who signs in and holds their role", () =>
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const registry = yield* UserRegistry.UserRegistry;
+      const linked = yield* issueLinkedSession;
+      const request = bearerRequest(linked.token);
+      const asLinked = yield* auth.authenticateHttpRequest(request);
+      expect(asLinked.scopes).toEqual(AuthUserRoleScopes.operator);
+      const socket = yield* Effect.forkChild(auth.awaitSessionAccessChange(asLinked));
+
+      const { complete } = yield* stepUp(linked, "1");
+      expect(yield* complete).toEqual({ kind: "stepUp", userLabel: "your account" });
+
+      // The socket opened as the link closes; a pending user has no scopes.
+      yield* Fiber.join(socket);
+      const pending = yield* auth.authenticateHttpRequest(request);
+      expect(pending.scopes).toEqual([]);
+      expect(pending.user?.status).toBe("pending");
+      expect(pending.method).toBe("dpop-access-token");
+      // A bound session lives no longer than a user session.
+      expect(pending.expiresAt?.epochMilliseconds).toBe(
+        (yield* Clock.currentTimeMillis) + Duration.toMillis(Duration.hours(12)),
+      );
+
+      yield* registry.approve({ userId: pending.userId!, role: "reader", actor: hostCli });
+      expect((yield* auth.authenticateHttpRequest(request)).scopes).toEqual(
+        AuthUserRoleScopes.reader,
+      );
+
+      yield* TestClock.adjust(Duration.hours(12));
+      expect(Result.isFailure(yield* Effect.result(auth.authenticateHttpRequest(request)))).toBe(
+        true,
+      );
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("a step-up completes once, and only while its session is active", () =>
+    Effect.gen(function* () {
+      const entra = yield* EntraSignIn.EntraSignIn;
+      const sessions = yield* SessionStore.SessionStore;
+      const linked = yield* issueLinkedSession;
+      const first = yield* stepUp(linked, "1");
+      yield* first.complete;
+      const replay = yield* Effect.result(
+        entra.complete({
+          ...first.callback,
+          error: null,
+          flowCookie: undefined,
+          client: { deviceType: "desktop" },
+        }),
+      );
+      expect(Result.isFailure(replay) && replay.failure).toMatchObject({
+        reason: "invalid_state",
+      });
+
+      const revoked = yield* issueLinkedSession;
+      const pending = yield* stepUp(revoked, "2");
+      yield* sessions.revoke(revoked.sessionId);
+      const failure = yield* Effect.result(pending.complete);
+      expect(Result.isFailure(failure) && failure.failure).toMatchObject({
+        reason: "invalid_state",
+        stepUp: true,
+      });
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("step-up is only for sessions without a user that are not browser cookies", () =>
+    Effect.gen(function* () {
+      const entra = yield* EntraSignIn.EntraSignIn;
+      const linked = yield* issueLinkedSession;
+      const bound = yield* stepUp(linked, "1");
+      yield* bound.complete;
+      const browser = yield* signInAs("2");
+
+      const refusal = (session: Parameters<typeof entra.startStepUp>[0]) =>
+        Effect.flip(entra.startStepUp(session)).pipe(
+          Effect.map((error) =>
+            error._tag === "EntraStepUpRefusedError" ? error.reason : error._tag,
+          ),
+        );
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      expect(yield* refusal(yield* auth.authenticateHttpRequest(bearerRequest(linked.token)))).toBe(
+        "session_already_bound",
+      );
+      expect(
+        yield* refusal({ sessionId: browser.session.sessionId, method: "browser-session-cookie" }),
+      ).toBe("browser_sign_in_required");
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("signing out a stepped-up session drops the user and keeps the link", () =>
+    Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const registry = yield* UserRegistry.UserRegistry;
+      yield* registry.provisionAdministratorFromHost(identity("1"));
+      const linked = yield* issueLinkedSession;
+      yield* (yield* stepUp(linked, "1")).complete;
+      const request = bearerRequest(linked.token);
+      const asUser = yield* auth.authenticateHttpRequest(request);
+      expect(asUser.scopes).toEqual(AuthUserRoleScopes.administrator);
+      const socket = yield* Effect.forkChild(auth.awaitSessionAccessChange(asUser));
+
+      expect((yield* auth.signOut(request)).signedOut).toBe(true);
+
+      yield* Fiber.join(socket);
+      const after = yield* auth.authenticateHttpRequest(request);
+      expect(after.userId).toBeUndefined();
+      expect(after.scopes).toEqual(AuthUserRoleScopes.operator);
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
   it.effect(
     "pairing cannot make a browser session while Entra is on; service tokens still work",
     () =>
@@ -635,6 +793,13 @@ it.layer(NodeServices.layer)("EntraSignIn", (it) => {
 
       expect(browser.response.permissions).toEqual(AuthStandardClientScopes);
       expect(entra.enabled).toBe(false);
+      const stepUpRefused = yield* Effect.flip(
+        entra.startStepUp({
+          sessionId: "linked-session" as AuthSessionId,
+          method: "dpop-access-token",
+        }),
+      );
+      expect(stepUpRefused._tag).toBe("EntraSignInDisabledError");
       expect((yield* auth.getDescriptor()).entraSignIn).toBe(false);
     }).pipe(Effect.provide(makeLayer({ entra: false }))),
   );
@@ -942,6 +1107,69 @@ it.layer(NodeServices.layer)("Entra sign-in HTTP routes", (it) => {
     }).pipe(Effect.provide(makeLayer())),
   );
 
+  it.effect("a linked session steps up over HTTP and then cannot mint pairing credentials", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const registry = yield* UserRegistry.UserRegistry;
+      yield* registry.provisionAdministratorFromHost(identity("1"));
+      const linked = yield* issueLinkedSession;
+      const browser = yield* signInAs("2");
+      const asLinked = { authorization: `Bearer ${linked.token}` };
+      const startStepUp = (
+        fetch: (path: string, init?: RequestInit) => Promise<Response>,
+        init: RequestInit,
+      ) => fetch("/api/auth/entra/step-up", { method: "POST", ...init });
+      const tenantCode = (authorizationUrl: string) =>
+        tenantCallbackFor(authorizationUrl, { oid: objectId("1"), name: "Ada <script>" });
+      yield* withWebHandler(async (fetch) => {
+        const fromBrowser = await fetch("/api/auth/entra/step-up", {
+          method: "POST",
+          cookie: `${sessions.cookieName}=${browser.session.token}`,
+        });
+        expect(fromBrowser.status).toBe(403);
+        expect(await fromBrowser.json()).toMatchObject({ reason: "browser_sign_in_required" });
+
+        const started = await startStepUp(fetch, { headers: asLinked });
+        expect(started.status).toBe(200);
+        const { authorizationUrl } = (await started.json()) as { authorizationUrl: string };
+        const { code, state } = await tenantCode(authorizationUrl);
+
+        // The callback opens in a browser that never saw the app: no flow cookie.
+        const callback = await fetch(`/api/auth/entra/callback?code=${code}&state=${state}`);
+        expect(callback.status).toBe(200);
+        expect(callback.headers.get("content-type")).toContain("text/html");
+        const page = await callback.text();
+        expect(page).toContain("Ada &lt;script&gt;");
+        expect(cookiePair(callback, sessions.cookieName)).toBeUndefined();
+
+        const session = await fetch("/api/auth/session", { headers: asLinked });
+        expect(await session.json()).toMatchObject({
+          authenticated: true,
+          sessionMethod: "dpop-access-token",
+          user: { status: "active", role: "administrator" },
+          permissions: AuthUserRoleScopes.administrator,
+        });
+
+        const again = await startStepUp(fetch, { headers: asLinked });
+        expect(await again.json()).toMatchObject({ reason: "session_already_bound" });
+
+        // Bound to a user, the link follows the user rules for access changes.
+        const mint = await fetch("/api/auth/pairing-token", {
+          method: "POST",
+          body: JSON.stringify({ label: "keep me", scopes: ["orchestration:read"] }),
+          headers: asLinked,
+        });
+        expect(mint.status).toBe(403);
+        expect(await mint.json()).toMatchObject({ reason: "host_cli_required" });
+
+        const replay = await fetch(`/api/auth/entra/callback?code=${code}&state=${state}`, {
+          redirect: "manual",
+        });
+        expect(replay.headers.get("location")).toBe("/?signInError=invalid_state");
+      });
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
   it.effect("without Entra, administrators still mint pairing credentials over HTTP", () =>
     Effect.gen(function* () {
       const auth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -953,6 +1181,12 @@ it.layer(NodeServices.layer)("Entra sign-in HTTP routes", (it) => {
           headers: { authorization: `Bearer ${serviceToken.token}` },
         });
         expect(response.status).toBe(200);
+        const stepUp = await fetch("/api/auth/entra/step-up", {
+          method: "POST",
+          headers: { authorization: `Bearer ${serviceToken.token}` },
+        });
+        expect(stepUp.status).toBe(403);
+        expect(await stepUp.json()).toMatchObject({ reason: "entra_sign_in_disabled" });
       });
       expect(yield* auth.listPairingLinks()).toHaveLength(1);
     }).pipe(Effect.provide(makeLayer({ entra: false }))),

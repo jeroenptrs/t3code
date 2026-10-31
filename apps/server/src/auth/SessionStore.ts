@@ -76,6 +76,8 @@ export type SessionCredentialChange =
   | {
       readonly type: "clientUpserted";
       readonly clientSession: AuthClientSession;
+      /** The session's user binding changed, so sockets opened under the old one must close. */
+      readonly accessChanged?: true;
     }
   | {
       readonly type: "clientRemoved";
@@ -448,6 +450,20 @@ export class SessionStore extends Context.Service<
     readonly revokeForUser: (
       userId: AuthUserId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
+    /**
+     * Binds an active session with no user to `userId`. Its scopes then come
+     * from the user, and it expires within `ttl` from now. False when the
+     * session is revoked, expired, unknown, or already bound.
+     */
+    readonly bindUser: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly userId: AuthUserId;
+      readonly ttl: Duration.Duration;
+    }) => Effect.Effect<boolean, SessionCredentialInternalError>;
+    /** Clears the binding, so the session is back to the scopes it was issued with. */
+    readonly unbindUser: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<boolean, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
   }
@@ -575,10 +591,11 @@ const make = Effect.gen(function* () {
       );
   }
 
-  const emitUpsert = (clientSession: AuthClientSession) =>
+  const emitUpsert = (clientSession: AuthClientSession, options?: { accessChanged: true }) =>
     PubSub.publish(changesPubSub, {
       type: "clientUpserted",
       clientSession,
+      ...options,
     }).pipe(Effect.asVoid);
 
   const emitRemoved = (sessionId: AuthSessionId) =>
@@ -873,6 +890,15 @@ const make = Effect.gen(function* () {
         });
       }
 
+      // Binding a user can shorten the stored expiry below the signed one.
+      if (row.value.expiresAt.epochMilliseconds <= observedAt.epochMilliseconds) {
+        return yield* new SessionTokenExpiredError({
+          sessionId: claims.sid,
+          expiresAt: row.value.expiresAt,
+          observedAt,
+        });
+      }
+
       // The row's user binding is authoritative; the claim only mirrors it.
       const user = row.value.user;
       return {
@@ -880,7 +906,10 @@ const make = Effect.gen(function* () {
         token,
         method: claims.method,
         client: toClientMetadata(row.value.client),
-        expiresAt: expiresAt.value,
+        expiresAt:
+          row.value.expiresAt.epochMilliseconds < claims.exp
+            ? row.value.expiresAt
+            : expiresAt.value,
         subject: claims.sub,
         scopes: sessionScopes({ scopes: claims.scopes, user }),
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
@@ -1109,6 +1138,53 @@ const make = Effect.gen(function* () {
     return revokedSessionIds.length;
   }, Effect.uninterruptible);
 
+  const publishAccessChange = (sessionId: AuthSessionId) =>
+    loadActiveSession(sessionId).pipe(
+      Effect.flatMap((session) =>
+        Option.isSome(session)
+          ? emitUpsert(session.value, { accessChanged: true })
+          : emitRemoved(sessionId),
+      ),
+    );
+
+  const bindUser: SessionStore["Service"]["bindUser"] = Effect.fn("SessionStore.bindUser")(
+    function* (input) {
+      const now = yield* DateTime.now;
+      const bound = yield* authSessions
+        .bindUser({
+          sessionId: input.sessionId,
+          userId: input.userId,
+          now,
+          latestExpiresAt: DateTime.add(now, { milliseconds: Duration.toMillis(input.ttl) }),
+        })
+        .pipe(
+          Effect.flatMap((bound) =>
+            bound
+              ? publishAccessChange(input.sessionId).pipe(Effect.as(true))
+              : Effect.succeed(false),
+          ),
+          Effect.mapError(
+            (cause) => new SessionCredentialIssueError({ sessionId: input.sessionId, cause }),
+          ),
+        );
+      return bound;
+    },
+    // A committed binding must reach the sockets opened before it.
+    Effect.uninterruptible,
+  );
+
+  const unbindUser: SessionStore["Service"]["unbindUser"] = Effect.fn("SessionStore.unbindUser")(
+    function* (sessionId) {
+      return yield* authSessions.unbindUser({ sessionId }).pipe(
+        Effect.flatMap((unbound) =>
+          unbound ? publishAccessChange(sessionId).pipe(Effect.as(true)) : Effect.succeed(false),
+        ),
+        Effect.mapError((cause) => new SessionRevocationError({ sessionId, cause })),
+      );
+    },
+    Effect.uninterruptible,
+  );
+
   const awaitInvalidation = Effect.fn(function* (sessionId: AuthSessionId) {
     return yield* Effect.scoped(
       Effect.gen(function* () {
@@ -1158,6 +1234,8 @@ const make = Effect.gen(function* () {
     revoke,
     revokeAllExcept,
     revokeForUser,
+    bindUser,
+    unbindUser,
     markConnected,
     markDisconnected,
   });
