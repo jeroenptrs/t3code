@@ -1203,7 +1203,10 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  const toAccessTokenResult = (session: SessionStore.IssuedSession) =>
+  const toAccessTokenResult = (
+    session: SessionStore.IssuedSession,
+    scopes: ReadonlyArray<AuthEnvironmentScope> = session.scopes,
+  ) =>
     DateTime.now.pipe(
       Effect.map(
         (now) =>
@@ -1215,7 +1218,7 @@ export const make = Effect.gen(function* () {
               0,
               Math.floor((session.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1000),
             ),
-            scope: encodeOAuthScope(session.scopes),
+            scope: encodeOAuthScope(scopes),
           }) satisfies AuthAccessTokenResult,
       ),
     );
@@ -1281,6 +1284,7 @@ export const make = Effect.gen(function* () {
                     ? {
                         proofKeyThumbprint: input.proofKeyThumbprint,
                         ttl: renewable ? RENEWABLE_ACCESS_TOKEN_TTL : Duration.hours(1),
+                        inheritStepUp: entraSignIn,
                       }
                     : {}),
                   ...(renewable ? { renewalWindow: RENEWABLE_SESSION_WINDOW } : {}),
@@ -1291,6 +1295,7 @@ export const make = Effect.gen(function* () {
                   },
                 })
                 .pipe(
+                  Effect.map((issued) => ({ ...issued, grantedScopes })),
                   Effect.mapError(
                     (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
                   ),
@@ -1301,7 +1306,9 @@ export const make = Effect.gen(function* () {
                 : issueUnlessOthersRevokedSince(revocationsAtStart, issue);
             }),
           ),
-          Effect.flatMap(toAccessTokenResult),
+          // The grant, not the session's current scopes: a renewal that inherits a pending user's
+          // step-up has none, and `scope` cannot be empty.
+          Effect.flatMap((session) => toAccessTokenResult(session, session.grantedScopes)),
           (exchange) =>
             input?.proofKeyThumbprint ? connectTrustLock.withPermits(1)(exchange) : exchange,
         );
@@ -1869,7 +1876,12 @@ export const make = Effect.gen(function* () {
       : authenticateRequest(request).pipe(
           Effect.flatMap((session) =>
             session.method !== "browser-session-cookie" && session.userId !== undefined
-              ? sessions.unbindUser(session.sessionId)
+              ? sessions.unbindUser({
+                  sessionId: session.sessionId,
+                  ...(session.proofKeyThumbprint
+                    ? { proofKeyThumbprint: session.proofKeyThumbprint }
+                    : {}),
+                })
               : Effect.succeed(false),
           ),
           Effect.catchIf(isServerAuthCredentialError, () => Effect.succeed(false)),
@@ -1897,8 +1909,8 @@ export const make = Effect.gen(function* () {
         signOutBoundSession(request).pipe(
           Effect.map((unbound) => ({
             signedOut: unbound || revoked.some(Boolean),
-        cookieNames: authCookieNames,
-      })),
+            cookieNames: authCookieNames,
+          })),
         ),
       ),
       Effect.mapError((cause) => new ServerAuthSignOutError({ cause })),
