@@ -10,6 +10,7 @@ import {
   EnvironmentInternalError,
   type EnvironmentInternalErrorReason,
   EnvironmentOperationForbiddenError,
+  type EnvironmentOperationForbiddenReason,
   EnvironmentRequestInvalidError,
   type EnvironmentRequestInvalidReason,
   EnvironmentResourceNotFoundError,
@@ -20,6 +21,7 @@ import {
   ENTRA_SIGN_IN_ERROR_PARAM,
   ENTRA_SIGN_IN_RETURN_TO_PARAM,
   ENTRA_SIGN_IN_START_PATH,
+  type EntraSignInFailureReason,
   EnvironmentUserAccessConflictError,
   type EnvironmentUserAccessConflictReason,
 } from "@t3tools/contracts";
@@ -147,9 +149,7 @@ export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope
   );
 }
 
-function failEnvironmentOperationForbidden(
-  reason: "current_session_revoke_not_allowed" | "user_session_required" | "host_cli_required",
-) {
+function failEnvironmentOperationForbidden(reason: EnvironmentOperationForbiddenReason) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
       Effect.fail(
@@ -641,6 +641,27 @@ export const layer = HttpApiBuilder.group(
           ),
         )
         .handle(
+          "entraStepUp",
+          Effect.fn("environment.auth.entraStepUp")(
+            function* (args) {
+              yield* annotateEnvironmentRequest(args.endpoint.name);
+              const session = yield* EnvironmentAuthenticatedPrincipal;
+              // Test servers without the Entra service read as Entra off.
+              const entra = yield* Effect.serviceOption(EntraSignIn.EntraSignIn);
+              if (Option.isNone(entra)) {
+                return yield* failEnvironmentOperationForbidden("entra_sign_in_disabled");
+              }
+              yield* appendCredentialResponseHeaders;
+              return yield* entra.value.startStepUp(session);
+            },
+            Effect.catchTags({
+              EntraSignInDisabledError: () =>
+                failEnvironmentOperationForbidden("entra_sign_in_disabled"),
+              EntraStepUpRefusedError: (error) => failEnvironmentOperationForbidden(error.reason),
+            }),
+          ),
+        )
+        .handle(
           "users",
           Effect.fn("environment.auth.users")(
             function* (args) {
@@ -720,6 +741,20 @@ export const layer = HttpApiBuilder.group(
 
 const ENTRA_NO_STORE_HEADERS = { "cache-control": "no-store", "referrer-policy": "no-referrer" };
 
+const describeStepUpFailure = (reason: EntraSignInFailureReason): string => {
+  switch (reason) {
+    case "provider_error":
+      return "Microsoft sign-in was cancelled or refused.";
+    case "invalid_state":
+      return "This sign-in expired, was already used, or the T3 Code session that started it has ended.";
+    case "token_exchange_failed":
+    case "invalid_id_token":
+      return "Microsoft did not complete the sign-in.";
+    case "internal_error":
+      return "T3 Code could not record the sign-in.";
+  }
+};
+
 /** Redirects the browser to Entra. 404 when Entra sign-in is not configured. */
 const entraSignInStartRoute = HttpRouter.add(
   "GET",
@@ -754,13 +789,81 @@ const entraSignInStartRoute = HttpRouter.add(
   ),
 );
 
+const escapeHtml = (value: string) =>
+  value.replace(
+    /[&<>"']/g,
+    (char) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char] ?? char,
+  );
+
+/** The step-up finished in a browser that is not the app, so it only says so. */
+const stepUpPage = (title: string, message: string, status: number) =>
+  HttpServerResponse.text(
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title></head><body style="font-family: system-ui, sans-serif; max-width: 32rem; margin: 4rem auto; padding: 0 1rem"><h1 style="font-size: 1.25rem">${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></body></html>`,
+    {
+      status,
+      contentType: "text/html; charset=utf-8",
+      headers: {
+        ...ENTRA_NO_STORE_HEADERS,
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'",
+      },
+    },
+  );
+
 /**
  * Finishes sign-in: sets the session cookie and returns to the requested
- * page, or lands on `/?signInError=<reason>` when anything fails.
+ * page, or lands on `/?signInError=<reason>` when anything fails. A step-up
+ * sets no cookie and answers with a page telling the person to go back.
  */
 const handleEntraSignInCallback = (entra: EntraSignIn.EntraSignIn["Service"]) =>
   Effect.gen(function* () {
     const sessions = yield* SessionStore.SessionStore;
+    const callbackResponse = (
+      result: Result.Result<
+        EntraSignIn.EntraSignInCompleted,
+        EntraSignIn.EntraSignInError | EntraSignIn.EntraSignInDisabledError
+      >,
+    ) => {
+      if (Result.isFailure(result)) {
+        const reason =
+          result.failure._tag === "EntraSignInError" ? result.failure.reason : "internal_error";
+        if (result.failure._tag === "EntraSignInError" && result.failure.stepUp === true) {
+          return Effect.succeed(
+            stepUpPage(
+              "Sign-in did not finish",
+              `${describeStepUpFailure(reason)} Return to T3 Code and sign in with Microsoft again.`,
+              400,
+            ),
+          );
+        }
+        return Effect.succeed(
+          HttpServerResponse.redirect(
+            `/?${new URLSearchParams({ [ENTRA_SIGN_IN_ERROR_PARAM]: reason }).toString()}`,
+            { headers: ENTRA_NO_STORE_HEADERS },
+          ),
+        );
+      }
+      if (result.success.kind === "stepUp") {
+        return Effect.succeed(
+          stepUpPage(
+            "Signed in",
+            `T3 Code is now signed in as ${result.success.userLabel}. You can close this page and return to T3 Code.`,
+            200,
+          ),
+        );
+      }
+      return HttpServerResponse.redirect(result.success.returnTo, {
+        headers: ENTRA_NO_STORE_HEADERS,
+      }).pipe(
+        HttpServerResponse.setCookie(sessions.cookieName, result.success.session.token, {
+          httpOnly: true,
+          secure: entra.secureCookies,
+          sameSite: "lax",
+          path: "/",
+          expires: DateTime.toDate(result.success.session.expiresAt),
+        }),
+      );
+    };
     const request = yield* HttpServerRequest.HttpServerRequest;
     const params = Option.match(HttpServerRequest.toURL(request), {
       onNone: () => new URLSearchParams(),
@@ -787,25 +890,7 @@ const handleEntraSignInCallback = (entra: EntraSignIn.EntraSignIn["Service"]) =>
         return HttpServerResponse.text("Not Found", { status: 404 });
       }
     }
-    const response = Result.isSuccess(result)
-      ? yield* HttpServerResponse.redirect(result.success.returnTo, {
-          headers: ENTRA_NO_STORE_HEADERS,
-        }).pipe(
-          HttpServerResponse.setCookie(sessions.cookieName, result.success.session.token, {
-            httpOnly: true,
-            secure: entra.secureCookies,
-            sameSite: "lax",
-            path: "/",
-            expires: DateTime.toDate(result.success.session.expiresAt),
-          }),
-        )
-      : HttpServerResponse.redirect(
-          `/?${new URLSearchParams({
-            [ENTRA_SIGN_IN_ERROR_PARAM]:
-              result.failure._tag === "EntraSignInError" ? result.failure.reason : "internal_error",
-          }).toString()}`,
-          { headers: ENTRA_NO_STORE_HEADERS },
-        );
+    const response = yield* callbackResponse(result);
     return yield* HttpServerResponse.expireCookie(response, entra.flowCookieName, {
       httpOnly: true,
       secure: entra.secureCookies,
