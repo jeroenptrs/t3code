@@ -1117,15 +1117,27 @@ const make = Effect.gen(function* () {
     Effect.mapError((cause) => new ActiveSessionsListError({ cause })),
   );
 
+  const publishAccessChange = (sessionId: AuthSessionId) =>
+    loadActiveSession(sessionId).pipe(
+      Effect.flatMap((session) =>
+        Option.isSome(session)
+          ? emitUpsert(session.value, { accessChanged: true })
+          : emitRemoved(sessionId),
+      ),
+    );
+
   const revoke: SessionStore["Service"]["revoke"] = Effect.fn("SessionStore.revoke")(
     function* (sessionId) {
       const revokedAt = yield* DateTime.now;
-      const revoked = yield* authSessions
+      const { revoked, unboundSessionIds } = yield* authSessions
         .revoke({
           sessionId,
           revokedAt,
         })
         .pipe(Effect.mapError((cause) => new SessionRevocationError({ sessionId, cause })));
+      yield* Effect.forEach(unboundSessionIds, publishAccessChange, { discard: true }).pipe(
+        Effect.mapError((cause) => new SessionRevocationError({ sessionId, cause })),
+      );
       if (revoked) {
         yield* Ref.update(connectedSessionsRef, (current) => {
           const next = new Map(current);
@@ -1197,15 +1209,6 @@ const make = Effect.gen(function* () {
     return revokedSessionIds.length;
   }, Effect.uninterruptible);
 
-  const publishAccessChange = (sessionId: AuthSessionId) =>
-    loadActiveSession(sessionId).pipe(
-      Effect.flatMap((session) =>
-        Option.isSome(session)
-          ? emitUpsert(session.value, { accessChanged: true })
-          : emitRemoved(sessionId),
-      ),
-    );
-
   const bindUser: SessionStore["Service"]["bindUser"] = Effect.fn("SessionStore.bindUser")(
     function* (input) {
       const now = yield* DateTime.now;
@@ -1243,9 +1246,8 @@ const make = Effect.gen(function* () {
           ...(proofKeyThumbprint === undefined ? {} : { proofKeyThumbprint }),
         })
         .pipe(
-          Effect.flatMap((unbound) =>
-            unbound ? publishAccessChange(sessionId).pipe(Effect.as(true)) : Effect.succeed(false),
-          ),
+          Effect.tap((unbound) => Effect.forEach(unbound, publishAccessChange, { discard: true })),
+          Effect.map((unbound) => unbound.includes(sessionId)),
           Effect.mapError((cause) => new SessionRevocationError({ sessionId, cause })),
         );
     },
