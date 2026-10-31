@@ -18,4 +18,15 @@ export default Effect.gen(function* () {
     CREATE INDEX IF NOT EXISTS idx_fork_auth_step_up_bindings_user
     ON fork_auth_step_up_bindings(user_id)
   `;
+
+  // Which device key bound a session, so revoking that session can reach the binding.
+  yield* sql`
+    ALTER TABLE auth_sessions ADD COLUMN step_up_proof_key TEXT
+  `;
+
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_step_up_proof_key
+    ON auth_sessions(step_up_proof_key)
+    WHERE step_up_proof_key IS NOT NULL
+  `;
 });
