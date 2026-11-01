@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadStructureRuntime,
 } from "@t3tools/client-runtime/state/thread-execution";
@@ -130,7 +131,6 @@ export function ThreadScreen(props: {
     ),
   );
 
-  const rows = useMemo(() => deriveThreadRows(visibleItems), [visibleItems]);
   const thread = structure?.projection.thread ?? null;
   const runtime = useMemo(
     () => (structure ? deriveThreadStructureRuntime(structure.projection) : null),
@@ -139,6 +139,29 @@ export function ThreadScreen(props: {
   const activityRun = useMemo(
     () => (structure ? deriveThreadActivityRun(structure.projection) : null),
     [structure],
+  );
+  const runlessWorkActive = structure
+    ? deriveRunlessWorkStartedAt(structure.projection) !== null
+    : false;
+  // Run ids are unique, so opened folds need no reset when the thread changes.
+  const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleFold = useCallback((runId: string) => {
+    // The fold keeps focus while its work opens or closes; following the end would scroll it away.
+    messageList.current?.holdPosition();
+    setExpandedRunIds((current) => {
+      const next = new Set(current);
+      if (!next.delete(runId)) next.add(runId);
+      return next;
+    });
+  }, []);
+  const rows = useMemo(
+    () =>
+      deriveThreadRows(visibleItems, {
+        latestRun: activityRun,
+        runlessWorkActive,
+        expandedRunIds,
+      }),
+    [visibleItems, activityRun, runlessWorkActive, expandedRunIds],
   );
   const needsInput =
     pendingRequests !== null &&
@@ -230,6 +253,7 @@ export function ThreadScreen(props: {
           latestHost={latestHost}
           latestHostRef={setLatestHost}
           emptyLabel={emptyLabel}
+          onToggleFold={toggleFold}
           environmentId={environmentId}
           threadId={threadId}
         />

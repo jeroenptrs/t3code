@@ -2,7 +2,10 @@ import {
   subagentGroupSummary,
   summarizeSubagentStatuses,
 } from "@t3tools/client-runtime/state/subagent-display";
+import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { ChatAttachment, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import * as DateTime from "effect/DateTime";
 
 type VisibleTurnItem = OrchestrationV2ThreadProjection["visibleTurnItems"][number];
 
@@ -48,7 +51,30 @@ export type ThreadRow =
       readonly statusSummary: string;
       readonly active: boolean;
       readonly failed: boolean;
+    }
+  | {
+      /** A settled turn's work, folded behind its duration the way mobile folds it. */
+      readonly kind: "fold";
+      readonly key: string;
+      readonly runId: string;
+      readonly label: string;
+      readonly expanded: boolean;
     };
+
+/** The thread's latest run, as `deriveThreadActivityRun` summarizes it. */
+export interface ThreadRowsRun {
+  readonly runId: string;
+  readonly status: string;
+  readonly startedAt: string | null;
+  readonly completedAt: string | null;
+}
+
+export interface ThreadRowsOptions {
+  readonly latestRun?: ThreadRowsRun | null;
+  /** A provider-native subagent thread's runless work is still going. */
+  readonly runlessWorkActive?: boolean;
+  readonly expandedRunIds?: ReadonlySet<string>;
+}
 
 const PREVIEW_LENGTH = 120;
 
@@ -183,8 +209,10 @@ function toRow(entry: VisibleTurnItem): ThreadRow | null {
       return { kind: "notice", key, text: item.summary, tone: "muted" };
     case "compaction":
       return { kind: "notice", key, text: "Context compacted", tone: "muted" };
+    case "reasoning":
+      return item.text.trim().length === 0 ? null : tool("Thought", item.text);
     default:
-      // Reasoning, checkpoints, handoffs, forks, and items newer than this client stay hidden.
+      // Checkpoints, handoffs, forks, and items newer than this client stay hidden.
       return null;
   }
 }
@@ -205,13 +233,205 @@ function subagentGroupRow(key: string, members: ReadonlyArray<SubagentItem>): Th
   };
 }
 
+function cachedRow(entry: VisibleTurnItem): ThreadRow | null {
+  let row = rowCache.get(entry);
+  if (row === undefined) {
+    row = toRow(entry);
+    rowCache.set(entry, row);
+  }
+  return row;
+}
+
+interface TurnFold {
+  readonly runId: string;
+  readonly label: string;
+  readonly hidden: ReadonlySet<VisibleTurnItem>;
+}
+
+const ACTIVE_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
+
+function unsettledRunId(run: ThreadRowsRun | null): string | null {
+  if (run === null || run.status === "queued") return null;
+  return run.completedAt === null || ACTIVE_RUN_STATUSES.has(run.status) ? run.runId : null;
+}
+
+const itemStart = (item: VisibleTurnItem["item"]) =>
+  DateTime.toEpochMillis(item.startedAt ?? item.updatedAt);
+
+const itemEnd = (item: VisibleTurnItem["item"]) =>
+  item.type === "assistant_message" ? DateTime.toEpochMillis(item.updatedAt) : itemStart(item);
+
+const isFailedRootError = (item: VisibleTurnItem["item"]) =>
+  item.type === "error" && item.status === "failed" && item.parentItemId === null;
+
+/** Items mobile keeps outside a fold: they matter after the turn, or they mark it. */
+function staysVisible(item: VisibleTurnItem["item"]): boolean {
+  return (
+    item.type === "compaction" ||
+    item.type === "system_notice" ||
+    item.type === "proposed_plan" ||
+    item.type === "notification" ||
+    isFailedRootError(item)
+  );
+}
+
+/** Subagents in a batch with a live member, which outlives its settled launching turn. */
+function liveSubagentItems(items: ReadonlyArray<VisibleTurnItem>): ReadonlySet<VisibleTurnItem> {
+  const live = new Set<VisibleTurnItem>();
+  let batch: Array<VisibleTurnItem> = [];
+  const flush = () => {
+    if (batch.some((entry) => isLiveSubagentTurnItem(entry.item))) {
+      for (const entry of batch) live.add(entry);
+    }
+    batch = [];
+  };
+  for (const entry of items) {
+    const item = entry.item;
+    const previous = batch.at(-1)?.item;
+    if (
+      item.type !== "subagent" ||
+      (previous?.type === "subagent" &&
+        (previous.runId !== item.runId || previous.providerTurnId !== item.providerTurnId))
+    ) {
+      flush();
+    }
+    if (item.type === "subagent") batch.push(entry);
+  }
+  flush();
+  return live;
+}
+
+/**
+ * Mobile's run folds (apps/mobile/src/lib/threadActivity.ts): each settled run's work, progress
+ * messages included, folds behind one row placed at its first hidden item. The run's last
+ * assistant message stays out as its answer. Running, streaming, interrupted, and failed runs do
+ * not fold. Keyed by the anchor item.
+ */
+function deriveTurnFolds(
+  items: ReadonlyArray<VisibleTurnItem>,
+  latestRun: ThreadRowsRun | null,
+  runlessWorkActive: boolean,
+): ReadonlyMap<VisibleTurnItem, TurnFold> {
+  const promptIndexByRunId = new Map<string, number>();
+  for (const [index, { item }] of items.entries()) {
+    if (
+      item.type === "user_message" &&
+      item.inputIntent !== "steer" &&
+      item.inputIntent !== "promoted_queued_to_steer" &&
+      item.runId !== null &&
+      !promptIndexByRunId.has(item.runId)
+    ) {
+      promptIndexByRunId.set(item.runId, index);
+    }
+  }
+  interface TurnGroup {
+    readonly members: Array<VisibleTurnItem>;
+    readonly prompt: VisibleTurnItem | null;
+    terminal: VisibleTurnItem | null;
+    unfoldable: boolean;
+  }
+  const groups = new Map<string, TurnGroup>();
+  let runlessKey: string | null = null;
+  let responseKey: string | null = null;
+  let pendingPrompt: VisibleTurnItem | null = null;
+  for (const [index, entry] of items.entries()) {
+    const item = entry.item;
+    if (item.type === "user_message") {
+      pendingPrompt = entry;
+      runlessKey = item.runId === null ? `runless:${rowKey(entry)}` : null;
+      responseKey = item.runId ?? runlessKey;
+      continue;
+    }
+    if (item.type !== "subagent" && cachedRow(entry) === null) continue;
+    const ownRunId = item.runId ?? runlessKey;
+    if (ownRunId === null) continue;
+    // A resumed subagent keeps its original turn's position, so it folds with that turn.
+    const runId =
+      responseKey !== null && (promptIndexByRunId.get(ownRunId) ?? -1) > index
+        ? responseKey
+        : ownRunId;
+    let group = groups.get(runId);
+    if (group === undefined) {
+      group = { members: [], prompt: pendingPrompt, terminal: null, unfoldable: false };
+      pendingPrompt = null;
+      groups.set(runId, group);
+    }
+    group.members.push(entry);
+    if (item.type === "assistant_message") {
+      group.terminal = entry;
+      if (item.streaming) group.unfoldable = true;
+    }
+    if (item.type === "run_interrupt_result" || isFailedRootError(item)) group.unfoldable = true;
+  }
+
+  const activeRunId = unsettledRunId(latestRun);
+  const liveSubagents = liveSubagentItems(items);
+  const folds = new Map<VisibleTurnItem, TurnFold>();
+  for (const [runId, group] of groups) {
+    if (
+      group.unfoldable ||
+      runId === activeRunId ||
+      (runlessWorkActive && runId === runlessKey) ||
+      (latestRun?.runId === runId && latestRun.status === "failed")
+    ) {
+      continue;
+    }
+    const hidden = new Set(
+      group.members.filter(
+        (entry) =>
+          entry !== group.terminal && !staysVisible(entry.item) && !liveSubagents.has(entry),
+      ),
+    );
+    const anchor = group.members.find((entry) => hidden.has(entry));
+    const first = group.members[0];
+    const last = group.members.at(-1);
+    if (anchor === undefined || first === undefined || last === undefined) continue;
+    const latest = latestRun?.runId === runId ? latestRun : null;
+    const elapsedMs =
+      latest?.startedAt && latest.completedAt
+        ? Date.parse(latest.completedAt) - Date.parse(latest.startedAt)
+        : Math.max(group.terminal === null ? 0 : itemEnd(group.terminal.item), itemEnd(last.item)) -
+          itemStart((group.prompt ?? first).item);
+    const duration = Number.isFinite(elapsedMs) ? formatDuration(Math.max(0, elapsedMs)) : null;
+    const stopped = latest?.status === "interrupted" || latest?.status === "cancelled";
+    folds.set(anchor, {
+      runId,
+      hidden,
+      label: stopped
+        ? duration
+          ? `You stopped after ${duration}`
+          : "You stopped this response"
+        : duration
+          ? `Worked for ${duration}`
+          : "Worked",
+    });
+  }
+  return folds;
+}
+
+const NO_EXPANDED_RUNS: ReadonlySet<string> = new Set();
+
 /**
  * The feed rows for a thread's visible turn items. Items the stream did not touch keep their
  * identity, so their rows do too and memoized row components skip re-rendering. Consecutive
  * subagents of one provider turn collapse into one row; keys stay unique even if the projection
- * repeats a source item.
+ * repeats a source item. A settled turn's work folds behind one row unless its run is expanded.
  */
-export function deriveThreadRows(items: ReadonlyArray<VisibleTurnItem>): ReadonlyArray<ThreadRow> {
+export function deriveThreadRows(
+  items: ReadonlyArray<VisibleTurnItem>,
+  options: ThreadRowsOptions = {},
+): ReadonlyArray<ThreadRow> {
+  const expandedRunIds = options.expandedRunIds ?? NO_EXPANDED_RUNS;
+  const folds = deriveTurnFolds(
+    items,
+    options.latestRun ?? null,
+    options.runlessWorkActive ?? false,
+  );
+  const collapsed = new Set<VisibleTurnItem>();
+  for (const fold of folds.values()) {
+    if (expandedRunIds.has(fold.runId)) continue;
+    for (const entry of fold.hidden) collapsed.add(entry);
+  }
   const rows: Array<ThreadRow> = [];
   const seenKeys = new Map<string, number>();
   let group: { key: string; members: Array<SubagentItem> } | null = null;
@@ -231,6 +451,18 @@ export function deriveThreadRows(items: ReadonlyArray<VisibleTurnItem>): Readonl
     return count === 0 ? key : `${key}#${count}`;
   };
   for (const entry of items) {
+    const fold = folds.get(entry);
+    if (fold !== undefined) {
+      flushGroup();
+      rows.push({
+        kind: "fold",
+        key: uniqueKey(`fold:${fold.runId}`),
+        runId: fold.runId,
+        label: fold.label,
+        expanded: expandedRunIds.has(fold.runId),
+      });
+    }
+    if (collapsed.has(entry)) continue;
     const item = entry.item;
     if (item.type === "subagent") {
       const previous: SubagentItem | undefined = group?.members[group.members.length - 1];
@@ -248,11 +480,7 @@ export function deriveThreadRows(items: ReadonlyArray<VisibleTurnItem>): Readonl
       continue;
     }
     flushGroup();
-    let row = rowCache.get(entry);
-    if (row === undefined) {
-      row = toRow(entry);
-      rowCache.set(entry, row);
-    }
+    const row = cachedRow(entry);
     if (row === null) continue;
     const key = uniqueKey(row.key);
     rows.push(key === row.key ? row : { ...row, key });

@@ -184,12 +184,39 @@ const SubagentsRow = memo(function SubagentsRow({
   );
 });
 
+/** Mobile's run fold: the muted duration and a chevron that points right, or down when open. */
+const FoldRow = memo(function FoldRow({
+  focusRef,
+  ...props
+}: {
+  readonly focusRef: Ref<ViewInstance> | undefined;
+  readonly runId: string;
+  readonly label: string;
+  readonly expanded: boolean;
+  readonly onToggle: (runId: string) => void;
+}) {
+  return (
+    <FocusableBlock
+      ref={focusRef}
+      style={styles.foldRow}
+      onPress={() => props.onToggle(props.runId)}
+    >
+      <Text style={styles.foldLabel} numberOfLines={1}>
+        {props.label}
+      </Text>
+      <View style={[styles.foldChevron, props.expanded && styles.foldChevronOpen]} />
+    </FocusableBlock>
+  );
+});
+
 function Row({
   row,
   focusRef,
+  onToggleFold,
 }: {
   readonly row: ThreadRow;
   readonly focusRef: Ref<ViewInstance> | undefined;
+  readonly onToggleFold: (runId: string) => void;
 }) {
   switch (row.kind) {
     case "user":
@@ -219,6 +246,16 @@ function Row({
           failed={row.failed}
         />
       );
+    case "fold":
+      return (
+        <FoldRow
+          focusRef={focusRef}
+          runId={row.runId}
+          label={row.label}
+          expanded={row.expanded}
+          onToggle={onToggleFold}
+        />
+      );
   }
 }
 
@@ -231,6 +268,8 @@ export interface ThreadMessageListHandle {
   readonly focusLatest: () => void;
   /** Scrolls to the start and moves focus to the first message. */
   readonly focusFirst: () => void;
+  /** Stops following the end, so content that grows around the focused row leaves it in place. */
+  readonly holdPosition: () => void;
 }
 
 // react-native-tvos adds requestTVFocus to View instances at runtime; its types omit it.
@@ -249,6 +288,8 @@ export function ThreadMessageList({
   /** A state setter (stable) that receives the newest block's host. */
   readonly latestHostRef: (host: ViewInstance | null) => void;
   readonly emptyLabel: string;
+  /** Opens or closes a settled turn's folded work; stable, so fold rows stay memoized. */
+  readonly onToggleFold: (runId: string) => void;
   /** Images resolve against this thread; without it they show as unavailable. */
   readonly environmentId?: EnvironmentId;
   readonly threadId?: ThreadId;
@@ -270,6 +311,9 @@ export function ThreadMessageList({
         followEnd.current = false;
         scrollRef.current?.scrollTo({ y: 0, animated: true });
         requestTVFocus(firstRef.current ?? latestHost);
+      },
+      holdPosition: () => {
+        followEnd.current = false;
       },
     }),
     [latestHost],
@@ -303,6 +347,7 @@ export function ThreadMessageList({
               <Row
                 key={row.key}
                 row={row}
+                onToggleFold={props.onToggleFold}
                 // A row's ref lands on its last block; a first row is usually a one-block prompt.
                 focusRef={
                   index === props.rows.length - 1
@@ -382,6 +427,24 @@ const styles = StyleSheet.create({
   toolText: { color: colors.textMuted, ...typography.small },
   toolName: { color: colors.text, fontWeight: "600" },
   toolFailed: { color: colors.danger },
+  foldRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 2,
+    borderBottomColor: colors.border,
+  },
+  foldLabel: { flexShrink: 1, color: colors.textMuted, ...typography.small, fontWeight: "500" },
+  foldChevron: {
+    width: 12,
+    height: 12,
+    borderRightWidth: 3,
+    borderBottomWidth: 3,
+    borderColor: colors.textMuted,
+    transform: [{ rotate: "-45deg" }],
+  },
+  foldChevronOpen: { marginTop: -6, transform: [{ rotate: "45deg" }] },
   noticeRow: { paddingVertical: 6 },
   noticeText: { color: colors.textMuted, ...typography.small },
 });
