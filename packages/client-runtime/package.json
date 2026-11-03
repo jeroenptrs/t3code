@@ -251,6 +251,10 @@
       "types": "./src/state/entraStepUp.ts",
       "default": "./src/state/entraStepUp.ts"
     },
+    "./state/portalUsers": {
+      "types": "./src/state/portalUsers.ts",
+      "default": "./src/state/portalUsers.ts"
+    },
     "./state/peerLinks": {
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"
