@@ -19,9 +19,8 @@ import { Link } from "@tanstack/react-router";
 import { CheckIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { Fragment, useRef, useState, type MouseEvent, type ReactNode } from "react";
 
-import { usePrimarySessionState } from "~/environments/primary";
+import { usePortalEnvironmentId, usePortalSession } from "~/state/portal";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { usePrimaryEnvironmentId } from "~/state/environments";
 import { jiraEnvironment, jiraFailureReason, useJiraCapabilities } from "~/state/jira";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -168,17 +167,17 @@ function JiraProposalOutcomeText(props: {
   );
 }
 
-/** "Approved by you" only where the client knows who it is signed in as: its primary server. */
+/** "Approved by you" only where the client knows who it is signed in as: the portal. */
 function ApprovedBy(props: {
   readonly environmentId: EnvironmentId;
   readonly userId: AuthUserId | undefined;
 }) {
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const session = usePrimarySessionState();
+  const portalEnvironmentId = usePortalEnvironmentId();
+  const session = usePortalSession();
   const isMe =
     props.userId !== undefined &&
-    props.environmentId === primaryEnvironmentId &&
-    session.data?.user?.userId === props.userId;
+    props.environmentId === portalEnvironmentId &&
+    session?.user?.userId === props.userId;
   return isMe ? "Approved by you" : "Approved";
 }
 
