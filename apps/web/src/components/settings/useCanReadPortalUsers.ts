@@ -1,8 +1,8 @@
 import { canReadPortalUsers } from "@t3tools/client-runtime/portal-user";
 
-import { usePrimarySessionState } from "../../environments/primary";
+import { usePortalSession } from "../../state/portal";
 
-/** Whether to offer the Users page: Entra sign-in is on and this session has `access:read`. */
+/** Whether to offer the Users page: the portal is connected and this session has `access:read`. */
 export function useCanReadPortalUsers(): boolean {
-  return canReadPortalUsers(usePrimarySessionState().data);
+  return canReadPortalUsers(usePortalSession());
 }
