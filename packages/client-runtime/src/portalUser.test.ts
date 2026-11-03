@@ -1,6 +1,7 @@
 import {
   AuthUserId,
   AuthUserRoleScopes,
+  EnvironmentId,
   EnvironmentOperationForbiddenError,
   EnvironmentUserAccessConflictError,
   type AuthEnvironmentScope,
@@ -25,6 +26,7 @@ import {
   portalUserActions,
   readEntraSignInFailure,
   resolvePortalAccess,
+  selectPortalEnvironmentId,
   sortPortalUsers,
   stripEntraSignInFailure,
 } from "./portalUser.ts";
@@ -76,6 +78,27 @@ describe("resolvePortalAccess", () => {
     expect(resolvePortalAccess(session("pending")).kind).toBe("awaiting-approval");
     expect(resolvePortalAccess(session("disabled")).kind).toBe("disabled");
     expect(resolvePortalAccess(session("active")).kind).toBe("signed-in");
+  });
+});
+
+describe("selectPortalEnvironmentId", () => {
+  it("picks the first environment with Entra on, skipping upstream and unanswered ones", () => {
+    const { entraSignIn: _, ...upstreamAuth } = AUTH;
+    const upstream: AuthSessionState = { authenticated: true, auth: upstreamAuth };
+    const portal: AuthSessionState = { authenticated: true, auth: AUTH };
+    const candidate = (id: string, session: AuthSessionState | null) => ({
+      environmentId: EnvironmentId.make(id),
+      session,
+    });
+    expect(
+      selectPortalEnvironmentId([
+        candidate("dev-box", upstream),
+        candidate("loading", null),
+        candidate("portal", portal),
+        candidate("second-portal", portal),
+      ]),
+    ).toBe("portal");
+    expect(selectPortalEnvironmentId([candidate("dev-box", upstream)])).toBeNull();
   });
 });
 
