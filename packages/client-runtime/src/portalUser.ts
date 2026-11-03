@@ -21,6 +21,7 @@ import {
   type AuthUserReference,
   type AuthUserRole,
   type AuthUserStatus,
+  type EnvironmentId,
   type EnvironmentUserAccessConflictReason,
   type ScheduledTaskWebhookEndpoint,
 } from "@t3tools/contracts";
@@ -53,6 +54,21 @@ export function resolvePortalAccess(session: AuthSessionState): PortalAccess {
     return { kind: "signed-out" };
   }
   return { kind: "not-portal" };
+}
+
+/**
+ * The portal every portal surface reads from: the first environment, primary first, whose
+ * session says Entra sign-in is on. Upstream servers never send that flag.
+ */
+export function selectPortalEnvironmentId(
+  candidates: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly session: AuthSessionState | null;
+  }>,
+): EnvironmentId | null {
+  return (
+    candidates.find(({ session }) => session?.auth.entraSignIn === true)?.environmentId ?? null
+  );
 }
 
 /**
