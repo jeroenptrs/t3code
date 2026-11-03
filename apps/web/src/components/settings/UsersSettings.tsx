@@ -17,13 +17,13 @@ import * as DateTime from "effect/DateTime";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
-import { usePrimarySessionState } from "../../environments/primary";
 import {
   listPortalUserAccessChanges,
   listPortalUsers,
   mutatePortalUser,
   revokePortalUserSessions,
-} from "../../environments/primary/users";
+} from "../../state/portalUsers";
+import { usePortalSession } from "../../state/portal";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { RefreshIcon } from "../ui/refresh-icon";
@@ -82,15 +82,15 @@ function usePortalUsers() {
 }
 
 export function UsersSettings() {
-  const session = usePrimarySessionState();
-  if (session.data === null) {
+  const session = usePortalSession();
+  if (session === null) {
     return (
       <SettingsPageContainer>
-        <p className="text-sm text-muted-foreground">{session.error ?? "Loading your access…"}</p>
+        <p className="text-sm text-muted-foreground">Connect to the portal to manage users.</p>
       </SettingsPageContainer>
     );
   }
-  if (!canReadPortalUsers(session.data)) {
+  if (!canReadPortalUsers(session)) {
     return (
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
@@ -101,8 +101,8 @@ export function UsersSettings() {
   }
   return (
     <PortalUsersList
-      canManage={canManagePortalUsers(session.data)}
-      currentUserId={session.data.user?.userId ?? null}
+      canManage={canManagePortalUsers(session)}
+      currentUserId={session.user?.userId ?? null}
     />
   );
 }
