@@ -6,19 +6,14 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
-import { useEnvironmentIds, usePrimaryEnvironmentId } from "./environments";
+import { usePortalEnvironmentId } from "./portal";
 import { environmentSession } from "./session";
 
 export const insightsEnvironment = createInsightsEnvironmentAtoms(connectionAtomRuntime);
 
-/**
- * The environment Insights reads and configures: the primary server, or the first known one where
- * the client has no primary, such as the hosted web app. Same choice as the Jira pages.
- */
+/** The environment Insights reads and configures: the portal, like the Jira pages. */
 export function useInsightsEnvironmentId(): EnvironmentId | null {
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const environmentIds = useEnvironmentIds();
-  return primaryEnvironmentId ?? environmentIds[0] ?? null;
+  return usePortalEnvironmentId();
 }
 
 const NO_SESSION_ATOM = Atom.make(AsyncResult.initial<AuthSessionState>()).pipe(
