@@ -14,6 +14,7 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
+import { InsightsLink } from "../insights/InsightsLink";
 import { PullRequestCompactFilterMenu } from "./PullRequestCompactFilterMenu";
 import type { PullRequestFilterOption } from "./PullRequestListFilters";
 import { INVOLVEMENT_TABS, STATE_TABS } from "./pullRequestListOptions";
@@ -210,6 +211,7 @@ export function PullRequestsColumn({
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
         )}
+        <InsightsLink />
         <div className="min-w-0 flex-1" />
         {condensed ? (
           <div ref={topbarSearchRef} className="flex shrink items-center gap-1.5">
