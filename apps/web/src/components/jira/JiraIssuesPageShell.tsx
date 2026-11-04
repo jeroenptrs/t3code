@@ -26,6 +26,7 @@ import { primaryServerKeybindingsAtom } from "~/state/server";
 
 import { PanelLayoutControls, RightPanelMaximizeControl } from "../chat/PanelLayoutControls";
 import { JiraIcon } from "../Icons";
+import { InsightsLink } from "../insights/InsightsLink";
 import { PullRequestListGhost } from "../pullRequest/PullRequestGhosts";
 import { RightPanelTabs } from "../RightPanelTabs";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
@@ -133,6 +134,7 @@ export function JiraIssuesPageShell({
       if (!event.repeat) toggleRightPanelMaximized();
     }
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document keydown listener for the panel shortcuts
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || isCommandPaletteOpen()) return;
@@ -198,6 +200,7 @@ export function JiraIssuesPageShell({
                 <h1 className="truncate">{title}</h1>
               </WorkspaceBreadcrumbItem>
             </WorkspaceBreadcrumb>
+            <InsightsLink />
           </WorkspacePageHeader>
           <div className="topbar-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
             <WorkspacePageContainer width="expanded" className="min-h-full gap-4">
@@ -241,6 +244,12 @@ export function JiraIssuesPageShell({
             onCloseSurface={(surface) =>
               useRightPanelStore.getState().closeSurface(rightPanelRef, surface.id)
             }
+            onCloseSelectedSurfaces={(surfaces) =>
+              useRightPanelStore.getState().closeSurfaces(
+                rightPanelRef,
+                surfaces.map((surface) => surface.id),
+              )
+            }
             onCloseOtherSurfaces={(surface) =>
               useRightPanelStore.getState().closeOtherSurfaces(rightPanelRef, surface.id)
             }
@@ -248,8 +257,8 @@ export function JiraIssuesPageShell({
               useRightPanelStore.getState().closeSurfacesToRight(rightPanelRef, surface.id)
             }
             onCloseAllSurfaces={() => useRightPanelStore.getState().closeAllSurfaces(rightPanelRef)}
-            onMoveSurface={(surfaceId, toIndex) =>
-              useRightPanelStore.getState().moveSurface(rightPanelRef, surfaceId, toIndex)
+            onMoveSurfaces={(surfaceIds, targetId) =>
+              useRightPanelStore.getState().moveSurfaces(rightPanelRef, surfaceIds, targetId)
             }
             onCopyFilePath={() => undefined}
             onAddBrowser={() => undefined}
