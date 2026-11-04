@@ -1,14 +1,14 @@
 # Insights
 
 Insights estimates how much coding work your team pushes and lands each week, per person, from
-the GitLab projects on this server. Open it from **Insights** in the sidebar or the command
-palette.
+the GitLab projects on this server. Open it from **Insights** at the top of the **Issues** or
+**Pull requests** page, or from the command palette.
 
 Every number is a model estimate of coding output, not hours worked. Read the numbers as a team
 trend. Do not rank or judge individuals by them.
 
-Only administrators see Insights. Operators and Readers do not see the page, the sidebar entry,
-or the settings section.
+Only administrators see Insights. Operators and Readers do not see the page, the **Insights**
+link, or the settings section.
 
 ## What the page shows
 
