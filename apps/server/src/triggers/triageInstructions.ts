@@ -32,7 +32,7 @@ const OPENINGS = {
  * The rest of the block, appended after the opening. The renderer keeps only the paragraph under
  * the chosen fallback marker.
  */
-export const TRIAGE_INSTRUCTIONS = `Read the task instructions above and decide whether they tell you what to do with this item. They do when the item is the kind of work they describe and the information you need to start is present or reachable. Start that work and carry it through.
+const TRIAGE_INSTRUCTIONS = `Read the task instructions above and decide whether they tell you what to do with this item. They do when the item is the kind of work they describe and the information you need to start is present or reachable. Start that work and carry it through.
 
 When the item fits no instruction, when two instructions conflict for it, or when you need a decision that only a person can make, do not guess and do not start work. Do this instead:
 
