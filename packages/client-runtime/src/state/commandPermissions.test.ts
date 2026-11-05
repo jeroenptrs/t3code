@@ -580,6 +580,10 @@ it.effect("saving a factory needs factories:manage, which an operator grant lack
       registry.set(sessions(env), role(AuthUserRoleScopes.administrator));
       expect(registry.get(save.permissionAtom(env))).toBe(true);
       yield* save.authorize(registry, env);
+    }),
+  ),
+);
+
 it.effect("listing trigger templates needs factories:read", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -605,7 +609,7 @@ it.effect("listing trigger templates needs factories:read", () =>
 );
 
 it.effect.each([WS_METHODS.triggerTemplatesSave, WS_METHODS.triggerTemplatesDelete] as const)(
-  "%s needs factories:write, which factories:read alone lacks",
+  "%s needs factories:manage, which factories:read alone lacks",
   (method) =>
     Effect.scoped(
       Effect.gen(function* () {
