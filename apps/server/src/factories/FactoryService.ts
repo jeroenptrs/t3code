@@ -163,17 +163,20 @@ const make = Effect.gen(function* () {
     rolePath: FactoryRolePath | undefined,
     providers: ReadonlyArray<ServerProvider>,
   ) {
-    if (rolePath === undefined) return { role: builtinRole(role, null), issues: [] };
-    const text = yield* readText(path.join(directory, rolePath));
+    // A role left out of factory.json still has a file when roles/<role>.md exists.
+    const listed = rolePath !== undefined;
+    const filePath = rolePath ?? defaultRolePath(role);
+    const text = yield* readText(path.join(directory, filePath));
     if (Option.isNone(text)) {
+      if (!listed) return { role: builtinRole(role, null), issues: [] };
       return {
-        role: builtinRole(role, rolePath),
+        role: builtinRole(role, filePath),
         issues: [
           {
             code: "missing_role_file",
             role,
             field: null,
-            message: `${rolePath} does not exist, so ${role} uses its built-in default.`,
+            message: `${filePath} does not exist, so ${role} uses its built-in default.`,
           } satisfies FactoryIssue,
         ],
       };
@@ -183,7 +186,7 @@ const make = Effect.gen(function* () {
     return {
       role: {
         role,
-        path: rolePath,
+        path: filePath,
         source: "file",
         fileBinding: parsed.binding,
         binding,
