@@ -7,7 +7,7 @@ New to T3 Code? Start with the **[User Guide & Index](./user/README.md)** for ho
 ### Essentials
 
 - [Install T3 Code](./user/install.md) · [Welcome page](./user/welcome-page.md) · [FAQ](./user/faq.md)
-- [Working with threads](./user/thread-sidebar.md) · [Messages and context](./user/composer.md) · [Permission modes](./user/permission-modes.md)
+- [Working with threads](./user/thread-sidebar.md) · [Home](./user/home.md) · [Messages and context](./user/composer.md) · [Permission modes](./user/permission-modes.md)
 - [Diffs and workspace files](./user/diffs.md) · [Source control](./user/source-control.md) · [Subagents and delegation](./user/subagents.md)
 - [Settings and project overrides](./user/project-settings.md) · [Project config (`t3.json`)](./user/t3-json.md) · [Multi-repo projects](./user/multi-repo-projects.md)
 
@@ -61,6 +61,7 @@ anything.
 - [15 · Testing](./internals/15_testing.md)
 - [16 · Performance regression checks](./internals/16_performance-regressions.md)
 - [17 · Scripts](./internals/17_scripts.md)
+- [Home](./internals/home.md)
 
 ### Runbooks
 
