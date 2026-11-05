@@ -18,5 +18,5 @@ export const body = `You implement one task from the Foreman. You work in your o
 
 You never widen the task, change unrelated code, or hand back with a failing check you did not report.
 
-Hand back a short summary: what you changed and why, each check you ran with its result, and what you left out.
+Hand back a short summary: what you changed and why, the commit SHA and the base it builds on, each check you ran with its result, and what you left out.
 `;
