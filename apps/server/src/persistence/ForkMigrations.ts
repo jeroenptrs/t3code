@@ -33,10 +33,12 @@
  * `fork_insights_contributor_emails`, `fork_insights_merge_requests`, `fork_insights_mr_reviews`,
  * `fork_insights_commits` (013);
  * `fork_insights_jira_issues` (014);
- * `fork_auth_step_up_bindings` (015).
+ * `fork_auth_step_up_bindings` (015);
+ * `fork_factory_threads` (016).
  *
  * Fork indexes on upstream tables: `idx_fork_turn_items_waiting_jira_proposals` on
- * `orchestration_v2_projection_turn_items` (009).
+ * `orchestration_v2_projection_turn_items` (009); `idx_fork_messages_scheduled_task` on
+ * `orchestration_v2_projection_messages` (016).
  */
 
 import * as Migrator from "effect/sql/Migrator";
@@ -60,6 +62,7 @@ import ForkMigration0012 from "./ForkMigrations/012_JiraBreakdowns.ts";
 import ForkMigration0013 from "./ForkMigrations/013_Insights.ts";
 import ForkMigration0014 from "./ForkMigrations/014_InsightsJiraIssues.ts";
 import ForkMigration0015 from "./ForkMigrations/015_AuthStepUpBindings.ts";
+import ForkMigration0016 from "./ForkMigrations/016_FactoryThreads.ts";
 
 export const forkMigrationsTable = "fork_sql_migrations";
 
@@ -79,6 +82,7 @@ export const forkMigrationEntries = [
   [13, "Insights", ForkMigration0013],
   [14, "InsightsJiraIssues", ForkMigration0014],
   [15, "AuthStepUpBindings", ForkMigration0015],
+  [16, "FactoryThreads", ForkMigration0016],
 ] as const;
 
 export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);
