@@ -20,6 +20,15 @@ export interface McpProviderSessionConfig {
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
   /** True while a delegated task this thread started will wake it with its result. */
   readonly hasPendingWake?: Effect.Effect<boolean>;
+  /** Fork-only. The factory role the thread runs as, read again on every session prepare. */
+  readonly factoryRole?: FactoryRoleInstructions;
+}
+
+/** Fork-only. A factory role's instructions, appended to the runtime instructions. */
+export interface FactoryRoleInstructions {
+  readonly factoryId: string;
+  readonly role: string;
+  readonly body: string;
 }
 
 export function withAgentDeviceEnvironment(

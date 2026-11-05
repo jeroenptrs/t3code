@@ -1959,6 +1959,7 @@ export function makeClaudeQueryOptions(input: {
   readonly deviceToolsAvailable?: boolean;
   /** The T3 MCP credential's capabilities; gates tool-specific runtime instructions. */
   readonly mcpCapabilities?: ReadonlySet<string>;
+  readonly factoryRole?: McpProviderSession.FactoryRoleInstructions;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -2108,6 +2109,7 @@ export function makeClaudeQueryOptions(input: {
         buildRuntimeInstructions({
           harness: "Claude Code",
           mcpCapabilities: input.mcpServers === undefined ? undefined : input.mcpCapabilities,
+          factoryRole: input.factoryRole,
         }) +
           (input.mcpServers === undefined
             ? ""
@@ -12156,6 +12158,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(mcpSession?.capabilities === undefined
               ? {}
               : { mcpCapabilities: mcpSession.capabilities }),
+            ...(mcpSession?.factoryRole === undefined
+              ? {}
+              : { factoryRole: mcpSession.factoryRole }),
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
               ? {}
