@@ -3929,8 +3929,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         }),
     );
 
-    // quarantine: #16603 follow-ups skip the child's progress check; upstream #21877 fixes it with wake routing
-    it.effect.skip("holds a follow-up while a subagent its run started still runs", () =>
+    it.effect("holds a follow-up while a subagent its run started still runs", () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const eventSink = yield* EventSink.EventSinkV2;
