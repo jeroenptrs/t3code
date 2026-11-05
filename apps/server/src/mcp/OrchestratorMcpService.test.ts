@@ -1965,13 +1965,20 @@ describe("OrchestratorMcpService provider resolution", () => {
       const commit = yield* Deferred.make<void>();
       const parentRunIds = yield* Ref.make<ReadonlyArray<RunId>>([]);
       let committed = false;
+      let delegated = false;
       const ended = parentProjection([]);
       const endedRun = { ...ended.runs[0]!, status: "completed" as const };
       const parent = () =>
         ({
           ...ended,
-          thread: { ...ended.thread, archivedAt: null, deletedAt: null },
+          thread: {
+            ...ended.thread,
+            providerInstanceId: codexInstanceId,
+            archivedAt: null,
+            deletedAt: null,
+          },
           messages: [],
+          subagents: delegated ? [task] : [],
           runs: committed
             ? [
                 endedRun,
@@ -1984,7 +1991,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 },
               ]
             : [endedRun],
-        }) as OrchestrationV2ThreadProjection;
+        }) as unknown as OrchestrationV2ThreadProjection;
       const task = {
         id: taskId,
         threadId: parentThreadId,
@@ -2039,6 +2046,11 @@ describe("OrchestratorMcpService provider resolution", () => {
               : Ref.update(parentRunIds, (ids) =>
                   command.type === "delegated_task.request" ? [...ids, command.parentRunId] : ids,
                 ).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      delegated = true;
+                    }),
+                  ),
                   Effect.as({
                     sequence: 2,
                     storedEvents: [
@@ -2107,14 +2119,12 @@ describe("OrchestratorMcpService provider resolution", () => {
       );
     });
 
-  // quarantine: #23006 the MCP gates cannot see a continuation offered but not yet committed
-  it.effect.skip(
+  it.effect(
     "lets a delegate_task call from a woken turn through once its continuation run commits",
     () => wokenTurnCall("delegate_task"),
   );
 
-  // quarantine: #23006 the MCP gates cannot see a continuation offered but not yet committed
-  it.effect.skip(
+  it.effect(
     "lets a t3_thread_send call from a woken turn through once its continuation run commits",
     () => wokenTurnCall("t3_thread_send"),
   );
