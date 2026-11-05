@@ -43,6 +43,7 @@ import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
+import { notHomeLayer } from "../home/HomeTestkit.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
@@ -118,7 +119,9 @@ const layerTools = Layer.mergeAll(
   McpHttpServer.layerOrchestratorToolkit,
   McpHttpServer.layerThreadToolkit,
   McpHttpServer.layerProjectRegistration,
-).pipe(
+)
+  .pipe(Layer.provide(notHomeLayer))
+  .pipe(
   Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
   Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provide(layerLaunches),
@@ -200,7 +203,7 @@ const layerTools = Layer.mergeAll(
     ),
   ),
   Layer.provide(NodeServices.layer),
-);
+  );
 
 const mcpClient = McpSchema.McpServerClient.of({
   clientId: 1,

@@ -44,6 +44,7 @@ T3 Code is an open-source control plane for coding agents. It gives the coding a
 ### Everyday workflow
 
 - [Working with threads](./thread-sidebar.md) — Starting threads, scratch threads, pinning, settling, snoozing, archiving, and side chats.
+- [Home](./home.md) — An agent that manages threads across your machines.
 - [Messages and context](./composer.md) — Composer formatting, attachments, queueing/steering, `@` threads/models, `#` PRs, `/goal`, stash, and rewind.
 - [Permission modes](./permission-modes.md) — Supervised, Auto-accept edits, Auto, Full access, push-hook prompts, and provider differences.
 - [Diffs and workspace files](./diffs.md) — Turn diffs, branch comparisons, commits view, file editor, and inline review comments.

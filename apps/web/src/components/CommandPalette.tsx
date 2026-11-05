@@ -81,6 +81,7 @@ import {
   RotateCcwIcon,
   RouteIcon,
   SettingsIcon,
+  HouseIcon,
   MonitorIcon,
   PinIcon,
   PinOffIcon,
@@ -176,6 +177,7 @@ import {
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
   isFilesystemBrowseQuery,
+  isHomeProject,
   isScratchProject,
   isUnsupportedWindowsProjectPath,
   resolveProjectPathForDispatch,
@@ -302,7 +304,11 @@ import { useJiraIssueLinking } from "../hooks/useJiraIssueLinking";
 import { useCanReadInsights } from "../state/insights";
 import { jiraEnvironment, useJiraCapabilities, useJiraEnvironmentId } from "../state/jira";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import {
+  primaryServerConfigAtom,
+  primaryServerKeybindingsAtom,
+  primaryServerSettingsAtom,
+} from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
@@ -536,6 +542,19 @@ function OpenCommandPaletteDialog(props: {
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const settingsSearchItems = useCommandPaletteSettingsItems(deferredQuery.trim().length > 0);
+  const homeThreadId = useAtomValue(
+    primaryServerSettingsAtom,
+    (settings) => settings.home.threadId,
+  );
+  const homeWorkspaceRoot = useAtomValue(
+    primaryServerConfigAtom,
+    (config) => config?.homeWorkspaceRoot ?? null,
+  );
+  // Home's folder belongs to Home alone: no search result or picker starts a thread there.
+  const isPrimaryHomeProject = (project: {
+    readonly environmentId: EnvironmentId;
+    readonly workspaceRoot: string;
+  }) => project.environmentId === primaryEnvironmentId && isHomeProject(project, homeWorkspaceRoot);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const paletteRouteTarget = useThreadRouteTarget();
@@ -963,7 +982,7 @@ function OpenCommandPaletteDialog(props: {
   const projectSearchItems = useOrderWhileOpen(
     buildProjectSearchItems(
       {
-        projects: pickerProjects,
+        projects: pickerProjects.filter((project) => !isPrimaryHomeProject(project)),
         projectGroupByTargetKey,
         locationByEnvironmentId: projectEnvironmentLocationById,
         runProject: openProjectFromSearch,
@@ -984,7 +1003,9 @@ function OpenCommandPaletteDialog(props: {
           ? undefined
           : projectPickerEntries.find((entry) => entry.isPreferred);
       const projectItems = buildNewThreadInProjectItems({
-        projects: pickerProjects.filter((project) => !isScratch(project)),
+        projects: pickerProjects.filter(
+          (project) => !isScratch(project) && !isPrimaryHomeProject(project),
+        ),
         currentProjectKey: currentEntry
           ? `${currentEntry.targetProject.environmentId}:${currentEntry.targetProject.id}`
           : null,
@@ -2033,6 +2054,23 @@ function OpenCommandPaletteDialog(props: {
       icon: <ChartLineIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({ to: "/insights" });
+      },
+    });
+  }
+
+  if (primaryEnvironmentId !== null && homeThreadId !== null) {
+    actionItems.push({
+      kind: "action",
+      value: "action:home",
+      searchTerms: ["home", "fleet", "all projects"],
+      title: "Open Home",
+      icon: <HouseIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "home.open",
+      run: async () => {
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(scopeThreadRef(primaryEnvironmentId, homeThreadId)),
+        });
       },
     });
   }

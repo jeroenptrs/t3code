@@ -593,6 +593,7 @@ export async function deleteSelectedThreadEntries<
 /**
  * `delegatedUnderParent` holds the tasks linked environments run for a thread
  * the sidebar lists, by thread key; they show under that thread, as subagents do.
+ * The current Home thread is left out because it has its own fixed row.
  */
 export function filterSidebarV2VisibleThreads<
   T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id" | "lineage"> & {
@@ -602,6 +603,7 @@ export function filterSidebarV2VisibleThreads<
   threads: readonly T[],
   scopedProjectKeys: ReadonlySet<string> | null,
   delegatedUnderParent: ReadonlySet<string>,
+  homeThread: { readonly environmentId: string; readonly threadId: string } | null = null,
 ): T[] {
   return threads.filter(
     (thread) =>
@@ -610,6 +612,11 @@ export function filterSidebarV2VisibleThreads<
         { environmentId: thread.environmentId, threadId: thread.id },
         thread.lineage,
         delegatedUnderParent,
+      ) &&
+      !(
+        homeThread !== null &&
+        thread.environmentId === homeThread.environmentId &&
+        thread.id === homeThread.threadId
       ) &&
       (scopedProjectKeys === null ||
         scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
