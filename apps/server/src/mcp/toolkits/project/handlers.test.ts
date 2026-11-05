@@ -3,6 +3,8 @@ import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
   GitCommandError,
+  type HomeSettings,
+  isHomeLaunchedThreadId,
   ProjectId,
   ProviderInstanceId,
   ProviderDriverKind,
@@ -40,6 +42,10 @@ import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.t
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as SourceControlProviderRegistry from "../../../sourceControl/SourceControlProviderRegistry.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
+import * as FleetBroker from "../../../home/FleetBroker.ts";
+import * as FleetService from "../../../home/FleetService.ts";
+import * as HomeService from "../../../home/HomeService.ts";
+import { notHomeLayer } from "../../../home/HomeTestkit.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -167,6 +173,7 @@ const clientLaunchHarness = (input: {
     }),
     Layer.mock(PeerForwarding.PeerForwarding)({}),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+    notHomeLayer,
     DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),
@@ -904,5 +911,114 @@ it.effect("an update the project refuses tells the agent why", () =>
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     expect(refused.at(-1)?.result).toMatchObject({ code: "invalid_request", message: detail });
+  }),
+);
+
+it.effect("makes Home name a project and watches the thread before launching it", () =>
+  Effect.gen(function* () {
+    const homeThreadId = ThreadId.make("home:current");
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const caller = {
+      id: homeThreadId,
+      projectId: ProjectId.make("project:home"),
+      providerInstanceId,
+      modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      activeRunId: "active-run",
+      archivedAt: null,
+      deletedAt: null,
+    } as unknown as OrchestrationV2ThreadShell;
+    const steps: Array<string> = [];
+    const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    let home = { threadId: homeThreadId, watchAll: false, watches: [] } as HomeSettings;
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mergeAll(
+        Layer.mock(HomeService.HomeService)({
+          available: true,
+          isHome: () => Effect.succeed(true),
+          updateWatches: (_homeThreadId, update) => {
+            home = update(home);
+            steps.push(`watch ${home.watches.map((watch) => watch.threadId).join()}`);
+            return Effect.succeed(home);
+          },
+        }),
+        Layer.mock(FleetService.FleetService)({
+          execute: ({ request }) => {
+            if (request.op !== "threads.launch") return Effect.die("Unexpected operation.");
+            steps.push(`launch ${request.input.threadId}`);
+            return Effect.succeed({
+              threadId: request.input.threadId,
+              projectId: request.input.projectId,
+              modelSelection: caller.modelSelection,
+              runId: null,
+              status: null,
+            });
+          },
+        }),
+        Layer.mock(FleetBroker.FleetBroker)({}),
+        Layer.succeed(McpInvocationContext.McpInvocationContext, {
+          environmentId: EnvironmentId.make("environment"),
+          requestNamespace: "session",
+          thread: { threadId: homeThreadId, providerSessionId: "session", providerInstanceId },
+          client: undefined,
+          issuedAt: 0,
+          capabilities: new Set(["orchestration" as const]),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(caller),
+        }),
+        Layer.mock(ThreadLaunch.ThreadLaunchService)({
+          launch: () => Effect.die("Home launched through the local launch path."),
+        }),
+        Layer.mock(Project.ProjectService)({
+          getById: (projectId) =>
+            Effect.succeedSome({
+              id: projectId,
+              workspaceRoot: projectId === caller.projectId ? "/data/home" : "/code/app",
+            } as unknown as ProjectRecord),
+        }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isInHomeFolder: (candidate) => Effect.succeed(candidate.startsWith("/data/home")),
+        }),
+        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+      ),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const handle = <Name extends "t3_thread_launch" | "t3_project_delete">(
+      name: Name,
+      params: Parameters<typeof toolkit.handle<Name>>[1],
+    ) =>
+      toolkit
+        .handle(name, params)
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    const unnamed = yield* handle("t3_thread_launch", { title: "Audit", message: "Review" });
+    expect(unnamed.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    const own = yield* handle("t3_thread_launch", { title: "Audit", projectId: caller.projectId });
+    expect(own.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    expect(steps).toEqual([]);
+
+    // The watch is saved before the launch, under the id the launch then uses.
+    const launched = yield* handle("t3_thread_launch", {
+      title: "Audit",
+      projectId: ProjectId.make("project:app"),
+    });
+    const { threadId } = launched.at(-1)!.result as { threadId: string };
+    expect(isHomeLaunchedThreadId(threadId)).toBe(true);
+    expect(steps).toEqual([`watch ${threadId}`, `launch ${threadId}`]);
+
+    // Home archives and settles; it never deletes.
+    const deleted = yield* handle("t3_project_delete", {
+      projectId: ProjectId.make("project:app"),
+      force: true,
+    });
+    expect(deleted.at(-1)?.result).toMatchObject({ code: "capability_denied" });
   }),
 );

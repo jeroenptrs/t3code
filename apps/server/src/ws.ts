@@ -89,6 +89,7 @@ import {
   serverProviderDeltas,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
+  type FilesystemGetMetadataInput,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   SOURCE_CONTROL_MEDIA_ASSET,
@@ -100,6 +101,7 @@ import {
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   WS_METHODS,
+  HomeUnavailableError,
   WsCoreRpcGroup,
   WsInsightsRpcGroup,
   WsJiraRpcGroup,
@@ -198,6 +200,9 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { makePrepareTerminalLaunch } from "./workspace/restoreMissingWorktree.ts";
 import { terminalOutputStream, withOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
+import * as FleetBroker from "./home/FleetBroker.ts";
+import * as FleetService from "./home/FleetService.ts";
+import * as HomeService from "./home/HomeService.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -1494,6 +1499,9 @@ export const layerWsRpc = (
       const scratchThreadPromotion = yield* ScratchThreadPromotion.ScratchThreadPromotion;
       const eventLoopMonitor = yield* EventLoopMonitor.EventLoopMonitor;
       const threadSearch = yield* ThreadSearch.ThreadSearch;
+      const home = yield* HomeService.HomeService;
+      const fleet = yield* FleetService.FleetService;
+      const fleetBroker = yield* FleetBroker.FleetBroker;
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
@@ -1953,6 +1961,7 @@ export const layerWsRpc = (
             onSome: (root) => ({ scratchWorkspaceRoot: root }),
           }),
           newProjectsRoot: managedFolders.namedProjectsRoot,
+          ...(home.available ? { homeWorkspaceRoot: yield* managedFolders.homeRoot } : {}),
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
           serverTime: DateTime.formatIso(yield* DateTime.now),
         };
@@ -2731,7 +2740,9 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.serverUpdateSettings]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
-          Effect.fnUntraced(function* ({ patch, providerInstanceMutation }) {
+          Effect.fnUntraced(function* ({ patch: clientPatch, providerInstanceMutation }) {
+            // Home's state changes only through the Home RPCs and Home's tools.
+            const { home: _home, ...patch } = clientPatch;
             const deviceHosts = patch.deviceHosts
               ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
                   Effect.provide(deviceHostContext),
@@ -3089,8 +3100,9 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.shellOpenInEditor]: (input) => externalLauncher.launchEditor(input),
-        [WS_METHODS.filesystemGetMetadata]: (input) =>
-          Effect.gen(function* () {
+        [WS_METHODS.filesystemGetMetadata]: Effect.fn("ws.filesystemGetMetadata")(function* (
+          input: FilesystemGetMetadataInput,
+        ) {
             // Paths a confined session cannot read report no metadata, like a missing file,
             // so one outside path does not fail the whole batch.
             const readable = yield* Effect.forEach(
@@ -3391,6 +3403,20 @@ export const layerWsRpc = (
         [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
         [WS_METHODS.subscribeDeviceState]: (_input) => DeviceService.stateStream(deviceService),
         [WS_METHODS.previewStopLocalServer]: (input) => portDiscovery.stopServer(input),
+        [WS_METHODS.homeEnable]: (input) => home.enable(input),
+        [WS_METHODS.homeDisable]: (_input) => home.disable,
+        [WS_METHODS.homeStartFresh]: (_input) => home.startFresh,
+        [WS_METHODS.fleetInvoke]: (input) => fleet.execute(input),
+        [WS_METHODS.fleetConnect]: (input) =>
+          home.available
+            ? Stream.unwrap(fleetBroker.connect(input))
+            : Stream.fail(
+                new HomeUnavailableError({
+                  message: "Home runs only on a server the T3 Code desktop app hosts.",
+                }),
+              ),
+        [WS_METHODS.fleetRespond]: (input) => fleetBroker.respond(input),
+        [WS_METHODS.fleetReportWatchEvents]: (input) => home.report(input),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>
             Effect.gen(function* () {
@@ -3746,6 +3772,9 @@ export const layer = Layer.unwrap(
     const jiraProposals = yield* JiraProposals.JiraProposals;
     const jiraBreakdowns = yield* JiraBreakdownService.JiraBreakdownService;
     const insights = yield* InsightsService.InsightsService;
+    const home = yield* HomeService.HomeService;
+    const fleet = yield* FleetService.FleetService;
+    const fleetBroker = yield* FleetBroker.FleetBroker;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3867,6 +3896,10 @@ export const layer = Layer.unwrap(
               ),
                 // Shared with the ingestion worker, so a reset cursor drops its walk in progress.
                 Layer.provide(Layer.succeed(InsightsService.InsightsService, insights)),
+                // Shared with /mcp, so Home's grant, relay, and watches are one per server.
+                Layer.provide(Layer.succeed(HomeService.HomeService, home)),
+                Layer.provide(Layer.succeed(FleetService.FleetService, fleet)),
+                Layer.provide(Layer.succeed(FleetBroker.FleetBroker, fleetBroker)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

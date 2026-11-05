@@ -52,6 +52,8 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/appearance",
   "/settings/chat",
   "/settings/diffs",
+  // Home lives on this desktop's own server.
+  "/settings/home",
   "/settings/snap-shot",
   "/settings/connections",
   // Access picks its environment on the page itself.

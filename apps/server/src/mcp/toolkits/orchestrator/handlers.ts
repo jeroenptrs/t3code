@@ -1,24 +1,49 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import { readCaller } from "../../threadAccess.ts";
+import { callerIsHome, routeHome, runAsHome } from "../../homeRouting.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
 
+/** Whether a call names an environment other than this one. */
+const namesOtherEnvironment = (environmentId: Parameters<typeof PeerForwarding.remoteTarget>[1]) =>
+  Effect.map(
+    McpInvocationContext.McpInvocationContext,
+    (scope) => PeerForwarding.remoteTarget(scope, environmentId) !== undefined,
+  );
+
 const handlers = {
-  orchestrator_capabilities: McpToolAccess.reads((input) =>
+  orchestrator_capabilities: McpToolAccess.routesHome(
+    // Home reads another environment's providers; the rest of the answer is about Home here.
+    ({ environmentId, ...input }) =>
+      Effect.gen(function* () {
+        if (!(yield* namesOtherEnvironment(environmentId))) return Option.none();
+        const remote = yield* routeHome(environmentId, "capabilities", {
+          environmentId,
+          ...input,
+        });
+        if (Option.isNone(remote)) return Option.none();
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const here = yield* service.capabilities(scope, input);
+        return Option.some({ ...here, providers: remote.value.providers });
+      }),
+    McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.capabilities(scope, input);
     }),
+  ),
   ),
   delegate_task: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
@@ -145,26 +170,63 @@ const handlers = {
   ),
   create_threads: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
+      // These threads share the caller's folder, and Home's folder makes them act as Home.
+      if (yield* callerIsHome())
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "Home launches threads with t3_thread_launch and a projectId or scratch:true.",
+        });
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.createThreads(scope, input);
     }),
   ),
-  t3_thread_list: McpToolAccess.reads((input) =>
+  t3_thread_list: McpToolAccess.routesHome(
+    (input) => routeHome(input.environmentId, "threads.list", input),
+    McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.listThreads(scope, input);
     }),
   ),
-  t3_thread_read: McpToolAccess.reads((input) =>
+  ),
+  t3_thread_read: McpToolAccess.routesHome(
+    (input) => routeHome(input.environmentId, "threads.read", input),
+    McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.readThread(scope, input);
     }),
   ),
-  t3_thread_update: McpToolAccess.writesThreads(
+  ),
+  t3_thread_update: McpToolAccess.routesHome(
+    // Home renames anywhere; its other actions stay in its own environment.
+    (input) =>
+      Effect.gen(function* () {
+        if (!(yield* callerIsHome())) return Option.none();
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const elsewhere = yield* namesOtherEnvironment(input.environmentId);
+        const threadId = input.threadId ?? (elsewhere ? undefined : scope.thread?.threadId);
+        if (input.action !== "rename" || input.title === undefined || threadId === undefined) {
+          if (!elsewhere) return Option.none();
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "Only renaming a named thread works in another environment.",
+          });
+        }
+        return Option.some(
+          yield* runAsHome(input.environmentId, "threads.rename", {
+            threadId,
+            title: input.title,
+            ...(input.clientRequestId === undefined
+              ? {}
+              : { clientRequestId: input.clientRequestId }),
+          }),
+        );
+      }),
+    McpToolAccess.writesThreads(
     (input) => [input.threadId],
     (input) =>
       Effect.gen(function* () {
@@ -173,7 +235,10 @@ const handlers = {
         return yield* service.update(scope, input);
       }),
   ),
-  t3_thread_send: McpToolAccess.afterForwarding(
+  ),
+  t3_thread_send: McpToolAccess.routesHome(
+    (input) => routeHome(input.environmentId, "threads.send", input),
+    McpToolAccess.afterForwarding(
     McpToolAccess.writesThreads(
       (input) => [input.threadId],
       (input) =>
@@ -190,6 +255,7 @@ const handlers = {
         const remote = yield* RemoteDelegation.RemoteDelegation;
         return yield* remote.followUp(scope, environmentId, input, sent);
       }),
+  ),
   ),
   t3_thread_wait: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
@@ -228,7 +294,9 @@ const handlers = {
       return { environmentId, removed };
     }),
   ),
-  t3_thread_interrupt: McpToolAccess.writesThreads(
+  t3_thread_interrupt: McpToolAccess.routesHome(
+    (input) => routeHome(input.environmentId, "threads.interrupt", input),
+    McpToolAccess.writesThreads(
     (input) => [input.threadId],
     (input) =>
       Effect.gen(function* () {
@@ -236,6 +304,7 @@ const handlers = {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
         return yield* service.interruptThread(scope, input);
       }),
+  ),
   ),
 } satisfies McpToolAccess.Handlers<typeof OrchestratorToolkit.tools>;
 
