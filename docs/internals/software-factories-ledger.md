@@ -14,6 +14,12 @@ import point.
 | [#15975](https://github.com/pingdotgg/t3code/pull/15975) | `b5d05a6ebf3c0b99a097f2a197983cb1203669c6` | `29eb5cfead`                           | The thread-management toolkit and the watch reports that wake the Foreman.                                                                                                 |
 | [#21877](https://github.com/pingdotgg/t3code/pull/21877) | `76beabe5749c02771cc630b60324ed9de4bc4edb` | `0cb4bd1578`                           | Delegated follow-ups report done only after nested work finishes, which the Foreman's revision loop relies on. No adapter, because it changes behavior, not an API.        |
 
+## Not pulled
+
+| Upstream PR                                              | Why                                                                                                                                                                                      |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [#31129](https://github.com/pingdotgg/t3code/pull/31129) | Open on 2026-11-05 when M4 shipped, so triggers have no delivery mode. Pull it behind an adapter in `apps/server/src/factories/upstream/` and add queue, steer, and restart per trigger. |
+
 ## Fork fixes waiting on upstream
 
 These fork commits fix upstream issues that no pulled PR covers yet.
