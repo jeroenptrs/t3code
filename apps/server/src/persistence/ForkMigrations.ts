@@ -1,44 +1,7 @@
 /**
- * Fork-only migrations, kept out of upstream's list and ledger.
- *
- * The migrator skips every id at or below the highest one recorded, so a fork
- * migration numbered inside upstream's sequence would make upstream's own
- * migration at that id silently never run after a rebase. Fork migrations
- * instead number from 1 in their own ledger table and run after upstream's
- * migrations have completed. Every caller of `runMigrations()` that opens a
- * real database must also call `runForkMigrations()` right after it.
- *
- * Because they run after upstream, fork migrations may create fork-owned
- * tables and add columns or indexes to upstream tables. They must not rename,
- * drop, or rebuild upstream tables or change upstream columns: a later upstream
- * migration assumes upstream's schema and would conflict with or undo it.
- * Columns added to upstream tables are lost if upstream later recreates the
- * table, and the fork ledger would not notice. When rebasing, check new
- * upstream migrations for rebuilds of tables listed below and add a fork
- * migration that restores the fork columns.
- *
- * Fork columns on upstream tables: `auth_sessions.user_id` (002);
- * `scheduled_tasks.created_by_user_id`, `webhook_token_rotated_by_user_id`,
- * `webhook_token_rotated_at` (003);
- * `scheduled_task_webhook_deliveries.dispatched_at` (004).
- *
- * Fork-owned tables: `auth_users`, `auth_user_access_changes` (001);
- * `fork_diff_walkthroughs` (005, documents rewritten by 006);
- * `fork_projection_thread_jira_issues` (007, `watch_json` added by 010);
- * `fork_jira_user_credentials` (008);
- * `fork_jira_proposals` (009);
- * `fork_jira_remote_links` (011);
- * `fork_jira_breakdowns` (012);
- * `fork_insights_settings`, `fork_insights_projects`, `fork_insights_contributors`,
- * `fork_insights_contributor_emails`, `fork_insights_merge_requests`, `fork_insights_mr_reviews`,
- * `fork_insights_commits` (013);
- * `fork_insights_jira_issues` (014);
- * `fork_auth_step_up_bindings` (015);
- * `fork_factory_threads` (016).
- *
- * Fork indexes on upstream tables: `idx_fork_turn_items_waiting_jira_proposals` on
- * `orchestration_v2_projection_turn_items` (009); `idx_fork_messages_scheduled_task` on
- * `orchestration_v2_projection_messages` (016).
+ * Fork-only migrations in their own ledger, numbered from 1 and run after upstream's, so a rebase
+ * cannot make upstream skip one of its own ids. They may add fork tables, columns, and indexes but
+ * never rename, drop, or rebuild an upstream table. Inventory: docs/internals/fork-migrations.md.
  */
 
 import * as Migrator from "effect/sql/Migrator";
