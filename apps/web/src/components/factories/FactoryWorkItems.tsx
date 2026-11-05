@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import {
   FactoryRoleName,
   WorkItemOutcome,
@@ -8,7 +9,7 @@ import {
   type WorkItemSummary,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, PlusIcon } from "lucide-react";
 import { Fragment, useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -21,6 +22,8 @@ import { Button } from "../ui/button";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table";
+import { NewWorkItemDialogHost, openNewWorkItemDialog } from "./NewWorkItemDialog";
+import { WorkItemGateAnswer } from "./WorkItemGateAnswer";
 import {
   FACTORY_ROLE_LABELS,
   WORK_ITEM_OUTCOME_LABELS,
@@ -125,6 +128,7 @@ export function FactoryWorkItems(props: {
       input: workItemListInput(props.factory.id, search),
     }),
   );
+  const canCreate = useAtomValue(factoriesEnvironment.createWorkItem.permissionAtom(environmentId));
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const items = query.data?.workItems ?? null;
   const filtered =
@@ -142,6 +146,16 @@ export function FactoryWorkItems(props: {
         <h2 id="factory-work-items" className="flex-1 font-medium">
           Work items
         </h2>
+        {canCreate ? (
+          <Button
+            size="xs"
+            variant="outline"
+            onClick={() => openNewWorkItemDialog(environmentId, props.factory.id)}
+          >
+            <PlusIcon />
+            New work item
+          </Button>
+        ) : null}
         <Button
           size="icon-xs"
           variant="ghost-muted"
@@ -151,6 +165,7 @@ export function FactoryWorkItems(props: {
           <RefreshIcon refreshing={query.isPending} />
         </Button>
       </div>
+      <NewWorkItemDialogHost environmentId={environmentId} factoryId={props.factory.id} />
       <div className="flex flex-wrap items-center gap-2">
         <FilterSelect
           label="Stage"
@@ -280,10 +295,11 @@ function WorkItemDetails(props: {
     <div className="flex flex-col gap-3 py-1 whitespace-normal">
       <p className="max-h-40 overflow-y-auto text-sm whitespace-pre-wrap">{item.source.text}</p>
       {item.gate.state === "waiting" ? (
-        <div className="flex flex-col gap-1">
-          <p className="text-xs font-medium text-muted-foreground">The Foreman asks</p>
-          <p className="text-sm whitespace-pre-wrap">{item.gate.question}</p>
-        </div>
+        <WorkItemGateAnswer
+          environmentId={props.environmentId}
+          workItemId={item.id}
+          question={item.gate.question}
+        />
       ) : null}
       {transitions === null ? (
         <p className="text-xs text-muted-foreground" role="status">
@@ -312,5 +328,46 @@ function WorkItemDetails(props: {
         </ol>
       )}
     </div>
+  );
+}
+
+/** Items a gate holds for a person, above everything else on the page. Hidden when there are none. */
+export function FactoryNeedsYou(props: {
+  readonly environmentId: EnvironmentId;
+  readonly factory: Factory;
+}) {
+  const items =
+    useEnvironmentQuery(
+      factoriesEnvironment.workItems({
+        environmentId: props.environmentId,
+        input: workItemListInput(props.factory.id, { stage: "waiting" }),
+      }),
+    ).data?.workItems ?? [];
+  if (items.length === 0) return null;
+  return (
+    <section className="flex flex-col gap-3" aria-labelledby="factory-needs-you">
+      <h2 id="factory-needs-you" className="font-medium">
+        Needs you
+      </h2>
+      <ul className="flex flex-col gap-3">
+        {items.map((item) =>
+          item.gate.state === "waiting" ? (
+            <li key={item.id} className="flex flex-col gap-2 rounded-lg border p-3">
+              <p className="flex items-baseline gap-2 text-sm">
+                <span className="min-w-0 flex-1 truncate font-medium">{item.title}</span>
+                <span className="text-xs">
+                  <Timestamp value={item.gate.askedAt} />
+                </span>
+              </p>
+              <WorkItemGateAnswer
+                environmentId={props.environmentId}
+                workItemId={item.id}
+                question={item.gate.question}
+              />
+            </li>
+          ) : null,
+        )}
+      </ul>
+    </section>
   );
 }

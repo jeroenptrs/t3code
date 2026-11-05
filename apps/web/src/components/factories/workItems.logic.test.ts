@@ -1,10 +1,11 @@
-import { FactoryId, WorkItemId } from "@t3tools/contracts";
+import { FactoryId, WorkItemError, WorkItemId, WorkItemTransitionError } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   gateAnswerError,
   gateAnswerInput,
   validateWorkItemSearch,
+  workItemFailureMessage,
   workItemListInput,
   workItemStageBadgeVariant,
 } from "./workItems.logic";
@@ -41,6 +42,26 @@ describe("gateAnswerError", () => {
       decision: "approved",
       note: "go ahead",
     });
+  });
+});
+
+describe("workItemFailureMessage", () => {
+  it.each([
+    {
+      error: new WorkItemError({ code: "no_gate", message: "No gate holds this item." }),
+      expected: "No gate holds this item.",
+    },
+    {
+      error: new WorkItemTransitionError({
+        workItemId: WorkItemId.make("work-item:1"),
+        from: "done",
+        to: "dropped",
+      }),
+      expected: "The item cannot move from done to dropped.",
+    },
+    { error: "socket closed", expected: "The answer could not be sent." },
+  ])("shows $expected", ({ error, expected }) => {
+    expect(workItemFailureMessage(error, "The answer could not be sent.")).toBe(expected);
   });
 });
 
