@@ -27,7 +27,11 @@ import type {
   TriggerFilterSourceKind,
 } from "@t3tools/contracts";
 import { parseWebhookFilterDrafts } from "@t3tools/client-runtime/scheduled-task-webhook";
-import { parseTriggerFilterDrafts } from "@t3tools/client-runtime/scheduled-task-trigger";
+import {
+  parseTriageDraft,
+  parseTriggerFilterDrafts,
+  triageDraft,
+} from "@t3tools/client-runtime/scheduled-task-trigger";
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
@@ -83,6 +87,7 @@ import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
   Field,
+  TriageField,
   TriggerFiltersField,
   TriggerPromptHint,
   WebhookFiltersField,
@@ -189,6 +194,7 @@ const EMPTY_DRAFT: DraftState = {
   savedFilters: [],
   triggerFilters: [],
   savedTriggerFilters: [],
+  triage: triageDraft(undefined),
 };
 
 function splitModelKey(value: string): ModelSelection | null {
@@ -696,7 +702,8 @@ function ScheduledTaskRow({
       status={
         <div className="flex flex-wrap items-center gap-2">
           <span>
-            {scheduleLabel(task.schedule)} ·{" "}
+            {scheduleLabel(task.schedule)}
+            {task.triage === undefined ? "" : ` · Triage: ${task.triage.fallback}`} ·{" "}
             {task.blockedByPolicy !== undefined ? (
               task.blockedByPolicy
             ) : !task.enabled ? (
@@ -1313,6 +1320,11 @@ function ScheduledTaskEditorForm({
       for (const error of scheduleDraftErrors(draft)) reportFailure(error.title, error.description);
       return;
     }
+    const triage = parseTriageDraft(draft.triage);
+    if ("error" in triage) {
+      reportFailure("Triage label is required", triage.error);
+      return;
+    }
     if (
       schedule.type === "webhook" &&
       schedule.signature &&
@@ -1374,6 +1386,7 @@ function ScheduledTaskEditorForm({
         draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
+      ...triage,
     };
     // Lock before React renders, and keep successful creates locked until the form closes.
     submissionPending.current = true;
@@ -1958,6 +1971,11 @@ function ScheduledTaskEditorForm({
               </div>
             )}
           </div>
+
+          <TriageField
+            triage={draft.triage}
+            onChange={(triage) => setDraft((current) => ({ ...current, triage }))}
+          />
 
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0 space-y-1">
