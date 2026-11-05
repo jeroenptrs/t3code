@@ -55,9 +55,22 @@ beside the field and nothing is written.
 ## Send work to a factory
 
 Each request you send a factory is a work item. The factory's Foreman gets it as a new message in
-a fresh session, routes it to implement and review, and moves it through the stages **new**,
-**implement**, and **review** to **done**, **failed**, or **dropped**. The Foreman is one thread
-per factory, named `Foreman: <factory>`, and starts the first time the factory gets work.
+a fresh session, routes it to implement and review, and moves it through the stages **New**,
+**Implement**, and **Review** to **Done**, **Failed**, or **Dropped**. The Foreman is one thread
+per factory, named `Foreman: <factory>`, and starts the first time the factory gets work. The
+factory page header links to it as **Foreman thread**, and in the **Factories** tab it shows first
+under its factory.
+
+### Follow the work
+
+The factory page lists its work items under **Work items**, newest first, with the threads that
+worked on each one. Filter the list by stage, by the role of a thread that worked on the item, or
+by outcome. **Active** is every item that has not ended. The filters stay in the page's address,
+so a reload or a shared link keeps them.
+
+Click an item's title to see its request, the question a gate holds it on, and each stage change
+with who made it. The list does not update live. To read it again, click the refresh button
+beside **Work items**.
 
 To create a work item, open the factory's page, enter a title and the request, and send it. Only
 administrators can create work items. An agent can also send one for you when you ask it to.
