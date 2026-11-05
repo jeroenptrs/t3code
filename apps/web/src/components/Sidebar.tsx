@@ -156,7 +156,11 @@ import {
   useQuietThreadShells,
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import {
+  primaryServerConfigAtom,
+  primaryServerKeybindingsAtom,
+  primaryServerSettingsAtom,
+} from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
@@ -172,6 +176,7 @@ import {
   resolveThreadRouteTarget,
 } from "../threadRoutes";
 import type { SidebarThreadSummary } from "../types";
+import { isHomeProject, isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { cn } from "~/lib/utils";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import { ProjectRowActions } from "./ProjectComboboxRow";
@@ -279,6 +284,7 @@ import {
   useDraftTerminalLabels,
   useSidebarDrafts,
 } from "./sidebar/SidebarDraftBlock";
+import { SidebarHomeRow } from "./sidebar/SidebarHomeRow";
 import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
@@ -366,6 +372,8 @@ interface SidebarThreadPartitionInput {
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   /** Tasks linked environments run for a listed thread; they show under it. */
   readonly delegatedUnderParent: ReadonlySet<string>;
+  /** The current Home thread, which has its own fixed row. */
+  readonly homeThread: { readonly environmentId: string; readonly threadId: string } | null;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly connectedEnvironmentIds: readonly EnvironmentId[];
   readonly optimisticDrop: SidebarOptimisticDrop | null;
@@ -436,6 +444,7 @@ function useSidebarThreads(input: {
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly threads: readonly EnvironmentThreadShell[];
   readonly delegatedUnderParent: ReadonlySet<string>;
+  readonly homeThread: SidebarThreadPartitionInput["homeThread"];
   readonly routeRowThreadKey: string | null;
   readonly departingThreadKey: string | null;
   // Set in boring mode: the project groups to fold active threads into, in order.
@@ -451,6 +460,7 @@ function useSidebarThreads(input: {
     optimisticDrop,
     threads,
     delegatedUnderParent,
+    homeThread,
     routeRowThreadKey,
     departingThreadKey,
     folderGroups,
@@ -499,6 +509,7 @@ function useSidebarThreads(input: {
     threads,
     scopedProjectKeys,
     delegatedUnderParent,
+    homeThread,
     serverConfigs,
     connectedEnvironmentIds,
     optimisticDrop,
@@ -635,13 +646,19 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     threads,
     scopedProjectKeys,
     delegatedUnderParent,
+    homeThread,
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
     sortActiveBySend,
   } = input;
   const preciseNow = new Date().toISOString();
-  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
+  const visible = filterSidebarV2VisibleThreads(
+    threads,
+    scopedProjectKeys,
+    delegatedUnderParent,
+    homeThread,
+  );
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
@@ -824,6 +841,11 @@ function isOptimisticDropReleased(input: {
 function useSidebarLookups() {
   const gt = useGT();
   const projects = useProjects();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const homeWorkspaceRoot = useAtomValue(
+    primaryServerConfigAtom,
+    (config) => config?.homeWorkspaceRoot ?? null,
+  );
   const environments = useEnvironmentIdentities();
   const serverConfigs = useServerConfigs();
   const providerEntriesByEnvironment = useAtomValue(sidebarProviderEntriesAtom);
@@ -847,7 +869,18 @@ function useSidebarLookups() {
   const projectScopeItems = [
     { value: ADD_PROJECT_SCOPE_ITEM_VALUE, label: gt("Add project") },
     { value: "all", label: gt("All projects") },
-    ...pickableProjectGroups(projectGroups).map((project) => ({
+    // Home's folder is not a project to scope to.
+    ...pickableProjectGroups(projectGroups)
+      .filter(
+        (project) =>
+          homeWorkspaceRoot === null ||
+          !project.memberProjects.some(
+            (member) =>
+              member.environmentId === primaryEnvironmentId &&
+              isHomeProject(member, homeWorkspaceRoot),
+          ),
+      )
+      .map((project) => ({
       value: project.projectKey,
       label: project.displayName,
     })),
@@ -1006,6 +1039,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const homeThreadId = useAtomValue(
+    primaryServerSettingsAtom,
+    (settings) => settings.home.threadId,
+  );
+  // The current Home thread lives on the primary environment and gets its own
+  // fixed row; older Home threads stay in the normal lists.
+  const homeThreadRef =
+    primaryEnvironmentId !== null && homeThreadId !== null
+      ? scopeThreadRef(primaryEnvironmentId, homeThreadId)
+      : null;
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
@@ -1369,6 +1412,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     optimisticDrop,
     threads: listedThreads,
     delegatedUnderParent,
+    homeThread: homeThreadRef,
     routeRowThreadKey,
     departingThreadKey,
     folderGroups: boringSidebarEnabled
@@ -3610,6 +3654,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       };
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
                       const items: ReactNode[] = [
+                        homeThreadRef === null ? null : (
+                          <SidebarHomeRow
+                            key="home"
+                            threadRef={homeThreadRef}
+                            isActive={routeThreadKey === scopedThreadKey(homeThreadRef)}
+                            onActivate={navigateToThread}
+                          />
+                        ),
                         <SidebarDraftBlock
                           key="draft-sessions"
                           draftIds={draftIds}

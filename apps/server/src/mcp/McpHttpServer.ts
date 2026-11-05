@@ -72,6 +72,8 @@ import { ThemeToolkit } from "./toolkits/theme/tools.ts";
 import * as ThemeHandlers from "./toolkits/theme/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
+import { HomeToolkit } from "./toolkits/home/tools.ts";
+import * as HomeHandlers from "./toolkits/home/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
 import * as AttachmentHandlers from "./toolkits/attachment/handlers.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
@@ -1453,6 +1455,7 @@ const layerFeedbackToolkit = toolkitRegistration(FeedbackToolkit, FeedbackHandle
     ),
   ),
 );
+const layerHomeToolkit = toolkitRegistration(HomeToolkit, HomeHandlers.layer);
 
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,
@@ -1526,6 +1529,7 @@ export const layerTools = Layer.mergeAll(
   layerAttachmentToolkit,
   layerProjectRegistration,
   layerFeedbackToolkit,
+  layerHomeToolkit,
   layerEnvironmentToolkit,
   layerThemeToolkit,
   layerPreviewControlsRegistration,

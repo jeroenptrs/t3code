@@ -5,6 +5,7 @@
 - [Install T3 Code](./user/install.md)
 - [Messages and context](./user/composer.md)
 - [Working with threads](./user/thread-sidebar.md)
+- [Home](./user/home.md)
 - [Permission modes](./user/permission-modes.md)
 - [Terminal history](./user/terminal.md)
 - [Source control](./user/source-control.md)
@@ -63,6 +64,7 @@ anything.
 - [15 · Testing](./internals/15_testing.md)
 - [16 · Performance regression checks](./internals/16_performance-regressions.md)
 - [17 · Scripts](./internals/17_scripts.md)
+- [Home](./internals/home.md)
 
 ### Runbooks
 

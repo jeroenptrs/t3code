@@ -202,6 +202,7 @@ import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
+import { notHomeLayer } from "./home/HomeTestkit.ts";
 import {
   layerWsRpc,
   resolveOpenDiscoveryForConfig,
@@ -270,8 +271,10 @@ it("records the session's user as who linked a Jira issue, never the client's cl
   assert.notProperty(withSessionUserAttribution(watch, null), "linkedByUserId");
 });
 
+const decodeScheduledTaskList = Schema.decodeSync(ScheduledTaskListResult);
+
 it("shows a webhook's URL and audit trail only to sessions that may operate", () => {
-  const result = Schema.decodeUnknownSync(ScheduledTaskListResult)({
+  const result = decodeScheduledTaskList({
     tasks: [
       {
         id: "scheduled-task:hook",
@@ -1030,6 +1033,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
   FeatureFlags.layerTest(),
+  notHomeLayer,
 );
 
 const layerConfigSources = Layer.mergeAll(

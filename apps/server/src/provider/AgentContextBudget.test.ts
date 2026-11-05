@@ -19,6 +19,9 @@ import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitManager } from "../git/GitManager.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { TaskFolders } from "../workspace/TaskFolders.ts";
+import { FleetBroker } from "../home/FleetBroker.ts";
+import { FleetService } from "../home/FleetService.ts";
+import { HomeService } from "../home/HomeService.ts";
 import { JiraIdentities } from "../jira/JiraIdentities.ts";
 import { JiraProposals } from "../jira/JiraProposals.ts";
 import { JiraService } from "../jira/JiraService.ts";
@@ -70,9 +73,12 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),
   Layer.mock(EnvironmentThemeService)({}),
+  Layer.mock(FleetBroker)({}),
+  Layer.mock(FleetService)({}),
   Layer.mock(GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),
   Layer.mock(TaskFolders)({}),
+  Layer.mock(HomeService)({ available: false }),
   Layer.mock(IssueService)({}),
   Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
   Layer.mock(McpProviderSessions)({}),
