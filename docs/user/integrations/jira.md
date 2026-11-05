@@ -20,6 +20,8 @@ is a link on the Jira issue back to a linked thread. Everything else is read-onl
   that mention the issue.
 - Link an issue to a thread.
 - Start a new thread from an issue.
+- [Start a thread automatically](#start-a-thread-from-jira) when a linked issue
+  changes status, labels, or assignee.
 - Approve issues, comments, and transitions that an agent proposes.
 - Post a comment or move an issue to another status from the issue's detail. You act
   as yourself, so this needs your [personal Jira token](#use-your-own-jira-token) for
@@ -305,8 +307,31 @@ Approval works as it does for any other [proposal](#agents-that-write-to-jira).
 
 ## Start a thread from Jira
 
+To start work when an issue reaches a status or gets a label, create a scheduled
+task with the **On Jira change** schedule. It reacts to issues that a thread
+already links, because those are the issues T3 Code keeps up to date. For an
+issue that no thread links, use a
+[Jira Automation rule](#start-a-thread-for-an-issue-no-thread-links) instead.
+
+1. In **Settings → Scheduled tasks**, create a task and choose **On Jira change**.
+   See [Event triggers](../project-settings.md#event-triggers).
+2. Add filters. To react to a status, use **Event type** equals
+   `issue.status_changed` and **Status** equals `In Progress`. To react to a
+   label, use **Added labels** equals `t3`.
+3. Write the prompt with event placeholders:
+
+   ```text
+   Work on Jira issue {{event.key}}: {{event.summary}} ({{event.url}}).
+   Link the issue to this thread with link_jira_issue, then plan the change and
+   start on it.
+   ```
+
+Each matching change starts a new thread, unless the task posts into an existing thread.
+
+### Start a thread for an issue no thread links
+
 A Jira Automation rule can start a thread when someone adds a label such as `t3` to
-an issue. T3 Code receives the request through a webhook scheduled task, so Jira has
+any issue. T3 Code receives the request through a webhook scheduled task, so Jira has
 to reach your server. Atlassian's cloud can't see a private address, so use a public
 URL: a [T3 Connect](../remote-access.md) tunnel or a server deployed with
 `T3CODE_PUBLIC_URL`.

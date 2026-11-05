@@ -34,7 +34,7 @@ import {
   SourceControlRepositoryError,
   type OrchestrationV2Command,
   WS_METHODS,
-  WsRpcGroup,
+  WsCoreRpcGroup,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
   type AuthAccessStreamEvent,
@@ -43,10 +43,7 @@ import {
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationProjectShell,
-  ProjectId,
-  ProviderInstanceId,
   ScheduledTaskListResult,
-  ThreadId,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerProvider,
@@ -105,6 +102,14 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
+import * as DiffWalkthroughService from "./diffWalkthrough/DiffWalkthroughService.ts";
+import * as FactoryService from "./factories/FactoryService.ts";
+import * as FactorySkillStore from "./factories/FactorySkillStore.ts";
+import * as InsightsService from "./insights/InsightsService.ts";
+import * as JiraBreakdownService from "./jira/JiraBreakdownService.ts";
+import * as JiraProposals from "./jira/JiraProposals.ts";
+import * as JiraService from "./jira/JiraService.ts";
+import * as JiraUserCredentials from "./jira/JiraUserCredentials.ts";
 import * as WorkspaceReadAccess from "./workspace/WorkspaceReadAccess.ts";
 import * as DiffWalkthroughRunService from "./diffWalkthrough/DiffWalkthroughRunService.ts";
 import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.ts";
@@ -146,6 +151,8 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as Workflows from "./workflows/Workflows.ts";
 import * as WorkflowRuntime from "./workflows/WorkflowRuntime.ts";
+import * as TriggerService from "./triggers/TriggerService.ts";
+import * as TriggerTemplates from "./triggers/TriggerTemplateService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as FeedbackStore from "./feedback/FeedbackStore.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
@@ -1004,6 +1011,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
   Workflows.layerDisabled,
   Layer.mock(WorkflowRuntime.WorkflowDefinitions)({}),
+  Layer.mock(TriggerService.TriggerService)({}),
+  Layer.mock(TriggerTemplates.TriggerTemplateService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(FeedbackStore.FeedbackStore)({}),
   Layer.mock(SecretResolver.SecretResolver)({}),
@@ -1088,6 +1097,19 @@ it.live.each([
         Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
         Layer.mock(ProviderRegistry.ProviderRegistry)({}),
         Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+        Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+        Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+        Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
+        Layer.mock(TriggerService.TriggerService)({}),
+        Layer.mock(TriggerTemplates.TriggerTemplateService)({}),
+        Layer.mock(DiffWalkthroughService.DiffWalkthroughService)({}),
+        Layer.mock(FactoryService.FactoryService)({}),
+        Layer.mock(FactorySkillStore.FactorySkillStore)({}),
+        Layer.mock(InsightsService.InsightsService)({}),
+        Layer.mock(JiraBreakdownService.JiraBreakdownService)({}),
+        Layer.mock(JiraProposals.JiraProposals)({}),
+        Layer.mock(JiraService.JiraService)({}),
+        Layer.mock(JiraUserCredentials.JiraUserCredentials)({}),
         Layer.mock(ExternalLauncher.ExternalLauncher)({}),
         Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
         Layer.mock(DirectEndpoints.DirectEndpoints)({}),
@@ -1417,7 +1439,7 @@ it.effect("access changes made while the snapshot loads reach the client after i
       );
     const revokedElsewhere = AuthSessionId.make("revoked-elsewhere");
     const responses = yield* Queue.unbounded<AuthAccessStreamEvent>();
-    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+    const server = yield* RpcServer.makeNoSerialization(WsCoreRpcGroup, {
       ...WS_RPC_SERVER_OPTIONS,
       onFromServer: (response) =>
         response._tag === "Chunk"
@@ -1457,6 +1479,9 @@ it.effect("access changes made while the snapshot loads reach the client after i
               }),
               Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
               Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+              Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+              Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+              Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
               Layer.mock(EnvironmentAuth.EnvironmentAuth)({
                 listPairingLinks: () => Effect.succeed([]),
                 listConnectDevices: () => Effect.succeed([]),
@@ -1997,6 +2022,9 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
       Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+      Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+      Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
     );
     const server = yield* RpcServer.makeNoSerialization(
       RpcGroup.make(WsServerRefreshProvidersRpc),
@@ -2083,8 +2111,11 @@ it.effect("a git action that fails partway still refreshes the repository status
       Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+      Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+      Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
     );
-    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+    const server = yield* RpcServer.makeNoSerialization(WsCoreRpcGroup, {
       ...WS_RPC_SERVER_OPTIONS,
       onFromServer: (response) =>
         response._tag === "Exit" ? Queue.offer(exits, response.exit) : Effect.void,
@@ -2163,8 +2194,12 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
       Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+      Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+      Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
     );
-    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+    // The fork's Jira, Insights, and factory groups are served by their own layers.
+    const server = yield* RpcServer.makeNoSerialization(WsCoreRpcGroup, {
       ...WS_RPC_SERVER_OPTIONS,
       onFromServer: (response) =>
         response._tag === "Exit" ? Queue.offer(exits, response.exit._tag) : Effect.void,
@@ -2500,12 +2535,12 @@ const acpSessionTags = [
   WS_METHODS.serverImportAcpRegistrySession,
   WS_METHODS.serverDeleteAcpRegistrySession,
 ] as const;
-const acpSessionRpcs = WsRpcGroup.omit(
-  ...[...WsRpcGroup.requests.keys()].filter(
+const acpSessionRpcs = WsCoreRpcGroup.omit(
+  ...[...WsCoreRpcGroup.requests.keys()].filter(
     (
       tag,
     ): tag is Exclude<
-      keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
+      RpcGroup.Rpcs<typeof WsCoreRpcGroup>["_tag"],
       (typeof acpSessionTags)[number]
     > => !(acpSessionTags as ReadonlyArray<string>).includes(tag),
   ),
@@ -2699,6 +2734,9 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
           Effect.sync(() => repaired.push(threadId)).pipe(Effect.as(1)),
       }),
       Layer.succeed(SqlClient.SqlClient, sql),
+      Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+      Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+      Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
     );
     const services = AcpRegistrySessions.layer.pipe(Layer.provideMerge(dependencies));
     const client = yield* RpcTest.makeClient(acpSessionRpcs).pipe(
@@ -2780,12 +2818,12 @@ const workflowTags = [
   WS_METHODS.workflowsResume,
   WS_METHODS.workflowsCancel,
 ] as const;
-const workflowRpcs = WsRpcGroup.omit(
-  ...[...WsRpcGroup.requests.keys()].filter(
+const workflowRpcs = WsCoreRpcGroup.omit(
+  ...[...WsCoreRpcGroup.requests.keys()].filter(
     (
       tag,
     ): tag is Exclude<
-      keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
+      RpcGroup.Rpcs<typeof WsCoreRpcGroup>["_tag"],
       (typeof workflowTags)[number]
     > => !(workflowTags as ReadonlyArray<string>).includes(tag),
   ),
@@ -2837,6 +2875,9 @@ const makeWorkflowClient = Effect.fn("test.makeWorkflowClient")(function* (
     Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
     Layer.mock(ServerEnvironment.ServerEnvironment)({}),
     Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+    Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+    Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
     Layer.mock(Workflows.Workflows)({
       get: (runId) =>
         runId === workflowRun.runId
