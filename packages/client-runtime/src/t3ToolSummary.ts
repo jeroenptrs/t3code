@@ -118,6 +118,7 @@ export function summarizeT3ToolCalls(
   const projectIds = selected.map(
     (call) => id(call.output?.id) ?? id(call.output?.projectId) ?? id(call.input?.projectId),
   );
+  const factoryIds = selected.map((call) => id(call.output?.id) ?? id(call.input?.factoryId));
   const threadIds = selected.map(
     (call) =>
       id(call.output?.threadId) ??
@@ -540,6 +541,55 @@ export function summarizeT3ToolCalls(
         : resolve(
             msg(
               "{count, plural, one {Tried to clone {count} repository} other {Tried to clone {count} repositories}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "factory-list": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Listed factories {count} time} other {Listed factories {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to list factories {count} time} other {Tried to list factories {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "factory-read": {
+      const count = countEntities(factoryIds);
+      label = done
+        ? resolve(
+            msg("{count, plural, one {Read {count} factory} other {Read {count} factories}}", {
+              count,
+            }),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to read {count} factory} other {Tried to read {count} factories}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "factory-save": {
+      const count = countEntities(factoryIds);
+      label = done
+        ? resolve(
+            msg("{count, plural, one {Saved {count} factory} other {Saved {count} factories}}", {
+              count,
+            }),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to save {count} factory} other {Tried to save {count} factories}}",
               { count },
             ),
           );
