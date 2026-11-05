@@ -844,6 +844,8 @@ function jiraProposalTitle(proposal: JiraProposal): string {
       return `Comment on ${proposal.key}`;
     case "transition":
       return `Move ${proposal.key}: ${proposal.transitionName}`;
+    case "labels":
+      return `Label ${proposal.key}: ${proposal.labels.join(", ")}`;
   }
 }
 
