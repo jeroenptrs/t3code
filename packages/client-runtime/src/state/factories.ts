@@ -1,0 +1,54 @@
+/**
+ * Fork-only software factories client state. Operators read factories and what they own;
+ * administrators save their definitions. Nothing here polls: a view re-reads when shown again
+ * after its stale time or when a save lands.
+ */
+import { WS_METHODS, type EnvironmentId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import { Atom, type AtomRegistry } from "effect/reactivity";
+
+import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+
+export function createFactoriesEnvironmentAtoms<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+) {
+  // A save can change any factory's summary, such as which scheduled tasks it owns, so it
+  // re-reads whatever is mounted and marks the rest stale.
+  const epoch = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make(0).pipe(Atom.withLabel("environment-data:factories:epoch")),
+  );
+  const refreshTrigger = ({ environmentId }: { readonly environmentId: EnvironmentId }) =>
+    epoch(environmentId);
+
+  return {
+    /** Every factory in the environment, or in one project, with its attention count. */
+    list: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:factories:list",
+      tag: WS_METHODS.factoriesList,
+      staleTimeMs: 15_000,
+      refreshTrigger,
+    }),
+    /** One factory: its definition, each role's effective binding and body, and what it owns. */
+    read: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:factories:read",
+      tag: WS_METHODS.factoriesRead,
+      staleTimeMs: 15_000,
+      refreshTrigger,
+    }),
+    /** Re-reads both views, for an explicit refresh. */
+    refresh: (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) =>
+      registry.update(epoch(environmentId), (value) => value + 1),
+    save: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:factories:save",
+      tag: WS_METHODS.factoriesSave,
+      // One save at a time per environment, so two edits cannot land out of order.
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.update(epoch(environmentId), (value) => value + 1)),
+    }),
+  };
+}
