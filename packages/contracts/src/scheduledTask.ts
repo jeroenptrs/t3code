@@ -144,19 +144,23 @@ const WebhookFilterListValue = Schema.String.check(
   Schema.isPattern(/^[^,\s](?:[^,]*[^,\s])?$/),
 ).annotate({ description: "Non-empty, without commas or surrounding whitespace." });
 
-export const ScheduledTaskWebhookFilter = Schema.Union([
+/** One filter's operator and value shapes, shared by webhook, trigger, and template filters. */
+export const makeFilterSchema = (path: typeof TrimmedNonEmptyString) =>
+  Schema.Union([
   Schema.Struct({
-    path: WebhookFilterPath,
+      path,
     op: Schema.Literals(["equals", "notEquals", "startsWith"]),
     value: Schema.String,
   }),
   Schema.Struct({
-    path: WebhookFilterPath,
+      path,
     op: Schema.Literal("in"),
     value: Schema.Array(WebhookFilterListValue).check(Schema.isMinLength(1)),
   }),
-  Schema.Struct({ path: WebhookFilterPath, op: Schema.Literal("exists") }),
-]).annotate({
+    Schema.Struct({ path, op: Schema.Literal("exists") }),
+  ]);
+
+export const ScheduledTaskWebhookFilter = makeFilterSchema(WebhookFilterPath).annotate({
   description:
     "Path: `headers.x-event` or `body.action`. String compare. Objects pass only 'exists'. A `[]` segment matches any array item. `notEquals` passes only if no item equals.",
 });
@@ -204,12 +208,67 @@ const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
     "Run per webhook request. Prompt can use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}}, {{request}}.",
 });
 
+export const TriggerFilterPath = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^event\.[a-zA-Z][a-zA-Z0-9]*$/),
+).annotate({ description: "An event field, such as `event.status`." });
+
+export const TriggerFilter = makeFilterSchema(TriggerFilterPath).annotate({
+  description:
+    "String compare on one event field. Array fields match when any item does; `notEquals` passes only if no item equals, `exists` only if non-empty. Null fields fail every op.",
+});
+export type TriggerFilter = typeof TriggerFilter.Type;
+export type TriggerFilterOp = TriggerFilter["op"];
+
+export const TriggerFilters = Schema.Array(TriggerFilter)
+  .check(Schema.isMaxLength(MAX_WEBHOOK_FILTERS))
+  .annotate({
+    description: "All must match. Max 16. Omitted: keep stored. [] clears.",
+  });
+export type TriggerFilters = typeof TriggerFilters.Type;
+
+export const ScheduledTaskJiraSchedule = Schema.Struct({
+  type: Schema.Literal("jira"),
+  filters: Schema.optional(TriggerFilters),
+}).annotate({
+  description: "Run on Jira issue changes. Prompt can use {{event.field}} and {{event}}.",
+});
+
+export const ScheduledTaskGitLabSchedule = Schema.Struct({
+  type: Schema.Literal("gitlab"),
+  filters: Schema.optional(TriggerFilters),
+}).annotate({
+  description: "Run on GitLab merge request changes. Prompt can use {{event.field}} and {{event}}.",
+});
+
+export const ScheduledTaskSlackSchedule = Schema.Struct({
+  type: Schema.Literal("slack"),
+  filters: Schema.optional(TriggerFilters),
+}).annotate({
+  description: "Run on Slack messages. Prompt can use {{event.field}} and {{event}}.",
+});
+
+export const ScheduledTaskManualSchedule = Schema.Struct({
+  type: Schema.Literal("manual"),
+}).annotate({ description: "Run only when started by hand." });
+
+/** The clock-driven schedules, which the scheduler runs. */
+export const ScheduledTaskTimeSchedule = Schema.Union([
+  ScheduledTaskIntervalSchedule,
+  ScheduledTaskFixedTimeSchedule,
+  ScheduledTaskOnceSchedule,
+]);
+export type ScheduledTaskTimeSchedule = typeof ScheduledTaskTimeSchedule.Type;
+
 /** Accept legacy sub-minute schedules so users can still manage them. */
 export const ScheduledTaskSchedule = Schema.Union([
   ScheduledTaskIntervalSchedule,
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskOnceSchedule,
   ScheduledTaskWebhookSchedule,
+  ScheduledTaskJiraSchedule,
+  ScheduledTaskGitLabSchedule,
+  ScheduledTaskSlackSchedule,
+  ScheduledTaskManualSchedule,
 ]);
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
@@ -225,6 +284,10 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskOnceSchedule,
   ScheduledTaskUpsertWebhookSchedule,
+  ScheduledTaskJiraSchedule,
+  ScheduledTaskGitLabSchedule,
+  ScheduledTaskSlackSchedule,
+  ScheduledTaskManualSchedule,
 ]);
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
 
