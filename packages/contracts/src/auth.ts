@@ -50,6 +50,8 @@ export const AuthRelayWriteScope = "relay:write" as const;
 export const AuthRelayConfigureScope = "relay:configure" as const;
 export const AuthInsightsReadScope = "insights:read" as const;
 export const AuthInsightsWriteScope = "insights:write" as const;
+export const AuthFactoriesReadScope = "factories:read" as const;
+export const AuthFactoriesManageScope = "factories:manage" as const;
 export const AuthEnvironmentScope = Schema.Literals([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -71,6 +73,8 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthRelayConfigureScope,
   AuthInsightsReadScope,
   AuthInsightsWriteScope,
+  AuthFactoriesReadScope,
+  AuthFactoriesManageScope,
 ]);
 export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
 export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
@@ -117,6 +121,9 @@ const legacyParents: Partial<Record<AuthEnvironmentScope, AuthEnvironmentScope>>
   // Insights is administrator-only, like access management.
   [AuthInsightsReadScope]: AuthAccessReadScope,
   [AuthInsightsWriteScope]: AuthAccessWriteScope,
+  // Viewing factories is viewing threads; managing them is administrator-only.
+  [AuthFactoriesReadScope]: AuthOrchestrationReadScope,
+  [AuthFactoriesManageScope]: AuthAccessWriteScope,
 };
 
 /** Keep permission denials decodable by clients with the original scope enum. */
@@ -179,6 +186,8 @@ export const AuthStandardClientScopes = [
   AuthRelayWriteScope,
   AuthInsightsReadScope,
   AuthInsightsWriteScope,
+  AuthFactoriesReadScope,
+  AuthFactoriesManageScope,
 ] as const;
 
 export const AuthAdministrativeClientScopes = [
@@ -539,7 +548,6 @@ export const AuthCreatePairingCredentialInput = Schema.Union([
   }),
 ]);
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
-
 
 export const AuthMcpProtectedResourceMetadata = Schema.Struct({
   resource: Schema.String,
