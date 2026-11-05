@@ -43,6 +43,7 @@ import {
   type RenderFailureProps,
 } from "./components/RenderErrorBoundary";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
+import { FactoriesScreen } from "./features/factories/FactoriesScreen";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
@@ -341,6 +342,11 @@ const SETTINGS_SCREENS = {
     screen: SettingsOpenSourceLicenseRouteScreen,
     linking: "settings/open-source-licenses/:entryKey",
     options: settingsPage("License notice"),
+  }),
+  SettingsFactories: createNativeStackScreen({
+    screen: FactoriesScreen,
+    linking: "settings/factories",
+    options: settingsPage("Factories"),
   }),
   SettingsUsage: createNativeStackScreen({
     screen: UsageRouteScreen,
