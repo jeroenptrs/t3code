@@ -39,7 +39,7 @@ from the `scheduledTaskId` on stored messages, read through a fork index
 ## Work items and the Foreman
 
 Each request the Foreman routes is a row in `fork_factory_work_items`, with its
-threads and transitions beside it (migration 017). `canTransitionWorkItem` in
+threads and transitions beside it (migration 019). `canTransitionWorkItem` in
 contracts is the only stage table. Each stage change writes one transition row
 with its actor, and only a person's gate answer moves an item out of `waiting`.
 
