@@ -3929,6 +3929,109 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         }),
     );
 
+    // quarantine: #16603 follow-ups skip the child's progress check; upstream #21877 fixes it with wake routing
+    it.effect.skip("holds a follow-up while a subagent its run started still runs", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread:followup-nested");
+        const projectId = ProjectId.make("project:followup-nested");
+        const parentRunId = RunId.make("run:followup-nested");
+        const rootNodeId = NodeId.make("node:followup-nested");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:seed-followup-nested"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: "followup-nested-child",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        const messageId = MessageId.make("message:followup-nested");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: CommandId.make("command:followup-nested-send"),
+          threadId: child.childThreadId,
+          senderThreadId: parentThreadId,
+          messageId,
+          text: "Check the same work again.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        });
+        const run = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+          (row) => row.userMessageId === messageId,
+        )!;
+        assert.isDefined(run.delegatedTaskId);
+        const nestedId = NodeId.make("node:followup-nested-native");
+        yield* eventSink.write({
+          commandId: reconcileCommandId("followup-nested-finish"),
+          events: [
+            {
+              id: EventId.make("event:followup-nested-native"),
+              type: "subagent.updated",
+              threadId: child.childThreadId,
+              runId: run.id,
+              nodeId: nestedId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                id: nestedId,
+                threadId: child.childThreadId,
+                runId: run.id,
+                parentNodeId: NodeId.make("node:followup-nested-child-root"),
+                origin: "provider_native",
+                createdBy: "agent",
+                driver,
+                providerInstanceId: modelSelection.instanceId,
+                providerThreadId: null,
+                childThreadId: null,
+                nativeTaskRef: null,
+                prompt: "Research prices in the background.",
+                title: null,
+                model: null,
+                status: "running",
+                result: null,
+                startedAt: now,
+                completedAt: null,
+                updatedAt: now,
+              },
+            },
+            {
+              id: EventId.make("event:followup-nested-finish"),
+              type: "run.updated",
+              threadId: child.childThreadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+
+        const followup = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (task) => task.id === run.delegatedTaskId,
+        );
+        assert.isNull(followup?.result);
+        assert.notEqual(followup?.status, "completed");
+      }),
+    );
+
     it.effect("tracks a child's usage-limit auto-resume as a follow-up", () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
