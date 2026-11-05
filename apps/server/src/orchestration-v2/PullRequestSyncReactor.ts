@@ -24,6 +24,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
@@ -34,6 +35,7 @@ import * as GitManager from "../git/GitManager.ts";
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as TriggerSources from "../triggers/TriggerSources.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestAutoWalkthrough from "./PullRequestAutoWalkthrough.ts";
@@ -359,6 +361,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitManager.GitManager;
   const random = yield* SecureRandom.SecureRandom;
   const autoWalkthrough = yield* PullRequestAutoWalkthrough.PullRequestAutoWalkthrough;
+  const triggerSources = yield* Effect.serviceOption(TriggerSources.TriggerSources);
 
   const lastSyncedAt = new Map<string, number>();
   const requested = new Set<string>();
@@ -485,16 +488,35 @@ export const make = Effect.gen(function* () {
       }
       if (changed) {
         const uuid = yield* random.uuidV4();
+        const host = normalizeThreadPullRequestKey(link).host;
+        const snapshot = { ...fields, syncedAt: nowIso };
         yield* engine.dispatch({
           type: "thread.pull-request-link.sync",
           commandId: CommandId.make(`server:pr-sync:${thread.id}:${uuid}`),
           threadId: thread.id,
-          host: normalizeThreadPullRequestKey(link).host,
+          host,
           repository: link.repository,
           number: link.number,
-          snapshot: { ...fields, syncedAt: nowIso },
+          snapshot,
           stack: nextStack,
         });
+        if (Option.isSome(triggerSources)) {
+          yield* triggerSources.value
+            .observePullRequest(
+              { host, repository: link.repository, number: link.number, url: link.url },
+              snapshot,
+            )
+            .pipe(
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (cause) =>
+                  Effect.logWarning("pull request trigger observation failed", {
+                    threadId: thread.id,
+                    cause: Cause.pretty(cause),
+                  }),
+              ),
+            );
+        }
       }
     }, Effect.withSpan("PullRequestSyncReactor.syncEntry"));
 

@@ -25,19 +25,13 @@ import type {
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliverySummary,
   ThreadId,
+  TriggerFilterSourceKind,
 } from "@t3tools/contracts";
-import {
-  DEFAULT_WEBHOOK_PROMPT,
-  emptyWebhookFilterDraft,
-  parseWebhookFilterDrafts,
-  removeWebhookFilterDraft,
-  WEBHOOK_FILTER_OPS,
-  type WebhookFilterDraft,
-} from "@t3tools/client-runtime/scheduled-task-webhook";
+import { parseWebhookFilterDrafts } from "@t3tools/client-runtime/scheduled-task-webhook";
+import { parseTriggerFilterDrafts } from "@t3tools/client-runtime/scheduled-task-trigger";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
-  MAX_WEBHOOK_FILTERS,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
@@ -96,9 +90,19 @@ import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
+  Field,
+  TriggerFiltersField,
+  TriggerPromptHint,
+  WebhookFiltersField,
+} from "./scheduledTaskFields";
+import { TriggerTemplatesSection } from "./TriggerTemplatesSettings";
+import {
+  SCHEDULE_MODE_LABELS,
   WEBHOOK_SIGNATURE_DEFAULTS,
   changeDraftProject,
   moveDraftToThread,
+  isTriggerFilterSource,
+  promptForScheduleMode,
   scheduleDraftErrors,
   scheduledTaskDestinationThreads,
   toDateTimeLocalValue,
@@ -168,6 +172,15 @@ const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   existing_worktree: "Use a specific checkout",
 };
 
+const SCHEDULE_MODES = Object.keys(SCHEDULE_MODE_LABELS) as ReadonlyArray<ScheduleMode>;
+
+const TRIGGER_SOURCE_DESCRIPTIONS: Record<TriggerFilterSourceKind, string> = {
+  jira: "Runs when a Jira issue linked to a thread changes status, labels, or assignee.",
+  gitlab:
+    "Runs when a GitLab merge request linked to a thread opens, changes, merges, closes, or its pipeline finishes.",
+  slack: "Runs when the Slack integration passes a message to this environment.",
+};
+
 const EMPTY_DRAFT: DraftState = {
   editingId: null,
   title: "",
@@ -200,124 +213,9 @@ const EMPTY_DRAFT: DraftState = {
   coalesceWindowSeconds: "",
   filters: [],
   savedFilters: [],
+  triggerFilters: [],
+  savedTriggerFilters: [],
 };
-
-function WebhookFiltersField({
-  filters,
-  onChange,
-}: {
-  filters: ReadonlyArray<WebhookFilterDraft>;
-  onChange: (filters: ReadonlyArray<WebhookFilterDraft>) => void;
-}) {
-  const update = (index: number, patch: Partial<WebhookFilterDraft>) =>
-    onChange(filters.map((filter, at) => (at === index ? { ...filter, ...patch } : filter)));
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0 space-y-1">
-          <Label>Filters</Label>
-          <p className="text-sm text-muted-foreground">
-            Run only when every filter matches. Other requests are logged as filtered. Separate “is
-            one of” values with commas; a value can't contain a comma.
-          </p>
-        </div>
-        <Button
-          className="shrink-0"
-          variant="outline"
-          size="sm"
-          disabled={filters.length >= MAX_WEBHOOK_FILTERS}
-          onClick={() => onChange([...filters, emptyWebhookFilterDraft()])}
-        >
-          <PlusIcon />
-          Add filter
-        </Button>
-      </div>
-      {filters.map((filter, index) => (
-        // Always stacked: the dialog stays narrow on wide windows, so a single line
-        // would cut off typical paths and values. The grid wrappers size each control
-        // without restyling it; a grid item stretches to its minmax(0, 1fr) track.
-        <div key={filter.id} className="space-y-2 pt-1">
-          <div className="flex items-center gap-2">
-            <div className="grid min-w-0 flex-1 grid-cols-1">
-              <Input
-                aria-label={`Filter ${index + 1} path`}
-                placeholder="body.action"
-                value={filter.path}
-                onChange={(event) => update(index, { path: event.target.value })}
-              />
-            </div>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`Remove filter ${index + 1}`}
-              onClick={() => onChange(removeWebhookFilterDraft(filters, filter.id))}
-            >
-              <Trash2Icon />
-            </Button>
-          </div>
-          <div className="flex items-center gap-2">
-            <Select
-              value={filter.op}
-              onValueChange={(op) => {
-                const known = WEBHOOK_FILTER_OPS.find((option) => option.op === op);
-                if (known) update(index, { op: known.op });
-              }}
-            >
-              <div className="grid w-44 shrink-0 grid-cols-1">
-                <SelectTrigger size="sm" aria-label={`Filter ${index + 1} test`}>
-                  <SelectValue>
-                    {WEBHOOK_FILTER_OPS.find((option) => option.op === filter.op)?.label}
-                  </SelectValue>
-                </SelectTrigger>
-              </div>
-              <SelectPopup>
-                {WEBHOOK_FILTER_OPS.map((option) => (
-                  <SelectItem key={option.op} value={option.op}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-            {filter.op === "exists" ? null : (
-              <div className="grid min-w-0 flex-1 grid-cols-1">
-                <Input
-                  aria-label={`Filter ${index + 1} value`}
-                  placeholder={filter.op === "in" ? "opened, reopened" : "opened"}
-                  value={filter.value}
-                  onChange={(event) => update(index, { value: event.target.value })}
-                />
-              </div>
-            )}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  htmlFor,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  htmlFor?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <Label className="flex items-baseline justify-between" htmlFor={htmlFor}>
-        <span>{label}</span>
-        {hint ? (
-          <span className="font-normal text-2xs text-muted-foreground/80">{hint}</span>
-        ) : null}
-      </Label>
-      {children}
-    </div>
-  );
-}
 
 function splitModelKey(value: string): ModelSelection | null {
   const index = value.indexOf(":");
@@ -381,6 +279,9 @@ export function ScheduledTasksSettings(target: {
   const [editor, setEditor] = useState<{
     environmentId: EnvironmentId;
     task: ScheduledTask | null;
+    /** Fields a template fills in on a new task. */
+    prefill?: Partial<DraftState>;
+    key?: number;
   } | null>(null);
   const openForEdit = (environmentId: EnvironmentId, task: ScheduledTask) => {
     setEditor({ environmentId, task });
@@ -490,11 +391,22 @@ export function ScheduledTasksSettings(target: {
           </div>
         )}
       </SettingsSection>
+      {scope.kind === "unavailable" ? null : (
+        <TriggerTemplatesSection
+          canCreateTask={(environmentId) =>
+            permittedEnvironments.some((entry) => entry.environmentId === environmentId)
+          }
+          onUse={(environmentId, prefill) =>
+            setEditor({ environmentId, task: null, prefill, key: Date.now() })
+          }
+        />
+      )}
       {editor ? (
         <ScheduledTaskEditorDialog
-          key={`${editor.environmentId}:${editor.task?.id ?? "new"}`}
+          key={`${editor.environmentId}:${editor.task?.id ?? "new"}:${editor.key ?? 0}`}
           initialEnvironmentId={editor.environmentId}
           task={editor.task}
+          prefill={editor.prefill}
           onClose={closeEditor}
         />
       ) : null}
@@ -746,6 +658,8 @@ function ScheduledTaskRow({
   const [busy, setBusy] = useState(false);
   const [deliveriesOpen, setDeliveriesOpen] = useState(false);
   const isWebhook = task.schedule.type === "webhook";
+  // Event tasks need an event to fill their prompt, as webhook tasks need a request.
+  const runsOnEvent = isWebhook || isTriggerFilterSource(task.schedule.type);
   const toggle = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
     label: "scheduled task enabled",
   });
@@ -787,8 +701,10 @@ function ScheduledTaskRow({
               task.blockedByPolicy
             ) : !task.enabled ? (
               "Paused"
-            ) : isWebhook ? (
+            ) : runsOnEvent ? (
               "Listening"
+            ) : task.schedule.type === "manual" ? (
+              "Runs when started"
             ) : task.nextRunAt ? (
               <>
                 Next run <ScheduledRelativeLabel value={task.nextRunAt} />
@@ -837,7 +753,7 @@ function ScheduledTaskRow({
                   <InboxIcon />
                   Deliveries
                 </MenuItem>
-              ) : (
+              ) : runsOnEvent ? null : (
                 <MenuItem onClick={() => void act("run")}>
                   <PlayIcon />
                   Run now
@@ -1152,10 +1068,12 @@ function WebhookDeliveryMode({ environmentId }: { readonly environmentId: Enviro
 function ScheduledTaskEditorDialog({
   initialEnvironmentId,
   task,
+  prefill,
   onClose,
 }: {
   readonly initialEnvironmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
+  readonly prefill?: Partial<DraftState> | undefined;
   readonly onClose: () => void;
 }) {
   const [saving, setSaving] = useState(false);
@@ -1171,6 +1089,7 @@ function ScheduledTaskEditorDialog({
         <ScheduledTaskEditorForm
           initialEnvironmentId={initialEnvironmentId}
           task={task}
+          prefill={prefill}
           saving={saving}
           onSavingChange={setSaving}
           onClose={onClose}
@@ -1342,12 +1261,14 @@ function ScheduledTaskDestination({
 function ScheduledTaskEditorForm({
   initialEnvironmentId,
   task,
+  prefill,
   saving,
   onSavingChange: setSaving,
   onClose,
 }: {
   readonly initialEnvironmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
+  readonly prefill?: Partial<DraftState> | undefined;
   readonly saving: boolean;
   readonly onSavingChange: (saving: boolean) => void;
   readonly onClose: () => void;
@@ -1388,6 +1309,7 @@ function ScheduledTaskEditorForm({
       : {
           ...EMPTY_DRAFT,
           projectId: defaultScheduledTaskProjectId(scopedProjects, scope),
+          ...prefill,
         },
   );
   // Pinned first. The chosen project stays listed after it is archived.
@@ -1467,6 +1389,16 @@ function ScheduledTaskEditorForm({
     if (draft.scheduleMode === "webhook" && "error" in parsedFilters) {
       reportFailure("Invalid filter", parsedFilters.error);
       return;
+    }
+    if (isTriggerFilterSource(draft.scheduleMode)) {
+      const parsedTriggerFilters = parseTriggerFilterDrafts(
+        draft.triggerFilters,
+        draft.scheduleMode,
+      );
+      if ("error" in parsedTriggerFilters) {
+        reportFailure("Invalid filter", parsedTriggerFilters.error);
+        return;
+      }
     }
     const schedule = scheduleFromDraft(draft);
     if (schedule === null) {
@@ -1555,8 +1487,8 @@ function ScheduledTaskEditorForm({
       <DialogHeader>
         <DialogTitle>{draft.editingId ? "Edit task" : "New task"}</DialogTitle>
         <DialogDescription>
-          Run a prompt automatically on an interval, at a fixed time, once at a set date, or when a
-          webhook is called.
+          Run a prompt on a schedule, when a webhook is called, when a linked Jira issue or GitLab
+          merge request changes, or on a Slack message. A manual task runs only when started.
         </DialogDescription>
       </DialogHeader>
 
@@ -1769,6 +1701,9 @@ function ScheduledTaskEditorForm({
                 setDraft((current) => ({ ...current, prompt: event.target.value }))
               }
             />
+            {isTriggerFilterSource(draft.scheduleMode) ? (
+              <TriggerPromptHint source={draft.scheduleMode} />
+            ) : null}
           </Field>
 
           <Field label="Model">
@@ -1801,17 +1736,11 @@ function ScheduledTaskEditorForm({
             {/* Wraps the toggle below the label when both don't fit, as on phones. */}
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Label>Schedule</Label>
-              <ToggleGroup
-                aria-label="Schedule type"
-                value={[draft.scheduleMode]}
-                onValueChange={(values) => {
-                  const mode = values[0] as ScheduleMode | undefined;
-                  if (
-                    mode === "fixed" ||
-                    mode === "once" ||
-                    mode === "interval" ||
-                    mode === "webhook"
-                  )
+              <Select
+                value={draft.scheduleMode}
+                onValueChange={(value) => {
+                  const mode = SCHEDULE_MODES.find((entry) => entry === value);
+                  if (mode === undefined) return;
                     setDraft((current) => {
                       const suggested =
                         mode === "once" && !current.runAt
@@ -1827,26 +1756,38 @@ function ScheduledTaskEditorForm({
                               runAt: toDateTimeLocalValue(suggested),
                               savedRunAt: suggested.toISOString(),
                             }),
-                        prompt:
-                          mode === "webhook" && !current.prompt.trim()
-                            ? DEFAULT_WEBHOOK_PROMPT
-                            : current.prompt,
+                      // Each source has its own fields, so rows from another source can't carry over.
+                      ...(mode !== current.scheduleMode && isTriggerFilterSource(mode)
+                        ? { triggerFilters: [] }
+                        : {}),
+                      prompt: promptForScheduleMode(mode, current.prompt),
                       };
                     });
                 }}
               >
-                <Toggle value="fixed">At a time</Toggle>
-                {offersOnce || draft.scheduleMode === "once" ? (
-                  <Toggle value="once">Once</Toggle>
-                ) : null}
-                <Toggle value="interval">Every interval</Toggle>
-                <Toggle
-                  value="webhook"
-                  disabled={webhookDenial !== undefined && draft.scheduleMode !== "webhook"}
+                <div className="grid w-48 grid-cols-1">
+                  <SelectTrigger size="sm" aria-label="Schedule type">
+                    <SelectValue>{SCHEDULE_MODE_LABELS[draft.scheduleMode]}</SelectValue>
+                  </SelectTrigger>
+                </div>
+                <SelectPopup>
+                  {SCHEDULE_MODES.filter(
+                    (mode) => mode !== "once" || offersOnce || draft.scheduleMode === "once",
+                  ).map((mode) => (
+                    <SelectItem
+                      key={mode}
+                      value={mode}
+                      disabled={
+                        mode === "webhook" &&
+                        webhookDenial !== undefined &&
+                        draft.scheduleMode !== "webhook"
+                      }
                 >
-                  On webhook
-                </Toggle>
-              </ToggleGroup>
+                      {SCHEDULE_MODE_LABELS[mode]}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
             </div>
 
             {webhookDenial !== undefined ? (
@@ -2031,6 +1972,23 @@ function ScheduledTaskEditorForm({
                   </div>
                 ) : null}
               </div>
+            ) : isTriggerFilterSource(draft.scheduleMode) ? (
+              <div className="space-y-4">
+                <p className="text-xs text-muted-foreground">
+                  {TRIGGER_SOURCE_DESCRIPTIONS[draft.scheduleMode]}
+                </p>
+                <TriggerFiltersField
+                  source={draft.scheduleMode}
+                  filters={draft.triggerFilters}
+                  onChange={(triggerFilters) =>
+                    setDraft((current) => ({ ...current, triggerFilters }))
+                  }
+                />
+              </div>
+            ) : draft.scheduleMode === "manual" ? (
+              <p className="text-xs text-muted-foreground">
+                Runs only when you choose Run now or an agent starts it.
+              </p>
             ) : draft.scheduleMode === "once" ? (
               <div className="flex items-center gap-2">
                 <Label htmlFor="scheduled-task-run-at">Run on</Label>

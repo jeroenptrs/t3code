@@ -15,6 +15,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
@@ -23,6 +24,7 @@ import * as Stream from "effect/Stream";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as TriggerSources from "../triggers/TriggerSources.ts";
 import * as JiraIdentities from "./JiraIdentities.ts";
 import * as JiraService from "./JiraService.ts";
 import { browseUrl } from "./issueMapping.ts";
@@ -76,6 +78,7 @@ const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const sql = yield* SqlClient.SqlClient;
   const random = yield* SecureRandom.SecureRandom;
+  const triggerSources = yield* Effect.serviceOption(TriggerSources.TriggerSources);
   const configuredSites = new Set(identities.list.map((identity) => identity.site));
 
   const failures = new Map<string, { readonly count: number; readonly retryAtMs: number }>();
@@ -232,6 +235,18 @@ const make = Effect.gen(function* () {
     );
     if (issues === null) return;
     failures.delete(site);
+    if (Option.isSome(triggerSources)) {
+      yield* triggerSources.value.observeJiraIssues(site, issues).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("Jira trigger observation failed", {
+              site,
+              cause: Cause.pretty(cause),
+            }),
+        ),
+      );
+    }
     const byKey = new Map(issues.map((issue) => [issue.key, issue]));
     const syncedAt = DateTime.formatIso(now);
     for (const row of rows) {

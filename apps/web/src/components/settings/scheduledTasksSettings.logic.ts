@@ -1,4 +1,8 @@
-import { isListedThreadLineage, isWebhookDedupeTemplate } from "@t3tools/contracts";
+import {
+  isListedThreadLineage,
+  isWebhookDedupeTemplate,
+  type TriggerFilterSourceKind,
+} from "@t3tools/contracts";
 import {
   EnvironmentId,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
@@ -17,6 +21,14 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
+  DEFAULT_TRIGGER_PROMPT,
+  parseTriggerFilterDrafts,
+  triggerFilterDrafts,
+  triggerFilterDraftsChanged,
+  type TriggerFilterDraft,
+} from "@t3tools/client-runtime/scheduled-task-trigger";
+import {
+  DEFAULT_WEBHOOK_PROMPT,
   parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
   webhookFilterDrafts,
@@ -45,7 +57,13 @@ export function scheduleLabel(
   timeZone?: string,
   runAt?: string | null,
 ): string {
-  if (schedule.type === "webhook") return "On webhook";
+  if (schedule.type === "webhook") return SCHEDULE_MODE_LABELS.webhook;
+  if (schedule.type === "manual") return SCHEDULE_MODE_LABELS.manual;
+  if (schedule.type === "jira" || schedule.type === "gitlab" || schedule.type === "slack") {
+    const count = schedule.filters?.length ?? 0;
+    const label = SCHEDULE_MODE_LABELS[schedule.type];
+    return count === 0 ? label : `${label} · ${count} filter${count === 1 ? "" : "s"}`;
+  }
   if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
@@ -89,7 +107,43 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
   };
 }
 
-export type ScheduleMode = "fixed" | "once" | "interval" | "webhook";
+export type ScheduleMode =
+  | "fixed"
+  | "once"
+  | "interval"
+  | "webhook"
+  | "jira"
+  | "gitlab"
+  | "slack"
+  | "manual";
+
+export const SCHEDULE_MODE_LABELS: Record<ScheduleMode, string> = {
+  fixed: "At a time",
+  once: "Once",
+  interval: "Every interval",
+  webhook: "On webhook",
+  jira: "On Jira change",
+  gitlab: "On GitLab change",
+  slack: "On Slack message",
+  manual: "Manual",
+};
+
+export function isTriggerFilterSource(mode: string): mode is TriggerFilterSourceKind {
+  return mode === "jira" || mode === "gitlab" || mode === "slack";
+}
+
+const DEFAULT_PROMPTS = new Set<string>([
+  DEFAULT_WEBHOOK_PROMPT,
+  ...Object.values(DEFAULT_TRIGGER_PROMPT),
+]);
+
+/** A blank prompt, or one still at another mode's default, takes the new mode's default. */
+export function promptForScheduleMode(mode: ScheduleMode, prompt: string): string {
+  if (prompt.trim() !== "" && !DEFAULT_PROMPTS.has(prompt)) return prompt;
+  if (mode === "webhook") return DEFAULT_WEBHOOK_PROMPT;
+  if (isTriggerFilterSource(mode)) return DEFAULT_TRIGGER_PROMPT[mode];
+  return "";
+}
 
 /** The zone new fixed-time schedules start in: wherever the person editing is. */
 export const localTimeZone = () => new Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -135,6 +189,9 @@ export interface DraftState {
   readonly filters: ReadonlyArray<WebhookFilterDraft>;
   /** The filter rows the form opened with. */
   readonly savedFilters: ReadonlyArray<WebhookFilterDraft>;
+  /** Event filters for the Jira, GitLab, and Slack modes; paths are fields of that source. */
+  readonly triggerFilters: ReadonlyArray<TriggerFilterDraft>;
+  readonly savedTriggerFilters: ReadonlyArray<TriggerFilterDraft>;
 }
 
 export const WEBHOOK_SIGNATURE_DEFAULTS = {
@@ -264,6 +321,17 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
         : {}),
     };
   }
+  if (isTriggerFilterSource(draft.scheduleMode)) {
+    const parsed = parseTriggerFilterDrafts(draft.triggerFilters, draft.scheduleMode);
+    if (!("filters" in parsed)) return null;
+    return {
+      type: draft.scheduleMode,
+      ...(triggerFilterDraftsChanged(draft.savedTriggerFilters, draft.triggerFilters)
+        ? { filters: parsed.filters }
+        : {}),
+    };
+  }
+  if (draft.scheduleMode === "manual") return { type: "manual" };
   if (draft.scheduleMode === "interval") {
     const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
     return { type: "interval", everyMs };
@@ -280,6 +348,11 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
 export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
   const filters = webhookFilterDrafts(schedule.type === "webhook" ? schedule.filters : undefined);
+  const triggerFilters = triggerFilterDrafts(
+    schedule.type === "jira" || schedule.type === "gitlab" || schedule.type === "slack"
+      ? schedule.filters
+      : undefined,
+  );
   const weekdays =
     schedule.type === "fixed_time" && schedule.weekdays && schedule.weekdays.length > 0
       ? new Set(schedule.weekdays)
@@ -336,6 +409,8 @@ export function taskToDraft(task: ScheduledTask): DraftState {
         : "",
     filters,
     savedFilters: filters,
+    triggerFilters,
+    savedTriggerFilters: triggerFilters,
   };
 }
 

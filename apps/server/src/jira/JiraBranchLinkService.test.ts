@@ -25,6 +25,7 @@ const toSummary = (key: string): JiraIssueSummary => ({
   site: SITE,
   key,
   url: `https://${SITE}/browse/${key}`,
+  labels: [],
   summary: key,
   status: "To Do",
   statusCategory: "todo",

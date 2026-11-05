@@ -1,6 +1,7 @@
 import { isWebhookDedupeTemplate, scheduledTaskThreadMode } from "@t3tools/contracts";
 import type {
   ModelSelection,
+  TriggerFilterSourceKind,
   ServerConfig,
   ProjectId,
   RuntimeMode,
@@ -13,12 +14,20 @@ import type {
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import {
+  DEFAULT_WEBHOOK_PROMPT,
   parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
   webhookFilterDrafts,
   webhookFilterDraftsChanged,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
+import {
+  DEFAULT_TRIGGER_PROMPT,
+  parseTriggerFilterDrafts,
+  triggerFilterDrafts,
+  triggerFilterDraftsChanged,
+  type TriggerFilterDraft,
+} from "@t3tools/client-runtime/scheduled-task-trigger";
 import {
   resolveProjectSettings,
   type LegacyProjectSettingsFields,
@@ -52,8 +61,20 @@ export function scheduledTaskDefaultModel(
   });
 }
 
+const TRIGGER_FILTER_MODES: ReadonlySet<string> = new Set(["jira", "gitlab", "slack"]);
+
+export function isTriggerFilterMode(mode: string): mode is TriggerFilterSourceKind {
+  return TRIGGER_FILTER_MODES.has(mode);
+}
+
 export type ScheduleDraft = {
-  readonly mode: "fixed_time" | "once" | "interval" | "webhook";
+  readonly mode:
+    | "fixed_time"
+    | "once"
+    | "interval"
+    | "webhook"
+    | TriggerFilterSourceKind
+    | "manual";
   readonly timeOfDay: string;
   /** ISO time for a one-time run. Empty until the user picks the "Once" mode. */
   readonly runAt: string;
@@ -69,6 +90,9 @@ export type ScheduleDraft = {
   readonly filters: ReadonlyArray<WebhookFilterDraft>;
   /** The filter rows the form opened with. */
   readonly savedFilters: ReadonlyArray<WebhookFilterDraft>;
+  /** `event.` filter rows for the Jira, GitLab, and Slack modes. */
+  readonly triggerFilters: ReadonlyArray<TriggerFilterDraft>;
+  readonly savedTriggerFilters: ReadonlyArray<TriggerFilterDraft>;
 };
 
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
@@ -86,6 +110,8 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   coalesceWindowSeconds: "",
   filters: [],
   savedFilters: [],
+  triggerFilters: [],
+  savedTriggerFilters: [],
 };
 
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
@@ -125,6 +151,17 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
         filters: webhookFilterDrafts(task.schedule.filters),
         savedFilters: webhookFilterDrafts(task.schedule.filters),
       };
+    case "jira":
+    case "gitlab":
+    case "slack":
+      return {
+        ...DEFAULT_SCHEDULE,
+        mode: task.schedule.type,
+        triggerFilters: triggerFilterDrafts(task.schedule.filters),
+        savedTriggerFilters: triggerFilterDrafts(task.schedule.filters),
+      };
+    case "manual":
+      return { ...DEFAULT_SCHEDULE, mode: "manual" };
   }
 }
 
@@ -133,6 +170,18 @@ export function parseIntervalMinutes(value: string): number {
 }
 
 export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
+  if (draft.mode === "manual") return { type: "manual" };
+  if (isTriggerFilterMode(draft.mode)) {
+    const parsed = parseTriggerFilterDrafts(draft.triggerFilters, draft.mode);
+    if (!("filters" in parsed)) return null;
+    return {
+      type: draft.mode,
+      // Like webhooks: unedited filters are left out so the server keeps the stored ones.
+      ...(triggerFilterDraftsChanged(draft.savedTriggerFilters, draft.triggerFilters)
+        ? { filters: parsed.filters }
+        : {}),
+    };
+  }
   if (draft.mode === "webhook") {
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
     if (maxDeliveryAgeMinutes === undefined) return null;
@@ -245,6 +294,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.schedule.coalesceWindowSeconds,
     draft.schedule.filters.map(({ path, op, value }) => [path, op, value]),
     draft.threadMode,
+    draft.schedule.triggerFilters.map(({ path, op, value }) => [path, op, value]),
     draft.workspace,
     draft.baseRef,
     draft.checkoutPath,
@@ -252,6 +302,41 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.startFromOrigin,
     draft.runtimeMode,
   ]);
+}
+
+const DEFAULT_PROMPTS: ReadonlySet<string> = new Set([
+  DEFAULT_WEBHOOK_PROMPT,
+  ...Object.values(DEFAULT_TRIGGER_PROMPT),
+]);
+
+export function switchScheduleMode(
+  draft: ScheduledTaskDraft,
+  mode: ScheduleDraft["mode"],
+  now: number,
+): ScheduledTaskDraft {
+  // Filter rows belong to one source, so switching sources starts over, or back at the saved rows.
+  const triggerFilters =
+    isTriggerFilterMode(mode) && draft.task?.schedule.type === mode
+      ? scheduleDraftForTask(draft.task).triggerFilters
+      : [];
+  return {
+    ...draft,
+    prompt:
+      mode === "webhook" && !draft.prompt.trim()
+        ? DEFAULT_WEBHOOK_PROMPT
+        : isTriggerFilterMode(mode) && !draft.task && DEFAULT_PROMPTS.has(draft.prompt.trim())
+          ? DEFAULT_TRIGGER_PROMPT[mode]
+          : draft.prompt,
+    schedule: {
+      ...draft.schedule,
+      mode,
+      runAt:
+        mode === "once" && !draft.schedule.runAt
+          ? new Date(Math.ceil(now / 3_600_000) * 3_600_000).toISOString()
+          : draft.schedule.runAt,
+      ...(isTriggerFilterMode(mode) ? { triggerFilters, savedTriggerFilters: triggerFilters } : {}),
+    },
+  };
 }
 
 export function hasScheduledTaskDraftChanges(

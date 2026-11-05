@@ -130,6 +130,8 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as TriggerTemplates from "./triggers/TriggerTemplateService.ts";
+import * as TriggerService from "./triggers/TriggerService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import {
@@ -1531,6 +1533,8 @@ export const layerWsRpc = (
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const triggerTemplates = yield* TriggerTemplates.TriggerTemplateService;
+      const triggers = yield* TriggerService.TriggerService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
@@ -2399,6 +2403,10 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.getWebhookDelivery(input)),
           ),
+        [WS_METHODS.triggerTemplatesList]: (input) => triggerTemplates.list(input),
+        [WS_METHODS.triggerTemplatesSave]: (input) => triggerTemplates.save(input),
+        [WS_METHODS.triggerTemplatesDelete]: (input) => triggerTemplates.delete(input),
+        [WS_METHODS.triggersRaise]: (input) => triggers.raise(input.event),
         [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
         [WS_METHODS.serverGetConfig]: (_input) =>
           loadServerConfig({
@@ -3790,6 +3798,7 @@ export const layer = Layer.unwrap(
     const home = yield* HomeService.HomeService;
     const fleet = yield* FleetService.FleetService;
     const fleetBroker = yield* FleetBroker.FleetBroker;
+    const triggerTemplates = yield* TriggerTemplates.TriggerTemplateService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3910,6 +3919,10 @@ export const layer = Layer.unwrap(
               Layer.provide(
                 Layer.succeed(JiraBreakdownService.JiraBreakdownService, jiraBreakdowns),
               ),
+                // Reads and writes one project's `.t3/triggers/` files, shared across clients.
+                Layer.provide(
+                  Layer.succeed(TriggerTemplates.TriggerTemplateService, triggerTemplates),
+                ),
                 // Shared with the ingestion worker, so a reset cursor drops its walk in progress.
                 Layer.provide(Layer.succeed(InsightsService.InsightsService, insights)),
                 Layer.provide(Layer.succeed(FactoryService.FactoryService, factories)),
