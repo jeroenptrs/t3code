@@ -9,7 +9,6 @@ import {
   AuthFactoriesManageScope,
   AuthInsightsReadScope,
   AuthInsightsWriteScope,
-  AuthFactoriesWriteScope,
   AuthOrchestrationReadScope,
   AuthRelayWriteScope,
   AuthStandardClientScopes,
