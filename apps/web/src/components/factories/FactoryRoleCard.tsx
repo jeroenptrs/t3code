@@ -3,6 +3,7 @@ import type {
   FactoryIsolation,
   FactoryIssue,
   FactoryRole,
+  FactorySkill,
   ModelSelection,
   ProviderInteractionMode,
   ProviderInstanceId,
@@ -56,6 +57,23 @@ function modelLabel(model: ModelSelection | null, entries: ReadonlyArray<Provide
   const entry = entries.find((candidate) => candidate.instanceId === model.instanceId);
   const name = entry?.models.find((candidate) => candidate.slug === model.model)?.name;
   return `${entry?.displayName ?? model.instanceId} · ${name ?? model.model}`;
+}
+
+/** Each skill the role binds that exists, with where it comes from. */
+function SkillList(props: { readonly skills: ReadonlyArray<FactorySkill> }) {
+  if (props.skills.length === 0) return null;
+  return (
+    <ul className="flex flex-wrap gap-x-3 gap-y-1.5">
+      {props.skills.map((skill) => (
+        <li key={skill.name} className="flex items-center gap-1.5 text-sm">
+          {skill.name}
+          <Badge variant="outline">
+            {skill.source === "file" ? `skills/${skill.name}` : "Built-in"}
+          </Badge>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function BindingField(props: {
@@ -263,9 +281,10 @@ function FactoryRoleFields(props: Parameters<typeof FactoryRoleCard>[0] & { read
               placeholder={effective.skills.join(", ") || "None"}
               onChange={(event) => props.onChange({ ...draft, skills: event.target.value })}
             />
-          ) : (
-            <span className="text-sm">{effective.skills.join(", ") || "None"}</span>
-          )}
+          ) : role.skills.length === 0 ? (
+            <span className="text-sm">None</span>
+          ) : null}
+          <SkillList skills={role.skills} />
         </BindingField>
         <BindingField label="Tools" htmlFor={`${id}-tools`} issues={fieldIssues("tools")}>
           {editable ? (
