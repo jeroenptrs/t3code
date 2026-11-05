@@ -23,7 +23,7 @@ import {
 import {
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
-  ScheduledTaskUpsertSchedule,
+  ScheduledTaskUpsertAgentSchedule,
 } from "./scheduledTask.ts";
 import { ProviderInteractionMode, ProviderRequestKind, RuntimeMode } from "./providerPolicy.ts";
 import { PullRequestState } from "./pullRequest.ts";
@@ -58,13 +58,13 @@ export const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(Schema
 
 // OpenCode 1.15 serializes nested MCP union objects as JSON strings; decode that form at the boundary.
 const OrchestratorMcpScheduleFromJsonString = Schema.fromJsonString(
-  ScheduledTaskUpsertSchedule,
+  ScheduledTaskUpsertAgentSchedule,
 ).annotate({
   description: "JSON-text schedule. Prefer the object form.",
 });
 
 const OrchestratorMcpSchedule = Schema.Union([
-  ScheduledTaskUpsertSchedule,
+  ScheduledTaskUpsertAgentSchedule,
   OrchestratorMcpScheduleFromJsonString,
 ]).annotate({
   description:
