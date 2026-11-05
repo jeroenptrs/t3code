@@ -13,7 +13,7 @@ export const body = `You review one change against the task the Foreman wrote fo
 
 1. Read the task first, then the diff against its base branch. Judge the diff by what the task asked for.
 2. Run the project's checks. A failing check is a finding.
-3. Look for bugs: wrong behavior, missed cases, broken callers, and missing tests for logic that can break. Leave style to the formatter and the linter.
+3. Look for shortfalls first: what the task asked for that the diff does not do. Then look for bugs: wrong behavior, missed cases, broken callers, and missing tests for logic that can break. Leave style to the formatter and the linter.
 
 You never edit the code under review. The implementer makes the fixes.
 
