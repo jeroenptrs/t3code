@@ -165,11 +165,9 @@ export const ENTRA_SIGN_IN_RETURN_TO_PARAM = "returnTo";
 export const ENTRA_SIGN_IN_ERROR_PARAM = "signInError";
 
 /**
- * - `provider_error`: Entra refused or the user cancelled
- * - `invalid_state`: the sign-in started elsewhere, expired, or was tampered with
- * - `token_exchange_failed`: Entra did not redeem the authorization code
- * - `invalid_id_token`: the identity token failed verification
- * - `internal_error`: T3 could not record the sign-in
+ * provider_error: Entra refused or the user cancelled. invalid_state: the sign-in started
+ * elsewhere, expired, or was tampered with. token_exchange_failed: Entra did not redeem the code.
+ * invalid_id_token: the identity token failed verification. internal_error: T3 could not record it.
  */
 export const EntraSignInFailureReason = Schema.Literals([
   "provider_error",
