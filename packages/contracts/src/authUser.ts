@@ -6,6 +6,7 @@ import {
   AuthAccessWriteScope,
   AuthEnvironmentScope,
   AuthEnvironmentScopes,
+  AuthFactoriesManageScope,
   AuthInsightsReadScope,
   AuthInsightsWriteScope,
   AuthOrchestrationReadScope,
@@ -107,13 +108,14 @@ const managementScopes = new Set<AuthEnvironmentScope>([
   AuthRelayWriteScope,
   AuthInsightsReadScope,
   AuthInsightsWriteScope,
+  AuthFactoriesManageScope,
 ]);
 
 /**
  * Reader sees portal data and nothing else. Operator gets what an ordinary
- * paired client gets minus access and relay management and Insights, which still includes
- * agent execution, terminals and filesystem access. Administrator gets the
- * full paired-client grant.
+ * paired client gets minus access and relay management, Insights, and managing
+ * factories, which still includes agent execution, terminals and filesystem
+ * access. Administrator gets the full paired-client grant.
  */
 export const AuthUserRoleScopes = {
   reader: [AuthOrchestrationReadScope],
