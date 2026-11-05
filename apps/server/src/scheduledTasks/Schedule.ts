@@ -10,11 +10,20 @@ function parseTimeOfDay(value: string): { hour: number; minute: number } | null 
   return { hour: Number(match[1]), minute: Number(match[2]) };
 }
 
+type ClockSchedule = Extract<ScheduledTaskSchedule, { type: "interval" | "fixed_time" | "once" }>;
+
+/** Webhook and event sources run when something raises them, never on the clock. */
+const isClockSchedule = (schedule: ScheduledTaskSchedule): schedule is ClockSchedule =>
+  schedule.type === "interval" || schedule.type === "fixed_time" || schedule.type === "once";
+
+const filtersKey = (schedule: ScheduledTaskSchedule) =>
+  JSON.stringify("filters" in schedule ? (schedule.filters ?? []) : []);
+
 export function nextScheduledRunAt(
   schedule: ScheduledTaskSchedule,
   from: DateTime.DateTime,
 ): DateTime.DateTime | null {
-  if (schedule.type === "webhook") return null;
+  if (!isClockSchedule(schedule)) return null;
   if (schedule.type === "once") {
     const runAt = DateTime.make(schedule.runAt);
     return Option.isSome(runAt) &&
@@ -62,6 +71,7 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
     return b.type === "interval" && a.everyMs === b.everyMs;
   }
   if (a.type === "webhook") return b.type === "webhook";
+  if (!isClockSchedule(a)) return a.type === b.type && filtersKey(a) === filtersKey(b);
   if (a.type === "once") return b.type === "once" && Date.parse(a.runAt) === Date.parse(b.runAt);
   if (b.type !== "fixed_time") return false;
   // Compare parsed times so padded-hour edits do not reschedule pending runs.

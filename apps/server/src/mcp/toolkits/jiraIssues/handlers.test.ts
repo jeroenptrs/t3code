@@ -62,6 +62,7 @@ const issue = (key: string, summary: string): JiraIssueSummary => ({
   site: SITE,
   key,
   url: `https://${SITE}/browse/${key}`,
+  labels: [],
   summary,
   status: "In Progress",
   statusCategory: "in-progress",

@@ -257,6 +257,7 @@ const issueSummary = (
   site: JIRA_SITE,
   key,
   url: `https://${JIRA_SITE}/browse/${key}`,
+  labels: [],
   summary: `Issue ${key}`,
   status: "In Progress",
   statusCategory: "in-progress",
