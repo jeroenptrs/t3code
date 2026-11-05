@@ -98,7 +98,7 @@ export const FactoryDefinition = Schema.Struct({
   /** T3 project names the factory may work in. The owning project is implied. */
   projects: Schema.Array(TrimmedNonEmptyString),
   triggers: Schema.Array(FactoryTrigger),
-  /** The file for each role that has one. A role left out uses its built-in default. */
+  /** The file for each role that has one. A role left out uses `roles/<role>.md` if it exists. */
   roles: Schema.Struct({
     foreman: Schema.optionalKey(FactoryRolePath),
     implement: Schema.optionalKey(FactoryRolePath),
