@@ -48,13 +48,14 @@ import {
   AuthSourceControlWriteScope,
   AuthFilesystemReadScope,
   type DesktopWslState,
-  type EnvironmentId,
+  EnvironmentId,
+  FactoryId,
   type FilesystemBrowseResult,
   SourceControlProviderKind,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   BugIcon,
@@ -282,8 +283,9 @@ import { useBreakDownJiraIssue } from "./jira/useBreakDownJiraIssue";
 import { JiraIcon } from "./Icons";
 import { useJiraIssueLinking } from "../hooks/useJiraIssueLinking";
 import { useCanReadInsights } from "../state/insights";
-import { useFactoryEnvironments } from "../state/factories";
+import { factoriesEnvironment, useFactoryEnvironments } from "../state/factories";
 import { showsFactoriesTab } from "./factories/factories.logic";
+import { openNewWorkItemDialog } from "./factories/NewWorkItemDialog";
 import { openFactoriesTab } from "./factories/useSidebarFactories";
 import { jiraEnvironment, useJiraCapabilities, useJiraEnvironmentId } from "../state/jira";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
@@ -549,6 +551,18 @@ function OpenCommandPaletteDialog(props: {
   // Fork-only. Administrators only, like the sidebar entry.
   const canReadInsights = useCanReadInsights();
   const factoryEnvironments = useFactoryEnvironments();
+  const routeParams = useParams({ strict: false });
+  // Only the factory page has a factoryId param.
+  const factoryPage =
+    routeParams.factoryId !== undefined && routeParams.environmentId !== undefined
+      ? {
+          environmentId: EnvironmentId.make(routeParams.environmentId),
+          factoryId: FactoryId.make(routeParams.factoryId),
+        }
+      : null;
+  const canCreateWorkItem = useAtomValue(
+    factoriesEnvironment.createWorkItem.permissionAtom(factoryPage?.environmentId ?? null),
+  );
   // The Jira pages open issues in their own panel and read through the workspace environment;
   // elsewhere an issue is open beside the active thread, in its environment.
   const onJiraPage = pathname === "/issues" || pathname === "/sprint-planning";
@@ -1917,6 +1931,17 @@ function OpenCommandPaletteDialog(props: {
       run: async () => {
         await navigate({ to: "/insights" });
       },
+    });
+  }
+
+  if (factoryPage !== null && canCreateWorkItem) {
+    actionItems.push({
+      kind: "action",
+      value: "action:new-work-item",
+      searchTerms: ["new", "work item", "request", "factory", "foreman"],
+      title: "New work item…",
+      icon: <FactoryIcon className={ITEM_ICON_CLASS} />,
+      run: async () => openNewWorkItemDialog(factoryPage.environmentId, factoryPage.factoryId),
     });
   }
 
