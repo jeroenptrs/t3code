@@ -49,8 +49,23 @@ Edit any of these and click **Save**. A role you change gets its own file at
 role's file when you save, so the role goes back to the built-in settings and instructions. A
 blank **Instructions** box also keeps the built-in instructions.
 
-If the server refuses a save, such as for a model the provider does not offer, the reason appears
-beside the field and nothing is written.
+If the server refuses a save, such as for a model the provider does not offer or a skill that does
+not exist, the reason appears beside the field and nothing is written.
+
+## Give a role skills
+
+A skill is a folder of instructions an agent loads when its task calls for them. The implement and
+review roles start with the built-in `implement` and `review` skills, which hold the checks that
+must pass before a change goes to review and the review checklist.
+
+To add your own skill, create `.t3/factories/<name>/skills/<skill>/SKILL.md` in the project, with
+`name` and `description` frontmatter, then add the skill's name to a role's **Skills**. A folder
+with the name of a built-in skill replaces that skill.
+
+When a role's agent starts, T3 Code copies its skills into the folder the agent works in, under
+`.agents/skills`, `.claude/skills`, and `.codex/skills`, where each provider looks, and hides them
+from git there. A skill you take off a role stays in a worktree that already has it until the
+worktree is removed.
 
 ## Send work to a factory
 
