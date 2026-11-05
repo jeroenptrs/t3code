@@ -23,7 +23,7 @@ import {
   SourceControlRepositoryError,
   type OrchestrationV2Command,
   WS_METHODS,
-  WsRpcGroup,
+  WsCoreRpcGroup,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
   type AuthAccessStreamEvent,
@@ -32,10 +32,7 @@ import {
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationProjectShell,
-  ProjectId,
-  ProviderInstanceId,
   ScheduledTaskListResult,
-  ThreadId,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerProvider,
@@ -119,6 +116,8 @@ import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolve
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as TriggerService from "./triggers/TriggerService.ts";
+import * as TriggerTemplates from "./triggers/TriggerTemplateService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -964,6 +963,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ResourceTelemetry.ResourceTelemetry)({}),
   Layer.mock(ReviewService.ReviewService)({}),
   Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
+  Layer.mock(TriggerService.TriggerService)({}),
+  Layer.mock(TriggerTemplates.TriggerTemplateService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(SecretResolver.SecretResolver)({}),
   Layer.mock(GuestShareService.GuestShareService)({}),
@@ -1279,7 +1280,7 @@ it.effect("access changes made while the snapshot loads reach the client after i
       );
     const revokedElsewhere = AuthSessionId.make("revoked-elsewhere");
     const responses = yield* Queue.unbounded<AuthAccessStreamEvent>();
-    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+    const server = yield* RpcServer.makeNoSerialization(WsCoreRpcGroup, {
       ...WS_RPC_SERVER_OPTIONS,
       onFromServer: (response) =>
         response._tag === "Chunk"
@@ -1319,6 +1320,9 @@ it.effect("access changes made while the snapshot loads reach the client after i
               }),
               Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
               Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+              Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+              Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+              Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
               Layer.mock(EnvironmentAuth.EnvironmentAuth)({
                 listPairingLinks: () => Effect.succeed([]),
                 listConnectDevices: () => Effect.succeed([]),
@@ -1859,6 +1863,9 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
       Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+      Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+      Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
     );
     const server = yield* RpcServer.makeNoSerialization(
       RpcGroup.make(WsServerRefreshProvidersRpc),
@@ -1945,8 +1952,11 @@ it.effect("a git action that fails partway still refreshes the repository status
       Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+      Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+      Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
     );
-    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+    const server = yield* RpcServer.makeNoSerialization(WsCoreRpcGroup, {
       ...WS_RPC_SERVER_OPTIONS,
       onFromServer: (response) =>
         response._tag === "Exit" ? Queue.offer(exits, response.exit) : Effect.void,
@@ -2025,8 +2035,12 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
       Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+      Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+      Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
     );
-    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+    // The fork's Jira, Insights, and factory groups are served by their own layers.
+    const server = yield* RpcServer.makeNoSerialization(WsCoreRpcGroup, {
       ...WS_RPC_SERVER_OPTIONS,
       onFromServer: (response) =>
         response._tag === "Exit" ? Queue.offer(exits, response.exit._tag) : Effect.void,
@@ -2361,12 +2375,12 @@ const acpSessionTags = [
   WS_METHODS.serverListAcpRegistrySessions,
   WS_METHODS.serverImportAcpRegistrySession,
 ] as const;
-const acpSessionRpcs = WsRpcGroup.omit(
-  ...[...WsRpcGroup.requests.keys()].filter(
+const acpSessionRpcs = WsCoreRpcGroup.omit(
+  ...[...WsCoreRpcGroup.requests.keys()].filter(
     (
       tag,
     ): tag is Exclude<
-      keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
+      RpcGroup.Rpcs<typeof WsCoreRpcGroup>["_tag"],
       (typeof acpSessionTags)[number]
     > => !(acpSessionTags as ReadonlyArray<string>).includes(tag),
   ),
@@ -2520,6 +2534,9 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
         importNativeHistory: ({ threadId }) =>
           Effect.sync(() => repaired.push(threadId)).pipe(Effect.as(1)),
       }),
+      Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+      Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+      Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
     );
     const services = AcpRegistrySessions.layer.pipe(Layer.provideMerge(dependencies));
     const client = yield* RpcTest.makeClient(acpSessionRpcs).pipe(
