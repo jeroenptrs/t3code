@@ -1285,6 +1285,90 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("attaches a delegated task to the run that continued its completed parent run", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const parentThreadId = ThreadId.make("thread:continued-parent");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-continued-parent"),
+      threadId: parentThreadId,
+      projectId: ProjectId.make("project:continued-parent"),
+      title: "Parent woken by background work",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-continued-parent"),
+      threadId: parentThreadId,
+      messageId: MessageId.make("message:continued-parent"),
+      text: "Start the background build",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const endedRun = (yield* projections.getThreadRecords(parentThreadId, ["runs"])).runs[0]!;
+    const now = yield* DateTime.now;
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("event:continued-parent-completed"),
+          type: "run.updated",
+          threadId: parentThreadId,
+          runId: endedRun.id,
+          occurredAt: now,
+          payload: { ...endedRun, status: "completed", completedAt: now },
+        },
+      ],
+    });
+    // The woken agent's call was checked while the ended run still looked active.
+    const delegate = (commandId: string) =>
+      orchestrator.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make(commandId),
+        parentThreadId,
+        parentRunId: endedRun.id,
+        parentNodeId: endedRun.rootNodeId!,
+        task: "Review the build output",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+    const beforeContinuation = yield* Effect.result(delegate("delegate-before-continuation"));
+    assert.isTrue(Result.isFailure(beforeContinuation));
+
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("continue-parent"),
+      threadId: parentThreadId,
+      messageId: MessageId.make("message:continued-parent-wake"),
+      text: "Background task completed.",
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "agent",
+      creationSource: "server",
+    });
+    const continuation = (yield* projections.getThreadRecords(parentThreadId, ["runs"])).runs.find(
+      (run) => run.id !== endedRun.id,
+    )!;
+    yield* delegate("delegate-after-continuation");
+    const task = (yield* projections.getThreadProjection(parentThreadId)).subagents[0]!;
+    assert.equal(task.runId, continuation.id);
+    assert.equal(task.parentNodeId, continuation.rootNodeId);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("wakes the parent once when its delegated task asks a question", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
