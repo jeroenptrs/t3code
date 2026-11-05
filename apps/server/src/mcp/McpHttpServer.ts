@@ -86,6 +86,8 @@ import { IssuesToolkit } from "./toolkits/issues/tools.ts";
 import * as DiffWalkthroughHandlers from "./toolkits/diffWalkthrough/handlers.ts";
 import * as JiraIssuesHandlers from "./toolkits/jiraIssues/handlers.ts";
 import { JiraIssuesToolkit } from "./toolkits/jiraIssues/tools.ts";
+import * as FactoriesHandlers from "./toolkits/factories/handlers.ts";
+import { FactoriesToolkit } from "./toolkits/factories/tools.ts";
 import { DiffWalkthroughToolkit } from "./toolkits/diffWalkthrough/tools.ts";
 import * as DeviceHandlers from "./toolkits/device/handlers.ts";
 import {
@@ -1312,6 +1314,9 @@ const layerDiffWalkthroughToolkit = toolkitRegistration(
 // Fork-only: records thread ↔ Jira issue links; Jira itself is changed with jtk.
 const layerJiraIssuesToolkit = toolkitRegistration(JiraIssuesToolkit, JiraIssuesHandlers.layer);
 
+// Fork-only: software factory definitions under each project's .t3/factories.
+const layerFactoriesToolkit = toolkitRegistration(FactoriesToolkit, FactoriesHandlers.layer);
+
 const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceStandardToolkit,
   DeviceHandlers.layerStandard,
@@ -1373,6 +1378,7 @@ export const layerTools = Layer.mergeAll(
   layerIssuesToolkit,
   layerDiffWalkthroughToolkit,
   layerJiraIssuesToolkit,
+  layerFactoriesToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
   layerMessageToolkit,
