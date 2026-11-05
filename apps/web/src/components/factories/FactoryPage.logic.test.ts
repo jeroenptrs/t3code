@@ -29,6 +29,7 @@ const builtinRole = (role: FactoryRole["role"]): FactoryRole => ({
   },
   body: `Built-in ${role} instructions.`,
   bodySource: "builtin",
+  skills: [],
 });
 
 const factory: Factory = {
@@ -53,8 +54,10 @@ const factory: Factory = {
       binding: { ...builtinRole("review").binding, model, skills: ["review-checklist"] },
       body: "Review against the task.",
       bodySource: "file",
+      skills: [{ name: "review-checklist", source: "file" }],
     },
   ],
+  skills: [{ name: "review-checklist", source: "file" }],
   issues: [],
   scheduledTaskIds: [taskId],
   threads: [],
