@@ -6,6 +6,7 @@ import {
   ScheduledTask,
   ScheduledTaskError,
   ScheduledTaskId,
+  ScheduledTaskTriage,
   ThreadId,
   ScheduledTaskWebhookDeliveryId,
   type AuthUserId,
@@ -29,6 +30,7 @@ import {
   type TriggerEvent,
   type TriggerFilter,
   type TriggerFilterSourceKind,
+  type TriggerSourceKind,
   managedPolicyDeniedMessage,
   scheduledTaskThreadMode,
   managedRuntimeModeDenial,
@@ -87,6 +89,7 @@ import { describeFailedWebhookFilter, findFailedWebhookFilter } from "./webhookF
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
 import { withLocalTracing } from "@t3tools/shared/relayTracing";
 import { routineSpan } from "@t3tools/shared/observability";
+import { renderTriageInstructions, type TriageOrigin } from "../triggers/triageInstructions.ts";
 import { renderTriggerPrompt, triggerEventId } from "../triggers/triggerPrompt.ts";
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
@@ -234,6 +237,7 @@ const decodeTaskId = Schema.decodeUnknownOption(ScheduledTaskId);
 const decodeScheduleJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.schedule),
 );
+const decodeTriageJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ScheduledTaskTriage));
 const decodeWorkspaceStrategyJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.workspaceStrategy),
 );
@@ -287,6 +291,7 @@ interface ScheduledTaskRow {
   readonly created_by_user_id: string | null;
   readonly webhook_token_rotated_by_user_id: string | null;
   readonly webhook_token_rotated_at: string | null;
+  readonly triage_json: string | null;
   /** Resolved from auth_users by the list and get queries; absent elsewhere. */
   readonly created_by_user_name?: string | null;
   readonly webhook_token_rotated_by_user_name?: string | null;
@@ -492,6 +497,7 @@ const decodeRow = Effect.fnUntraced(
     const webhook = schedule.type === "webhook" ? webhookEndpoint(row, origin) : undefined;
     const workspaceStrategy = yield* decodeWorkspaceStrategyJson(row.workspace_strategy_json);
     const modelSelection = yield* decodeModelSelectionJson(row.model_selection_json);
+    const triage = row.triage_json === null ? null : yield* decodeTriageJson(row.triage_json);
     return yield* decodeTask({
       id: row.task_id,
       title: row.title,
@@ -515,6 +521,7 @@ const decodeRow = Effect.fnUntraced(
       lastRunError: row.last_run_error,
       runCount: row.run_count,
       ...(webhook === undefined ? {} : { webhook }),
+      ...(triage === null ? {} : { triage }),
     });
   },
   (effect, row, _origin?) =>
@@ -650,6 +657,7 @@ export const layer = Layer.effect(
         created_by_user_id,
         webhook_token_rotated_by_user_id,
         webhook_token_rotated_at,
+        triage_json,
         ${userName("created_by_user_id")} AS created_by_user_name,
         ${userName("webhook_token_rotated_by_user_id")} AS webhook_token_rotated_by_user_name
       FROM scheduled_tasks
@@ -697,6 +705,7 @@ export const layer = Layer.effect(
         created_by_user_id,
         webhook_token_rotated_by_user_id,
         webhook_token_rotated_at,
+        triage_json,
         ${userName("created_by_user_id")} AS created_by_user_name,
         ${userName("webhook_token_rotated_by_user_id")} AS webhook_token_rotated_by_user_name
       FROM scheduled_tasks
@@ -780,7 +789,8 @@ export const layer = Layer.effect(
           run_count,
           webhook_token,
           webhook_secret,
-          created_by_user_id
+          created_by_user_id,
+          triage_json
         )
         SELECT
           ${task.id},
@@ -806,7 +816,8 @@ export const layer = Layer.effect(
           ${task.runCount},
           ${webhook.token},
           ${webhook.secret},
-          ${createdByUserId}
+          ${createdByUserId},
+          ${task.triage === undefined ? null : JSON.stringify(task.triage)}
         WHERE ${requireExisting ? 0 : 1} = 1
            OR EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${task.id})
         ON CONFLICT (task_id)
@@ -829,6 +840,7 @@ export const layer = Layer.effect(
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
           creation_source = excluded.creation_source,
+          triage_json = excluded.triage_json,
           updated_at = excluded.updated_at,
           -- Keep a next_run_at that a finishing run moved during this save, unless
           -- another edit changed the schedule or enabled state meanwhile.
@@ -1088,7 +1100,12 @@ export const layer = Layer.effect(
         readonly prompt: string;
         readonly dispatched: Ref.Ref<boolean>;
       },
-      event?: { readonly eventId: string; readonly prompt: string },
+      event?: {
+        readonly eventId: string;
+        readonly prompt: string;
+        readonly source: TriggerSourceKind;
+        readonly type: string;
+      },
     ) {
       // Read before reserving: nothing between the reservation and its release may fail.
       const startedAt = yield* localNow;
@@ -1199,7 +1216,21 @@ export const layer = Layer.effect(
               : `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`;
         const commandId = CommandId.make(`scheduled-task:${fireKey}`);
         const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
-        const prompt = webhook?.prompt ?? event?.prompt ?? active.prompt;
+        const basePrompt = webhook?.prompt ?? event?.prompt ?? active.prompt;
+        const triageOrigin: TriageOrigin =
+          event !== undefined
+            ? { kind: "event", source: event.source, type: event.type }
+            : webhook !== undefined
+              ? { kind: "webhook" }
+              : { kind: trigger === "scheduled" ? "schedule" : "manual" };
+        const prompt =
+          active.triage === undefined
+            ? basePrompt
+            : `${basePrompt}\n\n${renderTriageInstructions({
+                taskTitle: active.title,
+                origin: triageOrigin,
+                triage: active.triage,
+              })}`;
         const threadMode = scheduledTaskThreadMode(active);
 
         // A bound thread can move to another project (No project to a project) while
@@ -1739,6 +1770,8 @@ export const layer = Layer.effect(
         isSameSchedule(existingTask.schedule, schedule);
       if (!scheduleUnchanged)
         yield* requireFutureOnce({ enabled: input.enabled, schedule }, now, id);
+      // Omitted keeps the stored triage, so clients that predate it can re-save a task.
+      const triage = input.triage === undefined ? existingTask?.triage : input.triage;
       const task: ScheduledTask = {
         id,
         title: input.title,
@@ -1763,6 +1796,7 @@ export const layer = Layer.effect(
         lastRunStatus: existingTask?.lastRunStatus ?? "never",
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
+        ...(triage == null ? {} : { triage }),
       };
       yield* saveTask(
         task,
@@ -2940,6 +2974,8 @@ export const layer = Layer.effect(
       return yield* runTask(task, "event", undefined, {
         eventId: triggerEventId(event),
         prompt: rendered.prompt,
+        source: event.source,
+        type: event.type,
       }).pipe(
         permit.withPermits(1),
         Effect.mapError((cause) =>
