@@ -5,9 +5,12 @@
  */
 import * as Schema from "effect/Schema";
 
+import { AuthUserId } from "./authUser.ts";
 import {
+  IsoDateTime,
   NonNegativeInt,
   ProjectId,
+  RunId,
   ScheduledTaskId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -153,9 +156,9 @@ export const FactoryIssue = Schema.Struct({
 export type FactoryIssue = typeof FactoryIssue.Type;
 
 export const FactoryAttention = Schema.Struct({
-  /** Always 0 until factories have gates. */
+  /** Work items a gate holds for a person. */
   gatesWaiting: NonNegativeInt,
-  /** Owned threads whose latest run failed. */
+  /** Owned threads whose latest run failed, plus failed work items a person did not fail. */
   failedRuns: NonNegativeInt,
   /** Owned threads waiting on an answer from the user. */
   questions: NonNegativeInt,
@@ -165,7 +168,10 @@ export type FactoryAttention = typeof FactoryAttention.Type;
 
 export const FactoryThread = Schema.Struct({
   threadId: ThreadId,
-  /** The role the factory started it as; null for a thread an owned scheduled task started. */
+  /**
+   * The role the factory started it as, or the role it has on a work item; null for a thread an
+   * owned scheduled task started, or a work item's thread with no role.
+   */
   role: Schema.NullOr(FactoryRoleName),
 });
 export type FactoryThread = typeof FactoryThread.Type;
@@ -264,3 +270,236 @@ export class FactoryError extends Schema.TaggedError<FactoryError>()("FactoryErr
   message: Schema.String,
   issues: Schema.optionalKey(Schema.Array(FactoryIssue)),
 }) {}
+
+/** The Foreman's thread id starts with this, so clients can tell it apart. */
+export const FACTORY_FOREMAN_THREAD_ID_PREFIX = "factory-foreman:";
+
+/** `work-item:<uuid>`. */
+export const WorkItemId = TrimmedNonEmptyString.pipe(Schema.brand("WorkItemId"));
+export type WorkItemId = typeof WorkItemId.Type;
+
+/** `waiting`: a gate holds the item for a person. `done`, `failed`, and `dropped` are terminal. */
+export const WorkItemStage = Schema.Literals([
+  "new",
+  "implement",
+  "review",
+  "waiting",
+  "done",
+  "failed",
+  "dropped",
+]);
+export type WorkItemStage = typeof WorkItemStage.Type;
+
+/** Where a gate sends the item when the person approves. */
+export const WorkItemResumeStage = Schema.Literals(["implement", "review", "done"]);
+export type WorkItemResumeStage = typeof WorkItemResumeStage.Type;
+
+/** What a person decides at a gate. */
+export const WorkItemGateDecision = Schema.Literals(["approved", "rejected"]);
+export type WorkItemGateDecision = typeof WorkItemGateDecision.Type;
+
+/** `active` is every stage that is not terminal. */
+export const WorkItemOutcome = Schema.Literals(["done", "failed", "dropped", "active"]);
+export type WorkItemOutcome = typeof WorkItemOutcome.Type;
+
+const WorkItemText = Schema.String.check(Schema.isMaxLength(65_536));
+const WorkItemNote = Schema.String.check(Schema.isMaxLength(16_384));
+const WorkItemTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(200));
+
+/** `text` is the request. A scheduled task source is reserved for triggers and not created yet. */
+export const WorkItemSource = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("manual"), text: WorkItemText }),
+  Schema.Struct({
+    kind: Schema.Literal("scheduled_task"),
+    scheduledTaskId: ScheduledTaskId,
+    deliveryId: Schema.NullOr(TrimmedNonEmptyString),
+    text: WorkItemText,
+  }),
+]);
+export type WorkItemSource = typeof WorkItemSource.Type;
+
+export const WorkItemGate = Schema.Union([
+  Schema.Struct({ state: Schema.Literal("none") }),
+  Schema.Struct({
+    state: Schema.Literal("waiting"),
+    question: WorkItemNote,
+    resumeStage: WorkItemResumeStage,
+    askedAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    state: Schema.Literal("answered"),
+    question: WorkItemNote,
+    decision: WorkItemGateDecision,
+    note: WorkItemNote,
+    answeredAt: IsoDateTime,
+    resumeStage: WorkItemResumeStage,
+  }),
+]);
+export type WorkItemGate = typeof WorkItemGate.Type;
+
+export const WorkItemActor = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("foreman"), threadId: ThreadId }),
+  /** Null for a session with no user, such as the admin dev credential. */
+  Schema.Struct({ kind: Schema.Literal("user"), userId: Schema.NullOr(AuthUserId) }),
+  Schema.Struct({ kind: Schema.Literal("server") }),
+]);
+export type WorkItemActor = typeof WorkItemActor.Type;
+
+export const WorkItemTransition = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  from: WorkItemStage,
+  to: WorkItemStage,
+  actor: WorkItemActor,
+  note: Schema.NullOr(WorkItemNote),
+  at: IsoDateTime,
+});
+export type WorkItemTransition = typeof WorkItemTransition.Type;
+
+/** A thread that worked on the item, with the role it worked as; null when it had none. */
+export const WorkItemThread = Schema.Struct({
+  threadId: ThreadId,
+  role: Schema.NullOr(FactoryRoleName),
+});
+export type WorkItemThread = typeof WorkItemThread.Type;
+
+export const WorkItemSummary = Schema.Struct({
+  id: WorkItemId,
+  factoryId: FactoryId,
+  title: WorkItemTitle,
+  source: WorkItemSource,
+  stage: WorkItemStage,
+  gate: WorkItemGate,
+  /** Null until the Foreman thread is known. */
+  foremanThreadId: Schema.NullOr(ThreadId),
+  /** The Foreman run the item was sent as; null until it was sent. */
+  foremanRunId: Schema.NullOr(RunId),
+  threads: Schema.Array(WorkItemThread),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type WorkItemSummary = typeof WorkItemSummary.Type;
+
+export const WorkItem = Schema.Struct({
+  ...WorkItemSummary.fields,
+  /** Oldest first. */
+  transitions: Schema.Array(WorkItemTransition),
+});
+export type WorkItem = typeof WorkItem.Type;
+
+const TERMINAL_WORK_ITEM_STAGES: ReadonlySet<WorkItemStage> = new Set([
+  "done",
+  "failed",
+  "dropped",
+]);
+
+export const isTerminalWorkItemStage = (stage: WorkItemStage): boolean =>
+  TERMINAL_WORK_ITEM_STAGES.has(stage);
+
+const NEXT_WORK_ITEM_STAGES = {
+  new: ["implement", "waiting", "dropped", "failed"],
+  implement: ["review", "waiting", "failed", "dropped"],
+  review: ["implement", "done", "waiting", "failed"],
+  // Plus the stage the waiting gate resumes to.
+  waiting: ["dropped", "failed"],
+  done: [],
+  failed: [],
+  dropped: [],
+} satisfies Record<WorkItemStage, ReadonlyArray<WorkItemStage>>;
+
+/** Whether an item at `from` may move to `to`. Out of `waiting`, the gate's resume stage too. */
+export function canTransitionWorkItem(
+  from: WorkItemStage,
+  to: WorkItemStage,
+  gate: WorkItemGate,
+): boolean {
+  if (from === "waiting" && gate.state === "waiting" && to === gate.resumeStage) return true;
+  return (NEXT_WORK_ITEM_STAGES[from] as ReadonlyArray<WorkItemStage>).includes(to);
+}
+
+export const WorkItemListInput = Schema.Struct({
+  factoryId: FactoryId,
+  stage: Schema.optionalKey(WorkItemStage),
+  /** Items with a thread in this role. */
+  role: Schema.optionalKey(FactoryRoleName),
+  outcome: Schema.optionalKey(WorkItemOutcome),
+});
+export type WorkItemListInput = typeof WorkItemListInput.Type;
+
+export const WorkItemListResult = Schema.Struct({
+  /** Newest first, at most 200. */
+  workItems: Schema.Array(WorkItemSummary),
+});
+export type WorkItemListResult = typeof WorkItemListResult.Type;
+
+export const WorkItemReadInput = Schema.Struct({
+  workItemId: WorkItemId,
+});
+export type WorkItemReadInput = typeof WorkItemReadInput.Type;
+
+export const WorkItemCreateInput = Schema.Struct({
+  factoryId: FactoryId,
+  title: WorkItemTitle,
+  /** The request, as the Foreman reads it. */
+  text: WorkItemText.check(Schema.isMinLength(1)),
+});
+export type WorkItemCreateInput = typeof WorkItemCreateInput.Type;
+
+export const WorkItemAnswerGateInput = Schema.Struct({
+  workItemId: WorkItemId,
+  decision: WorkItemGateDecision,
+  note: WorkItemNote,
+});
+export type WorkItemAnswerGateInput = typeof WorkItemAnswerGateInput.Type;
+
+/** Stages the Foreman moves an item to. `waiting` takes a gate instead. */
+export const WorkItemAdvanceStage = Schema.Literals([
+  "implement",
+  "review",
+  "done",
+  "failed",
+  "dropped",
+]);
+export type WorkItemAdvanceStage = typeof WorkItemAdvanceStage.Type;
+
+export const WorkItemAdvanceInput = Schema.Struct({
+  workItemId: WorkItemId,
+  stage: WorkItemAdvanceStage,
+  note: Schema.optionalKey(WorkItemNote),
+  threads: Schema.optionalKey(Schema.Array(WorkItemThread)),
+});
+export type WorkItemAdvanceInput = typeof WorkItemAdvanceInput.Type;
+
+export const WorkItemGateInput = Schema.Struct({
+  workItemId: WorkItemId,
+  question: WorkItemNote.check(Schema.isMinLength(1)),
+  resumeStage: WorkItemResumeStage,
+});
+export type WorkItemGateInput = typeof WorkItemGateInput.Type;
+
+/**
+ * `not_foreman`: only the item's Foreman thread may do this. `gate_waiting`: only a person's
+ * answer moves the item on. `no_gate`: no gate waits for an answer. `unavailable`: the database
+ * or the Foreman thread could not be reached.
+ */
+export const WorkItemErrorCode = Schema.Literals([
+  "not_found",
+  "not_foreman",
+  "gate_waiting",
+  "no_gate",
+  "unavailable",
+]);
+export type WorkItemErrorCode = typeof WorkItemErrorCode.Type;
+
+export class WorkItemError extends Schema.TaggedError<WorkItemError>()("WorkItemError", {
+  code: WorkItemErrorCode,
+  message: Schema.String,
+}) {}
+
+export class WorkItemTransitionError extends Schema.TaggedError<WorkItemTransitionError>()(
+  "WorkItemTransitionError",
+  { workItemId: WorkItemId, from: WorkItemStage, to: WorkItemStage },
+) {
+  override get message(): string {
+    return `Work item ${this.workItemId} cannot move from ${this.from} to ${this.to}.`;
+  }
+}
