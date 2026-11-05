@@ -17,6 +17,15 @@ export interface McpProviderSessionConfig {
   readonly browserToolsAvailable: boolean;
   readonly capabilities?: ReadonlySet<string>;
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
+  /** Fork-only. The factory role the thread runs as, read again on every session prepare. */
+  readonly factoryRole?: FactoryRoleInstructions;
+}
+
+/** Fork-only. A factory role's instructions, appended to the runtime instructions. */
+export interface FactoryRoleInstructions {
+  readonly factoryId: string;
+  readonly role: string;
+  readonly body: string;
 }
 
 export function withAgentDeviceEnvironment(

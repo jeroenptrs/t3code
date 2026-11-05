@@ -1,3 +1,5 @@
+import type { FactoryRoleInstructions } from "./mcpSession.ts";
+
 /** Session-invariant; harnesses with a native system-prompt append can carry it once per session. */
 export const PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
 Link each PR you create, take over, or push to: link_pull_request, or link_pull_requests for several, full URL, every stack layer, as your next call. Host tools don't link for you. If linking fails, say so. Skip PRs you only read or review and PRs named only as background. Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch. Finish any needed branch update and push first, then watch and end your turn. Otherwise act now or hand back. Delegated children never watch, even if the brief says babysit. After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>. Links and watches persist across pushes. For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup. Before handback, call unwatch_pull_request on any PR you watch.
@@ -22,11 +24,9 @@ ${JIRA_ISSUE_TOOL_GUIDANCE.map((line) => `- ${line}`).join("\n")}
 </jira_issue_linking>`;
 
 /**
- * Fork-only. What a good work package is for this team, for threads the server started to break
- * a Jira issue into work packages; the server grants those threads the "jira-breakdown" MCP
- * capability. The first message carries the issue and its planning context. The capability stays
- * for the thread's life, since changing it would rotate the MCP credential under long-lived
- * provider processes, so the rules scope themselves to the breakdown.
+ * Fork-only. Rules for threads the server started to break a Jira issue into work packages. They
+ * hold the "jira-breakdown" MCP capability for life, since changing it would rotate the credential
+ * under long-lived providers, so the rules scope themselves to the breakdown.
  */
 const JIRA_BREAKDOWN_GUIDANCE = [
   "This thread starts by breaking the Jira issue in its first message into work packages for the user to approve. Until you have proposed them, read the repository to understand the work, but do not edit files, commit, push, or open pull requests.",
@@ -44,6 +44,16 @@ const JIRA_BREAKDOWN_INSTRUCTIONS = `<jira_breakdown>
 ${JIRA_BREAKDOWN_GUIDANCE.map((line) => `- ${line}`).join("\n")}
 </jira_breakdown>`;
 
+/**
+ * Fork-only. The role body is the factory's file text, so it is wrapped, not rewritten. The
+ * Codex adapter sends it as entries of its own to stay under Codex's per-entry cap.
+ */
+export function buildFactoryRoleInstructions(factoryRole: FactoryRoleInstructions): string {
+  return `<factory_role factory="${factoryRole.factoryId}" role="${factoryRole.role}">
+${factoryRole.body.trim()}
+</factory_role>`;
+}
+
 /** Omit model and effort when the harness manages them dynamically. */
 export function buildRuntimeInstructions(runtime: {
   readonly harness: string;
@@ -53,6 +63,7 @@ export function buildRuntimeInstructions(runtime: {
   /** False when the session's system prompt already carries the linking instructions. */
   readonly pullRequestLinking?: boolean;
   readonly mcpCapabilities?: ReadonlySet<string> | undefined;
+  readonly factoryRole?: FactoryRoleInstructions | undefined;
 }): string {
   const harness = toSingleLine(runtime.harness);
   const model = toSingleLine(runtime.model ?? "");
@@ -69,11 +80,15 @@ export function buildRuntimeInstructions(runtime: {
 
 ${JIRA_BREAKDOWN_INSTRUCTIONS}`
     : "";
+  const role =
+    runtime.factoryRole === undefined
+      ? ""
+      : `\n\n${buildFactoryRoleInstructions(runtime.factoryRole)}`;
   return runtime.pullRequestLinking === false
-    ? `${runtimeInfo}${jira}${breakdown}`
+    ? `${runtimeInfo}${jira}${breakdown}${role}`
     : `${runtimeInfo}
 
-${PULL_REQUEST_LINKING_INSTRUCTIONS}${jira}${breakdown}`;
+${PULL_REQUEST_LINKING_INSTRUCTIONS}${jira}${breakdown}${role}`;
 }
 
 function toSingleLine(value: string): string {
