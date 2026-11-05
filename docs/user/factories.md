@@ -14,7 +14,8 @@ threads its scheduled tasks start, move from **Home** to **Factories**. The side
 tab you last chose in this browser.
 
 Each tab shows how many of its threads need you: a thread whose latest run failed counts once,
-and a thread waiting on your answer counts once.
+and a thread waiting on your answer counts once. **Factories** also counts each work item a gate
+holds for you, and each work item that failed without a person failing it.
 
 In **Factories**, the chevron beside a factory shows the threads and scheduled tasks it owns. A
 thread there opens and acts like any other thread. Click the factory's name to open its page.
@@ -50,3 +51,20 @@ blank **Instructions** box also keeps the built-in instructions.
 
 If the server refuses a save, such as for a model the provider does not offer, the reason appears
 beside the field and nothing is written.
+
+## Send work to a factory
+
+Each request you send a factory is a work item. The factory's Foreman gets it as a new message in
+a fresh session, routes it to implement and review, and moves it through the stages **new**,
+**implement**, and **review** to **done**, **failed**, or **dropped**. The Foreman is one thread
+per factory, named `Foreman: <factory>`, and starts the first time the factory gets work.
+
+To create a work item, open the factory's page, enter a title and the request, and send it. Only
+administrators can create work items. An agent can also send one for you when you ask it to.
+
+### Answer a gate
+
+When the Foreman needs a decision, it holds the work item at **waiting** with a question, and the
+factory's attention count goes up. Open the work item, read the question, and approve or reject
+it, with a note if you want. Approving sends the item back to the stage the Foreman asked for.
+Rejecting drops it. The Foreman reads your answer and note in the item's session.

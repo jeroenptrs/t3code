@@ -1,4 +1,5 @@
 import type { ProviderAdapterV2RuntimePolicy } from "./ProviderAdapter.ts";
+import type { FactoryRoleInstructions } from "./mcpSession.ts";
 
 /** Session-invariant; harnesses with a native system-prompt append can carry it once per session. */
 export const PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
@@ -25,11 +26,9 @@ ${JIRA_ISSUE_TOOL_GUIDANCE.map((line) => `- ${line}`).join("\n")}
 </jira_issue_linking>`;
 
 /**
- * Fork-only. What a good work package is for this team, for threads the server started to break
- * a Jira issue into work packages; the server grants those threads the "jira-breakdown" MCP
- * capability. The first message carries the issue and its planning context. The capability stays
- * for the thread's life, since changing it would rotate the MCP credential under long-lived
- * provider processes, so the rules scope themselves to the breakdown.
+ * Fork-only. Rules for threads the server started to break a Jira issue into work packages. They
+ * hold the "jira-breakdown" MCP capability for life, since changing it would rotate the credential
+ * under long-lived providers, so the rules scope themselves to the breakdown.
  */
 const JIRA_BREAKDOWN_GUIDANCE = [
   "This thread starts by breaking the Jira issue in its first message into work packages for the user to approve. Until you have proposed them, read the repository to understand the work, but do not edit files, commit, push, or open pull requests.",
@@ -47,6 +46,16 @@ const JIRA_BREAKDOWN_INSTRUCTIONS = `<jira_breakdown>
 ${JIRA_BREAKDOWN_GUIDANCE.map((line) => `- ${line}`).join("\n")}
 </jira_breakdown>`;
 
+/**
+ * Fork-only. The role body is the factory's file text, so it is wrapped, not rewritten. The
+ * Codex adapter sends it as entries of its own to stay under Codex's per-entry cap.
+ */
+export function buildFactoryRoleInstructions(factoryRole: FactoryRoleInstructions): string {
+  return `<factory_role factory="${factoryRole.factoryId}" role="${factoryRole.role}">
+${factoryRole.body.trim()}
+</factory_role>`;
+}
+
 /** Omit model and effort when the harness manages them dynamically. */
 export function buildRuntimeInstructions(runtime: {
   readonly harness: string;
@@ -58,6 +67,7 @@ export function buildRuntimeInstructions(runtime: {
   /** Adds the folder list of a multi-folder thread. */
   readonly runtimePolicy?: Pick<ProviderAdapterV2RuntimePolicy, "cwd" | "workspace"> | undefined;
   readonly mcpCapabilities?: ReadonlySet<string> | undefined;
+  readonly factoryRole?: FactoryRoleInstructions | undefined;
 }): string {
   const harness = toSingleLine(runtime.harness);
   const model = toSingleLine(runtime.model ?? "");
@@ -75,6 +85,9 @@ export function buildRuntimeInstructions(runtime: {
     ...(runtime.pullRequestLinking === false ? [] : [PULL_REQUEST_LINKING_INSTRUCTIONS]),
     ...(runtime.mcpCapabilities?.has("jira") ? [JIRA_ISSUE_LINKING_INSTRUCTIONS] : []),
     ...(runtime.mcpCapabilities?.has("jira-breakdown") ? [JIRA_BREAKDOWN_INSTRUCTIONS] : []),
+    ...(runtime.factoryRole === undefined
+      ? []
+      : [buildFactoryRoleInstructions(runtime.factoryRole)]),
     ...(workspace === "" ? [] : [workspace]),
   ].join("\n\n");
 }

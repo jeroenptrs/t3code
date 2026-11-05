@@ -1097,6 +1097,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           mcpSession?.capabilities?.has("device") === true,
         );
         const t3McpCapabilities = hasT3Mcp ? mcpSession.capabilities : undefined;
+        const factoryRole = hasT3Mcp ? mcpSession.factoryRole : undefined;
         if (hasT3Mcp) {
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
             client.mcp.add({
@@ -3518,6 +3519,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 model: turn.modelSelection.model,
                 runtimePolicy: turn.runtimePolicy,
                 mcpCapabilities: t3McpCapabilities,
+                factoryRole,
               }),
             ]
               .filter(Boolean)
