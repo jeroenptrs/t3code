@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
   AuthAccessWriteScope,
+  AuthFactoriesManageScope,
   AuthInsightsWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -90,6 +91,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.insightsRescanProject]: AuthInsightsWriteScope,
   [WS_METHODS.insightsUpdateContributor]: AuthInsightsWriteScope,
   [WS_METHODS.insightsMergeContributors]: AuthInsightsWriteScope,
+  // Saving rewrites a factory's files, which decide what its agents run.
+  [WS_METHODS.factoriesSave]: AuthFactoriesManageScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

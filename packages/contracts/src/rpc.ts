@@ -126,6 +126,14 @@ import {
   DiffWalkthroughPutResult,
 } from "./diffWalkthrough.ts";
 import {
+  Factory,
+  FactoryError,
+  FactoryListInput,
+  FactoryListResult,
+  FactoryReadInput,
+  FactorySaveInput,
+} from "./factories.ts";
+import {
   InsightsConfig,
   InsightsContributorMergeInput,
   InsightsContributorUpdateInput,
@@ -695,6 +703,11 @@ export const WS_METHODS = {
   insightsRescanProject: "insights.rescanProject",
   insightsUpdateContributor: "insights.updateContributor",
   insightsMergeContributors: "insights.mergeContributors",
+
+  // Software factories (fork-only): operators view, administrators manage
+  factoriesList: "factories.list",
+  factoriesRead: "factories.read",
+  factoriesSave: "factories.save",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1495,6 +1508,26 @@ const WsInsightsMergeContributorsRpc = Rpc.make(WS_METHODS.insightsMergeContribu
   payload: InsightsContributorMergeInput,
   success: InsightsConfig,
   error: InsightsRpcError,
+});
+
+const FactoriesRpcError = Schema.Union([FactoryError, EnvironmentAuthorizationError]);
+
+const WsFactoriesListRpc = Rpc.make(WS_METHODS.factoriesList, {
+  payload: FactoryListInput,
+  success: FactoryListResult,
+  error: FactoriesRpcError,
+});
+
+const WsFactoriesReadRpc = Rpc.make(WS_METHODS.factoriesRead, {
+  payload: FactoryReadInput,
+  success: Factory,
+  error: FactoriesRpcError,
+});
+
+const WsFactoriesSaveRpc = Rpc.make(WS_METHODS.factoriesSave, {
+  payload: FactorySaveInput,
+  success: Factory,
+  error: FactoriesRpcError,
 });
 
 const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLookupRepository, {
@@ -2362,7 +2395,14 @@ export const WsInsightsRpcGroup = RpcGroup.make(
   WsInsightsMergeContributorsRpc,
 ).middleware(RpcScopeAuthorization);
 
-/** Every RPC except those in `WsJiraRpcGroup` and `WsInsightsRpcGroup`. */
+/** The fork's factory RPCs, in a group of their own for the same reason as `WsJiraRpcGroup`. */
+export const WsFactoriesRpcGroup = RpcGroup.make(
+  WsFactoriesListRpc,
+  WsFactoriesReadRpc,
+  WsFactoriesSaveRpc,
+).middleware(RpcScopeAuthorization);
+
+/** Every RPC except those in the fork's Jira, Insights, and factories groups. */
 export const WsCoreRpcGroup = RpcGroup.make(
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
@@ -2587,4 +2627,8 @@ export const WsCoreRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeCommandOutputRpc,
 ).middleware(RpcScopeAuthorization);
 
-export const WsRpcGroup = WsCoreRpcGroup.merge(WsJiraRpcGroup, WsInsightsRpcGroup);
+export const WsRpcGroup = WsCoreRpcGroup.merge(
+  WsJiraRpcGroup,
+  WsInsightsRpcGroup,
+  WsFactoriesRpcGroup,
+);
