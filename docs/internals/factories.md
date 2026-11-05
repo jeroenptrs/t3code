@@ -52,7 +52,7 @@ with its actor, and only a person's gate answer moves an item out of `waiting`.
 - A factory has one active item: sent, and not yet `done`, `failed`, or
   `dropped`. A `waiting` item stays active, because the gate answer continues
   its session. A new item waits at `new` with a null `dispatched_at` (fork
-  migration 018) until the active one ends, so no child wakes into a later
+  migration 020) until the active one ends, so no child wakes into a later
   item's session. The stage change that ends an item sends the oldest queued
   one under the same per-factory lock. An item the server cannot send fails,
   and the next one is tried.
