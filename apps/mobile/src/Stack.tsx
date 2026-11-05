@@ -108,6 +108,7 @@ import {
   SettingsScheduledTaskNewRouteScreen,
   SettingsScheduledTaskEditRouteScreen,
 } from "./features/settings/SettingsScheduledTasksRouteScreen";
+import { SettingsScheduledTaskTemplateRouteScreen } from "./features/settings/ScheduledTaskTemplates";
 import {
   ScheduledTaskModelPickerRouteScreen,
   ScheduledTaskBranchPickerRouteScreen,
@@ -306,6 +307,10 @@ const SETTINGS_SCREENS = {
   SettingsScheduledTaskThread: createNativeStackScreen({
     screen: ScheduledTaskThreadPickerRouteScreen,
     options: settingsPage("Destination"),
+  }),
+  SettingsScheduledTaskTemplate: createNativeStackScreen({
+    screen: SettingsScheduledTaskTemplateRouteScreen,
+    options: settingsPage("Use template"),
   }),
   SettingsScheduledTaskModel: createNativeStackScreen({
     screen: ScheduledTaskModelPickerRouteScreen,
