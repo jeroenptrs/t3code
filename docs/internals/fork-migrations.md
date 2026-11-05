@@ -45,6 +45,7 @@ Fork-owned tables:
 - `fork_insights_jira_issues` (014)
 - `fork_auth_step_up_bindings` (015)
 - `fork_factory_threads` (016)
+- `fork_trigger_observations` (017)
 
 Fork indexes on upstream tables:
 

@@ -341,6 +341,26 @@ describe("webhook scheduled tasks", () => {
   });
 });
 
+describe("event scheduled tasks", () => {
+  it("sends event filters only when changed and rejects a field the source lacks", () => {
+    const filters = [{ path: "event.status", op: "equals", value: "In Progress" }] as const;
+    const draft = taskToDraft({ ...legacyTask, schedule: { type: "jira", filters } });
+    expect(draft.scheduleMode).toBe("jira");
+    expect(scheduleFromDraft({ ...draft, title: "Renamed" })).toEqual({ type: "jira" });
+    expect(scheduleFromDraft({ ...draft, triggerFilters: [] })).toEqual({
+      type: "jira",
+      filters: [],
+    });
+    expect(
+      scheduleFromDraft({
+        ...draft,
+        triggerFilters: [{ id: "f1", path: "event.title", op: "equals", value: "x" }],
+      }),
+    ).toBeNull();
+    expect(scheduleFromDraft({ ...draft, scheduleMode: "manual" })).toEqual({ type: "manual" });
+  });
+});
+
 describe("scheduled task model defaults", () => {
   const instanceId = ProviderInstanceId.make("codex");
   const projectId = ProjectId.make("project");

@@ -25,6 +25,10 @@ import {
   type ScheduledTaskSetEnabledInput,
   type ScheduledTaskThreadMode,
   type ScheduledTaskUpsertInput,
+  TRIGGER_SOURCE_FIELDS,
+  type TriggerEvent,
+  type TriggerFilter,
+  type TriggerFilterSourceKind,
   managedPolicyDeniedMessage,
   scheduledTaskThreadMode,
   managedRuntimeModeDenial,
@@ -78,6 +82,7 @@ import {
 } from "./webhookDedupe.ts";
 import { describeFailedWebhookFilter, findFailedWebhookFilter } from "./webhookFilter.ts";
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
+import { renderTriggerPrompt, triggerEventId } from "../triggers/triggerPrompt.ts";
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
@@ -177,8 +182,35 @@ export type WebhookTriggerResult =
     }
   | { readonly _tag: "expired" };
 
-const webhookFilters = (filters: ReadonlyArray<ScheduledTaskWebhookFilter> | undefined) =>
+const withFilters = <F>(filters: ReadonlyArray<F> | undefined) =>
   filters?.length ? { filters } : {};
+
+function storedTriggerFilters(
+  schedule: ScheduledTask["schedule"] | undefined,
+  type: TriggerFilterSourceKind,
+): ReadonlyArray<TriggerFilter> | undefined {
+  if (schedule?.type !== type) return undefined;
+  switch (schedule.type) {
+    case "jira":
+    case "gitlab":
+    case "slack":
+      return schedule.filters;
+    default:
+      return undefined;
+  }
+}
+
+/** A filter on a field the source never sends would silently match nothing. */
+function unknownTriggerFilter(
+  type: TriggerFilterSourceKind,
+  filters: ReadonlyArray<TriggerFilter>,
+): string | undefined {
+  const fields = new Set<string>(TRIGGER_SOURCE_FIELDS[type].map((field) => field.path));
+  const index = filters.findIndex((filter) => !fields.has(filter.path));
+  return index === -1
+    ? undefined
+    : `Filter ${index + 1} (${filters[index]!.path}) is not a field ${type} events have.`;
+}
 
 const decodeTask = Schema.decodeUnknownEffect(ScheduledTask);
 const decodeTaskId = Schema.decodeUnknownOption(ScheduledTaskId);
@@ -301,6 +333,14 @@ export class ScheduledTaskService extends Context.Service<
     readonly getWebhookDelivery: (
       input: ScheduledTaskGetWebhookDeliveryInput,
     ) => Effect.Effect<ScheduledTaskGetWebhookDeliveryResult, ScheduledTaskError>;
+    /** Runs a task for an event its filters matched, in its bound thread or a new one. */
+    readonly runForEvent: (
+      task: ScheduledTask,
+      event: TriggerEvent,
+    ) => Effect.Effect<
+      ScheduledTaskRunNowResult & { readonly threadId: ThreadId | null },
+      ScheduledTaskError
+    >;
     /** Verifies, logs and dispatches; returns after logging while the run continues in the background. */
     readonly triggerWebhook: (
       request: WebhookTriggerRequest,
@@ -986,12 +1026,13 @@ export const layer = Layer.effect(
 
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
-      trigger: "scheduled" | "manual" | "webhook",
+      trigger: "scheduled" | "manual" | "webhook" | "event",
       webhook?: {
         readonly deliveryId: string;
         readonly prompt: string;
         readonly dispatched: Ref.Ref<boolean>;
       },
+      event?: { readonly eventId: string; readonly prompt: string },
     ) {
       // Read before reserving: nothing between the reservation and its release may fail.
       const startedAt = yield* localNow;
@@ -1058,6 +1099,15 @@ export const layer = Layer.effect(
                     : null;
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
         }
+        // An event matched against a stale listing must not run a paused or retargeted task.
+        if (
+          event !== undefined &&
+          (!active.enabled ||
+            active.createdAt !== task.createdAt ||
+            active.schedule.type !== task.schedule.type)
+        ) {
+          return { task: active, threadId: null, dispatchFailed: false };
+        }
 
         if (webhook === undefined) yield* markRunning(active.id, startedAtIso);
         else
@@ -1078,12 +1128,14 @@ export const layer = Layer.effect(
         yield* notifyChanged;
 
         const fireKey =
-          webhook === undefined
-            ? `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`
-            : `${active.id}:webhook:${webhook.deliveryId}`;
+          webhook !== undefined
+            ? `${active.id}:webhook:${webhook.deliveryId}`
+            : event !== undefined
+              ? `${active.id}:event:${event.eventId}`
+              : `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`;
         const commandId = CommandId.make(`scheduled-task:${fireKey}`);
         const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
-        const prompt = webhook?.prompt ?? active.prompt;
+        const prompt = webhook?.prompt ?? event?.prompt ?? active.prompt;
         const threadMode = scheduledTaskThreadMode(active);
 
         // A bound thread can move to another project (No project to a project) while
@@ -1466,6 +1518,16 @@ export const layer = Layer.effect(
           input.id === undefined ? {} : { taskId: input.id },
         );
       }
+      if (
+        input.schedule.type === "jira" ||
+        input.schedule.type === "gitlab" ||
+        input.schedule.type === "slack"
+      ) {
+        const unknown = unknownTriggerFilter(input.schedule.type, input.schedule.filters ?? []);
+        if (unknown !== undefined) {
+          return yield* taskError(unknown, input.id === undefined ? {} : { taskId: input.id });
+        }
+      }
       const now = yield* localNow;
       const uuid =
         input.commandId === undefined
@@ -1529,7 +1591,7 @@ export const layer = Layer.effect(
                   ? { dedupe: existingTask.schedule.dedupe }
                   : {}
                 : { dedupe: input.schedule.dedupe }),
-              ...webhookFilters(
+              ...withFilters<ScheduledTaskWebhookFilter>(
                 // Omitted keeps the stored filters, so a client that predates
                 // them can re-save a task without clearing them.
                 input.schedule.filters ??
@@ -1540,6 +1602,16 @@ export const layer = Layer.effect(
             }
           : input.schedule.type === "once"
             ? { type: "once", runAt: iso(DateTime.makeUnsafe(input.schedule.runAt)) }
+            : input.schedule.type === "jira" ||
+                input.schedule.type === "gitlab" ||
+                input.schedule.type === "slack"
+              ? {
+                  type: input.schedule.type,
+                  ...withFilters(
+                    input.schedule.filters ??
+                      storedTriggerFilters(existingTask?.schedule, input.schedule.type),
+                  ),
+                }
             : input.schedule;
       const webhook =
         input.schedule.type === "webhook"
@@ -1764,6 +1836,16 @@ export const layer = Layer.effect(
         return yield* taskError("Webhook tasks run when their URL receives a request.", {
           taskId: input.id,
         });
+      }
+      if (
+        task.schedule.type === "jira" ||
+        task.schedule.type === "gitlab" ||
+        task.schedule.type === "slack"
+      ) {
+        return yield* taskError(
+          "Event tasks run when a matching event arrives; their prompt needs one.",
+          { taskId: input.id },
+        );
       }
       return yield* runTask(task, "manual").pipe(
         Effect.mapError((cause) =>
@@ -2752,6 +2834,37 @@ export const layer = Layer.effect(
       ),
     );
 
+    const runForEvent: ScheduledTaskService["Service"]["runForEvent"] = Effect.fn(
+      "ScheduledTaskService.runForEvent",
+    )(function* (task, event) {
+      yield* Effect.annotateCurrentSpan({
+        "scheduled_task.id": task.id,
+        "trigger.source": event.source,
+        "trigger.type": event.type,
+      });
+      const frameId = yield* random.randomBytes(6).pipe(
+        Effect.map((bytes) => Buffer.from(bytes).toString("hex")),
+        Effect.mapError((cause) => taskError("Could not generate frame id.", { cause })),
+      );
+      const rendered = renderTriggerPrompt(task.prompt, event, frameId);
+      if (rendered.prompt.trim().length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+        return yield* taskError(PROMPT_TOO_LONG, { taskId: task.id });
+      }
+      // Events for one task run one at a time, so a burst queues instead of failing as busy.
+      const permit = yield* webhookPermit(task.id);
+      return yield* runTask(task, "event", undefined, {
+        eventId: triggerEventId(event),
+        prompt: rendered.prompt,
+      }).pipe(
+        permit.withPermits(1),
+        Effect.mapError((cause) =>
+          isScheduledTaskError(cause)
+            ? cause
+            : taskError("Could not run schedule task.", { taskId: task.id, cause }),
+        ),
+      );
+    });
+
     return ScheduledTaskService.of({
       list,
       subscribeList,
@@ -2765,6 +2878,7 @@ export const layer = Layer.effect(
       listWebhookDeliveries,
       getWebhookDelivery,
       triggerWebhook,
+      runForEvent,
     });
   }),
 );
