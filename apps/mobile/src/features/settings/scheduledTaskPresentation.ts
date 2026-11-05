@@ -1,3 +1,4 @@
+import type { ScheduledTaskSchedule } from "@t3tools/contracts";
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
@@ -101,4 +102,19 @@ export function formatNextScheduledTaskRun(
     ...(next.getFullYear() !== current.getFullYear() ? { year: "numeric" as const } : {}),
   });
   return resolve(msg("Next run {date} at {time}", { date, time }));
+}
+
+export const TRIGGER_SCHEDULE_LABELS = {
+  jira: "On Jira change",
+  gitlab: "On GitLab change",
+  slack: "On Slack message",
+  manual: "Manual",
+} as const;
+
+export function formatTriggerSchedule(
+  schedule: Extract<ScheduledTaskSchedule, { readonly type: keyof typeof TRIGGER_SCHEDULE_LABELS }>,
+): string {
+  const label = TRIGGER_SCHEDULE_LABELS[schedule.type];
+  const count = schedule.type === "manual" ? 0 : (schedule.filters?.length ?? 0);
+  return count === 0 ? label : `${label} · ${count} filter${count === 1 ? "" : "s"}`;
 }

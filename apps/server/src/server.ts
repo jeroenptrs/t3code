@@ -8,6 +8,8 @@ import * as WorkspacePreviewRevisions from "./assets/WorkspacePreviewRevisions.t
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
+import * as TriggerService from "./triggers/TriggerService.ts";
+import * as TriggerSources from "./triggers/TriggerSources.ts";
 import * as PullRequestAutoWalkthrough from "./orchestration-v2/PullRequestAutoWalkthrough.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
@@ -196,6 +198,7 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as CodexManagedTokenBroker from "./provider/CodexManagedTokenBroker.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
+import * as TriggerTemplateService from "./triggers/TriggerTemplateService.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
 import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
@@ -818,6 +821,14 @@ const layerServerRestart = Layer.effect(
   }),
 );
 
+// Fork-only: one TriggerSources for the Jira and pull request reactors merged below; the trigger
+// service runs the scheduled tasks their events match. WebSocket `triggers.raise` uses it too.
+const layerTriggers = Layer.effectDiscard(
+  Effect.gen(function* () {
+    yield* (yield* TriggerService.TriggerService).start();
+  }),
+).pipe(Layer.provideMerge(TriggerService.layer), Layer.provideMerge(TriggerSources.layer));
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   HeldHooksWaker.layer,
@@ -868,6 +879,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
+  Layer.provideMerge(layerTriggers),
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(layerTaskFolders),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
@@ -1037,6 +1049,7 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(layerDiffWalkthroughService),
   // Started over the WebSocket; shares the Jira services below.
   Layer.provide(layerJiraBreakdowns),
+  Layer.provide(TriggerTemplateService.layer),
   // The same instance the ingestion worker uses.
   Layer.provide(layerInsights),
   // Factories, shared by the WebSocket and /mcp.
