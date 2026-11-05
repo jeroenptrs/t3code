@@ -217,13 +217,13 @@ function resolveT3McpToolPresentation(
         ? input.key.trim().toUpperCase()
         : detail
       : actionKind !== undefined &&
-    actionKind !== "list-prs" &&
+          actionKind !== "list-prs" &&
           actionKind !== "list-jira" &&
-    typeof number === "number" &&
-    Number.isSafeInteger(number) &&
-    number > 0
-      ? `${shortLabel} #${number}`
-      : detail;
+          typeof number === "number" &&
+          Number.isSafeInteger(number) &&
+          number > 0
+        ? `${shortLabel} #${number}`
+        : detail;
   // A batch proposal names how many issues it carries.
   const draftCount =
     definition.summaryAction === "propose-jira-issues" && Array.isArray(input?.issues)
@@ -577,6 +577,9 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "project-delete":
     case "project-clone":
     case "factory-save":
+    case "work-item-create":
+    case "work-item-advance":
+    case "work-item-gate":
     case "environment-update":
     case "attachment-prepare":
     case "attachment-discard":
