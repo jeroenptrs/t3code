@@ -79,6 +79,7 @@ import * as JiraService from "./jira/JiraService.ts";
 import * as InsightsIngestor from "./insights/InsightsIngestor.ts";
 import * as InsightsService from "./insights/InsightsService.ts";
 import * as FactoryService from "./factories/FactoryService.ts";
+import * as FactorySkills from "./factories/FactorySkills.ts";
 import * as FactoryThreads from "./factories/FactoryThreads.ts";
 import * as InsightsStore from "./insights/InsightsStore.ts";
 import * as Scheduler from "./scheduling/Scheduler.ts";
@@ -698,13 +699,18 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   Layer.provide(layerScheduledTaskWebhookOrigin),
   // Fork-only: provider sessions get the "jira" MCP capability when Jira is configured,
   // "jira-breakdown" in threads the server started as breakdowns, and a factory thread's role
-  // instructions.
+  // instructions and skills.
   Layer.provide(
     Layer.mergeAll(
       JiraIdentities.layer,
       JiraBreakdownThreads.layer,
+      FactorySkills.layer.pipe(
+        Layer.provideMerge(
       FactoryThreads.layer.pipe(
         Layer.provide(Layer.merge(ProjectStore.layer, ProjectionStoreV2.layer)),
+      ),
+    ),
+        Layer.provide(GitVcsDriver.layer),
       ),
     ),
   ),

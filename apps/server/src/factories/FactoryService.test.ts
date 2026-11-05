@@ -185,7 +185,7 @@ const checkout = Effect.fn(function* (files: Record<string, string>) {
 const factoryJson = (value: object) => JSON.stringify(value);
 
 describe("FactoryService", () => {
-  it.effect("lays a role file's bindings and body over the built-in role", () =>
+  it.effect("lays a role file's bindings, body, and skills over the built-in role", () =>
     Effect.gen(function* () {
       const root = yield* checkout({
         ".t3/factories/triage/factory.json": factoryJson({
@@ -194,10 +194,14 @@ describe("FactoryService", () => {
           roles: { implement: "roles/implement.md", review: "roles/review.md" },
         }),
         ".t3/factories/triage/roles/implement.md":
-          "---\nisolation: shared\nskills: [run-checks]\n---\n\nFix the bug.\n",
+          "---\nisolation: shared\nskills: [run-checks, implement, lint]\n---\n\nFix the bug.\n",
         ".t3/factories/triage/roles/review.md": "---\nruntimeMode: approval-required\n---\n",
         // Not listed in factory.json: the file at the default path still counts.
         ".t3/factories/triage/roles/foreman.md": "Route everything to implement.\n",
+        // A factory skill of a built-in's name replaces it; a folder without SKILL.md is no skill.
+        ".t3/factories/triage/skills/run-checks/SKILL.md": "---\nname: run-checks\n---\n",
+        ".t3/factories/triage/skills/review/SKILL.md": "---\nname: review\n---\n",
+        ".t3/factories/triage/skills/drafts/notes.md": "Not a skill yet.\n",
       });
       const backend = project("project-backend", "backend", root);
       const factory = yield* FactoryService.FactoryService.use((factories) =>
@@ -213,26 +217,41 @@ describe("FactoryService", () => {
         binding: builtinRoles.foreman.binding,
         body: "Route everything to implement.",
         bodySource: "file",
+        skills: [],
       });
+      const skills = ["run-checks", "implement", "lint"];
       assert.deepStrictEqual(implement, {
         role: "implement",
         path: "roles/implement.md",
         source: "file",
-        fileBinding: { isolation: "shared", skills: ["run-checks"] },
-        binding: { ...builtinRoles.implement.binding, isolation: "shared", skills: ["run-checks"] },
+        fileBinding: { isolation: "shared", skills },
+        binding: { ...builtinRoles.implement.binding, isolation: "shared", skills },
         body: "Fix the bug.",
         bodySource: "file",
+        skills: [
+          { name: "run-checks", source: "file" },
+          { name: "implement", source: "builtin" },
+        ],
       });
       assert.strictEqual(review?.binding.runtimeMode, "approval-required");
       assert.strictEqual(review?.body, builtinRoles.review.body);
       assert.strictEqual(review?.bodySource, "builtin");
+      assert.deepStrictEqual(review?.skills, [{ name: "review", source: "file" }]);
+      assert.deepStrictEqual(factory.skills, [
+        { name: "implement", source: "builtin" },
+        { name: "review", source: "file" },
+        { name: "run-checks", source: "file" },
+      ]);
       assert.deepStrictEqual(factory.projects, [
         { name: "backend", projectId: backend.projectId },
         { name: "mobile", projectId: null },
       ]);
       assert.deepStrictEqual(
-        factory.issues.map((issue) => issue.code),
-        ["unknown_project"],
+        factory.issues.map((issue) => [issue.code, issue.role, issue.field]),
+        [
+          ["unknown_skill", "implement", "skills"],
+          ["unknown_project", null, "projects"],
+        ],
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -273,45 +292,65 @@ describe("FactoryService", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("writes a new factory, reads it back, and removes a role file on request", () =>
-    Effect.gen(function* () {
-      const root = yield* checkout({});
-      const backend = project("project-backend", "backend", root);
-      const fileSystem = yield* FileSystem.FileSystem;
-      const save = (input: FactorySaveInput) =>
-        FactoryService.FactoryService.use((factories) => factories.save(input)).pipe(
-          Effect.provide(layerFor({ projects: [backend] })),
+  it.effect(
+    "writes a new factory, reads it back, and removes role and skill files on request",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* checkout({});
+        const backend = project("project-backend", "backend", root);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const save = (input: FactorySaveInput) =>
+          FactoryService.FactoryService.use((factories) => factories.save(input)).pipe(
+            Effect.provide(layerFor({ projects: [backend] })),
+          );
+        const implement: FactoryRoleFile = {
+          binding: {
+            model: { instanceId: codex, model: "gpt-6" },
+            skills: ["run-checks"],
+            tools: ["Read", "Edit"],
+          },
+          body: "Fix the bug the task names.",
+        };
+        const definition = { name: "triage", projects: ["backend"], triggers: [], roles: {} };
+        const skillText =
+          "---\nname: run-checks\ndescription: Runs the checks.\n---\n\nRun them.\n";
+
+        // The role may name the skill the same save writes.
+        const saved = yield* save({
+          projectId: backend.projectId,
+          definition,
+          roles: [{ role: "implement", file: implement }],
+          skills: [{ name: "run-checks", file: { body: skillText } }],
+        });
+        assert.deepStrictEqual(saved.definition.roles, { implement: "roles/implement.md" });
+        assert.deepStrictEqual(saved.roles[1]?.fileBinding, implement.binding);
+        assert.strictEqual(saved.roles[1]?.body, implement.body);
+        assert.deepStrictEqual(saved.roles[1]?.skills, [{ name: "run-checks", source: "file" }]);
+        assert.deepStrictEqual(saved.issues, []);
+        const roleFile = `${root}/.t3/factories/triage/roles/implement.md`;
+        const skillFile = `${root}/.t3/factories/triage/skills/run-checks/SKILL.md`;
+        assert.isTrue(yield* fileSystem.exists(roleFile));
+        assert.strictEqual(yield* fileSystem.readFileString(skillFile), skillText);
+
+        const reset = yield* save({
+          projectId: backend.projectId,
+          definition: saved.definition,
+          roles: [{ role: "implement", file: null }],
+          skills: [{ name: "run-checks", file: null }],
+        });
+        assert.deepStrictEqual(reset.definition.roles, {});
+        assert.strictEqual(reset.roles[1]?.source, "builtin");
+        assert.deepStrictEqual(reset.roles[1]?.skills, [{ name: "implement", source: "builtin" }]);
+        assert.deepStrictEqual(
+          reset.skills.map((skill) => skill.name),
+          ["implement", "review"],
         );
-      const implement: FactoryRoleFile = {
-        binding: { model: { instanceId: codex, model: "gpt-6" }, tools: ["Read", "Edit"] },
-        body: "Fix the bug the task names.",
-      };
-      const definition = { name: "triage", projects: ["backend"], triggers: [], roles: {} };
-
-      const saved = yield* save({
-        projectId: backend.projectId,
-        definition,
-        roles: [{ role: "implement", file: implement }],
-      });
-      assert.deepStrictEqual(saved.definition.roles, { implement: "roles/implement.md" });
-      assert.deepStrictEqual(saved.roles[1]?.fileBinding, implement.binding);
-      assert.strictEqual(saved.roles[1]?.body, implement.body);
-      assert.deepStrictEqual(saved.issues, []);
-      const roleFile = `${root}/.t3/factories/triage/roles/implement.md`;
-      assert.isTrue(yield* fileSystem.exists(roleFile));
-
-      const reset = yield* save({
-        projectId: backend.projectId,
-        definition: saved.definition,
-        roles: [{ role: "implement", file: null }],
-      });
-      assert.deepStrictEqual(reset.definition.roles, {});
-      assert.strictEqual(reset.roles[1]?.source, "builtin");
-      assert.isFalse(yield* fileSystem.exists(roleFile));
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        assert.isFalse(yield* fileSystem.exists(roleFile));
+        assert.isFalse(yield* fileSystem.exists(skillFile));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("refuses a binding the provider catalog does not offer and writes nothing", () =>
+  it.effect("refuses a model or skill the factory does not offer and writes nothing", () =>
     Effect.gen(function* () {
       const root = yield* checkout({});
       const backend = project("project-backend", "backend", root);
@@ -323,7 +362,10 @@ describe("FactoryService", () => {
           roles: [
             {
               role: "review",
-              file: { binding: { model: { instanceId: codex, model: "gpt-1" } }, body: null },
+              file: {
+                binding: { model: { instanceId: codex, model: "gpt-1" }, skills: ["lint"] },
+                body: null,
+              },
             },
           ],
         }),
@@ -331,7 +373,10 @@ describe("FactoryService", () => {
       assert.strictEqual(error.code, "invalid");
       assert.deepStrictEqual(
         error.issues?.map((issue) => [issue.code, issue.role]),
-        [["unknown_model", "review"]],
+        [
+          ["unknown_model", "review"],
+          ["unknown_skill", "review"],
+        ],
       );
       assert.isFalse(yield* fileSystem.exists(`${root}/.t3/factories/triage`));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

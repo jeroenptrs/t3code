@@ -5,7 +5,7 @@ export const binding = {
   runtimeMode: "full-access",
   interactionMode: "default",
   isolation: "worktree",
-  skills: [],
+  skills: ["review"],
   tools: [],
 } satisfies FactoryEffectiveBinding;
 

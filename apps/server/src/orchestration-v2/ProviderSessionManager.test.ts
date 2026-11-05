@@ -36,6 +36,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -44,6 +45,7 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as FactorySkills from "../factories/FactorySkills.ts";
 import * as FactoryThreads from "../factories/FactoryThreads.ts";
 import * as JiraBreakdownThreads from "../jira/JiraBreakdownThreads.ts";
 import * as JiraIdentities from "../jira/JiraIdentities.ts";
@@ -663,6 +665,7 @@ function layerTest(input: {
   readonly jiraIdentitiesLayer?: Layer.Layer<JiraIdentities.JiraIdentities>;
   readonly jiraBreakdownThreadsLayer?: Layer.Layer<JiraBreakdownThreads.JiraBreakdownThreads>;
   readonly factoryThreadsLayer?: Layer.Layer<FactoryThreads.FactoryThreads>;
+  readonly factorySkillsLayer?: Layer.Layer<FactorySkills.FactorySkills>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -770,6 +773,7 @@ function layerTest(input: {
             ? []
             : [input.jiraBreakdownThreadsLayer]),
           ...(input.factoryThreadsLayer === undefined ? [] : [input.factoryThreadsLayer]),
+          ...(input.factorySkillsLayer === undefined ? [] : [input.factorySkillsLayer]),
         ),
       ),
     ),
@@ -5796,6 +5800,93 @@ it.effect(
         ),
       );
     }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 binds a factory thread's skills into its directory before the provider opens",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const root = yield* fileSystem.makeTempDirectoryScoped();
+      const state = yield* Ref.make(emptyState);
+      const factoryThreadId = ThreadId.make("thread-provider-session-manager-implementer");
+      const skillText = "---\nname: implement\n---\n";
+      const skillAt = (cwd: string) => `${cwd}/.agents/skills/implement/SKILL.md`;
+      const opening = yield* Ref.make(root);
+      const boundAtOpen = yield* Ref.make<ReadonlyArray<boolean>>([]);
+      const notARepository = {
+        exitCode: ChildProcessSpawner.ExitCode(128),
+        stdout: "",
+        stderr: "fatal: not a git repository",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      };
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const open = Effect.fn(function* (threadId: ThreadId, cwd: string) {
+          yield* fileSystem.makeDirectory(cwd);
+          yield* Ref.set(opening, cwd);
+          yield* eventSink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+          });
+          const providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          yield* manager.open({
+            threadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy: { ...runtimePolicy, cwd },
+          });
+        });
+
+        yield* open(factoryThreadId, `${root}/implementer`);
+        yield* open(ThreadId.make("thread-provider-session-manager-plain"), `${root}/plain`);
+        assert.deepStrictEqual(yield* Ref.get(boundAtOpen), [true, false]);
+        assert.strictEqual(
+          yield* fileSystem.readFileString(skillAt(`${root}/implementer`)),
+          skillText,
+        );
+        assert.isFalse(yield* fileSystem.exists(`${root}/plain/.agents`));
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1_000,
+            beforeOpen: () =>
+              Ref.get(opening).pipe(
+                Effect.flatMap((cwd) => fileSystem.exists(skillAt(cwd))),
+                Effect.orDie,
+                Effect.flatMap((bound) => Ref.update(boundAtOpen, (all) => [...all, bound])),
+              ),
+            factorySkillsLayer: FactorySkills.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.mock(FactoryThreads.FactoryThreads)({
+                    skillsOf: (threadId) =>
+                      Effect.succeed(
+                        threadId === factoryThreadId
+                          ? [{ name: "implement", source: "builtin", text: skillText }]
+                          : [],
+                      ),
+                  }),
+                  Layer.mock(GitVcsDriver.GitVcsDriver)({
+                    execute: () => Effect.succeed(notARepository),
+                  }),
+                  NodeServices.layer,
+                ),
+              ),
+            ),
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
