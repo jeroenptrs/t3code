@@ -1,6 +1,8 @@
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthFactoriesManageScope,
+  AuthFactoriesReadScope,
   AuthInsightsReadScope,
   AuthInsightsWriteScope,
   sessionGrantsScope,
@@ -121,6 +123,19 @@ export function canManageInsights(session: AuthSessionState | null): boolean {
     session !== null &&
     sessionGrantsScope(session, AuthInsightsReadScope) &&
     sessionGrantsScope(session, AuthInsightsWriteScope)
+  );
+}
+
+/** Operators and administrators view factories; administrators alone manage them. */
+export function canReadFactories(session: AuthSessionState | null): boolean {
+  return session !== null && sessionGrantsScope(session, AuthFactoriesReadScope);
+}
+
+export function canManageFactories(session: AuthSessionState | null): boolean {
+  return (
+    session !== null &&
+    sessionGrantsScope(session, AuthFactoriesReadScope) &&
+    sessionGrantsScope(session, AuthFactoriesManageScope)
   );
 }
 
