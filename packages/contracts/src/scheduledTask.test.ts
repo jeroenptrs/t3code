@@ -84,4 +84,23 @@ describe("webhook filters", () => {
     expect(accepts([{ path: "body.action", op: "equals" }])).toBe(false);
     expect(accepts([{ path: "body.action", op: "matches", value: "^opened$" }])).toBe(false);
   });
+
+  it("takes only one-level event fields on event schedules, and none on manual", () => {
+    const acceptsEvent = (type: string, filters: unknown) => {
+      try {
+        decodeUpsertSchedule({ type, filters });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    for (const type of ["jira", "gitlab", "slack"]) {
+      expect(acceptsEvent(type, [{ path: "event.status", op: "equals", value: "Done" }])).toBe(
+        true,
+      );
+      expect(acceptsEvent(type, [{ path: "body.action", op: "exists" }])).toBe(false);
+      expect(acceptsEvent(type, [{ path: "event.issue.key", op: "exists" }])).toBe(false);
+    }
+    expect(decodeUpsertSchedule({ type: "manual", filters: [] })).toEqual({ type: "manual" });
+  });
 });
