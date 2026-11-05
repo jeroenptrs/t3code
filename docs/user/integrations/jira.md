@@ -249,8 +249,9 @@ archived, or settles. Subagents cannot watch issues.
 
 ## Agents that write to Jira
 
-An agent can propose creating issues, posting a comment, or moving an issue to
-another status. The proposal appears as a card in the thread, and the thread shows
+An agent can propose creating issues, posting a comment, moving an issue to
+another status, or adding labels to an issue. Adding labels keeps the labels the
+issue already has. The proposal appears as a card in the thread, and the thread shows
 as waiting for you. You can edit the proposal, then approve or reject it. Nothing is
 written until someone approves, whatever the thread's access mode, and the card
 stays open after the agent's turn ends or the thread is stopped.

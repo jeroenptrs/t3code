@@ -1,7 +1,8 @@
 /**
  * JiraProposals - Jira writes an agent proposes and a signed-in user approves.
  *
- * An agent proposes creating issues, posting a comment or moving an issue; the proposal is a
+ * An agent proposes creating issues, posting a comment, moving an issue or adding labels; the
+ * proposal is a
  * card in its thread. Only a user deciding it from a client approves or rejects it, and an
  * approval writes to Jira with that user's own personal token, never a service identity. The
  * card outlives the run that proposed it.
@@ -99,6 +100,12 @@ export type JiraProposalRequest =
       /** A transition id or name, or the name of the status it leads to. */
       readonly transition: string;
       readonly comment?: string | null | undefined;
+    }
+  | {
+      readonly kind: "labels";
+      readonly site?: string | undefined;
+      readonly key: string;
+      readonly labels: ReadonlyArray<string>;
     };
 
 export interface JiraProposalOutcome {
@@ -165,13 +172,15 @@ const SETTLED_ITEM_STATUSES: ReadonlySet<OrchestrationV2TurnItem["status"]> = ne
 ]);
 
 /**
- * What an approval has written so far: the issues, the steps done for a transition or comment,
- * and the drafts whose story points and sprint were set after creating them.
+ * What an approval has written so far: the issues, the steps done for a transition, comment or
+ * labels, the drafts whose story points and sprint were set after creating them, and the labels
+ * added.
  */
 const Progress = Schema.Struct({
   issues: JiraProposalResult.fields.issues,
-  steps: Schema.Array(Schema.Literals(["transition", "comment"])),
+  steps: Schema.Array(Schema.Literals(["transition", "comment", "labels"])),
   edited: Schema.optional(Schema.Array(Schema.Int)),
+  addedLabels: JiraProposalResult.fields.addedLabels,
 });
 type Progress = typeof Progress.Type;
 const ProgressJson = Schema.fromJsonString(Progress);
@@ -188,12 +197,22 @@ const mergeProgress = (left: Progress, right: Progress | undefined): Progress =>
     if (!issues.some((known) => known.key === entry.key)) issues.push(entry);
   }
   const edited = [...new Set([...(left.edited ?? []), ...(right.edited ?? [])])];
+  const addedLabels = [...new Set([...(left.addedLabels ?? []), ...(right.addedLabels ?? [])])];
   return {
     issues,
     steps: [...new Set([...left.steps, ...right.steps])],
     ...(edited.length === 0 ? {} : { edited }),
+    ...(addedLabels.length === 0 ? {} : { addedLabels }),
   };
 };
+
+const resultOf = (progress: Progress): JiraProposalResult => ({
+  issues: progress.issues,
+  ...(progress.addedLabels === undefined ? {} : { addedLabels: progress.addedLabels }),
+});
+
+const IssueLabels = Schema.Struct({ labels: Schema.optional(Schema.Array(Schema.String)) });
+const decodeIssueLabels = Schema.decodeUnknownEffect(IssueLabels);
 
 const LedgerRow = Schema.Struct({
   status: JiraProposalStatus,
@@ -297,8 +316,8 @@ const checkEdit = (
   if (proposalSite(approved) !== proposalSite(proposed))
     return invalid("An approval cannot move the proposal to another Jira site.");
   if (
-    (approved.kind === "comment" || approved.kind === "transition") &&
-    (proposed.kind === "comment" || proposed.kind === "transition") &&
+    approved.kind !== "create-issues" &&
+    proposed.kind !== "create-issues" &&
     approved.key !== proposed.key
   )
     return invalid("An approval cannot move the proposal to another issue.");
@@ -537,6 +556,13 @@ const make = Effect.gen(function* () {
             comment: request.comment ?? null,
           } as const;
         }
+        case "labels":
+          return {
+            kind: "labels",
+            site,
+            key: request.key,
+            labels: [...new Set(request.labels)],
+          } as const;
       }
     });
 
@@ -811,6 +837,31 @@ const make = Effect.gen(function* () {
           }
           return;
         }
+        case "labels": {
+          if ((yield* Ref.get(progress)).steps.includes("labels")) return;
+          // Read only to report what this approval adds; the write itself never replaces.
+          const read = yield* api.getIssue(identity, proposal.key, { fields: ["labels"] });
+          const existing =
+            (yield* decodeIssueLabels(read.fields ?? {}).pipe(
+              Effect.mapError(
+                () =>
+                  new JiraError({
+                    reason: "unavailable",
+                    message: `Could not read the labels ${proposal.key} has.`,
+                  }),
+              ),
+            )).labels ?? [];
+          const added = proposal.labels.filter((label) => !existing.includes(label));
+          if (added.length > 0) {
+            yield* api.addLabels(identity, proposal.key, added);
+          }
+          yield* advance((current) => ({
+            ...withIssue(current, proposal.key),
+            steps: [...current.steps, "labels"],
+            addedLabels: added,
+          }));
+          return;
+        }
       }
     }).pipe(asApprover(identity));
   };
@@ -861,7 +912,7 @@ const make = Effect.gen(function* () {
   const outcomeFromLedger = (item: ProposalItem, row: LedgerRow) =>
     Effect.gen(function* () {
       const progress = yield* progressOf(row);
-      const result = { issues: progress.issues };
+      const result = resultOf(progress);
       if (repairable(item.proposalStatus, row.status)) {
         yield* record(
           item,
@@ -914,7 +965,7 @@ const make = Effect.gen(function* () {
       }
       const status = settled._tag === "Failure" ? "failed" : input.status;
       const error = settled._tag === "Failure" ? PROGRESS_UNSAVED : input.error;
-      const result = { issues: written.issues };
+      const result = resultOf(written);
       // The command id names this approval, so a second attempt replays a first that landed.
       yield* record(item, `jira-proposal:${item.id}:${status}:${input.claimId}`, {
         proposal: input.proposal,
@@ -955,7 +1006,7 @@ const make = Effect.gen(function* () {
               proposal,
               proposalStatus: "approved",
               ...decided,
-              ...(stored.issues.length === 0 ? {} : { result: { issues: stored.issues } }),
+              ...(stored.issues.length === 0 ? {} : { result: resultOf(stored) }),
             }),
           );
           if (shown._tag === "Failure") {
@@ -966,7 +1017,7 @@ const make = Effect.gen(function* () {
               proposal,
               proposalStatus: "failed",
               ...decided,
-              ...(stored.issues.length === 0 ? {} : { result: { issues: stored.issues } }),
+              ...(stored.issues.length === 0 ? {} : { result: resultOf(stored) }),
               error: APPROVAL_UNRECORDED,
             }).pipe(Effect.ignore);
             return yield* recordFailedDecision(shown.failure);

@@ -66,6 +66,7 @@ const proposalResult = (outcome: JiraProposals.JiraProposalOutcome): JiraProposa
   ...(outcome.result === null || outcome.result.issues.length === 0
     ? {}
     : { issues: outcome.result.issues }),
+  ...(outcome.result?.addedLabels === undefined ? {} : { addedLabels: outcome.result.addedLabels }),
   ...(outcome.error === null ? {} : { error: outcome.error }),
 });
 
@@ -308,6 +309,12 @@ const make = Effect.gen(function* () {
       key: input.key,
       transition: input.transition,
       comment: input.comment,
+    })),
+    propose_jira_labels: proposes("propose_jira_labels", (input) => ({
+      kind: "labels",
+      site: input.site,
+      key: input.key,
+      labels: input.labels,
     })),
   } satisfies McpToolAccess.Handlers<typeof JiraIssuesToolkit.tools>;
 });
