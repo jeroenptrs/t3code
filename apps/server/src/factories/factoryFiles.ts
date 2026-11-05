@@ -24,6 +24,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+/** Where factories live in a project's checkout. */
+export const FACTORIES_DIRECTORY = [".t3", "factories"] as const;
+
 export const FACTORY_FILE_NAME = "factory.json";
 
 export const defaultRolePath = (role: FactoryRoleName) => `roles/${role}.md`;
