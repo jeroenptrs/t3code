@@ -34,6 +34,7 @@ import {
   OrchestrationV2Command,
   type OrchestrationV2InternalCommand,
   type OrchestrationV2LimitRecoveryUpdate,
+  type OrchestrationV2Notification,
   type OrchestrationV2ServerCommand,
   type JiraProposal,
   type JiraProposalStatus,
@@ -892,6 +893,8 @@ function jiraProposalTitle(proposal: JiraProposal): string {
       return `Comment on ${proposal.key}`;
     case "transition":
       return `Move ${proposal.key}: ${proposal.transitionName}`;
+    case "labels":
+      return `Label ${proposal.key}: ${proposal.labels.join(", ")}`;
   }
 }
 
@@ -1122,6 +1125,11 @@ function usageLimitHoldsQueue(
   const resetAt = latestRootProviderFailure(limited, projection.turnItems)?.resetAt;
   return resetAt != null && Date.parse(resetAt) > DateTime.toEpochMillis(now);
 }
+
+type WatchSyncCommand = Extract<
+  OrchestrationV2ServerCommand,
+  { readonly type: "thread.pull-request-watch.sync" | "thread.jira-issue-watch.sync" }
+>;
 
 function pullRequestSnapshotEndsWatch(
   snapshot: ThreadPullRequestLink["snapshot"],
@@ -3712,80 +3720,62 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   /**
    * Records what a pull request or Jira issue watch read, then queues its wake for the agent.
    * Checked under the thread lock: the watch or the thread can change while the remote is read.
-   * The watch is recorded first so the wake's own thread events carry it.
+   * The watch is recorded first so the wake's own thread events carry it. `wakeNotification`
+   * returns null when the wake should not go out.
    */
-  const dispatchWatchSync = Effect.fn("orchestrationV2.dispatch.watchSync")(function* (
-      command: Extract<
-        OrchestrationV2ServerCommand,
-      { readonly type: "thread.pull-request-watch.sync" | "thread.jira-issue-watch.sync" }
-      >,
+  const dispatchWatchSync = Effect.fn("orchestrationV2.dispatch.watchSync")(function* <
+    C extends WatchSyncCommand,
+  >(
+    command: C,
     subject: string,
     watchStartedAt: (thread: OrchestrationV2AppThread) => string | undefined,
-      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
-    ) {
-      const thread = yield* projectionStore
-        .getThread(command.threadId)
-        .pipe(
-          Effect.mapError(
-            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-          ),
-        );
-      const inactive =
-        thread.archivedAt !== null ||
-        thread.settledOverride === "settled" ||
-        thread.settledAt !== null ||
-        isProviderNativeSubagentThread(thread);
-    if (watchStartedAt(thread) !== command.startedAt || (command.wake && inactive)) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-        cause: `The ${subject} watch ended or its thread settled while it was read.`,
-        });
-      }
-      yield* dispatchThreadMutation(command, events, effects);
-      if (command.wake === undefined) return;
-      // An idle thread dispatches immediately, bypassing queued-wake validation.
-      if (
-        command.wake.notification.source.kind === "monitor" &&
-        command.watch !== null &&
-        pullRequestSnapshotEndsWatch(link.snapshot, command.startedAt)
-      ) {
-        return;
-      }
-      yield* dispatchMessage(
-        {
-          type: "message.dispatch",
-          commandId: command.commandId,
-          threadId: command.threadId,
-          messageId: command.wake.messageId,
-          text: command.wake.text,
-          notification: {
-            ...command.wake.notification,
-            source:
-              command.wake.notification.source.kind === "monitor"
-                ? {
-                    kind: "monitor",
-                    pullRequest: {
-                      ...key,
-                      watchStartedAt: command.startedAt,
-                      headSha:
-                        command.wake.includesRemarks === true
-                          ? null
-                          : (command.watch?.headSha ?? null),
-                      ...(command.watch === null ? { watchEnded: true } : {}),
-                    },
-                  }
-                : command.wake.notification.source,
-          },
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          creationSource: "server",
-        },
-        events,
-        effects,
+    wakeNotification: (
+      thread: OrchestrationV2AppThread,
+      wake: NonNullable<C["wake"]>,
+    ) => OrchestrationV2Notification | null,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
       );
+    const inactive =
+      thread.archivedAt !== null ||
+      thread.settledOverride === "settled" ||
+      thread.settledAt !== null ||
+      isProviderNativeSubagentThread(thread);
+    if (watchStartedAt(thread) !== command.startedAt || (command.wake && inactive)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `The ${subject} watch ended or its thread settled while it was read.`,
+      });
+    }
+    yield* dispatchThreadMutation(command, events, effects);
+    const wake = command.wake as NonNullable<C["wake"]> | undefined;
+    if (wake === undefined) return;
+    const notification = wakeNotification(thread, wake);
+    if (notification === null) return;
+    yield* dispatchMessage(
+      {
+        type: "message.dispatch",
+        commandId: command.commandId,
+        threadId: command.threadId,
+        messageId: wake.messageId,
+        text: wake.text,
+        notification,
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+      },
+      events,
+      effects,
+    );
   });
 
   // Deleted after the share change commits: the files of waiting messages it dismissed or dropped.
@@ -3915,7 +3905,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return yield* refuse(
           `Thread ${command.threadId} is settled or archived and cannot watch ${subject}.`,
-      );
+        );
       }
       // A subagent or delegated task reports to its parent thread, which owns the work. Its own
       // watch would wake it on every change of something it was not asked to babysit.
@@ -12329,28 +12319,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: thread.providerInstanceId,
         occurredAt: input.now,
         payload: {
-            ...withoutJiraIssueWatches(thread),
+          ...withoutJiraIssueWatches(thread),
           pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
         },
       });
     }
-      // Fork-only. Jira watches end in their own event, which keeps the reverse lookup in step.
-      if (thread.jiraIssues?.some((link) => link.watch !== undefined)) {
-        yield* emitEvent({
-          type: "thread.jira-issues-synced",
-          threadId: thread.id,
-          providerInstanceId: thread.providerInstanceId,
-          occurredAt: input.now,
-          payload: {
-            ...withoutJiraIssueWatches(thread),
-            ...(thread.pullRequests === undefined
-              ? {}
-              : {
-                  pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
-                }),
-          },
-        });
-      }
+    // Fork-only. Jira watches end in their own event, which keeps the reverse lookup in step.
+    if (thread.jiraIssues?.some((link) => link.watch !== undefined)) {
+      yield* emitEvent({
+        type: "thread.jira-issues-synced",
+        threadId: thread.id,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: input.now,
+        payload: {
+          ...withoutJiraIssueWatches(thread),
+          ...(thread.pullRequests === undefined
+            ? {}
+            : {
+                pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
+              }),
+        },
+      });
+    }
     const cohortRunIds = new Set(input.cohortRunIds);
     for (const run of runs) {
       if (run.delegatedCompletion?.delivery != null) cohortRunIds.add(run.id);
@@ -14602,15 +14592,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "thread.pull-request-watch.sync": {
         const key = normalizeThreadPullRequestKey(command);
+        const linkOf = (thread: OrchestrationV2AppThread) =>
+          threadPullRequestsOf(thread).find(
+            (candidate) =>
+              candidate.source !== "stack-dismissed" && threadPullRequestKeysEqual(candidate, key),
+          );
         yield* dispatchWatchSync(
           command,
           "pull request",
-          (thread) =>
-            threadPullRequestsOf(thread).find(
-              (candidate) =>
-                candidate.source !== "stack-dismissed" &&
-                threadPullRequestKeysEqual(candidate, key),
-            )?.watch?.startedAt,
+          (thread) => linkOf(thread)?.watch?.startedAt,
+          (thread, wake) => {
+            if (wake.notification.source.kind !== "monitor") return wake.notification;
+            const snapshot = linkOf(thread)?.snapshot ?? null;
+            // An idle thread dispatches immediately, bypassing queued-wake validation.
+            if (command.watch !== null && pullRequestSnapshotEndsWatch(snapshot, command.startedAt))
+              return null;
+            return {
+              ...wake.notification,
+              source: {
+                kind: "monitor",
+                pullRequest: {
+                  ...key,
+                  watchStartedAt: command.startedAt,
+                  headSha: wake.includesRemarks === true ? null : (command.watch?.headSha ?? null),
+                  ...(command.watch === null ? { watchEnded: true } : {}),
+                },
+              },
+            };
+          },
           events,
           effects,
         );
@@ -14636,6 +14645,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 candidate.site === site &&
                 candidate.key === key,
             )?.watch?.startedAt,
+          (_thread, wake) => wake.notification,
           events,
           effects,
         );
