@@ -5,6 +5,8 @@ import {
   AuthEnvironmentMaintainScope,
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
+  AuthFactoriesManageScope,
+  AuthFactoriesReadScope,
   type AuthGrantScope,
   AuthInsightsReadScope,
   AuthInsightsWriteScope,
@@ -114,6 +116,16 @@ export const AUTH_SCOPE_OPTIONS: ReadonlyArray<{
     scope: AuthInsightsWriteScope,
     title: "Manage insights",
     description: "Choose the projects and people Insights covers.",
+  },
+  {
+    scope: AuthFactoriesReadScope,
+    title: "View factories",
+    description: "Read factory definitions and the threads and tasks they own.",
+  },
+  {
+    scope: AuthFactoriesManageScope,
+    title: "Manage factories",
+    description: "Change factory definitions, roles, and triggers.",
   },
 ];
 
