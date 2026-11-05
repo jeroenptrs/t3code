@@ -6,6 +6,7 @@ import {
   initialJiraProposalEdits,
   jiraDraftEditErrors,
   jiraIssueTypeOptions,
+  jiraLabelsEditError,
   jiraProposalApproveLabel,
   jiraProposalDisplay,
   jiraProposalEditsChanged,
@@ -135,6 +136,19 @@ describe("approvedJiraProposal", () => {
       comment: null,
     });
   });
+
+  it("reads labels as comma-separated text and refuses one with a space", () => {
+    const labels: JiraProposal = { kind: "labels", site: SITE, key: "ABC-1", labels: ["triage"] };
+    expect(initialJiraProposalEdits(labels)).toEqual({ kind: "labels", labels: "triage" });
+    expect(
+      approvedJiraProposal(labels, { kind: "labels", labels: " triage,needs-info, ,triage " }),
+    ).toEqual({ ...labels, labels: ["triage", "needs-info"] });
+    expect(jiraLabelsEditError(" , ")).toBe("Add a label");
+    expect(jiraLabelsEditError("needs info")).toBe("Labels cannot contain spaces");
+    expect(approvedJiraProposal(labels, { kind: "labels", labels: "needs info" })).toBeNull();
+    const many = Array.from({ length: 21 }, (_, index) => `l${index}`).join(",");
+    expect(jiraLabelsEditError(many)).toBe("At most 20 labels");
+  });
 });
 
 describe("jiraProposalApproveLabel", () => {
@@ -149,6 +163,10 @@ describe("jiraProposalApproveLabel", () => {
       ),
     ).toBe("Create 1 issue");
     expect(jiraProposalApproveLabel(createIssues, edits, true)).toBe("Retry");
+    const labels: JiraProposal = { kind: "labels", site: SITE, key: "ABC-1", labels: ["a", "b"] };
+    expect(jiraProposalApproveLabel(labels, initialJiraProposalEdits(labels), false)).toBe(
+      "Add labels",
+    );
   });
 });
 
@@ -181,6 +199,24 @@ describe("jiraProposalOutcome", () => {
       issues: [{ site: SITE, key: "ABC-1", url: `https://${SITE}/browse/ABC-1` }],
       tail: "to Done",
     });
+  });
+
+  it("names the labels an approval added, or none when the issue had them all", () => {
+    const labels: JiraProposal = {
+      kind: "labels",
+      site: SITE,
+      key: "ABC-1",
+      labels: ["triage", "needs-info"],
+    };
+    const issues = [{ site: SITE, key: "ABC-1", url: "u1" }];
+    expect(jiraProposalOutcome(labels, { issues, addedLabels: ["needs-info"] })).toEqual({
+      verb: "Labeled",
+      issues,
+      tail: "with needs-info",
+    });
+    expect(jiraProposalOutcome(labels, { issues, addedLabels: [] }).tail).toBe(
+      "with no new labels",
+    );
   });
 });
 
