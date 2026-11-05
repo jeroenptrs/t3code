@@ -61,6 +61,8 @@
         "src/provider/testFixtures/*.mjs",
         // graphqlgen reads its config.
         "graphql.config.ts",
+        // The import point for factory adapters, which M1 will consume.
+        "src/factories/upstream/index.ts",
       ],
       // The generated operations export every selection's class.
       "ignoreIssues": { "**/*.graphql.ts": ["exports", "types", "namespaceMembers"] },
