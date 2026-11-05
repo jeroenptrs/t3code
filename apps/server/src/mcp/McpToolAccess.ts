@@ -143,12 +143,12 @@ const refuseReadOnlyClient = McpInvocationContext.McpInvocationContext.pipe(
 
 const writingCaller = refuseReadOnlyClient.pipe(
   Effect.andThen(loadCaller()),
-  Effect.tap(assertLiveCaller),
+  Effect.flatMap(assertLiveCaller),
 );
 
 const orchestratingCaller = refuseReadOnlyClient.pipe(
   Effect.andThen(readCaller()),
-  Effect.tap(assertLiveCaller),
+  Effect.flatMap(assertLiveCaller),
 );
 
 const requireThreadCaller = McpInvocationContext.McpInvocationContext.pipe(

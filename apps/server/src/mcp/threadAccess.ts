@@ -13,9 +13,12 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
+import * as ProviderContinuationService from "../orchestration-v2/ProviderContinuationService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -141,18 +144,68 @@ export const isLiveCallerShell = (
     ) ??
       false));
 
+// A loaded host was traced committing a woken turn's continuation run 44 s after the wake.
+const CONTINUATION_COMMIT_WAIT = Duration.seconds(60);
+
+/**
+ * A woken turn can call before the run its wake started commits. When the caller's own thread
+ * lacks only a live run and a continuation for it is in flight, waits for that continuation, then
+ * returns `read` once. Otherwise returns `current` at once.
+ */
+export const readAfterPendingContinuation = Effect.fn("mcp.readAfterPendingContinuation")(
+  function* <A, E, R>(options: {
+    readonly providerInstanceId: ProviderInstanceId | undefined;
+    readonly thread: Pick<
+      OrchestrationV2ThreadShell,
+      "id" | "archivedAt" | "deletedAt" | "providerInstanceId"
+    >;
+    readonly live: boolean;
+    readonly current: A;
+    readonly read: Effect.Effect<A, E, R>;
+  }) {
+    const { thread } = options;
+    if (
+      options.live ||
+      thread.archivedAt !== null ||
+      thread.deletedAt !== null ||
+      thread.providerInstanceId !== options.providerInstanceId
+    ) {
+      return options.current;
+    }
+    const continuations = yield* ProviderContinuationService.ProviderContinuationService;
+    const settled = yield* continuations
+      .awaitSettled(thread.id)
+      .pipe(Effect.timeoutOption(CONTINUATION_COMMIT_WAIT));
+    return Option.contains(settled, false) ? options.current : yield* options.read;
+  },
+);
+
 /** Thread callers need a live run or its background subagent in an unarchived thread. OAuth clients rely on their session and ceiling. */
-export function assertLiveCaller({ caller, scope }: Caller) {
-  if (caller === undefined) return Effect.void;
-  return isLiveCallerShell(caller, scope.thread?.providerInstanceId)
-    ? Effect.void
-    : Effect.fail(
-        new OrchestratorMcpFailure({
-          code: "parent_not_active",
-          message: "The calling provider no longer owns an active thread run.",
-        }),
-      );
-}
+export const assertLiveCaller = Effect.fn("mcp.assertLiveCaller")(function* (context: Caller) {
+  const { caller, scope } = context;
+  if (caller === undefined) return context;
+  const providerInstanceId = scope.thread?.providerInstanceId;
+  const shell = yield* readAfterPendingContinuation({
+    providerInstanceId,
+    thread: caller,
+    live: isLiveCallerShell(caller, providerInstanceId),
+    current: caller,
+    read: context.threads.getThreadShell(caller.id).pipe(Effect.mapError(unavailable)),
+  });
+  if (shell === null || shell.deletedAt !== null || !isLiveCallerShell(shell, providerInstanceId)) {
+    return yield* new OrchestratorMcpFailure({
+      code: "parent_not_active",
+      message: "The calling provider no longer owns an active thread run.",
+    });
+  }
+  return shell === caller
+    ? context
+    : ({
+        ...context,
+        caller: shell,
+        limits: { runtimeMode: shell.runtimeMode, interactionMode: shell.interactionMode },
+      } satisfies Caller);
+});
 
 export const assertFullAccess = (context: Caller, message: string) =>
   context.limits.runtimeMode === "full-access" && context.limits.interactionMode === "default"

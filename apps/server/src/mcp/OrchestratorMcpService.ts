@@ -132,7 +132,7 @@ import {
   runtimeModeRank,
   taskPrompt,
 } from "./delegatedTaskModes.ts";
-import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
+import { isLiveCallerShell, readAfterPendingContinuation, threadNotFound } from "./threadAccess.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -1439,7 +1439,14 @@ const make = Effect.gen(function* () {
   ) {
     yield* requireCapability(scope);
     const threadScope = yield* requireThreadScope(scope, operation);
-    const parent = yield* loadCallerRecords(threadScope.thread.threadId, ["runs"]);
+    const loaded = yield* loadCallerRecords(threadScope.thread.threadId, ["runs"]);
+    const parent = yield* readAfterPendingContinuation({
+      providerInstanceId: threadScope.thread.providerInstanceId,
+      thread: loaded.thread,
+      live: ThreadManagementService.latestActiveRun(loaded) !== undefined,
+      current: loaded,
+      read: loadCallerRecords(threadScope.thread.threadId, ["runs"]),
+    });
     return { scope: threadScope, parent } as const;
   });
 
@@ -1489,7 +1496,7 @@ const make = Effect.gen(function* () {
   ) =>
     parent === undefined || target.thread.id === parent.thread.id
       ? Effect.void
-      : assertLiveCaller(scope, parent);
+      : assertLiveCaller(scope, parent, true);
 
   const assertLiveCallerForOtherProject = (
     scope: McpInvocationScope,
@@ -1498,11 +1505,12 @@ const make = Effect.gen(function* () {
   ) =>
     parent === undefined || projectId === parent.thread.projectId
       ? Effect.void
-      : assertLiveCaller(scope, parent);
+      : assertLiveCaller(scope, parent, true);
 
   const assertLiveCaller = (
     scope: McpInvocationScope,
     parent: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+    awaitContinuation: boolean,
   ) => {
     const notActive = failure(
       "parent_not_active",
@@ -1510,15 +1518,25 @@ const make = Effect.gen(function* () {
     );
     const activeRun = ThreadManagementService.latestActiveRun(parent);
     if (parent.thread.archivedAt === null && activeRun === undefined) {
+      const providerInstanceId = scope.thread?.providerInstanceId;
+      const readShell = threadManagement
+        .getThreadShell(parent.thread.id)
+        .pipe(Effect.mapError(threadManagementFailure));
       // Decide from this one fresh snapshot: a run may have started since `parent` was read.
-      return threadManagement.getThreadShell(parent.thread.id).pipe(
-        Effect.mapError(threadManagementFailure),
-        Effect.flatMap((shell) =>
-          isLiveCallerShell(shell, scope.thread?.providerInstanceId)
-            ? Effect.void
-            : Effect.fail(notActive),
-        ),
-      );
+      return Effect.gen(function* () {
+        const fresh = yield* readShell;
+        const shell =
+          fresh === null || !awaitContinuation
+            ? fresh
+            : yield* readAfterPendingContinuation({
+                providerInstanceId,
+                thread: fresh,
+                live: isLiveCallerShell(fresh, providerInstanceId),
+                current: fresh,
+                read: readShell,
+              });
+        if (!isLiveCallerShell(shell, providerInstanceId)) return yield* notActive;
+      });
     }
     return parent.thread.archivedAt !== null ||
       activeRun === undefined ||
@@ -2239,7 +2257,8 @@ const make = Effect.gen(function* () {
       const live =
         caller.parent === undefined
           ? scope.client?.access !== "read-only"
-          : Exit.isSuccess(yield* Effect.exit(assertLiveCaller(scope, caller.parent)));
+          : // Runs once per listed task, so it never waits on a continuation.
+            Exit.isSuccess(yield* Effect.exit(assertLiveCaller(scope, caller.parent, false)));
       const modes = yield* scheduledTaskRunModes(task).pipe(Effect.option);
       return scheduledTaskSummary(
         task,

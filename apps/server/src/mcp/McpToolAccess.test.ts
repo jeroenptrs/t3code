@@ -9,13 +9,18 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
 import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
+import * as ProviderContinuationService from "../orchestration-v2/ProviderContinuationService.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
@@ -356,6 +361,67 @@ it.effect("refuses a change when the calling thread cannot be read", () =>
       ),
     ),
   ),
+);
+
+it.effect("a woken caller waits up to 60 seconds for its own continuation run to commit", () =>
+  Effect.gen(function* () {
+    const wokenThreadId = ThreadId.make("thread:woken");
+    const woken = threadCaller(wokenThreadId);
+    const otherInstance = {
+      ...woken,
+      thread: { ...woken.thread!, providerInstanceId: ProviderInstanceId.make("claude") },
+    };
+    const waits = yield* Queue.unbounded<void>();
+    const settled = yield* Deferred.make<void>();
+    let committed = false;
+    // False when the call ends without waiting, so a missing wait fails here instead of hanging.
+    const waitsOnContinuation = (fiber: Fiber.Fiber<unknown, unknown>) =>
+      Effect.raceFirst(
+        Queue.take(waits).pipe(Effect.as(true)),
+        Fiber.await(fiber).pipe(Effect.as(false)),
+      );
+
+    yield* Effect.gen(function* () {
+      const timedOut = yield* Effect.forkChild(call("acts_as_caller", woken), {
+        startImmediately: true,
+      });
+      expect(yield* waitsOnContinuation(timedOut)).toBe(true);
+      yield* TestClock.adjust("60 seconds");
+      expect(yield* Fiber.join(timedOut)).toBe("parent_not_active");
+
+      expect(yield* call("acts_as_caller", otherInstance)).toBe("parent_not_active");
+      expect(yield* Queue.size(waits)).toBe(0);
+
+      const committing = yield* Effect.forkChild(call("acts_as_caller", woken), {
+        startImmediately: true,
+      });
+      expect(yield* waitsOnContinuation(committing)).toBe(true);
+      committed = true;
+      yield* Deferred.succeed(settled, undefined);
+      expect(yield* Fiber.join(committing)).toBe("ran");
+    }).pipe(
+      Effect.provide(
+        probeServer(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (threadId) =>
+              Effect.sync(() => liveThreadShell(threadId, committed ? {} : { activeRunId: null })),
+          }),
+        ).pipe(
+          Layer.provide(
+            Layer.succeed(ProviderContinuationService.ProviderContinuationService, {
+              awaitSettled: (threadId) =>
+                threadId === wokenThreadId
+                  ? Queue.offer(waits, undefined).pipe(
+                      Effect.andThen(Deferred.await(settled)),
+                      Effect.as(true),
+                    )
+                  : Effect.succeed(false),
+            }),
+          ),
+        ),
+      ),
+    );
+  }),
 );
 
 const box = EnvironmentId.make("environment-box");
