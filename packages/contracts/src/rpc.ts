@@ -135,6 +135,14 @@ import {
   FactoryListResult,
   FactoryReadInput,
   FactorySaveInput,
+  WorkItem,
+  WorkItemAnswerGateInput,
+  WorkItemCreateInput,
+  WorkItemError,
+  WorkItemListInput,
+  WorkItemListResult,
+  WorkItemReadInput,
+  WorkItemTransitionError,
 } from "./factories.ts";
 import {
   InsightsConfig,
@@ -736,6 +744,10 @@ export const WS_METHODS = {
   factoriesList: "factories.list",
   factoriesRead: "factories.read",
   factoriesSave: "factories.save",
+  factoriesWorkItemsList: "factories.workItems.list",
+  factoriesWorkItemsRead: "factories.workItems.read",
+  factoriesWorkItemsCreate: "factories.workItems.create",
+  factoriesWorkItemsAnswerGate: "factories.workItems.answerGate",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1607,6 +1619,37 @@ const WsFactoriesSaveRpc = Rpc.make(WS_METHODS.factoriesSave, {
   payload: FactorySaveInput,
   success: Factory,
   error: FactoriesRpcError,
+});
+
+const WorkItemsRpcError = Schema.Union([
+  FactoryError,
+  WorkItemError,
+  WorkItemTransitionError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsFactoriesWorkItemsListRpc = Rpc.make(WS_METHODS.factoriesWorkItemsList, {
+  payload: WorkItemListInput,
+  success: WorkItemListResult,
+  error: WorkItemsRpcError,
+});
+
+const WsFactoriesWorkItemsReadRpc = Rpc.make(WS_METHODS.factoriesWorkItemsRead, {
+  payload: WorkItemReadInput,
+  success: WorkItem,
+  error: WorkItemsRpcError,
+});
+
+const WsFactoriesWorkItemsCreateRpc = Rpc.make(WS_METHODS.factoriesWorkItemsCreate, {
+  payload: WorkItemCreateInput,
+  success: WorkItem,
+  error: WorkItemsRpcError,
+});
+
+const WsFactoriesWorkItemsAnswerGateRpc = Rpc.make(WS_METHODS.factoriesWorkItemsAnswerGate, {
+  payload: WorkItemAnswerGateInput,
+  success: WorkItem,
+  error: WorkItemsRpcError,
 });
 
 const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLookupRepository, {
@@ -2544,6 +2587,10 @@ export const WsFactoriesRpcGroup = RpcGroup.make(
   WsFactoriesListRpc,
   WsFactoriesReadRpc,
   WsFactoriesSaveRpc,
+  WsFactoriesWorkItemsListRpc,
+  WsFactoriesWorkItemsReadRpc,
+  WsFactoriesWorkItemsCreateRpc,
+  WsFactoriesWorkItemsAnswerGateRpc,
 ).middleware(RpcScopeAuthorization);
 
 /** Every RPC except those in the fork's Jira, Insights, and factories groups. */

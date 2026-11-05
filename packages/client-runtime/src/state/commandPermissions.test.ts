@@ -565,21 +565,25 @@ it.effect.each([
   ),
 );
 
-it.effect("saving a factory needs factories:manage, which an operator grant lacks", () =>
+it.effect.each([
+  WS_METHODS.factoriesSave,
+  WS_METHODS.factoriesWorkItemsCreate,
+  WS_METHODS.factoriesWorkItemsAnswerGate,
+])("%s needs factories:manage, which an operator grant lacks", (method) =>
   Effect.scoped(
     Effect.gen(function* () {
       const registry = yield* setup;
-      const save = createCommandPermissions(runtime, WS_METHODS.factoriesSave);
+      const command = createCommandPermissions(runtime, method);
       const role = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
         AsyncResult.success({ ...grant(false), scopes, permissions: scopes });
       registry.set(sessions(env), role(AuthUserRoleScopes.operator));
-      expect(registry.get(save.permissionAtom(env))).toBe(false);
-      expect(yield* save.authorize(registry, env).pipe(Effect.flip)).toMatchObject({
+      expect(registry.get(command.permissionAtom(env))).toBe(false);
+      expect(yield* command.authorize(registry, env).pipe(Effect.flip)).toMatchObject({
         requiredPermission: AuthFactoriesManageScope,
       });
       registry.set(sessions(env), role(AuthUserRoleScopes.administrator));
-      expect(registry.get(save.permissionAtom(env))).toBe(true);
-      yield* save.authorize(registry, env);
+      expect(registry.get(command.permissionAtom(env))).toBe(true);
+      yield* command.authorize(registry, env);
     }),
   ),
 );
