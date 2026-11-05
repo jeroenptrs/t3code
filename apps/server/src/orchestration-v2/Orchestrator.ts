@@ -134,6 +134,7 @@ import {
   continuationFailedBeforePrompt,
   continuationStartRetryDelayMs,
   delegatedTaskResultRun,
+  neverStarted,
   isRestartContinuationSource,
   runOutcome,
 } from "./RestartBackgroundNote.ts";
@@ -6926,7 +6927,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     // A run the thread queues for itself continues the task of the run that sent it.
-    const continuedTaskId = projection.runs.find((run) =>
+    let continuedTaskId = projection.runs.find((run) =>
       command.restartContinuationOfRunId === undefined
         ? command.senderThreadId === command.threadId && isActiveRun(run)
         : run.id === command.restartContinuationOfRunId,
@@ -7210,6 +7211,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         dispatchMode = { type: "queue_after_active" };
       }
     }
+    if (delegatedCompletion !== undefined && projection.thread.lineage.parentThreadId !== null) {
+      const source = projection.runs.find((run) => run.id === delegatedCompletion.parentRunId);
+      const parent = yield* projectionStore
+        .getThreadRecords(projection.thread.lineage.parentThreadId, ["subagents"])
+        .pipe(mapDispatchError(command));
+      const task = parent.subagents.find((task) => task.id === source?.delegatedTaskId);
+      // Nested results continue the pending follow-up rather than creating another obligation.
+      if (task?.result === null && task.completionDelivery?.state !== "disposed") {
+        continuedTaskId = task.id;
+      }
+    }
     // Steer mailbox deliveries, delegated task questions, and command notices
     // into an active goal under the thread lock: queued behind a long turn or a
     // goal run, they are never seen. Never interrupt/restart a turn for one.
@@ -7236,6 +7248,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       if (
         active !== undefined &&
+        (continuedTaskId === undefined || active.delegatedTaskId === continuedTaskId) &&
         activeTurn !== undefined &&
         providerThread?.providerSessionId != null &&
         (!commandNotice || providerThread.goal?.status === "active") &&
@@ -14406,6 +14419,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
 
+      // Each follow-up waits for its own nested work, independently of later queued follow-ups.
+      if (
+        taskRuns.length > 0 &&
+        !taskRuns.every(neverStarted) &&
+        delegatedTaskProgress({
+          ...childControls,
+          runs: taskRuns,
+          subagents: childControls.subagents.filter((task) =>
+            taskRuns.some((run) => run.id === task.runId),
+          ),
+        }).state !== "result_available"
+      )
+        return;
+
       const childResult = yield* projectionStore.getThreadRecords(
         childThreadId,
         ["messages", "turnItems"],
@@ -15995,6 +16022,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
         const run = delegatedTaskResultRun(runs, taskId);
         if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
+        if (runs.every(neverStarted)) return false;
+        if (
+          delegatedTaskProgress({
+            ...child,
+            runs,
+            subagents: child.subagents.filter((task) =>
+              runs.some((taskRun) => taskRun.id === task.runId),
+            ),
+          }).state !== "result_available"
+        )
+          return true;
         return yield* childAwaitsRestartContinuation(runs, run);
       }
       const progress = delegatedTaskProgress(child);
