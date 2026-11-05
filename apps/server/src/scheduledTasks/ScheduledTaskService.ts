@@ -2700,12 +2700,10 @@ export const layer = Layer.effect(
     });
     yield* scheduler.register("webhook-coalescing", dispatchPending());
 
-    // A delivery is answered once it is logged, before it runs, and senders do
-    // not retry an accepted delivery. Ones a restart cut off, queued or
-    // mid-dispatch, run now in arrival order, ahead of requests that arrive
-    // after startup. A webhook run is keyed by its delivery, so one whose
-    // dispatch had already committed replays it rather than running twice.
-    // Coalesced deliveries resume from scheduled_task_webhook_pending instead.
+    // A delivery is answered once logged, before it runs, and senders do not retry an accepted
+    // one. Deliveries a restart cut off, queued or mid-dispatch, run now in arrival order, ahead
+    // of requests that arrive after startup. A run is keyed by its delivery, so a committed
+    // dispatch replays instead of running twice. Coalesced ones resume from the pending table.
     yield* Effect.gen(function* () {
       const pending = yield* sql<{
         readonly delivery_id: string;
