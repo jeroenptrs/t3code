@@ -11,6 +11,7 @@ state and never a prompt. The design and milestones are in
 <project root>/.t3/factories/<name>/
   factory.json        name, projects, triggers, roles
   roles/<role>.md     YAML frontmatter with bindings, then the instructions
+  skills/<skill>/     SKILL.md and its supporting files, in the Agent Skills format
 ```
 
 - The directory names the factory. A `name` in `factory.json` that differs is
@@ -19,7 +20,7 @@ state and never a prompt. The design and milestones are in
   different factory, and its `fork_factory_threads` rows stay with the old id.
 - `factory.json` lists the file for each role that has one. A role it leaves
   out uses `roles/<role>.md` when that file exists, else the built-in default.
-- A save writes role files first and `factory.json` last.
+- A save writes skill and role files first and `factory.json` last.
 
 ## Precedence
 
@@ -28,6 +29,29 @@ binding the role file sets replaces the built-in one, and every other field
 keeps the built-in value. The body is all or nothing: a role file with a
 non-blank body replaces the built-in instructions whole. The built-ins are in
 `apps/server/src/factories/roles/`.
+
+Skills resolve the same way, by name. A `skills/<name>/` with a `SKILL.md`
+replaces the built-in skill of that name whole, and a name a role binds that is
+neither is an `unknown_skill` issue. The built-in skills are in
+`apps/server/src/factories/skills/`.
+
+## Skills in the role's worktree
+
+Claude reads `.claude/skills`, Codex and Antigravity `.agents/skills`, and fx
+`.codex/skills`, so `FactorySkills.materialize` writes each skill
+a thread's role binds to `<cwd>/.agents/skills/<name>/` and links
+`.claude/skills/<name>` and `.codex/skills/<name>` to it. It runs when the
+thread's provider session opens or the thread joins one, before the provider
+reads its skills, so an edited skill applies from the thread's next session.
+
+- It writes a file only when its content differs.
+- It adds each path it owns to the checkout's exclude file, from
+  `git rev-parse --git-path info/exclude`, which linked worktrees share. The
+  agent's `git status` stays clean, and `.gitignore` is never touched.
+- It never writes a tracked path. A skill whose path the checkout tracks is
+  skipped, and so is a path that something other than a link already holds.
+- Nothing removes a skill. One the role stops binding stays until the worktree
+  goes.
 
 ## Ownership
 
