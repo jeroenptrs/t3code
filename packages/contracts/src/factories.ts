@@ -373,6 +373,11 @@ export const WorkItemSummary = Schema.Struct({
   foremanThreadId: Schema.NullOr(ThreadId),
   /** The Foreman run the item was sent as; null until it was sent. */
   foremanRunId: Schema.NullOr(RunId),
+  /**
+   * When the server sent the item to its Foreman. Null while it waits for the factory's active
+   * item to end, and on an item that was never sent.
+   */
+  dispatchedAt: Schema.NullOr(IsoDateTime),
   threads: Schema.Array(WorkItemThread),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
