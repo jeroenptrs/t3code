@@ -78,6 +78,7 @@ export type T3McpToolSummaryAction =
   | "propose-jira-issues"
   | "propose-jira-comment"
   | "propose-jira-transition"
+  | "propose-jira-labels"
   | "diff-walkthrough-write"
   | "diff-walkthrough-read"
   | "thread-diff-read"
@@ -189,6 +190,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   propose_jira_transition: tool(
     ["Propose", "Proposing", "Proposed", "a Jira transition"],
     "propose-jira-transition",
+    "jira",
+  ),
+  propose_jira_labels: tool(
+    ["Propose", "Proposing", "Proposed", "Jira labels"],
+    "propose-jira-labels",
     "jira",
   ),
   write_diff_walkthrough: tool(

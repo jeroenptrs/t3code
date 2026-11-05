@@ -480,6 +480,9 @@ export function summarizeT3ToolCalls(
     case "propose-jira-transition":
       label = phrase("Proposed", "propose", quantity(selected.length, "Jira transition"));
       break;
+    case "propose-jira-labels":
+      label = phrase("Proposed", "propose", quantity(selected.length, "Jira label change"));
+      break;
     case "write-pr-guides": {
       // One call writes many guides, and reports a refusal per guide rather than failing.
       const outcomes = selected.flatMap((call) =>
