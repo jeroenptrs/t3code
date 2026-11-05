@@ -16,6 +16,9 @@ import { DiffWalkthroughWriter } from "../diffWalkthrough/DiffWalkthroughWriter.
 import { DeviceService } from "../device/DeviceService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
+import { FleetBroker } from "../home/FleetBroker.ts";
+import { FleetService } from "../home/FleetService.ts";
+import { HomeService } from "../home/HomeService.ts";
 import { JiraIdentities } from "../jira/JiraIdentities.ts";
 import { JiraProposals } from "../jira/JiraProposals.ts";
 import { JiraService } from "../jira/JiraService.ts";
@@ -58,8 +61,11 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(AssetSigner)({}),
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),
+  Layer.mock(FleetBroker)({}),
+  Layer.mock(FleetService)({}),
   Layer.mock(GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),
+  Layer.mock(HomeService)({ available: false }),
   Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
   Layer.mock(McpProviderSessions)({}),
   Layer.mock(OrchestratorV2)({}),

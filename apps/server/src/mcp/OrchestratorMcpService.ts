@@ -61,6 +61,7 @@ import {
   scheduledTaskThreadMode,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerSettings as ContractServerSettings,
   ThreadId,
   isOrchestrationV2WorkActive,
   resolveProjectProviderInstanceEnabled,
@@ -229,7 +230,7 @@ function failure(code: OrchestratorMcpFailure["code"], message: string): Orchest
   return new OrchestratorMcpFailure({ code, message });
 }
 
-function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
+export function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
   if (!isThreadManagementError(error)) return failure("orchestration_error", errorMessage(error));
   switch (error._tag) {
     case "ThreadManagementThreadNotFoundError":
@@ -251,7 +252,7 @@ function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
 }
 
 // Without a reason, a Stop reads as the user's (see RunExecutionService.USER_STOP_REASON).
-function agentStopReason(reason: string | undefined): string {
+export function agentStopReason(reason: string | undefined): string {
   return reason === undefined ? "Stopped by an agent" : `Stopped by an agent: ${reason}`;
 }
 
@@ -377,6 +378,67 @@ function providerConstraints(
 }
 
 /** t3_thread_launch keeps a selection as given, so it can hold options its model does not have. */
+/**
+ * The providers `orchestrator_capabilities` lists. Home also reads them from
+ * other environments before launching there.
+ */
+export function providerCapabilities(input: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly orchestrationCapableInstanceIds: ReadonlySet<string>;
+  readonly settings: Pick<
+    ContractServerSettings,
+    "providerInstances" | "projectSettingsOverrides" | "providerModelPreferences" | "favorites"
+  >;
+  /** The caller's project, which may turn providers off; null lists what any project enables. */
+  readonly projectId: ProjectId | null;
+  readonly inherited: ModelSelection | undefined;
+  readonly searchTerms: ReadonlyArray<string>;
+}): OrchestratorMcpCapabilitiesResult["providers"] {
+  const { settings, inherited } = input;
+  return input.providers.map((provider) => {
+    // Snapshots list instances any project enables; delegate_task checks the caller's project.
+    const enabledForCaller =
+      input.projectId === null ||
+      resolveProjectProviderInstanceEnabled(settings, input.projectId, provider.instanceId);
+    const constraints = providerConstraints(
+      enabledForCaller ? provider : { ...provider, enabled: false },
+      input.orchestrationCapableInstanceIds.has(provider.instanceId),
+    );
+    const { listed, omitted } = listCapabilityModels({
+      provider,
+      preferences: settings.providerModelPreferences?.[provider.instanceId],
+      searchTerms: input.searchTerms,
+      isPinned: (model) =>
+        model.isCustom ||
+        (inherited?.instanceId === provider.instanceId && inherited.model === model.slug) ||
+        (settings.favorites ?? []).some(
+          (favorite) => favorite.provider === provider.instanceId && favorite.model === model.slug,
+        ),
+    });
+    return {
+      providerInstanceId: provider.instanceId,
+      driverKind: provider.driver,
+      displayName: provider.displayName ?? null,
+      models: listed.map((model) => {
+        const options = model.capabilities?.optionDescriptors ?? [];
+        return {
+          id: model.slug,
+          ...(model.name.toLowerCase() === model.slug.toLowerCase() ? {} : { label: model.name }),
+          ...(options.length === 0 ? {} : { options: options.map(capabilityModelOption) }),
+        };
+      }),
+      ...(omitted === 0 ? {} : { omittedModels: omitted }),
+      ...(provider.supportedRuntimeModes === undefined ||
+      provider.supportedRuntimeModes.length === 0
+        ? {}
+        : { runtimeModes: [...provider.supportedRuntimeModes] }),
+      canRunChildTask: constraints.length === 0,
+      canRunCrossProviderChildTask: constraints.length === 0,
+      constraints: [...constraints],
+    };
+  });
+}
+
 function knownOptions(
   options: ReadonlyArray<ProviderOptionSelection> | undefined,
   descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
@@ -760,7 +822,7 @@ function threadTitle(input: {
   return `${detail.slice(0, end)}...`;
 }
 
-function threadSettlement(
+export function threadSettlement(
   thread: Pick<OrchestrationV2ThreadShell, "settledOverride" | "settledAt">,
 ): Pick<OrchestratorMcpThreadListItem, "settled" | "settledAt"> {
   const settled = thread.settledOverride === "settled";
@@ -795,8 +857,9 @@ function threadPullRequests(
   }));
 }
 
-function listItemFromShell(
-  scope: McpInvocationScope,
+/** `scope` names where the thread's link points; Home's fleet calls pass the environment alone. */
+export function listItemFromShell(
+  scope: Pick<McpInvocationScope, "environmentId" | "client">,
   shell: OrchestrationV2ThreadShell,
   nowMs: number,
 ): OrchestratorMcpThreadListItem {
@@ -826,7 +889,7 @@ function listItemFromShell(
 }
 
 function threadDetail(
-  scope: McpInvocationScope,
+  scope: Pick<McpInvocationScope, "environmentId" | "client">,
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "runtimeRequests">,
   itemCount: number,
   shell: OrchestrationV2ThreadShell,
@@ -1014,6 +1077,67 @@ function timelineItem(input: {
     updatedAt: DateTime.formatIso(input.row.item.updatedAt),
   };
 }
+
+/**
+ * One page of a thread as `t3_thread_read` returns it. Home reads every
+ * environment through this; the tool adds delegated-result acknowledgement.
+ */
+export const readThreadPage = Effect.fn("OrchestratorMcpService.readThreadPage")(function* (
+  threadManagement: ThreadManagementService.ThreadManagementService["Service"],
+  scope: Pick<McpInvocationScope, "environmentId" | "client">,
+  target: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "runtimeRequests">,
+  shell: OrchestrationV2ThreadShell,
+  input: OrchestratorMcpThreadReadInput,
+) {
+  const view = input.view ?? "messages";
+  const afterPosition = input.afterPosition ?? -1;
+  const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
+  const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
+  const timeline = yield* threadManagement
+    .getTimelinePage(input.threadId, {
+      afterPosition,
+      limit,
+      view,
+      ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
+    })
+    .pipe(Effect.mapError(threadManagementFailure));
+  const page = timeline.items;
+  const messageIdsByThread = new Map<ThreadId, Array<MessageId>>();
+  for (const row of page) {
+    if (row.item.type !== "user_message" && row.item.type !== "assistant_message") continue;
+    const ids = messageIdsByThread.get(row.sourceThreadId) ?? [];
+    ids.push(row.item.messageId);
+    messageIdsByThread.set(row.sourceThreadId, ids);
+  }
+  const sourceMessages = yield* Effect.forEach(
+    [...messageIdsByThread],
+    ([threadId, messageIds]) =>
+      threadManagement.getThreadRecords(threadId, ["messages"], { messageIds }).pipe(
+        Effect.map((records) => [threadId, records.messages] as const),
+        Effect.mapError(threadManagementFailure),
+      ),
+    { concurrency: 1 },
+  );
+  const messagesByThreadId = new Map(sourceMessages);
+  const result = {
+    thread: threadDetail(scope, target, timeline.totalItems, shell, yield* Clock.currentTimeMillis),
+    recentRuns: target.runs
+      .toSorted((left, right) => right.ordinal - left.ordinal)
+      .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
+      .map(threadRun),
+    items: page.map((row) =>
+      timelineItem({
+        row,
+        maxChars,
+        messagesByThreadId,
+        ...(input.itemId === undefined ? {} : { textOffset: input.textOffset ?? 0 }),
+      }),
+    ),
+    nextPosition: page.at(-1)?.position ?? null,
+    hasMore: timeline.hasMore,
+  } satisfies OrchestratorMcpThreadReadResult;
+  return { result, page };
+});
 
 const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
@@ -2332,54 +2456,13 @@ const make = Effect.gen(function* () {
           ) ?? [],
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
-        providers: providers.map((provider) => {
-          // Snapshots list instances any project enables; delegate_task checks the caller's project.
-          const enabledForCaller =
-            parent === undefined ||
-            resolveProjectProviderInstanceEnabled(
+        providers: providerCapabilities({
+          providers,
+          orchestrationCapableInstanceIds,
               settings,
-              parent.thread.projectId,
-              provider.instanceId,
-            );
-          const constraints = providerConstraints(
-            enabledForCaller ? provider : { ...provider, enabled: false },
-            orchestrationCapableInstanceIds.has(provider.instanceId),
-          );
-          const { listed, omitted } = listCapabilityModels({
-            provider,
-            preferences: settings.providerModelPreferences?.[provider.instanceId],
+          projectId: parent?.thread.projectId ?? null,
+          inherited,
             searchTerms,
-            isPinned: (model) =>
-              model.isCustom ||
-              (inherited?.instanceId === provider.instanceId && inherited.model === model.slug) ||
-              (settings.favorites ?? []).some(
-                (favorite) =>
-                  favorite.provider === provider.instanceId && favorite.model === model.slug,
-              ),
-          });
-          return {
-            providerInstanceId: provider.instanceId,
-            driverKind: provider.driver,
-            displayName: provider.displayName ?? null,
-            models: listed.map((model) => {
-              const options = model.capabilities?.optionDescriptors ?? [];
-              return {
-                id: model.slug,
-                ...(model.name.toLowerCase() === model.slug.toLowerCase()
-                  ? {}
-                  : { label: model.name }),
-                ...(options.length === 0 ? {} : { options: options.map(capabilityModelOption) }),
-              };
-            }),
-            ...(omitted === 0 ? {} : { omittedModels: omitted }),
-            ...(provider.supportedRuntimeModes === undefined ||
-            provider.supportedRuntimeModes.length === 0
-              ? {}
-              : { runtimeModes: [...provider.supportedRuntimeModes] }),
-            canRunChildTask: constraints.length === 0,
-            canRunCrossProviderChildTask: constraints.length === 0,
-            constraints: [...constraints],
-          };
         }),
         features: {
           appOwnedSubagents: true,
@@ -3034,36 +3117,8 @@ const make = Effect.gen(function* () {
     }),
     readThread: Effect.fn("OrchestratorMcpService.readThread")(function* (scope, input) {
       const { parent, target, shell } = yield* loadReadableThread(scope, input.threadId);
-      const view = input.view ?? "messages";
-      const afterPosition = input.afterPosition ?? -1;
-      const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
+      const { result, page } = yield* readThreadPage(threadManagement, scope, target, shell, input);
       const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
-      const timeline = yield* threadManagement
-        .getTimelinePage(input.threadId, {
-          afterPosition,
-          limit,
-          view,
-          ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
-        })
-        .pipe(Effect.mapError(threadManagementFailure));
-      const page = timeline.items;
-      const messageIdsByThread = new Map<ThreadId, Array<MessageId>>();
-      for (const row of page) {
-        if (row.item.type !== "user_message" && row.item.type !== "assistant_message") continue;
-        const ids = messageIdsByThread.get(row.sourceThreadId) ?? [];
-        ids.push(row.item.messageId);
-        messageIdsByThread.set(row.sourceThreadId, ids);
-      }
-      const sourceMessages = yield* Effect.forEach(
-        [...messageIdsByThread],
-        ([threadId, messageIds]) =>
-          threadManagement.getThreadRecords(threadId, ["messages"], { messageIds }).pipe(
-            Effect.map((records) => [threadId, records.messages] as const),
-            Effect.mapError(threadManagementFailure),
-          ),
-        { concurrency: 1 },
-      );
-      const messagesByThreadId = new Map(sourceMessages);
       const returnedRunIds = new Set(
         page.filter((row) => row.sourceThreadId === target.thread.id).map((row) => row.item.runId),
       );
@@ -3118,29 +3173,7 @@ const make = Effect.gen(function* () {
           }
         }
       }
-      return {
-        thread: threadDetail(
-          scope,
-          target,
-          timeline.totalItems,
-          shell,
-          yield* Clock.currentTimeMillis,
-        ),
-        recentRuns: target.runs
-          .toSorted((left, right) => right.ordinal - left.ordinal)
-          .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
-          .map(threadRun),
-        items: page.map((row) =>
-          timelineItem({
-            row,
-            maxChars,
-            messagesByThreadId,
-            ...(input.itemId === undefined ? {} : { textOffset: input.textOffset ?? 0 }),
-          }),
-        ),
-        nextPosition: page.at(-1)?.position ?? null,
-        hasMore: timeline.hasMore,
-      } satisfies OrchestratorMcpThreadReadResult;
+      return result;
     }),
     sendToThread: Effect.fn("OrchestratorMcpService.sendToThread")(function* (scope, input) {
       const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId);
