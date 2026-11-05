@@ -52,7 +52,7 @@ import {
   type FactoryRoleDraft,
 } from "./FactoryPage.logic";
 import { FactoryRoleCard, type FactoryModelChoices } from "./FactoryRoleCard";
-import { FactoryWorkItems } from "./FactoryWorkItems";
+import { FactoryNeedsYou, FactoryWorkItems } from "./FactoryWorkItems";
 import type { WorkItemSearch } from "./workItems.logic";
 
 export function FactoryPage(props: {
@@ -159,8 +159,9 @@ function ForemanLink(props: {
 }
 
 function attentionSummary(factory: Factory) {
-  const { failedRuns, questions } = factory.attention;
+  const { gatesWaiting, failedRuns, questions } = factory.attention;
   const parts = [
+    gatesWaiting === 0 ? null : `${gatesWaiting} ${gatesWaiting === 1 ? "gate" : "gates"} waiting`,
     failedRuns === 0 ? null : `${failedRuns} failed ${failedRuns === 1 ? "run" : "runs"}`,
     questions === 0 ? null : `${questions} ${questions === 1 ? "question" : "questions"}`,
   ].filter((part) => part !== null);
@@ -282,6 +283,7 @@ function FactoryView(props: {
           {refusal.message}
         </p>
       )}
+      <FactoryNeedsYou environmentId={environmentId} factory={factory} />
       <FactoryIssuesList issues={factory.issues} />
       <FactoryDefinitionSection
         environmentId={environmentId}

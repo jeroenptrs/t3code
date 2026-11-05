@@ -61,6 +61,15 @@ per factory, named `Foreman: <factory>`, and starts the first time the factory g
 factory page header links to it as **Foreman thread**, and in the **Factories** tab it shows first
 under its factory.
 
+To create a work item:
+
+1. Open the factory's page and click **New work item**. On the factory page, **New work item…** in
+   the command palette does the same.
+2. Enter a title and the request.
+3. Click **Create work item**.
+
+Only administrators can create work items. An agent can also send one for you when you ask it to.
+
 ### Follow the work
 
 The factory page lists its work items under **Work items**, newest first, with the threads that
@@ -72,12 +81,12 @@ Click an item's title to see its request, the question a gate holds it on, and e
 with who made it. The list does not update live. To read it again, click the refresh button
 beside **Work items**.
 
-To create a work item, open the factory's page, enter a title and the request, and send it. Only
-administrators can create work items. An agent can also send one for you when you ask it to.
-
 ### Answer a gate
 
-When the Foreman needs a decision, it holds the work item at **waiting** with a question, and the
-factory's attention count goes up. Open the work item, read the question, and approve or reject
-it, with a note if you want. Approving sends the item back to the stage the Foreman asked for.
-Rejecting drops it. The Foreman reads your answer and note in the item's session.
+When the Foreman needs a decision, it holds the work item at **Waiting** with a question, and the
+factory's attention count goes up. The item shows under **Needs you** at the top of the factory
+page. Read the question, then click **Approve** or **Reject**. A rejection needs a note that says
+why. An approval takes an optional note. Approving sends the item back to the stage the Foreman
+asked for. Rejecting drops it. The Foreman reads your answer and note in the item's session.
+
+Only administrators can answer a gate. Operators see the question.
