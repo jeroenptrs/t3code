@@ -105,6 +105,7 @@ import {
   WS_METHODS,
   HomeUnavailableError,
   WsCoreRpcGroup,
+  WsFactoriesRpcGroup,
   WsInsightsRpcGroup,
   WsJiraRpcGroup,
   WsRpcGroup,
@@ -263,6 +264,7 @@ import * as JiraService from "./jira/JiraService.ts";
 import * as JiraProposals from "./jira/JiraProposals.ts";
 import * as JiraBreakdownService from "./jira/JiraBreakdownService.ts";
 import * as InsightsService from "./insights/InsightsService.ts";
+import * as FactoryService from "./factories/FactoryService.ts";
 import * as JiraUserCredentials from "./jira/JiraUserCredentials.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
@@ -686,6 +688,7 @@ const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 const ServerWsCoreRpcGroup = WsCoreRpcGroup.middleware(RpcInstrumentation);
 const ServerWsJiraRpcGroup = WsJiraRpcGroup.middleware(RpcInstrumentation);
 const ServerWsInsightsRpcGroup = WsInsightsRpcGroup.middleware(RpcInstrumentation);
+const ServerWsFactoriesRpcGroup = WsFactoriesRpcGroup.middleware(RpcInstrumentation);
 
 // RpcGroup.toLayer derives each handler's requirements by scanning every RPC in
 // the group, so its type cost grows with handlers × RPCs. Near 200 methods that
@@ -3738,6 +3741,17 @@ const layerWsInsightsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession
     }),
   );
 
+const layerWsFactoriesRpc = ServerWsFactoriesRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const factories = yield* FactoryService.FactoryService;
+    return ServerWsFactoriesRpcGroup.of({
+      [WS_METHODS.factoriesList]: (input) => factories.list(input.projectId),
+      [WS_METHODS.factoriesRead]: (input) => factories.read(input.factoryId),
+      [WS_METHODS.factoriesSave]: (input) => factories.save(input),
+    });
+  }),
+);
+
 // Default socket-level Defect frames end every pending client request.
 export const WS_RPC_SERVER_OPTIONS = {
   disableTracing: true,
@@ -3761,6 +3775,7 @@ export const layer = Layer.unwrap(
     const jiraProposals = yield* JiraProposals.JiraProposals;
     const jiraBreakdowns = yield* JiraBreakdownService.JiraBreakdownService;
     const insights = yield* InsightsService.InsightsService;
+    const factories = yield* FactoryService.FactoryService;
     const home = yield* HomeService.HomeService;
     const fleet = yield* FleetService.FleetService;
     const fleetBroker = yield* FleetBroker.FleetBroker;
@@ -3837,6 +3852,7 @@ export const layer = Layer.unwrap(
               .pipe(
               Layer.merge(layerWsJiraRpc(session)),
                 Layer.merge(layerWsInsightsRpc(session)),
+                Layer.merge(layerWsFactoriesRpc),
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.
               Layer.provide(DefectReporter.layer),
@@ -3885,6 +3901,7 @@ export const layer = Layer.unwrap(
               ),
                 // Shared with the ingestion worker, so a reset cursor drops its walk in progress.
                 Layer.provide(Layer.succeed(InsightsService.InsightsService, insights)),
+                Layer.provide(Layer.succeed(FactoryService.FactoryService, factories)),
                 // Shared with /mcp, so Home's grant, relay, and watches are one per server.
                 Layer.provide(Layer.succeed(HomeService.HomeService, home)),
                 Layer.provide(Layer.succeed(FleetService.FleetService, fleet)),
