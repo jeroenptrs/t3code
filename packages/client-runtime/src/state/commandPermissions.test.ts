@@ -11,6 +11,7 @@ import {
   AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
   AuthFactoriesManageScope,
+  AuthFactoriesReadScope,
   AuthInsightsReadScope,
   AuthInsightsWriteScope,
   AuthOrchestrationOperateScope,
@@ -579,6 +580,83 @@ it.effect("saving a factory needs factories:manage, which an operator grant lack
       registry.set(sessions(env), role(AuthUserRoleScopes.administrator));
       expect(registry.get(save.permissionAtom(env))).toBe(true);
       yield* save.authorize(registry, env);
+it.effect("listing trigger templates needs factories:read", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const list = createCommandPermissions(runtime, WS_METHODS.triggerTemplatesList);
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      expect(registry.get(list.permissionAtom(env))).toBe(false);
+      expect(yield* list.authorize(registry, env).pipe(Effect.flip)).toMatchObject({
+        requiredPermission: AuthFactoriesReadScope,
+      });
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [AuthFactoriesReadScope],
+          permissions: [AuthFactoriesReadScope],
+        }),
+      );
+      expect(registry.get(list.permissionAtom(env))).toBe(true);
+      yield* list.authorize(registry, env);
+    }),
+  ),
+);
+
+it.effect.each([WS_METHODS.triggerTemplatesSave, WS_METHODS.triggerTemplatesDelete] as const)(
+  "%s needs factories:write, which factories:read alone lacks",
+  (method) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const command = createCommandPermissions(runtime, method);
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(true),
+            scopes: [AuthOrchestrationOperateScope, AuthFactoriesReadScope],
+            permissions: [AuthOrchestrationOperateScope, AuthFactoriesReadScope],
+          }),
+        );
+        expect(registry.get(command.permissionAtom(env))).toBe(false);
+        expect(yield* command.authorize(registry, env).pipe(Effect.flip)).toMatchObject({
+          requiredPermission: AuthFactoriesManageScope,
+        });
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthFactoriesReadScope, AuthFactoriesManageScope],
+            permissions: [AuthFactoriesReadScope, AuthFactoriesManageScope],
+          }),
+        );
+        expect(registry.get(command.permissionAtom(env))).toBe(true);
+        yield* command.authorize(registry, env);
+      }),
+    ),
+);
+
+it.effect("raising a trigger event needs orchestration:operate", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const raise = createCommandPermissions(runtime, WS_METHODS.triggersRaise);
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [AuthOrchestrationReadScope],
+          permissions: [AuthOrchestrationReadScope],
+        }),
+      );
+      expect(registry.get(raise.permissionAtom(env))).toBe(false);
+      expect(yield* raise.authorize(registry, env).pipe(Effect.flip)).toMatchObject({
+        requiredPermission: AuthOrchestrationOperateScope,
+      });
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      expect(registry.get(raise.permissionAtom(env))).toBe(true);
+      yield* raise.authorize(registry, env);
     }),
   ),
 );
