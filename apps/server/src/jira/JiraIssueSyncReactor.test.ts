@@ -39,6 +39,7 @@ const toSummary = (site: string, key: string, issue: FakeIssue): JiraIssueSummar
   site,
   key,
   url: `https://${site}/browse/${key}`,
+  labels: [],
   summary: issue.summary,
   status: issue.statusCategory,
   statusCategory: issue.statusCategory,

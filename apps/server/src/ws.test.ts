@@ -20,16 +20,13 @@ import {
   SourceControlRepositoryError,
   type OrchestrationV2Command,
   WS_METHODS,
-  WsRpcGroup,
+  WsCoreRpcGroup,
   WsServerRefreshProvidersRpc,
   WsSubscribeServerConfigRpc,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationProjectShell,
-  ProjectId,
-  ProviderInstanceId,
   ScheduledTaskListResult,
-  ThreadId,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerProvider,
@@ -108,6 +105,8 @@ import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolve
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as TriggerService from "./triggers/TriggerService.ts";
+import * as TriggerTemplates from "./triggers/TriggerTemplateService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -934,6 +933,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ResourceTelemetry.ResourceTelemetry)({}),
   Layer.mock(ReviewService.ReviewService)({}),
   Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
+  Layer.mock(TriggerService.TriggerService)({}),
+  Layer.mock(TriggerTemplates.TriggerTemplateService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(SecretResolver.SecretResolver)({}),
   Layer.mock(GuestShareService.GuestShareService)({}),
@@ -1508,8 +1509,12 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
       Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
       Layer.mock(ServerEnvironment.ServerEnvironment)({}),
       Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+      Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+      Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
     );
-    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+    // The fork's Jira, Insights, and factory groups are served by their own layers.
+    const server = yield* RpcServer.makeNoSerialization(WsCoreRpcGroup, {
       ...WS_RPC_SERVER_OPTIONS,
       onFromServer: (response) =>
         response._tag === "Exit" ? Queue.offer(exits, response.exit._tag) : Effect.void,
