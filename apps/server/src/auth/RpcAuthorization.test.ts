@@ -22,6 +22,7 @@ import {
   AuthFactoriesReadScope,
   AuthUserRoleScopes,
   FactoryId,
+  WorkItemId,
   InsightsContributorId,
   WS_METHODS,
   WsFactoriesRpcGroup,
@@ -367,12 +368,36 @@ describe("Factories authorization", () => {
             [WS_METHODS.factoriesRead]: () => Effect.die("unused"),
             [WS_METHODS.factoriesSave]: () =>
               Effect.sync(() => handled.push("save")).pipe(Effect.as(factory)),
+            [WS_METHODS.factoriesWorkItemsList]: () =>
+              Effect.sync(() => handled.push("workItems.list")).pipe(Effect.as({ workItems: [] })),
+            [WS_METHODS.factoriesWorkItemsRead]: () => Effect.die("unused"),
+            [WS_METHODS.factoriesWorkItemsCreate]: () =>
+              Effect.sync(() => handled.push("workItems.create")).pipe(Effect.as(workItem)),
+            [WS_METHODS.factoriesWorkItemsAnswerGate]: () =>
+              Effect.sync(() => handled.push("workItems.answerGate")).pipe(Effect.as(workItem)),
           }),
           RpcAuthorization.layer(scopes),
         ),
       ),
     );
   const save = { projectId: factory.projectId, definition: factory.definition };
+  const workItemId = WorkItemId.make("work-item:1");
+  const workItem = {
+    id: workItemId,
+    factoryId: factory.id,
+    title: "Fix the login bug",
+    source: { kind: "manual" as const, text: "SSO fails." },
+    stage: "new" as const,
+    gate: { state: "none" as const },
+    foremanThreadId: null,
+    foremanRunId: null,
+    threads: [],
+    createdAt: "2026-11-05T00:00:00.000Z",
+    updatedAt: "2026-11-05T00:00:00.000Z",
+    transitions: [],
+  };
+  const create = { factoryId: factory.id, title: workItem.title, text: workItem.source.text };
+  const answer = { workItemId, decision: "approved" as const, note: "" };
 
   it.effect("refuses a reader before any factory handler runs", () =>
     Effect.gen(function* () {
@@ -382,29 +407,43 @@ describe("Factories authorization", () => {
         _tag: "EnvironmentAuthorizationError",
         requiredPermission: AuthFactoriesReadScope,
       });
+      expect(
+        yield* client[WS_METHODS.factoriesWorkItemsList]({ factoryId: factory.id }).pipe(
+          Effect.flip,
+        ),
+      ).toMatchObject({ requiredPermission: AuthFactoriesReadScope });
       expect(handled).toEqual([]);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("lets an operator view factories but not save one", () =>
+  it.effect("lets an operator view factories and work items but change neither", () =>
     Effect.gen(function* () {
       const handled: Array<string> = [];
       const client = yield* clientWith(AuthUserRoleScopes.operator, handled);
       yield* client[WS_METHODS.factoriesList]({});
+      yield* client[WS_METHODS.factoriesWorkItemsList]({ factoryId: factory.id });
       expect(yield* client[WS_METHODS.factoriesSave](save).pipe(Effect.flip)).toMatchObject({
         _tag: "EnvironmentAuthorizationError",
         requiredPermission: AuthFactoriesManageScope,
       });
-      expect(handled).toEqual(["list"]);
+      expect(
+        yield* client[WS_METHODS.factoriesWorkItemsCreate](create).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthFactoriesManageScope });
+      expect(
+        yield* client[WS_METHODS.factoriesWorkItemsAnswerGate](answer).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthFactoriesManageScope });
+      expect(handled).toEqual(["list", "workItems.list"]);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("lets an administrator save a factory", () =>
+  it.effect("lets an administrator save a factory, create work items, and answer gates", () =>
     Effect.gen(function* () {
       const handled: Array<string> = [];
       const client = yield* clientWith(AuthUserRoleScopes.administrator, handled);
       yield* client[WS_METHODS.factoriesSave](save);
-      expect(handled).toEqual(["save"]);
+      yield* client[WS_METHODS.factoriesWorkItemsCreate](create);
+      yield* client[WS_METHODS.factoriesWorkItemsAnswerGate](answer);
+      expect(handled).toEqual(["save", "workItems.create", "workItems.answerGate"]);
     }).pipe(Effect.scoped),
   );
 });

@@ -3760,16 +3760,23 @@ const layerWsInsightsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession
     }),
   );
 
-const layerWsFactoriesRpc = ServerWsFactoriesRpcGroup.toLayer(
+const layerWsFactoriesRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
+  ServerWsFactoriesRpcGroup.toLayer(
   Effect.gen(function* () {
     const factories = yield* FactoryService.FactoryService;
     return ServerWsFactoriesRpcGroup.of({
       [WS_METHODS.factoriesList]: (input) => factories.list(input.projectId),
       [WS_METHODS.factoriesRead]: (input) => factories.read(input.factoryId),
       [WS_METHODS.factoriesSave]: (input) => factories.save(input),
+        [WS_METHODS.factoriesWorkItemsList]: (input) => factories.listWorkItems(input),
+        [WS_METHODS.factoriesWorkItemsRead]: (input) => factories.readWorkItem(input.workItemId),
+        [WS_METHODS.factoriesWorkItemsCreate]: (input) => factories.createWorkItem(input),
+        // Recorded as who answered; the admin dev credential has no user.
+        [WS_METHODS.factoriesWorkItemsAnswerGate]: (input) =>
+          factories.answerWorkItemGate(currentSession.userId ?? null, input),
     });
   }),
-);
+  );
 
 // Default socket-level Defect frames end every pending client request.
 export const WS_RPC_SERVER_OPTIONS = {
@@ -3872,7 +3879,7 @@ export const layer = Layer.unwrap(
               .pipe(
               Layer.merge(layerWsJiraRpc(session)),
                 Layer.merge(layerWsInsightsRpc(session)),
-                Layer.merge(layerWsFactoriesRpc),
+                Layer.merge(layerWsFactoriesRpc(session)),
               Layer.provideMerge(RpcSerialization.layerJson),
               // Handler-context reporters see only request defects, not server-wide defects.
               Layer.provide(DefectReporter.layer),

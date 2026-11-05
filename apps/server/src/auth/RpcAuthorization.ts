@@ -177,9 +177,12 @@ export const RPC_REQUIRED_SCOPES = {
   // writes are client-guarded above.
   [WS_METHODS.insightsOverview]: AuthInsightsReadScope,
   [WS_METHODS.insightsConfig]: AuthInsightsReadScope,
-  // Operators view factories; saving one is client-guarded above with the manage scope.
+  // Operators view factories and their work items; changing either is client-guarded above
+  // with the manage scope.
   [WS_METHODS.factoriesList]: AuthFactoriesReadScope,
   [WS_METHODS.factoriesRead]: AuthFactoriesReadScope,
+  [WS_METHODS.factoriesWorkItemsList]: AuthFactoriesReadScope,
+  [WS_METHODS.factoriesWorkItemsRead]: AuthFactoriesReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlAppAccess]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlStarred]: AuthOrchestrationReadScope,
