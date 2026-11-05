@@ -180,6 +180,8 @@ describe("FactoryService", () => {
         ".t3/factories/triage/roles/implement.md":
           "---\nisolation: shared\nskills: [run-checks]\n---\n\nFix the bug.\n",
         ".t3/factories/triage/roles/review.md": "---\nruntimeMode: approval-required\n---\n",
+        // Not listed in factory.json: the file at the default path still counts.
+        ".t3/factories/triage/roles/foreman.md": "Route everything to implement.\n",
       });
       const backend = project("project-backend", "backend", root);
       const factory = yield* FactoryService.FactoryService.use((factories) =>
@@ -189,12 +191,12 @@ describe("FactoryService", () => {
       const [foreman, implement, review] = factory.roles;
       assert.deepStrictEqual(foreman, {
         role: "foreman",
-        path: null,
-        source: "builtin",
+        path: "roles/foreman.md",
+        source: "file",
         fileBinding: {},
         binding: builtinRoles.foreman.binding,
-        body: builtinRoles.foreman.body,
-        bodySource: "builtin",
+        body: "Route everything to implement.",
+        bodySource: "file",
       });
       assert.deepStrictEqual(implement, {
         role: "implement",
