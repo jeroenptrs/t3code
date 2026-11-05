@@ -22,6 +22,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as FactoryThreads from "./FactoryThreads.ts";
 import { builtinRoles } from "./roles/index.ts";
+import { builtinSkills } from "./skills/index.ts";
 
 const factoryJson = JSON.stringify({ name: "triage", roles: { review: "roles/strict-review.md" } });
 
@@ -69,7 +70,7 @@ const layerProjections = Layer.mock(ProjectionStore.ProjectionStoreV2)({
     } as unknown as OrchestrationV2ThreadProjection),
 });
 
-it.effect("gives a factory's threads and its Foreman's delegated children their role body", () =>
+it.effect("gives a factory's threads and its Foreman's children their role body and skills", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -86,11 +87,19 @@ it.effect("gives a factory's threads and its Foreman's delegated children their 
       path.join(directory, "roles", "strict-review.md"),
       "---\nisolation: shared\n---\n\nBlock on any failing check.\n",
     );
+    // The factory's review skill replaces the built-in one.
+    yield* fileSystem.makeDirectory(path.join(directory, "skills", "review"), {
+      recursive: true,
+    });
+    yield* fileSystem.writeFileString(
+      path.join(directory, "skills", "review", "SKILL.md"),
+      "---\nname: review\n---\n",
+    );
     const projectId = ProjectId.make("project-backend");
     const factoryId = makeFactoryId(projectId, "triage");
     const backend = { projectId, workspaceRoot: root } as ProjectStore.ProjectRow;
 
-    const roles = yield* Effect.gen(function* () {
+    const { roles, skills } = yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       for (const [threadId, role] of [
         ["t-foreman", "foreman"],
@@ -103,19 +112,20 @@ it.effect("gives a factory's threads and its Foreman's delegated children their 
         `;
       }
       const threads = yield* FactoryThreads.FactoryThreads;
-      return yield* Effect.forEach(
-        [
-          "t-foreman",
-          "t-implement",
-          "t-review",
-          "t-other",
-          "t-foreman-implementer",
-          "t-foreman-reviewer",
-          "t-foreman-helper",
-          "t-other-implementer",
-        ],
-        (id) => threads.roleOf(ThreadId.make(id)),
-      );
+      const threadIds = [
+        "t-foreman",
+        "t-implement",
+        "t-review",
+        "t-other",
+        "t-foreman-implementer",
+        "t-foreman-reviewer",
+        "t-foreman-helper",
+        "t-other-implementer",
+      ].map((id) => ThreadId.make(id));
+      return {
+        roles: yield* Effect.forEach(threadIds, threads.roleOf),
+        skills: yield* Effect.forEach(threadIds, threads.skillsOf),
+      };
     }).pipe(
       Effect.provide(
         FactoryThreads.layer.pipe(
@@ -140,6 +150,26 @@ it.effect("gives a factory's threads and its Foreman's delegated children their 
       { factoryId, role: "review", body: "Block on any failing check." },
       null,
       null,
+    ]);
+    const implementSkill: FactoryThreads.BoundSkill = {
+      name: "implement",
+      source: "builtin",
+      text: builtinSkills.implement!,
+    };
+    const reviewSkill: FactoryThreads.BoundSkill = {
+      name: "review",
+      source: "file",
+      directory: path.join(directory, "skills", "review"),
+    };
+    assert.deepStrictEqual(skills, [
+      [],
+      [implementSkill],
+      [reviewSkill],
+      [],
+      [implementSkill],
+      [reviewSkill],
+      [],
+      [],
     ]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

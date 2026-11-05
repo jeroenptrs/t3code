@@ -1,6 +1,7 @@
 /**
  * The factory definition files: parsing them into what the service reports, rendering them back,
- * and checking role bindings against the provider catalog. Pure functions; the service does I/O.
+ * resolving role skills, and checking role bindings against the provider catalog. Pure functions,
+ * apart from listing a factory's skill directories; the services do the rest of the I/O.
  */
 import {
   FactoryDefinition,
@@ -11,6 +12,8 @@ import {
   type FactoryProject,
   FactoryRoleBinding,
   type FactoryRoleName,
+  type FactorySkill,
+  FactorySkillName,
   FactoryTrigger,
   ModelSelection,
   type ProjectId,
@@ -20,9 +23,14 @@ import {
   type ServerProvider,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import type * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+
+import { builtinSkills } from "./skills/index.ts";
 
 /** Where factories live in a project's checkout. */
 export const FACTORIES_DIRECTORY = [".t3", "factories"] as const;
@@ -30,6 +38,11 @@ export const FACTORIES_DIRECTORY = [".t3", "factories"] as const;
 export const FACTORY_FILE_NAME = "factory.json";
 
 export const defaultRolePath = (role: FactoryRoleName) => `roles/${role}.md`;
+
+/** A factory's skills are `skills/<name>/SKILL.md`, beside any supporting files. */
+export const SKILLS_DIRECTORY = "skills";
+
+export const SKILL_FILE_NAME = "SKILL.md";
 
 const issue = (
   code: FactoryIssue["code"],
@@ -39,6 +52,7 @@ const issue = (
 ): FactoryIssue => ({ code, role, field, message });
 
 const decodeName = Schema.decodeUnknownOption(FactoryName);
+const isSkillName = Schema.is(FactorySkillName);
 const decodeNames = Schema.decodeUnknownOption(Schema.Array(TrimmedNonEmptyString));
 const decodeTriggers = Schema.decodeUnknownOption(Schema.Array(FactoryTrigger));
 const decodeRoles = Schema.decodeUnknownOption(FactoryDefinition.fields.roles);
@@ -228,6 +242,68 @@ export const effectiveBinding = (
   skills: file.skills ?? defaults.skills,
   tools: file.tools ?? defaults.tools,
 });
+
+/** The skill directories under the factory's `skills/` that hold a SKILL.md, sorted. */
+export const readFactorySkillNames = Effect.fn("factoryFiles.readFactorySkillNames")(function* (
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  factoryDirectory: string,
+) {
+  const directory = path.join(factoryDirectory, SKILLS_DIRECTORY);
+  const entries = yield* fileSystem.readDirectoryEntries(directory).pipe(
+    Effect.catchTags({
+      PlatformError: (error) =>
+        error.reason._tag === "NotFound" ? Effect.succeed([]) : Effect.fail(error),
+    }),
+  );
+  const names = entries
+    .filter((entry) => entry.type !== "File" && isSkillName(entry.name))
+    .map((entry) => entry.name)
+    .toSorted();
+  const present = yield* Effect.forEach(names, (name) =>
+    fileSystem.exists(path.join(directory, name, SKILL_FILE_NAME)),
+  );
+  return names.filter((_, index) => present[index]);
+});
+
+/**
+ * Every skill a role can name, sorted: the built-in ones, and the factory's own, which replace a
+ * built-in skill of the same name whole.
+ */
+export function availableSkills(factorySkillNames: ReadonlyArray<string>): Array<FactorySkill> {
+  const sources = new Map<string, FactorySkill["source"]>();
+  for (const name of Object.keys(builtinSkills)) sources.set(name, "builtin");
+  for (const name of factorySkillNames) sources.set(name, "file");
+  return [...sources]
+    .map(([name, source]) => ({ name, source }))
+    .toSorted((left, right) => left.name.localeCompare(right.name));
+}
+
+/** The skills a role's binding names that exist, in its order, and an issue for each that does not. */
+export function resolveRoleSkills(
+  role: FactoryRoleName,
+  names: ReadonlyArray<string>,
+  available: ReadonlyArray<FactorySkill>,
+): { readonly skills: ReadonlyArray<FactorySkill>; readonly issues: ReadonlyArray<FactoryIssue> } {
+  const skills: Array<FactorySkill> = [];
+  const issues: Array<FactoryIssue> = [];
+  for (const name of new Set(names)) {
+    const skill = available.find((candidate) => candidate.name === name);
+    if (skill !== undefined) {
+      skills.push(skill);
+      continue;
+    }
+    issues.push(
+      issue(
+        "unknown_skill",
+        role,
+        "skills",
+        `No skill ${name} exists: it is not built in, and the factory has no ${SKILLS_DIRECTORY}/${name}/${SKILL_FILE_NAME}.`,
+      ),
+    );
+  }
+  return { skills, issues };
+}
 
 const optionProblem = (
   selection: { readonly id: string; readonly value: string | boolean },
