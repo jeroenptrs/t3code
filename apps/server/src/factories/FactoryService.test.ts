@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  CommandId,
   type FactoryRoleFile,
   type FactorySaveInput,
   makeFactoryId,
@@ -14,18 +15,29 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as FactoryService from "./FactoryService.ts";
 import { builtinRoles } from "./roles/index.ts";
 
@@ -137,6 +149,10 @@ const layerFor = (fixture: Fixture) =>
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: fixture.tasks ?? [] }),
         }),
+        // Definitions and ownership never launch or message a thread.
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        Layer.mock(ServerSettings.ServerSettingsService)({}),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getShellSnapshot: (options) =>
             Effect.succeed({
@@ -371,6 +387,38 @@ describe("FactoryService", () => {
           INSERT INTO fork_factory_threads (factory_id, thread_id, role, created_at)
           VALUES (${factoryId}, 't-foreman', 'foreman', '2026-11-01T00:00:00.000Z')
         `;
+          // A gate holds one item, the Foreman failed one, and a person failed the third.
+          yield* thread("t-child");
+          const item = (id: string, stage: string) => sql`
+          INSERT INTO fork_factory_work_items (
+            work_item_id, factory_id, title, source_json, stage, gate_json,
+            foreman_thread_id, foreman_run_id, created_at, updated_at
+          ) VALUES (
+            ${id}, ${factoryId}, ${id}, '{"kind":"manual","text":"Fix it."}', ${stage},
+            '{"state":"none"}', 't-foreman', NULL,
+            '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'
+          )
+        `;
+          const transition = (id: string, itemId: string, to: string, actor: string) => sql`
+          INSERT INTO fork_factory_work_item_transitions (
+            transition_id, work_item_id, from_stage, to_stage, actor_json, note, at
+          ) VALUES (${id}, ${itemId}, 'implement', ${to}, ${actor}, NULL, '2026-11-01T00:00:00.000Z')
+        `;
+          yield* item("work-item:gated", "waiting");
+          yield* item("work-item:broke", "failed");
+          yield* item("work-item:rejected", "failed");
+          yield* transition("x-1", "work-item:broke", "failed", '{"kind":"user","userId":null}');
+          yield* transition(
+            "x-2",
+            "work-item:broke",
+            "failed",
+            '{"kind":"foreman","threadId":"t-foreman"}',
+          );
+          yield* transition("x-3", "work-item:rejected", "failed", '{"kind":"user","userId":null}');
+          yield* sql`
+          INSERT INTO fork_factory_work_item_threads (work_item_id, thread_id, role, created_at)
+          VALUES ('work-item:gated', 't-child', 'implement', '2026-11-01T00:00:00.000Z')
+        `;
           return {
             factory: yield* factories.read(factoryId),
             list: yield* factories.list(),
@@ -399,13 +447,14 @@ describe("FactoryService", () => {
         assert.deepStrictEqual(result.factory.scheduledTaskIds, [nightly.id]);
         assert.deepStrictEqual(result.factory.threads, [
           { threadId: ThreadId.make("t-foreman"), role: "foreman" },
+          { threadId: ThreadId.make("t-child"), role: "implement" },
           { threadId: ThreadId.make("t-run"), role: null },
         ]);
         assert.deepStrictEqual(result.factory.attention, {
-          gatesWaiting: 0,
-          failedRuns: 1,
+          gatesWaiting: 1,
+          failedRuns: 2,
           questions: 1,
-          total: 2,
+          total: 4,
         });
         assert.deepStrictEqual(
           result.factory.issues.map((issue) => issue.code),
@@ -413,9 +462,439 @@ describe("FactoryService", () => {
         );
         assert.deepStrictEqual(result.list.factories[0]?.threadIds, [
           ThreadId.make("t-foreman"),
+          ThreadId.make("t-child"),
           ThreadId.make("t-run"),
         ]);
         assert.deepStrictEqual(result.list.factories[0]?.attention, result.factory.attention);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+const foremanAdapter = {
+  instanceId: codex,
+  driver: ProviderDriverKind.make("codex"),
+  getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+  planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
+  openSession: () => Effect.die("Work item tests open no provider session"),
+} as ProviderAdapter.ProviderAdapterV2["Service"];
+
+interface Recorded {
+  readonly launches: Ref.Ref<
+    ReadonlyArray<{
+      readonly input: ThreadLaunchService.ThreadLaunchInput;
+      /** The thread's fork_factory_threads role when the launch began. */
+      readonly listedAs: string | null;
+    }>
+  >;
+  readonly sends: Ref.Ref<ReadonlyArray<ThreadManagementService.ThreadManagementSendInput>>;
+}
+
+/** Creates the thread through the real orchestrator, without workspace preparation. */
+const layerRecordedLaunch = (recorded: Recorded) =>
+  Layer.effect(
+    ThreadLaunchService.ThreadLaunchService,
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sql = yield* SqlClient.SqlClient;
+      return ThreadLaunchService.ThreadLaunchService.of({
+        launch: (launch) =>
+          Effect.gen(function* () {
+            const threadId = launch.threadId!;
+            const rows = yield* sql<{ readonly role: string }>`
+              SELECT role FROM fork_factory_threads WHERE thread_id = ${threadId}
+            `;
+            yield* Ref.update(recorded.launches, (all) => [
+              ...all,
+              { input: launch, listedAs: rows[0]?.role ?? null },
+            ]);
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: launch.commandId,
+              threadId,
+              projectId: launch.projectId,
+              title: launch.title,
+              modelSelection: launch.modelSelection,
+              runtimeMode: launch.runtimeMode,
+              interactionMode: launch.interactionMode,
+              branch: null,
+              worktreePath: null,
+              createdBy: launch.createdBy,
+              creationSource: launch.creationSource,
+            });
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            return { threadId, projection, resumed: false };
+          }).pipe(Effect.orDie),
+        checkWorktreeBase: () => Effect.die("unused"),
+        retryPreparation: () => Effect.die("unused"),
+        prepareRun: () => Effect.die("unused"),
+      });
+    }),
+  );
+
+/** The real thread management service, with every send recorded. */
+const layerRecordedSends = (recorded: Recorded) =>
+  Layer.effect(
+    ThreadManagementService.ThreadManagementService,
+    Effect.map(ThreadManagementService.ThreadManagementService, (threads) =>
+      ThreadManagementService.ThreadManagementService.of({
+        ...threads,
+        sendToThread: (input) =>
+          Ref.update(recorded.sends, (all) => [...all, input]).pipe(
+            Effect.andThen(threads.sendToThread(input)),
+          ),
+      }),
+    ),
+  );
+
+const layerOrchestration = Layer.mergeAll(
+  SqlitePersistence.layerMemory,
+  ProviderReplayHarness.layerWithRegistry(
+    { name: "factory-work-items" },
+    ProviderAdapterRegistry.layerFromAdapters([foremanAdapter]),
+    { databaseLayer: SqlitePersistence.layerMemory, runEffectWorker: false },
+  ),
+);
+
+/** Real orchestration and thread management; the launch, Git, and catalogs are fake. */
+const layerWorkItems = (backend: ProjectStore.ProjectRow, recorded: Recorded) =>
+  FactoryService.layer.pipe(
+    Layer.provide(layerRecordedLaunch(recorded)),
+    Layer.provide(layerRecordedSends(recorded)),
+    Layer.provide(ThreadManagementService.layer),
+    Layer.provide(CommandReceiptStore.layer),
+    Layer.provide(ServerSettings.layerTest({})),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectStore.ProjectStoreV2)({
+          list: () => Effect.succeed([backend]),
+          get: (projectId) =>
+            Effect.succeed(projectId === backend.projectId ? Option.some(backend) : Option.none()),
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([provider]) }),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        }),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          resolveCommit: () => Effect.succeed({ commitSha: "c0ffee" }),
+        }),
+      ),
+    ),
+    Layer.provideMerge(layerOrchestration),
+    Layer.provideMerge(NodeServices.layer),
+  );
+
+const runs = (threadId: ThreadId) =>
+  Effect.flatMap(Orchestrator.OrchestratorV2, (orchestrator) =>
+    orchestrator.getThreadRecords(threadId, ["runs"]).pipe(Effect.map((records) => records.runs)),
+  );
+
+const otherThread = ThreadId.make("thread-not-the-foreman");
+
+/** A factory named triage in a fresh checkout, with the services a work item test drives. */
+const withWorkItems = <A, E>(
+  test: (input: {
+    readonly factoryId: ReturnType<typeof makeFactoryId>;
+    readonly recorded: Recorded;
+  }) => Effect.Effect<
+    A,
+    E,
+    FactoryService.FactoryService | Orchestrator.OrchestratorV2 | SqlClient.SqlClient
+  >,
+  options: { readonly defaultModel?: boolean } = {},
+) =>
+  Effect.gen(function* () {
+    const root = yield* checkout({
+      ".t3/factories/triage/factory.json": factoryJson({ name: "triage" }),
+    });
+    const backend = {
+      ...project("project-backend", "backend", root),
+      defaultModelSelection:
+        options.defaultModel === false ? null : { instanceId: codex, model: "gpt-6" },
+    };
+    const recorded: Recorded = {
+      launches: yield* Ref.make<Recorded["launches"] extends Ref.Ref<infer A> ? A : never>([]),
+      sends: yield* Ref.make<ReadonlyArray<ThreadManagementService.ThreadManagementSendInput>>([]),
+    };
+    return yield* test({ factoryId: makeFactoryId(backend.projectId, "triage"), recorded }).pipe(
+      Effect.provide(layerWorkItems(backend, recorded)),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+describe("FactoryService work items", () => {
+  it.effect("creates an item, launches the Foreman listed first, and sends the item fresh", () =>
+    withWorkItems(({ factoryId, recorded }) =>
+      Effect.gen(function* () {
+        const factories = yield* FactoryService.FactoryService;
+        const item = yield* factories.createWorkItem({
+          factoryId,
+          title: "Fix the login bug",
+          text: "Users cannot sign in with SSO.",
+        });
+
+        const [launch] = yield* Ref.get(recorded.launches);
+        const foremanThreadId = launch!.input.threadId!;
+        assert.isTrue(foremanThreadId.startsWith("factory-foreman:"));
+        assert.strictEqual(launch!.listedAs, "foreman");
+        assert.strictEqual(launch!.input.title, "Foreman: triage");
+        assert.deepStrictEqual(launch!.input.workspaceStrategy, { type: "root" });
+        assert.deepStrictEqual(launch!.input.modelSelection, { instanceId: codex, model: "gpt-6" });
+        assert.strictEqual(launch!.input.initialMessage, undefined);
+        assert.strictEqual(launch!.input.createdBy, "agent");
+        assert.strictEqual(launch!.input.creationSource, "server");
+
+        const [send] = yield* Ref.get(recorded.sends);
+        assert.strictEqual(send!.threadId, foremanThreadId);
+        assert.strictEqual(send!.mode, "queue");
+        assert.include(send!.text, item.id);
+        assert.include(send!.text, "Users cannot sign in with SSO.");
+        assert.include(send!.text, "t3_work_item_advance");
+        const [run] = yield* runs(foremanThreadId);
+        assert.strictEqual(run!.freshContext, true);
+        assert.strictEqual(item.foremanRunId, run!.id);
+        assert.strictEqual(item.foremanThreadId, foremanThreadId);
+        assert.strictEqual(item.stage, "new");
+        assert.deepStrictEqual(item.source, {
+          kind: "manual",
+          text: "Users cannot sign in with SSO.",
+        });
+
+        // The next item goes to the same Foreman, in a fresh session of its own.
+        const second = yield* factories.createWorkItem({ factoryId, title: "Next", text: "More." });
+        assert.lengthOf(yield* Ref.get(recorded.launches), 1);
+        assert.strictEqual(second.foremanThreadId, foremanThreadId);
+        const secondRun = (yield* runs(foremanThreadId)).find((r) => r.id === second.foremanRunId);
+        assert.strictEqual(secondRun?.freshContext, true);
+        assert.strictEqual(yield* factories.foremanThread(factoryId), foremanThreadId);
+      }),
+    ),
+  );
+
+  it.effect("keeps an item the Foreman could not be started for, failed by the server", () =>
+    withWorkItems(
+      ({ factoryId, recorded }) =>
+        Effect.gen(function* () {
+          const factories = yield* FactoryService.FactoryService;
+          const error = yield* factories
+            .createWorkItem({ factoryId, title: "Fix", text: "Fix it." })
+            .pipe(Effect.flip);
+          assert.strictEqual(error._tag === "WorkItemError" && error.code, "unavailable");
+          assert.lengthOf(yield* Ref.get(recorded.launches), 0);
+
+          const [summary] = (yield* factories.listWorkItems({ factoryId })).workItems;
+          const item = yield* factories.readWorkItem(summary!.id);
+          assert.strictEqual(item.stage, "failed");
+          assert.deepStrictEqual(
+            item.transitions.map(({ from, to, actor }) => ({ from, to, actor })),
+            [{ from: "new", to: "failed", actor: { kind: "server" } }],
+          );
+          assert.include(item.transitions[0]!.note, "has no default model");
+        }),
+      { defaultModel: false },
+    ),
+  );
+
+  it.effect("replaces an archived Foreman thread with a new one", () =>
+    withWorkItems(({ factoryId, recorded }) =>
+      Effect.gen(function* () {
+        const factories = yield* FactoryService.FactoryService;
+        const sql = yield* SqlClient.SqlClient;
+        const first = yield* factories.ensureForemanThread(factoryId);
+        yield* (yield* Orchestrator.OrchestratorV2).dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("archive-foreman"),
+          threadId: first,
+        });
+        assert.isNull(yield* factories.foremanThread(factoryId));
+
+        const second = yield* factories.ensureForemanThread(factoryId);
+        assert.notStrictEqual(second, first);
+        assert.lengthOf(yield* Ref.get(recorded.launches), 2);
+        const rows = yield* sql<{ readonly threadId: string }>`
+          SELECT thread_id AS "threadId" FROM fork_factory_threads WHERE factory_id = ${factoryId}
+        `;
+        assert.deepStrictEqual(rows, [{ threadId: second }]);
+      }),
+    ),
+  );
+
+  it.effect("lets only the item's Foreman advance it, along the transition table", () =>
+    withWorkItems(({ factoryId }) =>
+      Effect.gen(function* () {
+        const factories = yield* FactoryService.FactoryService;
+        const item = yield* factories.createWorkItem({ factoryId, title: "Fix", text: "Fix it." });
+        const foreman = item.foremanThreadId!;
+        const child = ThreadId.make("thread-implementer");
+
+        const denied = yield* factories
+          .advanceWorkItem(otherThread, { workItemId: item.id, stage: "implement" })
+          .pipe(Effect.flip);
+        assert.strictEqual(denied._tag === "WorkItemError" && denied.code, "not_foreman");
+
+        yield* factories.advanceWorkItem(foreman, {
+          workItemId: item.id,
+          stage: "implement",
+          note: "Delegated the fix.",
+          threads: [{ threadId: child, role: "implement" }],
+        });
+        const refused = yield* factories
+          .advanceWorkItem(foreman, { workItemId: item.id, stage: "done" })
+          .pipe(Effect.flip);
+        assert.deepStrictEqual(
+          refused._tag === "WorkItemTransitionError" && [refused.from, refused.to],
+          ["implement", "done"],
+        );
+        // The same stage only names another thread.
+        const reviewer = ThreadId.make("thread-reviewer");
+        const named = yield* factories.advanceWorkItem(foreman, {
+          workItemId: item.id,
+          stage: "implement",
+          threads: [{ threadId: reviewer, role: null }],
+        });
+
+        assert.strictEqual(named.stage, "implement");
+        assert.deepStrictEqual(named.threads, [
+          { threadId: child, role: "implement" },
+          { threadId: reviewer, role: null },
+        ]);
+        assert.deepStrictEqual(
+          named.transitions.map(({ from, to, actor, note }) => ({ from, to, actor, note })),
+          [
+            {
+              from: "new",
+              to: "implement",
+              actor: { kind: "foreman", threadId: foreman },
+              note: "Delegated the fix.",
+            },
+          ],
+        );
+        const listed = yield* factories.listWorkItems({ factoryId, role: "implement" });
+        assert.deepStrictEqual(
+          listed.workItems.map((workItem) => workItem.id),
+          [item.id],
+        );
+        const done = yield* factories.listWorkItems({ factoryId, outcome: "done" });
+        assert.deepStrictEqual(done.workItems, []);
+      }),
+    ),
+  );
+
+  it.effect("holds a gated item for a person, then resumes it and tells the Foreman", () =>
+    withWorkItems(({ factoryId, recorded }) =>
+      Effect.gen(function* () {
+        const factories = yield* FactoryService.FactoryService;
+        const item = yield* factories.createWorkItem({ factoryId, title: "Fix", text: "Fix it." });
+        const foreman = item.foremanThreadId!;
+        yield* factories.advanceWorkItem(foreman, { workItemId: item.id, stage: "implement" });
+
+        const gated = yield* factories.gateWorkItem(foreman, {
+          workItemId: item.id,
+          question: "Ship the schema change?",
+          resumeStage: "review",
+        });
+        assert.strictEqual(gated.stage, "waiting");
+        const held = yield* factories
+          .advanceWorkItem(foreman, { workItemId: item.id, stage: "failed" })
+          .pipe(Effect.flip);
+        assert.strictEqual(held._tag === "WorkItemError" && held.code, "gate_waiting");
+        const notForeman = yield* factories
+          .gateWorkItem(otherThread, { workItemId: item.id, question: "?", resumeStage: "done" })
+          .pipe(Effect.flip);
+        assert.strictEqual(notForeman._tag === "WorkItemError" && notForeman.code, "not_foreman");
+
+        const answered = yield* factories.answerWorkItemGate(null, {
+          workItemId: item.id,
+          decision: "approved",
+          note: "Go ahead.",
+        });
+        assert.strictEqual(answered.stage, "review");
+        assert.deepStrictEqual(answered.gate, {
+          state: "answered",
+          question: "Ship the schema change?",
+          decision: "approved",
+          note: "Go ahead.",
+          answeredAt: answered.gate.state === "answered" ? answered.gate.answeredAt : "",
+          resumeStage: "review",
+        });
+        assert.deepStrictEqual(answered.transitions.at(-1)?.actor, { kind: "user", userId: null });
+
+        const followUp = (yield* Ref.get(recorded.sends)).at(-1)!;
+        assert.strictEqual(followUp.threadId, foreman);
+        assert.strictEqual(followUp.mode, "auto");
+        assert.isUndefined(followUp.freshContext);
+        assert.include(followUp.text, "approved");
+        assert.include(followUp.text, "Go ahead.");
+
+        const again = yield* factories
+          .answerWorkItemGate(null, { workItemId: item.id, decision: "approved", note: "" })
+          .pipe(Effect.flip);
+        assert.strictEqual(again._tag === "WorkItemError" && again.code, "no_gate");
+
+        // A rejection drops the item.
+        yield* factories.gateWorkItem(foreman, {
+          workItemId: item.id,
+          question: "Merge it?",
+          resumeStage: "done",
+        });
+        const rejected = yield* factories.answerWorkItemGate(null, {
+          workItemId: item.id,
+          decision: "rejected",
+          note: "",
+        });
+        assert.strictEqual(rejected.stage, "dropped");
+        assert.include((yield* Ref.get(recorded.sends)).at(-1)!.text, "Stop work on it");
+      }),
+    ),
+  );
+
+  it.effect("names a delegated child on the item whose fresh session its parent run is in", () =>
+    withWorkItems(({ factoryId }) =>
+      Effect.gen(function* () {
+        const factories = yield* FactoryService.FactoryService;
+        const first = yield* factories.createWorkItem({ factoryId, title: "One", text: "One." });
+        const foreman = first.foremanThreadId!;
+        // A gate answer adds a run to the first item's session, without fresh context.
+        yield* factories.gateWorkItem(foreman, {
+          workItemId: first.id,
+          question: "Proceed?",
+          resumeStage: "implement",
+        });
+        yield* factories.answerWorkItemGate(null, {
+          workItemId: first.id,
+          decision: "approved",
+          note: "",
+        });
+        const second = yield* factories.createWorkItem({ factoryId, title: "Two", text: "Two." });
+        const [, continued] = (yield* runs(foreman)).toSorted((a, b) => a.ordinal - b.ordinal);
+        assert.notStrictEqual(continued!.freshContext, true);
+
+        const implementer = ThreadId.make("thread-implementer");
+        const reviewer = ThreadId.make("thread-reviewer");
+        yield* factories.attachDelegatedChild({
+          parentThreadId: foreman,
+          parentRunId: continued!.id,
+          childThreadId: implementer,
+          taskRole: "implementation",
+        });
+        yield* factories.attachDelegatedChild({
+          parentThreadId: foreman,
+          parentRunId: second.foremanRunId!,
+          childThreadId: reviewer,
+          taskRole: "review",
+        });
+        yield* factories.attachDelegatedChild({
+          parentThreadId: otherThread,
+          parentRunId: second.foremanRunId!,
+          childThreadId: ThreadId.make("thread-unrelated"),
+          taskRole: "implementation",
+        });
+
+        assert.deepStrictEqual((yield* factories.readWorkItem(first.id)).threads, [
+          { threadId: implementer, role: "implement" },
+        ]);
+        assert.deepStrictEqual((yield* factories.readWorkItem(second.id)).threads, [
+          { threadId: reviewer, role: "review" },
+        ]);
+      }),
+    ),
   );
 });
