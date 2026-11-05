@@ -18,7 +18,7 @@ state and never a prompt. The design and milestones are in
 - The id is `factory:<projectId>:<name>`, so renaming the directory makes a
   different factory, and its `fork_factory_threads` rows stay with the old id.
 - `factory.json` lists the file for each role that has one. A role it leaves
-  out is built-in, even if `roles/<role>.md` exists.
+  out uses `roles/<role>.md` when that file exists, else the built-in default.
 - A save writes role files first and `factory.json` last.
 
 ## Precedence
