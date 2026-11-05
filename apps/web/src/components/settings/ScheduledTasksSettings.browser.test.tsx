@@ -297,6 +297,8 @@ describe("ScheduledTasksSettings", () => {
     await dialog.getByLabelText("Filter 1 field").click();
     await page.getByRole("option", { name: "Status", exact: true }).click();
     await userEvent.fill(dialog.getByLabelText("Filter 1 value"), "In Progress");
+    await dialog.getByLabelText("When the item fits no instruction").click();
+    await page.getByRole("option", { name: "Ask and wait" }).click();
     await dialog.getByRole("button", { name: "Create task" }).click();
 
     await vi.waitFor(() =>
@@ -308,6 +310,7 @@ describe("ScheduledTasksSettings", () => {
               type: "jira",
               filters: [{ path: "event.status", op: "equals", value: "In Progress" }],
             },
+            triage: { fallback: "ask" },
           }),
         }),
       }),

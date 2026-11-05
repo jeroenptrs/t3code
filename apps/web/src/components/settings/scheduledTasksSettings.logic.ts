@@ -23,8 +23,10 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import {
   DEFAULT_TRIGGER_PROMPT,
   parseTriggerFilterDrafts,
+  triageDraft,
   triggerFilterDrafts,
   triggerFilterDraftsChanged,
+  type TriageDraft,
   type TriggerFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-trigger";
 import {
@@ -192,6 +194,7 @@ export interface DraftState {
   /** Event filters for the Jira, GitLab, and Slack modes; paths are fields of that source. */
   readonly triggerFilters: ReadonlyArray<TriggerFilterDraft>;
   readonly savedTriggerFilters: ReadonlyArray<TriggerFilterDraft>;
+  readonly triage: TriageDraft;
 }
 
 export const WEBHOOK_SIGNATURE_DEFAULTS = {
@@ -411,6 +414,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     savedFilters: filters,
     triggerFilters,
     savedTriggerFilters: triggerFilters,
+    triage: triageDraft(task.triage),
   };
 }
 

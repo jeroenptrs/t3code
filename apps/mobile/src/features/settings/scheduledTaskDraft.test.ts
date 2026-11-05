@@ -6,12 +6,16 @@ import {
   ProviderInstanceId,
   ProjectId,
 } from "@t3tools/contracts";
-import { DEFAULT_TRIGGER_PROMPT } from "@t3tools/client-runtime/scheduled-task-trigger";
+import {
+  DEFAULT_TRIGGER_PROMPT,
+  parseTriageDraft,
+} from "@t3tools/client-runtime/scheduled-task-trigger";
 import {
   scheduledTaskDefaultModel,
   createDraft,
   DEFAULT_SCHEDULE,
   editDraft,
+  hasScheduledTaskDraftChanges,
   scheduleDraftForTask,
   scheduleFromDraft,
   switchScheduleMode,
@@ -156,6 +160,24 @@ describe("switchScheduleMode", () => {
       type: "jira",
       filters: [],
     });
+  });
+});
+
+describe("triage", () => {
+  it("opens a task's triage, sends it only when changed, and counts the change", () => {
+    const saved = editDraft({
+      id: "task",
+      title: "Task",
+      prompt: "Work",
+      schedule: { type: "jira" },
+      workspaceStrategy: { type: "root" },
+      triage: { fallback: "label", label: "needs-triage" },
+    } as unknown as Parameters<typeof editDraft>[0]);
+    expect(parseTriageDraft(saved.triage)).toEqual({});
+    const off = { ...saved, triage: { ...saved.triage, fallback: "off" as const } };
+    expect(hasScheduledTaskDraftChanges(saved, off)).toBe(true);
+    expect(parseTriageDraft(off.triage)).toEqual({ triage: null });
+    expect(parseTriageDraft(createDraft(null, null).triage)).toEqual({});
   });
 });
 
