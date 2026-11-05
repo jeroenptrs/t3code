@@ -7,7 +7,6 @@ import {
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   AuthFactoriesManageScope,
-  AuthFactoriesReadScope,
   type AuthGrantScope,
   AuthInsightsReadScope,
   AuthInsightsWriteScope,
