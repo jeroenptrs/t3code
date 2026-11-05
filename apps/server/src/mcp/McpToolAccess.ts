@@ -151,12 +151,12 @@ const refuseReadOnlyClient = McpInvocationContext.McpInvocationContext.pipe(
 
 const writingCaller = refuseReadOnlyClient.pipe(
   Effect.andThen(loadCaller()),
-  Effect.tap(assertLiveCaller),
+  Effect.flatMap(assertLiveCaller),
 );
 
 const orchestratingCaller = refuseReadOnlyClient.pipe(
   Effect.andThen(readCaller()),
-  Effect.tap(assertLiveCaller),
+  Effect.flatMap(assertLiveCaller),
 );
 
 const requireThreadCaller = McpInvocationContext.McpInvocationContext.pipe(
@@ -494,30 +494,30 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
         `${name} acts as its calling thread, so outside clients must not be offered it.`,
       );
     if (takesLinkedEnvironment(tool)) {
-    const forwarded = forwardedOf(declaration) as
-      | Forwarded<object, unknown, Tool.Failure<Tools[keyof Tools]>, never>
-      | undefined;
-    if (remote === undefined)
-      return yield* Effect.die(
-        `${name} takes a linked environment, but it acts as its calling thread, which is here.`,
-      );
+      const forwarded = forwardedOf(declaration) as
+        | Forwarded<object, unknown, Tool.Failure<Tools[keyof Tools]>, never>
+        | undefined;
+      if (remote === undefined)
+        return yield* Effect.die(
+          `${name} takes a linked environment, but it acts as its calling thread, which is here.`,
+        );
       const here = handlers[name] as Handle;
-    handlers[name] = ({ environmentId, ...params }: { readonly environmentId?: EnvironmentId }) =>
-      Effect.gen(function* () {
-        const scope = yield* McpInvocationContext.McpInvocationContext;
-        const target = PeerForwarding.remoteTarget(scope, environmentId);
-        if (target === undefined) return yield* here(params);
+      handlers[name] = ({ environmentId, ...params }: { readonly environmentId?: EnvironmentId }) =>
+        Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const target = PeerForwarding.remoteTarget(scope, environmentId);
+          if (target === undefined) return yield* here(params);
           if (scope.linkedEnvironments === false)
             return yield* PeerForwarding.linkedEnvironmentsOff;
-        yield* (remote as RemoteCheck<typeof params>)(params);
-        if (Option.isNone(forwarding)) return yield* linksUnavailable;
-        const result = yield* forwarding.value.call(scope, tool, target, {
-          ...params,
-          environmentId,
+          yield* (remote as RemoteCheck<typeof params>)(params);
+          if (Option.isNone(forwarding)) return yield* linksUnavailable;
+          const result = yield* forwarding.value.call(scope, tool, target, {
+            ...params,
+            environmentId,
+          });
+          return forwarded === undefined ? result : yield* forwarded(params, target, result);
         });
-        return forwarded === undefined ? result : yield* forwarded(params, target, result);
-      });
-  }
+    }
     const home = homeRouteOf(declaration) as
       | ((
           params: object,
