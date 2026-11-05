@@ -62,6 +62,16 @@ keeps that shape and binds it to what T3 Code already has.
   view and appear there. Each tab shows an attention count for gates, failed
   runs, and questions.
 
+## Trigger seam
+
+A trigger is a source, filters, and a target. In M4 the persisted trigger is
+the scheduled task: its schedule is the source and holds the filters, and its
+project and thread binding is the target. The `Trigger` contract in
+`packages/contracts/src/trigger.ts` is the library view of that, derived by
+`scheduledTaskTrigger`. Its `target` is a union with one member, `thread`. A
+factory target joins that union as the second member, so triggers start
+factory work items without a second trigger model.
+
 ## Experimental dependencies
 
 Anything built on upstream work that is not yet in upstream `main` is
@@ -158,7 +168,8 @@ Each milestone ships on its own.
   moves inside T3.
 - Trigger templates per source that factories fill in with values.
 - Triage as a filter plus a routing instruction.
-- Delivery mode per trigger (queue, steer, restart) once #31129 lands.
+- Delivery mode per trigger (queue, steer, restart) once #31129 lands. It is
+  still open as of 2026-11-05, so M4 ships without it.
 
 ### M5. Skills management
 

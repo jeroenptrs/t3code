@@ -91,6 +91,10 @@
       "types": "./src/scheduledTaskTimeZone.ts",
       "default": "./src/scheduledTaskTimeZone.ts"
     },
+    "./scheduled-task-trigger": {
+      "types": "./src/scheduledTaskTrigger.ts",
+      "default": "./src/scheduledTaskTrigger.ts"
+    },
     "./portal-user": {
       "types": "./src/portalUser.ts",
       "default": "./src/portalUser.ts"

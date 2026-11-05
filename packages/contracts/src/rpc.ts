@@ -454,6 +454,17 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
+import {
+  TriggerRaiseInput,
+  TriggerRaiseResult,
+  TriggerTemplateDeleteInput,
+  TriggerTemplateDeleteResult,
+  TriggerTemplateError,
+  TriggerTemplateListInput,
+  TriggerTemplateListResult,
+  TriggerTemplateSaveInput,
+  TriggerTemplateSaveResult,
+} from "./trigger.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
   ProjectCloneActionInput,
@@ -639,6 +650,10 @@ export const WS_METHODS = {
   guestShareCreate: "guestShare.create",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
+  triggerTemplatesList: "triggerTemplates.list",
+  triggerTemplatesSave: "triggerTemplates.save",
+  triggerTemplatesDelete: "triggerTemplates.delete",
+  triggersRaise: "triggers.raise",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2414,6 +2429,32 @@ const WsScheduledTasksRotateWebhookTokenRpc = Rpc.make(
   },
 );
 
+const TriggerTemplateRpcError = Schema.Union([TriggerTemplateError, EnvironmentAuthorizationError]);
+
+const WsTriggerTemplatesListRpc = Rpc.make(WS_METHODS.triggerTemplatesList, {
+  payload: TriggerTemplateListInput,
+  success: TriggerTemplateListResult,
+  error: TriggerTemplateRpcError,
+});
+
+const WsTriggerTemplatesSaveRpc = Rpc.make(WS_METHODS.triggerTemplatesSave, {
+  payload: TriggerTemplateSaveInput,
+  success: TriggerTemplateSaveResult,
+  error: TriggerTemplateRpcError,
+});
+
+const WsTriggerTemplatesDeleteRpc = Rpc.make(WS_METHODS.triggerTemplatesDelete, {
+  payload: TriggerTemplateDeleteInput,
+  success: TriggerTemplateDeleteResult,
+  error: TriggerTemplateRpcError,
+});
+
+const WsTriggersRaiseRpc = Rpc.make(WS_METHODS.triggersRaise, {
+  payload: TriggerRaiseInput,
+  success: TriggerRaiseResult,
+  error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
+});
+
 const WsGuestShareCreateRpc = Rpc.make(WS_METHODS.guestShareCreate, {
   payload: GuestShareCreateInput,
   success: GuestShareCreateResult,
@@ -2576,6 +2617,10 @@ export const WsCoreRpcGroup = RpcGroup.make(
   WsSecretsAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
+  WsTriggerTemplatesListRpc,
+  WsTriggerTemplatesSaveRpc,
+  WsTriggerTemplatesDeleteRpc,
+  WsTriggersRaiseRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
