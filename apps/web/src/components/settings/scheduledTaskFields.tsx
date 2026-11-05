@@ -5,6 +5,8 @@ import {
 } from "@t3tools/contracts";
 import {
   emptyTriggerFilterDraft,
+  TRIAGE_FALLBACK_OPTIONS,
+  type TriageDraft,
   type TriggerFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-trigger";
 import {
@@ -273,6 +275,63 @@ export function TriggerFiltersField({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+export function TriageField({
+  triage,
+  onChange,
+}: {
+  triage: TriageDraft;
+  onChange: (triage: TriageDraft) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <Field
+        label="When the item fits no instruction"
+        hint="triage"
+        htmlFor="scheduled-task-triage"
+      >
+        <Select
+          value={triage.fallback}
+          onValueChange={(value) => {
+            const option = TRIAGE_FALLBACK_OPTIONS.find((entry) => entry.value === value);
+            if (option) onChange({ ...triage, fallback: option.value });
+          }}
+        >
+          <SelectTrigger
+            size="sm"
+            id="scheduled-task-triage"
+            aria-label="When the item fits no instruction"
+          >
+            <SelectValue>
+              {TRIAGE_FALLBACK_OPTIONS.find((entry) => entry.value === triage.fallback)?.label}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup>
+            {TRIAGE_FALLBACK_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          Adds triage instructions to every run. Off sends the prompt as written.
+        </p>
+      </Field>
+      {triage.fallback === "label" ? (
+        <Field label="Label to add" htmlFor="scheduled-task-triage-label">
+          <Input
+            id="scheduled-task-triage-label"
+            placeholder="needs-triage"
+            required
+            value={triage.label}
+            onChange={(event) => onChange({ ...triage, label: event.target.value })}
+          />
+        </Field>
+      ) : null}
     </div>
   );
 }
