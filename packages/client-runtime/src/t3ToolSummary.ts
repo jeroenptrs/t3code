@@ -119,6 +119,7 @@ export function summarizeT3ToolCalls(
     (call) => id(call.output?.id) ?? id(call.output?.projectId) ?? id(call.input?.projectId),
   );
   const factoryIds = selected.map((call) => id(call.output?.id) ?? id(call.input?.factoryId));
+  const workItemIds = selected.map((call) => id(call.output?.id) ?? id(call.input?.workItemId));
   const threadIds = selected.map(
     (call) =>
       id(call.output?.threadId) ??
@@ -590,6 +591,89 @@ export function summarizeT3ToolCalls(
         : resolve(
             msg(
               "{count, plural, one {Tried to save {count} factory} other {Tried to save {count} factories}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "work-item-list": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Listed work items {count} time} other {Listed work items {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to list work items {count} time} other {Tried to list work items {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "work-item-read": {
+      const count = countEntities(workItemIds);
+      label = done
+        ? resolve(
+            msg("{count, plural, one {Read {count} work item} other {Read {count} work items}}", {
+              count,
+            }),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to read {count} work item} other {Tried to read {count} work items}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "work-item-create": {
+      const count = countEntities(workItemIds);
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Created {count} work item} other {Created {count} work items}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to create {count} work item} other {Tried to create {count} work items}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "work-item-advance": {
+      const count = countEntities(workItemIds);
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Advanced {count} work item} other {Advanced {count} work items}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to advance {count} work item} other {Tried to advance {count} work items}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "work-item-gate": {
+      const count = countEntities(workItemIds);
+      label = done
+        ? resolve(
+            msg("{count, plural, one {Gated {count} work item} other {Gated {count} work items}}", {
+              count,
+            }),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to gate {count} work item} other {Tried to gate {count} work items}}",
               { count },
             ),
           );

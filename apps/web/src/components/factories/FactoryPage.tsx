@@ -7,11 +7,13 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import {
   FactoryId,
   parseFactoryId,
+  type ThreadId,
   type EnvironmentId,
   type Factory,
   type FactoryIssue,
   type FactoryRoleName,
 } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
 import { FactoryIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -50,10 +52,14 @@ import {
   type FactoryRoleDraft,
 } from "./FactoryPage.logic";
 import { FactoryRoleCard, type FactoryModelChoices } from "./FactoryRoleCard";
+import { FactoryWorkItems } from "./FactoryWorkItems";
+import type { WorkItemSearch } from "./workItems.logic";
 
 export function FactoryPage(props: {
   readonly environmentId: EnvironmentId;
   readonly factoryId: string;
+  readonly workItemSearch: WorkItemSearch;
+  readonly onWorkItemSearchChange: (search: WorkItemSearch) => void;
 }) {
   const { environmentId } = props;
   const factoryId = FactoryId.make(props.factoryId);
@@ -63,6 +69,8 @@ export function FactoryPage(props: {
   );
   const failure = factoryErrorOf(query.failure);
   const name = query.data?.name ?? parseFactoryId(factoryId)?.name ?? "Factory";
+  const foremanThreadId =
+    query.data?.threads.find((thread) => thread.role === "foreman")?.threadId ?? null;
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
@@ -75,6 +83,9 @@ export function FactoryPage(props: {
               <h1 className="truncate">{name}</h1>
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
+          {foremanThreadId === null ? null : (
+            <ForemanLink environmentId={environmentId} threadId={foremanThreadId} />
+          )}
           {access.canRead ? (
             <Button
               size="icon-xs"
@@ -116,12 +127,34 @@ export function FactoryPage(props: {
                 environmentId={environmentId}
                 factory={query.data}
                 canManage={access.canManage}
+                workItemSearch={props.workItemSearch}
+                onWorkItemSearchChange={props.onWorkItemSearchChange}
               />
             )}
           </WorkspacePageContainer>
         </ScrollArea>
       </div>
     </SidebarInset>
+  );
+}
+
+function ForemanLink(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  return (
+    <Button
+      size="xs"
+      variant="ghost"
+      render={
+        <Link
+          to="/$environmentId/$threadId"
+          params={{ environmentId: props.environmentId, threadId: props.threadId }}
+        />
+      }
+    >
+      Foreman thread
+    </Button>
   );
 }
 
@@ -138,6 +171,8 @@ function FactoryView(props: {
   readonly environmentId: EnvironmentId;
   readonly factory: Factory;
   readonly canManage: boolean;
+  readonly workItemSearch: WorkItemSearch;
+  readonly onWorkItemSearchChange: (search: WorkItemSearch) => void;
 }) {
   const { environmentId } = props;
   const canSave = useAtomValue(factoriesEnvironment.save.permissionAtom(environmentId));
@@ -258,6 +293,12 @@ function FactoryView(props: {
         issues={issues}
         onProjectsChange={(projects) => edit((current) => ({ ...current, projects }))}
         onTriggersChange={(triggers) => edit((current) => ({ ...current, triggers }))}
+      />
+      <FactoryWorkItems
+        environmentId={environmentId}
+        factory={factory}
+        search={props.workItemSearch}
+        onSearchChange={props.onWorkItemSearchChange}
       />
       <div className="flex flex-col gap-4">
         <h2 className="font-medium">Roles</h2>
