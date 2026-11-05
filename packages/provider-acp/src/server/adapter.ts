@@ -7984,6 +7984,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           if (!isNativeSlashCommand) {
             const sessionSetup = yield* Ref.get(activeSessionSetup);
+            const mcpSession = instructionState.hasT3Mcp
+              ? yield* mcpSessions.read(turnInput.threadId)
+              : undefined;
             prompt.push({
               type: "text",
               text: buildRuntimeInstructions({
@@ -7992,9 +7995,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 pullRequestLinking:
                   sessionSetup === null ||
                   flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !== true,
-                mcpCapabilities: instructionState.hasT3Mcp
-                  ? (yield* mcpSessions.read(turnInput.threadId))?.capabilities
-                  : undefined,
+                mcpCapabilities: mcpSession?.capabilities,
+                factoryRole: mcpSession?.factoryRole,
               }),
             });
           }
