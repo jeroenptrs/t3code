@@ -87,6 +87,7 @@ const workItem: WorkItem = {
   gate: { state: "none" },
   foremanThreadId,
   foremanRunId: null,
+  dispatchedAt: null,
   threads: [],
   createdAt: "2026-11-05T00:00:00.000Z",
   updatedAt: "2026-11-05T00:00:00.000Z",
