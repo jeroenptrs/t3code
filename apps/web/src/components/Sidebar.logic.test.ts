@@ -36,6 +36,9 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  countThreadAttention,
+  factoryOwnedThreadKeys,
+  partitionFactoryThreads,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -213,6 +216,51 @@ function makeLatestRun(overrides?: {
       overrides?.completedAt !== undefined ? overrides.completedAt : "2026-03-09T10:05:00.000Z",
   };
 }
+
+describe("factory threads leave Home", () => {
+  it("moves owned threads out per environment and counts the same attention as a factory", () => {
+    const environmentId = EnvironmentId.make("environment-factory");
+    const otherEnvironmentId = EnvironmentId.make("environment-other");
+    const ownedId = ThreadId.make("thread-owned");
+    const failedRun = { ...makeLatestRun(), status: "failed" as const };
+    const owned = makeThreadFixture({ id: ownedId, environmentId, latestRun: failedRun });
+    const sameIdElsewhere = makeThreadFixture({ id: ownedId, environmentId: otherEnvironmentId });
+    const failed = makeThreadFixture({
+      id: ThreadId.make("thread-failed"),
+      environmentId,
+      latestRun: failedRun,
+      hasPendingUserInput: true,
+    });
+    const asking = makeThreadFixture({
+      id: ThreadId.make("thread-asking"),
+      environmentId,
+      hasPendingUserInput: true,
+    });
+    const archived = makeThreadFixture({
+      id: ThreadId.make("thread-archived"),
+      environmentId,
+      latestRun: failedRun,
+      archivedAt: "2026-03-09T10:00:00.000Z",
+    });
+    const threads = [owned, sameIdElsewhere, failed, asking, archived];
+
+    const none = partitionFactoryThreads(threads, factoryOwnedThreadKeys([]));
+    expect(none.home).toBe(threads);
+
+    const ownedKeys = factoryOwnedThreadKeys([
+      { environmentId, factories: [{ threadIds: [ownedId] }] },
+      { environmentId: otherEnvironmentId, factories: null },
+    ]);
+    const { home, owned: ownedByKey } = partitionFactoryThreads(threads, ownedKeys);
+    expect(home).toEqual([sameIdElsewhere, failed, asking, archived]);
+    expect([...ownedByKey.keys()]).toEqual([
+      scopedThreadKey(scopeThreadRef(environmentId, ownedId)),
+    ]);
+    // A failed run and an open question each count, as the server counts them; archived never.
+    expect(countThreadAttention(home)).toBe(3);
+    expect(countThreadAttention([...ownedByKey.values()])).toBe(1);
+  });
+});
 
 describe("orderItemsByPreferredIds", () => {
   it("resolves legacy preference aliases without materializing project state", () => {
