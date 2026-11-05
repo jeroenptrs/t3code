@@ -15,7 +15,9 @@ build/
 .logs/
 release/
 release-mock/
-.t3
+# Worktree state, except factory definitions, which are part of the repo.
+.t3/*
+!.t3/factories/
 .idea/
 apps/web/.playwright
 apps/web/playwright-report
