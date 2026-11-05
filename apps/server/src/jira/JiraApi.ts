@@ -236,6 +236,12 @@ export class JiraApi extends Context.Service<
       key: string,
       fields: Readonly<Record<string, unknown>>,
     ) => Effect.Effect<void, JiraError>;
+    /** `PUT /rest/api/3/issue/{key}` with an `update` that adds labels, so none are replaced. */
+    readonly addLabels: (
+      identity: JiraServerIdentity,
+      key: string,
+      labels: ReadonlyArray<string>,
+    ) => Effect.Effect<void, JiraError>;
     /** `POST /rest/api/3/issue/{key}/comment` with an Atlassian Document Format body. */
     readonly addComment: (
       identity: JiraServerIdentity,
@@ -564,6 +570,16 @@ const make = Effect.gen(function* () {
         ),
         () => Effect.void,
       ).pipe(Effect.withSpan("JiraApi.editIssue")),
+    addLabels: (identity, key, labels) =>
+      send(
+        identity,
+        HttpClientRequest.put(`/rest/api/3/issue/${encodeURIComponent(key)}`).pipe(
+          HttpClientRequest.bodyJsonUnsafe({
+            update: { labels: labels.map((label) => ({ add: label })) },
+          }),
+        ),
+        () => Effect.void,
+      ).pipe(Effect.withSpan("JiraApi.addLabels")),
     addComment: (identity, key, body) =>
       read(
         identity,

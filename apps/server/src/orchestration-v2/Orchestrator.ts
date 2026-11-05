@@ -963,6 +963,8 @@ function jiraProposalTitle(proposal: JiraProposal): string {
       return `Comment on ${proposal.key}`;
     case "transition":
       return `Move ${proposal.key}: ${proposal.transitionName}`;
+    case "labels":
+      return `Label ${proposal.key}: ${proposal.labels.join(", ")}`;
   }
 }
 
@@ -4597,7 +4599,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
    * The watch is recorded first so the wake's own thread events carry it.
    */
   const dispatchWatchSync = Effect.fn("orchestrationV2.dispatch.watchSync")(function* (
-    command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.jira-issue-watch.sync" }>,
+    command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "thread.jira-issue-watch.sync" }
+    >,
     subject: string,
     watchStartedAt: (thread: OrchestrationV2AppThread) => string | undefined,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
