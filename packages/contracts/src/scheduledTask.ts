@@ -272,7 +272,8 @@ export const ScheduledTaskSchedule = Schema.Union([
 ]);
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
-export const ScheduledTaskUpsertSchedule = Schema.Union([
+/** The kinds an agent sets over MCP. Event sources are set up in Settings, with their filters. */
+export const ScheduledTaskUpsertAgentSchedule = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("interval"),
     everyMs: ScheduledTaskIntervalMs.check(
@@ -284,6 +285,11 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskOnceSchedule,
   ScheduledTaskUpsertWebhookSchedule,
+]);
+export type ScheduledTaskUpsertAgentSchedule = typeof ScheduledTaskUpsertAgentSchedule.Type;
+
+export const ScheduledTaskUpsertSchedule = Schema.Union([
+  ...ScheduledTaskUpsertAgentSchedule.members,
   ScheduledTaskJiraSchedule,
   ScheduledTaskGitLabSchedule,
   ScheduledTaskSlackSchedule,
