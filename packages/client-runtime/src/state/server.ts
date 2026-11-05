@@ -25,10 +25,11 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,
+  createEnvironmentGuardedRpcQueryAtomFamily,
   createEnvironmentRpcCommand,
   createEnvironmentQueryAtomFamily,
   createEnvironmentRpcQueryAtomFamily,
@@ -1196,6 +1197,15 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly environmentId: EnvironmentId;
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
   }) => welcomeFamily(target.environmentId);
+  // Templates are project files with no change feed, so a save or delete re-reads the list.
+  const triggerTemplatesEpoch = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make(0).pipe(Atom.withLabel("environment-data:server:trigger-templates:epoch")),
+  );
+  const triggerTemplatesChanged = (
+    { environmentId }: { readonly environmentId: EnvironmentId },
+    registry: AtomRegistry.AtomRegistry,
+  ) =>
+    Effect.sync(() => registry.update(triggerTemplatesEpoch(environmentId), (value) => value + 1));
   const updateSettings = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:server:update-settings",
     tag: WS_METHODS.serverUpdateSettings,
@@ -1587,6 +1597,30 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.scheduledTasksRotateWebhookToken,
       scheduler: configScheduler,
       concurrency: configConcurrency,
+    }),
+    /** `permissionAtom` says whether this session may list trigger templates. */
+    triggerTemplates: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:trigger-templates",
+      tag: WS_METHODS.triggerTemplatesList,
+      refreshTrigger: ({ environmentId }) => triggerTemplatesEpoch(environmentId),
+    }),
+    saveTriggerTemplate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:trigger-template:save",
+      tag: WS_METHODS.triggerTemplatesSave,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+      onSuccess: (target, registry) => triggerTemplatesChanged(target, registry),
+    }),
+    deleteTriggerTemplate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:trigger-template:delete",
+      tag: WS_METHODS.triggerTemplatesDelete,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+      onSuccess: (target, registry) => triggerTemplatesChanged(target, registry),
+    }),
+    raiseTrigger: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:trigger:raise",
+      tag: WS_METHODS.triggersRaise,
     }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",
