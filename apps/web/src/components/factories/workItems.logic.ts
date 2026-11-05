@@ -1,7 +1,9 @@
 import {
   FactoryRoleName,
+  WorkItemError,
   WorkItemOutcome,
   WorkItemStage,
+  WorkItemTransitionError,
   type FactoryId,
   type WorkItemActor,
   type WorkItemAnswerGateInput,
@@ -101,6 +103,18 @@ export function gateAnswerInput(
   note: string,
 ): WorkItemAnswerGateInput {
   return { workItemId, decision, note: note.trim() };
+}
+
+const isWorkItemError = Schema.is(WorkItemError);
+const isWorkItemTransitionError = Schema.is(WorkItemTransitionError);
+
+/** The message to show inline for a failed work item command. */
+export function workItemFailureMessage(error: unknown, fallback: string): string {
+  if (isWorkItemError(error)) return error.message;
+  if (isWorkItemTransitionError(error)) {
+    return `The item cannot move from ${WORK_ITEM_STAGE_LABELS[error.from].toLowerCase()} to ${WORK_ITEM_STAGE_LABELS[error.to].toLowerCase()}.`;
+  }
+  return error instanceof Error && error.message !== "" ? error.message : fallback;
 }
 
 /** The Foreman's thread first, then each thread that worked on the item, once each. */
