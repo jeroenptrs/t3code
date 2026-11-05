@@ -238,7 +238,6 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [17, "TriggerObservations"],
       [18, "ScheduledTaskTriage"],
       [19, "FactoryWorkItems"],
-      [17, "FactoryWorkItems"],
       [20, "FactoryWorkItemDispatch"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
@@ -292,7 +291,7 @@ it.effect("marks work items sent before the dispatch column as sent when created
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* runMigrations();
-    yield* runForkMigrations({ toMigrationInclusive: 17 });
+    yield* runForkMigrations({ toMigrationInclusive: 19 });
     for (const [id, runId] of [
       ["work-item:sent", "run-1"],
       ["work-item:unsent", null],
