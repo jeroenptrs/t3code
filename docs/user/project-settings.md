@@ -67,3 +67,66 @@ Choose **On webhook** as a task's schedule to trigger runs from external service
 - **Deduplication & coalescing**: Set a **Duplicate request key** (e.g. `{{headers.delivery-id}}`; ignores repeats for 7 days) or a **Coalesce key** with a 10–3600s window (default 120s; runs once with the latest payload when the window closes). Coalesced updates are rate-limited to 60/min (`HTTP 429`).
 - **Offline delivery**: By default, offline environments return an error. Enable **Settings → Sharing & access → Hold webhooks while offline** to buffer T3 Connect webhooks for up to 24 hours, and optionally set **Skip requests older than** on the task.
 - **Debugging**: Open **Deliveries** from a task's menu (web/desktop) to inspect recent payloads and rendered prompts.
+
+## Event triggers
+
+In **Settings → Scheduled tasks**, four more schedules start a task without a
+clock or a URL:
+
+- **On Jira change** runs when a Jira issue changes status, labels, or assignee.
+- **On GitLab change** runs when a GitLab merge request opens, changes, merges,
+  or closes, or when its pipeline fails or passes.
+- **On Slack message** runs when the [Slack integration](integrations/slack.md)
+  passes a message to the environment.
+- **Manual** never runs on its own. It runs when you choose **Run now** or an
+  agent starts it.
+
+Jira and GitLab events come from the issues and merge requests T3 Code already
+keeps up to date for linked threads, so a change shows up within a few minutes.
+An issue or merge request that no thread links raises no events. For those, use
+a [webhook](#webhook-automations) instead. The first time T3 Code sees an issue,
+it only records it. A merge request that is already open the first time counts
+as opened. Like webhook tasks, event tasks run only when their event arrives,
+so **Run now** is not offered for them.
+
+To run only for some events, add **Filters**. Each filter picks a field the
+source sends, such as **Status** or **Labels**, a test, and a value. For
+example, **Event type** equals `issue.status_changed` and **Status** equals
+`In Progress` together run the task when an issue moves into In Progress. A task
+runs only when every filter matches. Values compare as text. A list field, such
+as **Labels** or **Added labels**, passes when any item matches. For a list,
+**does not equal** passes only when no item equals the value, and **exists**
+passes only when the list has an item. A field with no value, such as
+**Assignee** on an unassigned issue, fails every test, **exists** included. Separate **is one of** values with commas.
+
+The event types are:
+
+- Jira: `issue.status_changed`, `issue.labels_changed`, and
+  `issue.assignee_changed`.
+- GitLab: `merge_request.opened`, `merge_request.updated`,
+  `merge_request.merged`, `merge_request.closed`, `pipeline.failed`, and
+  `pipeline.passed`.
+- Slack: `message`.
+
+In the prompt, `{{event.<field>}}` inserts one field, such as `{{event.key}}`
+or `{{event.summary}}`, and `{{event}}` inserts every field. Choosing a source
+on a task with an empty prompt fills in a starting prompt for it. Event values
+reach the agent wrapped and marked as untrusted data, the same way as webhook
+values.
+
+### Trigger templates
+
+A trigger template is a saved trigger: a source, filters, and a prompt, with
+placeholders such as `{{status}}` that you fill in when you use it. Each
+template is a file in the project at `.t3/triggers/<name>.md`, so you can commit
+it and share it with everyone who works in the repository.
+
+Templates appear under **Trigger templates** below the task list. Pick a
+project to see its templates. Operators can see and use templates. Only
+administrators can create, edit, or delete them.
+
+To use a template, choose **Use**. Fill in its values and choose **Create
+task**. A value with a default starts filled in, and a value without one is
+required. The task editor then opens with the template's schedule, filters,
+prompt, and project. Review the task and save it. Changing a template later
+doesn't change tasks made from it.
