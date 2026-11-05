@@ -540,6 +540,7 @@ const LATE_COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "walkthrough.previousSection": msg("Walkthrough: Previous Section"),
   "walkthrough.nextSection": msg("Walkthrough: Next Section"),
   "walkthrough.markReviewed": msg("Walkthrough: Mark Reviewed and Continue"),
+  "home.open": msg("Home: Open"),
 };
 
 export function commandLabel(command: KeybindingCommand, resolve: MessageResolver = m): string {
