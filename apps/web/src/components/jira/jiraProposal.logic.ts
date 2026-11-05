@@ -19,6 +19,8 @@ type JiraProposalIssue = JiraProposalResult["issues"][number];
 const SUMMARY_MAX = 255;
 const ISSUE_TYPE_MAX = 100;
 const MARKDOWN_MAX = 32_000;
+const LABEL_MAX = 255;
+const LABELS_MAX = 20;
 
 /** What the card shows: an editable form, a one-line outcome, or a pending item it cannot decide. */
 export type JiraProposalDisplay =
@@ -65,6 +67,8 @@ export function jiraProposalTitle(proposal: JiraProposal): string {
       return `Comment on ${proposal.key}`;
     case "transition":
       return `Move ${proposal.key} to ${proposal.transitionName}`;
+    case "labels":
+      return `Add labels to ${proposal.key}: ${proposal.labels.join(", ")}`;
   }
 }
 
@@ -92,6 +96,14 @@ export function jiraProposalOutcome(
         issues: fallbackIssue(issues, proposal),
         tail: `to ${proposal.transitionName}`,
       };
+    case "labels": {
+      const added = result?.addedLabels ?? proposal.labels;
+      return {
+        verb: "Labeled",
+        issues: fallbackIssue(issues, proposal),
+        tail: added.length === 0 ? "with no new labels" : `with ${added.join(", ")}`,
+      };
+    }
   }
 }
 
@@ -134,7 +146,8 @@ export interface JiraDraftEdit {
 export type JiraProposalEdits =
   | { readonly kind: "create-issues"; readonly drafts: ReadonlyArray<JiraDraftEdit> }
   | { readonly kind: "comment"; readonly body: string }
-  | { readonly kind: "transition"; readonly comment: string };
+  | { readonly kind: "transition"; readonly comment: string }
+  | { readonly kind: "labels"; readonly labels: string };
 
 export function initialJiraProposalEdits(proposal: JiraProposal): JiraProposalEdits {
   switch (proposal.kind) {
@@ -154,6 +167,8 @@ export function initialJiraProposalEdits(proposal: JiraProposal): JiraProposalEd
       return { kind: "comment", body: proposal.body };
     case "transition":
       return { kind: "transition", comment: proposal.comment ?? "" };
+    case "labels":
+      return { kind: "labels", labels: proposal.labels.join(", ") };
   }
 }
 
@@ -223,6 +238,27 @@ function parseParentKey(text: string): string | null | undefined {
   return JIRA_ISSUE_KEY_PATTERN.test(key) ? key : undefined;
 }
 
+function parseLabels(text: string): ReadonlyArray<string> {
+  return [
+    ...new Set(
+      text
+        .split(",")
+        .map((label) => label.trim())
+        .filter((label) => label.length > 0),
+    ),
+  ];
+}
+
+/** Why comma-separated labels cannot be approved as typed; null when they can. */
+export function jiraLabelsEditError(text: string): string | null {
+  const labels = parseLabels(text);
+  if (labels.length === 0) return "Add a label";
+  if (labels.length > LABELS_MAX) return `At most ${LABELS_MAX} labels`;
+  if (labels.some((label) => /\s/.test(label))) return "Labels cannot contain spaces";
+  if (labels.some((label) => label.length > LABEL_MAX)) return `At most ${LABEL_MAX} characters`;
+  return null;
+}
+
 function applyDraftEdit(draft: JiraIssueDraft, edit: JiraDraftEdit): JiraIssueDraft | null {
   if (Object.keys(jiraDraftEditErrors(edit)).length > 0) return null;
   return {
@@ -271,6 +307,10 @@ export function approvedJiraProposal(
     if (comment.length > MARKDOWN_MAX) return null;
     return { ...proposal, comment: comment.length === 0 ? null : comment };
   }
+  if (proposal.kind === "labels" && edits.kind === "labels") {
+    if (jiraLabelsEditError(edits.labels) !== null) return null;
+    return { ...proposal, labels: parseLabels(edits.labels) };
+  }
   return null;
 }
 
@@ -297,6 +337,8 @@ export function jiraProposalApproveLabel(
       return "Post comment";
     case "transition":
       return `Move to ${proposal.transitionName}`;
+    case "labels":
+      return "Add labels";
   }
 }
 
