@@ -646,6 +646,8 @@ export const ServerConfig = Schema.Struct({
   /** Secret settings may point at a secret provider; older servers drop the reference. */
   secretReferences: Schema.optionalKey(Schema.Boolean),
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Folder behind Home. Present only on servers a desktop app hosts, the only ones that run Home. */
+  homeWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
   newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
    * The latest stall long enough to notice, sent only for a few minutes after
