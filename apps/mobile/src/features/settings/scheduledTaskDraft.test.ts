@@ -6,11 +6,15 @@ import {
   ProviderInstanceId,
   ProjectId,
 } from "@t3tools/contracts";
+import { DEFAULT_TRIGGER_PROMPT } from "@t3tools/client-runtime/scheduled-task-trigger";
 import {
   scheduledTaskDefaultModel,
+  createDraft,
   DEFAULT_SCHEDULE,
+  editDraft,
   scheduleDraftForTask,
   scheduleFromDraft,
+  switchScheduleMode,
 } from "./scheduledTaskDraft";
 
 describe("scheduleDraftForTask", () => {
@@ -79,6 +83,79 @@ describe("scheduleDraftForTask", () => {
     expect(
       scheduleFromDraft({ ...draft, filters: [{ id: "f1", path: "", op: "exists", value: "" }] }),
     ).toBeNull();
+  });
+
+  it.each([
+    [
+      "jira",
+      [
+        { path: "event.type", op: "equals", value: "issue.status_changed" },
+        { path: "event.addedLabels", op: "in", value: ["agent", "triage"] },
+      ],
+    ],
+    ["gitlab", [{ path: "event.checksState", op: "equals", value: "failing" }]],
+    ["slack", [{ path: "event.surface", op: "exists" }]],
+  ] as const)("round-trips %s filters and sends them only when edited", (type, filters) => {
+    const draft = scheduleDraftForTask({ schedule: { type, filters } });
+    expect(draft.mode).toBe(type);
+    expect(scheduleFromDraft(draft)).toEqual({ type });
+    expect(scheduleFromDraft({ ...draft, triggerFilters: [] })).toEqual({ type, filters: [] });
+    expect(
+      scheduleFromDraft({
+        ...draft,
+        triggerFilters: draft.triggerFilters.map((row) => ({ ...row, id: `copy-${row.id}` })),
+      }),
+    ).toEqual({ type });
+    expect(
+      scheduleFromDraft({
+        ...draft,
+        triggerFilters: [{ id: "f1", path: "event.notAField", op: "exists", value: "" }],
+      }),
+    ).toBeNull();
+    expect(
+      scheduleFromDraft({
+        ...draft,
+        triggerFilters: [{ id: "f1", path: "event.type", op: "in", value: " , " }],
+      }),
+    ).toBeNull();
+  });
+
+  it("opens a manual task and saves it as manual", () => {
+    const draft = scheduleDraftForTask({ schedule: { type: "manual" } });
+    expect(draft.mode).toBe("manual");
+    expect(scheduleFromDraft(draft)).toEqual({ type: "manual" });
+  });
+});
+
+describe("switchScheduleMode", () => {
+  it("fills the source's default prompt only on a new task without a prompt of its own", () => {
+    const jira = switchScheduleMode(createDraft(null, null), "jira", 0);
+    expect(jira.prompt).toBe(DEFAULT_TRIGGER_PROMPT.jira);
+    expect(switchScheduleMode(jira, "gitlab", 0).prompt).toBe(DEFAULT_TRIGGER_PROMPT.gitlab);
+    expect(
+      switchScheduleMode({ ...createDraft(null, null), prompt: "Mine" }, "jira", 0).prompt,
+    ).toBe("Mine");
+  });
+
+  it("starts filters over on a source switch and restores the saved ones", () => {
+    const filters = [{ path: "event.status", op: "equals", value: "In Progress" }] as const;
+    const saved = editDraft({
+      id: "task",
+      title: "Task",
+      prompt: "Work",
+      schedule: { type: "jira", filters },
+      workspaceStrategy: { type: "root" },
+    } as unknown as Parameters<typeof editDraft>[0]);
+    const gitlab = switchScheduleMode(saved, "gitlab", 0);
+    expect(gitlab.prompt).toBe("Work");
+    expect(gitlab.schedule.triggerFilters).toEqual([]);
+    expect(scheduleFromDraft(gitlab.schedule)).toEqual({ type: "gitlab" });
+    const back = switchScheduleMode(gitlab, "jira", 0);
+    expect(scheduleFromDraft(back.schedule)).toEqual({ type: "jira" });
+    expect(scheduleFromDraft({ ...back.schedule, triggerFilters: [] })).toEqual({
+      type: "jira",
+      filters: [],
+    });
   });
 });
 

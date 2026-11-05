@@ -989,6 +989,47 @@ export function createEnvironmentRpcQueryAtomFamily<
   });
 }
 
+/**
+ * A query over a client-guarded read. It checks the session's scopes like a command does, so a
+ * session without them fails fast instead of asking the server.
+ */
+export function createEnvironmentGuardedRpcQueryAtomFamily<
+  R,
+  ER,
+  TTag extends Extract<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>,
+>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  options: {
+    readonly label: string;
+    readonly tag: TTag;
+    readonly staleTimeMs?: number;
+    readonly refreshTrigger?: (target: {
+      readonly environmentId: EnvironmentIdType;
+      readonly input: EnvironmentRpcInput<TTag>;
+    }) => Atom.Atom<unknown> | undefined;
+  },
+) {
+  const permissions = createCommandPermissions(runtime, options.tag);
+  const execute = Effect.fn(`EnvironmentGuardedQuery.${options.tag}`)(function* (
+    input: EnvironmentRpcInput<TTag>,
+  ) {
+    const registry = yield* AtomRegistry.AtomRegistry;
+    return yield* requestGuarded(options.tag, input).pipe(
+      Effect.provideService(RpcPermissionGuard, {
+        authorize: (id, method, payload) =>
+          createCommandPermissions(runtime, method).authorize(registry, id, payload),
+      }),
+    );
+  });
+  const family = createEnvironmentQueryAtomFamily(runtime, {
+    label: options.label,
+    ...(options.staleTimeMs === undefined ? {} : { staleTimeMs: options.staleTimeMs }),
+    ...(options.refreshTrigger === undefined ? {} : { refreshTrigger: options.refreshTrigger }),
+    execute: (input: EnvironmentRpcInput<TTag>) => execute(input),
+  });
+  return Object.assign(family, { permissionAtom: permissions.permissionAtom });
+}
+
 export function createEnvironmentRpcSubscriptionAtomFamily<
   R,
   ER,

@@ -1,4 +1,4 @@
-import type { ScheduledTaskWebhookFilter } from "@t3tools/contracts";
+import type { ScheduledTaskWebhookFilter, TriggerFilter } from "@t3tools/contracts";
 
 import { webhookExpressionResolver, type WebhookRequest } from "./webhookTemplate.ts";
 
@@ -7,13 +7,20 @@ export interface FailedWebhookFilter {
   readonly path: string;
 }
 
+type Filter = ScheduledTaskWebhookFilter | TriggerFilter;
+
+export interface FilterOptions {
+  /** Whether an array at this path matches when any element does, instead of only `exists`. */
+  readonly matchesAnyElement: (path: string) => boolean;
+}
+
 function scalarText(value: unknown): string | undefined {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return undefined;
 }
 
-function matchesScalar(filter: ScheduledTaskWebhookFilter, text: string): boolean {
+function matchesScalar(filter: Filter, text: string): boolean {
   switch (filter.op) {
     case "equals":
       return text === filter.value;
@@ -29,13 +36,13 @@ function matchesScalar(filter: ScheduledTaskWebhookFilter, text: string): boolea
 }
 
 /**
- * Placeholders render null as missing, so filters treat it the same way. A
- * path with a `[]` wildcard resolves to a list: `equals`, `in` and
- * `startsWith` match when any element does, `notEquals` only when none equals
- * the value, and `exists` when the list has an element.
+ * Placeholders render null as missing, so filters treat it the same way. An
+ * array that matches per element passes `equals`, `in` and `startsWith` when
+ * any element does, `notEquals` only when none equals the value, and `exists`
+ * when it has an element.
  */
-function matchesWebhookFilter(filter: ScheduledTaskWebhookFilter, value: unknown): boolean {
-  if (Array.isArray(value) && /\[\]/.test(filter.path)) {
+function matchesFilter(filter: Filter, value: unknown, options: FilterOptions): boolean {
+  if (Array.isArray(value) && options.matchesAnyElement(filter.path)) {
     if (filter.op === "exists")
       return value.some((element) => element !== null && element !== undefined);
     const texts = value.map(scalarText).filter((text): text is string => text !== undefined);
@@ -48,17 +55,27 @@ function matchesWebhookFilter(filter: ScheduledTaskWebhookFilter, value: unknown
   return matchesScalar(filter, text);
 }
 
+/** The first filter that fails against `resolve`, or null when every filter matches. */
+export function findFailedFilter(
+  filters: ReadonlyArray<Filter>,
+  resolve: (path: string) => unknown,
+  options: FilterOptions,
+): FailedWebhookFilter | null {
+  for (const [index, filter] of filters.entries()) {
+    if (!matchesFilter(filter, resolve(filter.path), options)) return { index, path: filter.path };
+  }
+  return null;
+}
+
+const WEBHOOK_FILTER_OPTIONS: FilterOptions = { matchesAnyElement: (path) => /\[\]/.test(path) };
+
 /** The first filter the request fails, or null when every filter matches. */
 export function findFailedWebhookFilter(
   filters: ReadonlyArray<ScheduledTaskWebhookFilter>,
   request: WebhookRequest,
 ): FailedWebhookFilter | null {
   if (filters.length === 0) return null;
-  const resolve = webhookExpressionResolver(request);
-  for (const [index, filter] of filters.entries()) {
-    if (!matchesWebhookFilter(filter, resolve(filter.path))) return { index, path: filter.path };
-  }
-  return null;
+  return findFailedFilter(filters, webhookExpressionResolver(request), WEBHOOK_FILTER_OPTIONS);
 }
 
 /** Filters are numbered from 1, in the order the settings form lists them. */
