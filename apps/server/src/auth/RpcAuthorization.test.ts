@@ -391,6 +391,7 @@ describe("Factories authorization", () => {
     gate: { state: "none" as const },
     foremanThreadId: null,
     foremanRunId: null,
+    dispatchedAt: null,
     threads: [],
     createdAt: "2026-11-05T00:00:00.000Z",
     updatedAt: "2026-11-05T00:00:00.000Z",

@@ -193,6 +193,7 @@ const assertFactoryThreadsSchema = Effect.gen(function* () {
       "foreman_run_id",
       "created_at",
       "updated_at",
+      "dispatched_at",
     ],
     ["work_item_id*1", "thread_id*2", "role", "created_at"],
     ["transition_id*1", "work_item_id", "from_stage", "to_stage", "actor_json", "note", "at"],
@@ -237,6 +238,8 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [17, "TriggerObservations"],
       [18, "ScheduledTaskTriage"],
       [19, "FactoryWorkItems"],
+      [17, "FactoryWorkItems"],
+      [20, "FactoryWorkItemDispatch"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
@@ -281,6 +284,37 @@ it.effect("leaves scheduled tasks created before the audit columns without a use
         webhook_token_rotated_by_user_id: null,
         webhook_token_rotated_at: null,
       },
+    ]);
+  }).pipe(Effect.provide(memoryDatabase())),
+);
+
+it.effect("marks work items sent before the dispatch column as sent when created", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations();
+    yield* runForkMigrations({ toMigrationInclusive: 17 });
+    for (const [id, runId] of [
+      ["work-item:sent", "run-1"],
+      ["work-item:unsent", null],
+    ] as const) {
+      yield* sql`
+        INSERT INTO fork_factory_work_items (
+          work_item_id, factory_id, title, source_json, stage, gate_json,
+          foreman_thread_id, foreman_run_id, created_at, updated_at
+        ) VALUES (
+          ${id}, 'factory:project-1:triage', ${id}, '{"kind":"manual","text":"Fix it."}', 'new',
+          '{"state":"none"}', NULL, ${runId}, '2026-10-01T00:00:00.000Z', '2026-10-02T00:00:00.000Z'
+        )
+      `;
+    }
+    yield* runForkMigrations();
+    const rows = yield* sql<{ readonly id: string; readonly dispatchedAt: string | null }>`
+      SELECT work_item_id AS "id", dispatched_at AS "dispatchedAt"
+      FROM fork_factory_work_items ORDER BY work_item_id
+    `;
+    assert.deepStrictEqual(rows, [
+      { id: "work-item:sent", dispatchedAt: "2026-10-01T00:00:00.000Z" },
+      { id: "work-item:unsent", dispatchedAt: null },
     ]);
   }).pipe(Effect.provide(memoryDatabase())),
 );
