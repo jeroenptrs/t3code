@@ -24,8 +24,10 @@ import {
 import {
   DEFAULT_TRIGGER_PROMPT,
   parseTriggerFilterDrafts,
+  triageDraft,
   triggerFilterDrafts,
   triggerFilterDraftsChanged,
+  type TriageDraft,
   type TriggerFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-trigger";
 import {
@@ -269,6 +271,7 @@ export type ScheduledTaskDraft = {
   readonly enabled: boolean;
   readonly startFromOrigin: boolean;
   readonly runtimeMode: RuntimeMode;
+  readonly triage: TriageDraft;
 };
 
 function draftSignature(draft: ScheduledTaskDraft): string {
@@ -301,6 +304,8 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.enabled,
     draft.startFromOrigin,
     draft.runtimeMode,
+    draft.triage.fallback,
+    draft.triage.label,
   ]);
 }
 
@@ -398,6 +403,7 @@ export function createDraft(
     enabled: true,
     startFromOrigin: true,
     runtimeMode: "full-access",
+    triage: triageDraft(undefined),
   };
 }
 
@@ -424,5 +430,6 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
         ? (task.workspaceStrategy.startFromOrigin ?? false)
         : true,
     runtimeMode: task.runtimeMode,
+    triage: triageDraft(task.triage),
   };
 }
