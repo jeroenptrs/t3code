@@ -210,11 +210,12 @@ function makeProviderSession(input: {
   readonly providerSessionId: ProviderSessionId;
   readonly now: DateTime.Utc;
   readonly capabilities?: OrchestrationV2ProviderCapabilities;
+  readonly instanceId?: ProviderInstanceId;
 }): OrchestrationV2ProviderSession {
   return {
     id: input.providerSessionId,
     driver: CODEX_DRIVER,
-    providerInstanceId: modelSelection.instanceId,
+    providerInstanceId: input.instanceId ?? modelSelection.instanceId,
     status: "ready",
     cwd: process.cwd(),
     model: "gpt-5.4",
@@ -424,6 +425,7 @@ function unimplemented(detail: string) {
 const makeProviderAdapter = Effect.fnUntraced(function* (
   state: Ref.Ref<TestProviderRuntimeState>,
   options: {
+    readonly instanceId?: ProviderInstanceId;
     readonly failEventStream?: boolean;
     readonly capabilities?: OrchestrationV2ProviderCapabilities;
     readonly extensionStatuses?: OrchestrationV2ProviderSession["extensionStatuses"];
@@ -446,6 +448,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
   } = {},
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const instanceId = options.instanceId ?? modelSelection.instanceId;
   const countClose = Effect.addFinalizer(() =>
     Ref.update(state, (current) => ({
       ...current,
@@ -460,7 +463,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     ).pipe(Effect.andThen(Effect.never)),
   );
   return ProviderAdapter.ProviderAdapterV2.of({
-    instanceId: ProviderInstanceId.make("codex"),
+    instanceId,
     driver: CODEX_DRIVER,
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
@@ -487,6 +490,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           ...makeProviderSession({
             providerSessionId: input.providerSessionId,
             now,
+          instanceId,
             ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }),
           }),
           ...(options.extensionStatuses === undefined
@@ -508,7 +512,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
         }
 
         return {
-          instanceId: ProviderInstanceId.make("codex"),
+          instanceId,
           driver: CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
           get providerSession() {
@@ -577,6 +581,8 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
 function layerTest(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
   readonly idleTimeoutMs: number;
+  /** Registers a second adapter of the same driver, as for two accounts of one provider. */
+  readonly otherInstanceId?: ProviderInstanceId;
   readonly maxIdlePinMs?: number;
   readonly failEventStream?: boolean;
   readonly capabilities?: OrchestrationV2ProviderCapabilities;
@@ -648,7 +654,16 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
-    }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
+    }).pipe(
+      Effect.flatMap((adapter) =>
+        input.otherInstanceId === undefined
+          ? Effect.succeed([adapter])
+          : makeProviderAdapter(input.state, { instanceId: input.otherInstanceId }).pipe(
+              Effect.map((other) => [adapter, other]),
+            ),
+      ),
+      Effect.map(ProviderAdapterRegistry.layerFromAdapters),
+    ),
   );
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
@@ -2654,6 +2669,72 @@ it.effect(
             idleTimeoutMs: 1_000,
             mcpConfigs,
           }),
+        ),
+      );
+    }),
+);
+
+// regression: #16565 a thread back on its retained session kept the other instance's credential
+it.effect(
+  "ProviderSessionManagerV2 scopes the MCP credential to a retained session's instance when its thread returns",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const otherSelection = {
+        instanceId: ProviderInstanceId.make("codex-work"),
+        model: modelSelection.model,
+      } satisfies ModelSelection;
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-switch-back");
+        const sessionA = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const sessionB = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: otherSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const scopedInstance = Effect.gen(function* () {
+          const slot = yield* mcpSessions.read(threadId);
+          assert.isDefined(slot);
+          const token = slot!.authorizationHeader.replace(/^Bearer\s+/, "");
+          return (yield* registry.resolve(token))?.thread.providerInstanceId;
+        });
+
+        yield* manager.open({
+          threadId,
+          providerSessionId: sessionA,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId: sessionB,
+          modelSelection: otherSelection,
+          runtimePolicy,
+        });
+        assert.equal(yield* scopedInstance, otherSelection.instanceId);
+
+        // Session A is still live and attached, as when both sessions are retained.
+        yield* manager.open({
+          threadId,
+          providerSessionId: sessionA,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal(yield* scopedInstance, modelSelection.instanceId);
+      }).pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000, otherInstanceId: otherSelection.instanceId }),
         ),
       );
     }),
