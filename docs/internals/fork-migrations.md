@@ -47,6 +47,8 @@ Fork-owned tables:
 - `fork_auth_step_up_bindings` (015)
 - `fork_factory_threads` (016)
 - `fork_trigger_observations` (017)
+- `fork_factory_work_items`, `fork_factory_work_item_threads`,
+  `fork_factory_work_item_transitions` (019)
 
 Fork indexes on upstream tables:
 

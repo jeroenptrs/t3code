@@ -49,9 +49,11 @@ import {
 } from "../observability/Metrics.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
+import * as FactoryThreads from "../factories/FactoryThreads.ts";
 import * as JiraBreakdownThreads from "../jira/JiraBreakdownThreads.ts";
 import * as JiraIdentities from "../jira/JiraIdentities.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import type * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -452,6 +454,21 @@ export const layerWithOptions = (
           onNone: () => Effect.succeed<boolean | undefined>(false),
           onSome: (breakdowns) => breakdowns.isBreakdownThread(threadId),
         });
+      // Fork-only and optional like the above. Read on every prepare, so the next session of a
+      // factory thread gets its role file as it is then.
+      const factoryThreads = yield* Effect.serviceOption(FactoryThreads.FactoryThreads);
+      const factoryRoleOf = (threadId: ThreadId) =>
+        Option.match(factoryThreads, {
+          onNone: () => Effect.succeed(null),
+          onSome: (threads) => threads.roleOf(threadId),
+        });
+      const withFactoryRole = (
+        config: McpProviderSession.McpProviderSessionConfig,
+        factoryRole: McpProviderSession.FactoryRoleInstructions | null,
+      ): McpProviderSession.McpProviderSessionConfig => {
+        const { factoryRole: _previous, ...rest } = config;
+        return factoryRole === null ? rest : { ...rest, factoryRole };
+      };
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const promptSuggestionStore = yield* SubscriptionRef.make<
@@ -597,6 +614,7 @@ export const layerWithOptions = (
                   Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
                   Effect.orElseSucceed(() => false),
                 );
+                const factoryRole = yield* factoryRoleOf(threadId);
                 const existing = yield* mcpSessions.read(threadId);
                 if (existing !== undefined) {
                   // Reserve before async validation so release cannot revoke between validation and reservation.
@@ -625,6 +643,7 @@ export const layerWithOptions = (
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent
                   ) {
+                    yield* mcpSessions.set(withFactoryRole(existing, factoryRole));
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -647,7 +666,9 @@ export const layerWithOptions = (
                   capabilities,
                   subagent,
                 });
-                yield* mcpSessions.set({
+                yield* mcpSessions.set(
+                  withFactoryRole(
+                    {
                   ...credential.config,
                   hasPendingWake: projectionStore
                     .getThreadRecords(threadId, ["runs", "subagents"])
@@ -655,7 +676,10 @@ export const layerWithOptions = (
                       Effect.map(delegatedTaskWillWake),
                       Effect.orElseSucceed(() => false),
                     ),
-                });
+                    },
+                    factoryRole,
+                  ),
+                );
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
                 return { mcpCredentialId: credential.config.providerSessionId, issued: true };
               }),

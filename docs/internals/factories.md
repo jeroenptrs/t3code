@@ -31,6 +31,25 @@ non-blank body replaces the built-in instructions whole. The built-ins are in
 
 ## Ownership
 
-A factory owns the threads in `fork_factory_threads` and the threads its
-scheduled tasks sent work into. The second set comes from the `scheduledTaskId`
-on stored messages, read through a fork index (migration 016).
+A factory owns the threads in `fork_factory_threads`, the threads its work items
+name, and the threads its scheduled tasks sent work into. The last set comes
+from the `scheduledTaskId` on stored messages, read through a fork index
+(migration 016).
+
+## Work items and the Foreman
+
+Each request the Foreman routes is a row in `fork_factory_work_items`, with its
+threads and transitions beside it (migration 017). `canTransitionWorkItem` in
+contracts is the only stage table. Each stage change writes one transition row
+with its actor, and only a person's gate answer moves an item out of `waiting`.
+
+- The Foreman is one thread per factory with a `factory-foreman:` id. Its
+  `fork_factory_threads` row lands before the launch, so its first provider
+  session gets the role. An archived or deleted one is replaced next time.
+- Each item is a `freshContext` queue send, and that send's run is the item's
+  `foreman_run_id`. A `delegate_task` child joins the item whose fresh run last
+  preceded its parent's run.
+- A queued item starts once the Foreman's run ends, which it does while children
+  work. So an earlier item's child wakes can land in a later item's session.
+- `FactoryThreads` reads the role body on every session prepare, outside the MCP
+  credential, so an edited role file applies from the next session.

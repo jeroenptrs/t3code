@@ -44,6 +44,7 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as FactoryThreads from "../factories/FactoryThreads.ts";
 import * as JiraBreakdownThreads from "../jira/JiraBreakdownThreads.ts";
 import * as JiraIdentities from "../jira/JiraIdentities.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -661,6 +662,7 @@ function layerTest(input: {
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
   readonly jiraIdentitiesLayer?: Layer.Layer<JiraIdentities.JiraIdentities>;
   readonly jiraBreakdownThreadsLayer?: Layer.Layer<JiraBreakdownThreads.JiraBreakdownThreads>;
+  readonly factoryThreadsLayer?: Layer.Layer<FactoryThreads.FactoryThreads>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -767,6 +769,7 @@ function layerTest(input: {
           ...(input.jiraBreakdownThreadsLayer === undefined
             ? []
             : [input.jiraBreakdownThreadsLayer]),
+          ...(input.factoryThreadsLayer === undefined ? [] : [input.factoryThreadsLayer]),
         ),
       ),
     ),
@@ -5714,6 +5717,80 @@ it.effect(
             mcpConfigs,
             jiraBreakdownThreadsLayer: Layer.mock(JiraBreakdownThreads.JiraBreakdownThreads)({
               isBreakdownThread: () => Ref.get(breakdownAnswer),
+            }),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 gives a factory thread its role instructions as they are at each prepare",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const foremanThreadId = ThreadId.make("factory-foreman:provider-session-manager");
+      const role = (body: string) => ({
+        factoryId: "factory:project-1:triage",
+        role: "foreman",
+        body,
+      });
+      const foremanRole = yield* Ref.make(role("Route every work item."));
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const open = Effect.fn(function* (threadId: ThreadId) {
+          const existing = (yield* Ref.get(state)).openCount;
+          yield* eventSink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+          });
+          const providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+          assert.equal((yield* Ref.get(state)).openCount, existing + 1);
+          return { providerSessionId, config: (yield* Ref.get(mcpConfigs)).at(-1) };
+        });
+
+        const first = yield* open(foremanThreadId);
+        assert.deepStrictEqual(first.config?.factoryRole, role("Route every work item."));
+
+        // An edited role file reaches the next prepare, which keeps the credential.
+        yield* manager.detach({
+          providerSessionId: first.providerSessionId,
+          threadId: foremanThreadId,
+          detail: "Fresh session.",
+        });
+        yield* Ref.set(foremanRole, role("Route only bugs."));
+        yield* manager.open({
+          threadId: foremanThreadId,
+          providerSessionId: first.providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const again = yield* (yield* McpProviderSessions.McpProviderSessions).read(foremanThreadId);
+        assert.equal(again?.authorizationHeader, first.config?.authorizationHeader);
+        assert.deepStrictEqual(again?.factoryRole, role("Route only bugs."));
+
+        const ordinary = yield* open(ThreadId.make("thread-provider-session-manager-ordinary"));
+        assert.isUndefined(ordinary.config?.factoryRole);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1_000,
+            mcpConfigs,
+            factoryThreadsLayer: Layer.mock(FactoryThreads.FactoryThreads)({
+              roleOf: (threadId) =>
+                threadId === foremanThreadId ? Ref.get(foremanRole) : Effect.succeed(null),
             }),
           }),
         ),

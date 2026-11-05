@@ -8236,9 +8236,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             pullRequestLinking:
               sessionSetup === null ||
               flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !== true,
-            mcpCapabilities: instructionState.hasT3Mcp
-              ? (yield* mcpSessions.read(turnInput.threadId))?.capabilities
-              : undefined,
+            mcpCapabilities: mcpSession?.capabilities,
+            factoryRole: mcpSession?.factoryRole,
           });
           // The agent keeps its own history, so resend only after compaction or when the text changes.
           const sendRuntimeInstructions =

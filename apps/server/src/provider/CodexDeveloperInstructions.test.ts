@@ -1,6 +1,7 @@
 import * as NodeAssert from "node:assert/strict";
 
 import { T3_CODE_DEVICE_TOOL_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { buildFactoryRoleInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { describe, it } from "vite-plus/test";
 
 import {
@@ -8,9 +9,16 @@ import {
   CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
 } from "./CodexDeveloperInstructions.ts";
 
+const factoryRole = {
+  factoryId: "factory:project-1:triage",
+  role: "foreman",
+  body: "Route 🦊 each work item to implement, then review.\n".repeat(300),
+};
+
 describe("buildCodexAdditionalContext", () => {
   describe.each([
     { model: "custom-model", modelName: "Custom 🦊 Model", reasoningEffort: "xhigh" },
+    { model: "factory-model", factoryRole },
   ])("with runtime $model", (runtime) => {
     it.each([undefined, { browser: true, device: true }])(
       "keeps every entry within Codex's per-entry cap with tools %j",
@@ -40,6 +48,22 @@ describe("Codex runtime context", () => {
 
     NodeAssert.match(instructions, /as gpt 5\.3 codex with high effort reasoning effort/);
     NodeAssert.doesNotMatch(instructions, /<runtime_info>[^<]*\n/);
+  });
+});
+
+describe("Codex factory role context", () => {
+  it("sends the whole role block in entries of its own, after the runtime entry", () => {
+    const context = buildCodexAdditionalContext({ model: "gpt-6.1-sol", factoryRole });
+    const keys = Object.keys(context);
+    const roleKeys = keys.filter((key) => key.startsWith("t3_code_factory_role_"));
+
+    NodeAssert.ok(roleKeys.length > 1);
+    NodeAssert.ok(keys.indexOf(roleKeys[0]!) > keys.indexOf("t3_code_runtime"));
+    NodeAssert.equal(
+      roleKeys.map((key) => context[key]!.value).join(""),
+      buildFactoryRoleInstructions(factoryRole),
+    );
+    NodeAssert.ok(!context.t3_code_runtime!.value.includes("<factory_role"));
   });
 });
 

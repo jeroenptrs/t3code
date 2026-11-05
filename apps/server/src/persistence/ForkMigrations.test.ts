@@ -170,6 +170,33 @@ const assertFactoryThreadsSchema = Effect.gen(function* () {
       AND name = 'idx_fork_messages_scheduled_task'
   `;
   assert.equal(indexes.length, 1);
+  const workItemTables = yield* Effect.forEach(
+    [
+      "fork_factory_work_items",
+      "fork_factory_work_item_threads",
+      "fork_factory_work_item_transitions",
+    ],
+    (table) =>
+      sql<{ readonly name: string; readonly pk: number }>`
+        SELECT name, pk FROM pragma_table_info(${table})
+      `.pipe(Effect.map((rows) => rows.map(({ name, pk }) => (pk === 0 ? name : `${name}*${pk}`)))),
+  );
+  assert.deepStrictEqual(workItemTables, [
+    [
+      "work_item_id*1",
+      "factory_id",
+      "title",
+      "source_json",
+      "stage",
+      "gate_json",
+      "foreman_thread_id",
+      "foreman_run_id",
+      "created_at",
+      "updated_at",
+    ],
+    ["work_item_id*1", "thread_id*2", "role", "created_at"],
+    ["transition_id*1", "work_item_id", "from_stage", "to_stage", "actor_json", "note", "at"],
+  ]);
 });
 
 it.effect("server startup records upstream and fork migrations in separate ledgers", () =>
@@ -209,6 +236,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [16, "FactoryThreads"],
       [17, "TriggerObservations"],
       [18, "ScheduledTaskTriage"],
+      [19, "FactoryWorkItems"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
