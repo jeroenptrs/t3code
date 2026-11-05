@@ -21,6 +21,7 @@ import {
   FactoryRoleName,
   type FactoryRolePath,
   type FactorySaveInput,
+  type FactorySkill,
   type FactoryThread,
   isTerminalWorkItemStage,
   makeFactoryId,
@@ -72,6 +73,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import {
+  availableSkills,
   bindingIssues,
   defaultRolePath,
   effectiveBinding,
@@ -79,9 +81,13 @@ import {
   FACTORY_FILE_NAME,
   parseFactoryJson,
   parseRoleFile,
+  readFactorySkillNames,
   renderFactoryJson,
   renderRoleFile,
   resolveProjects,
+  resolveRoleSkills,
+  SKILL_FILE_NAME,
+  SKILLS_DIRECTORY,
 } from "./factoryFiles.ts";
 import { builtinRoles } from "./roles/index.ts";
 import type { freshContext } from "./upstream/index.ts";
@@ -213,6 +219,7 @@ interface LoadedFactory {
   readonly name: FactoryName;
   readonly definition: FactoryDefinition;
   readonly roles: ReadonlyArray<FactoryRole>;
+  readonly skills: ReadonlyArray<FactorySkill>;
   readonly issues: ReadonlyArray<FactoryIssue>;
 }
 
@@ -248,7 +255,11 @@ const unavailable =
       ),
     );
 
-const builtinRole = (role: FactoryRoleName, path: FactoryRolePath | null): FactoryRole => ({
+const builtinRole = (
+  role: FactoryRoleName,
+  path: FactoryRolePath | null,
+  skills: ReadonlyArray<FactorySkill>,
+): FactoryRole => ({
   role,
   path,
   source: "builtin",
@@ -256,6 +267,7 @@ const builtinRole = (role: FactoryRoleName, path: FactoryRolePath | null): Facto
   binding: builtinRoles[role].binding,
   body: builtinRoles[role].body,
   bodySource: "builtin",
+  skills,
 });
 
 const make = Effect.gen(function* () {
@@ -305,15 +317,17 @@ const make = Effect.gen(function* () {
     role: FactoryRoleName,
     rolePath: FactoryRolePath | undefined,
     providers: ReadonlyArray<ServerProvider>,
+    skills: ReadonlyArray<FactorySkill>,
   ) {
     // A role left out of factory.json still has a file when roles/<role>.md exists.
     const listed = rolePath !== undefined;
     const filePath = rolePath ?? defaultRolePath(role);
     const text = yield* readText(path.join(directory, filePath));
     if (Option.isNone(text)) {
-      if (!listed) return { role: builtinRole(role, null), issues: [] };
+      const builtin = resolveRoleSkills(role, builtinRoles[role].binding.skills, skills);
+      if (!listed) return { role: builtinRole(role, null, builtin.skills), issues: builtin.issues };
       return {
-        role: builtinRole(role, filePath),
+        role: builtinRole(role, filePath, builtin.skills),
         issues: [
           {
             code: "missing_role_file",
@@ -321,11 +335,13 @@ const make = Effect.gen(function* () {
             field: null,
             message: `${filePath} does not exist, so ${role} uses its built-in default.`,
           } satisfies FactoryIssue,
+          ...builtin.issues,
         ],
       };
     }
     const parsed = parseRoleFile(role, text.value);
     const binding = effectiveBinding(builtinRoles[role].binding, parsed.binding);
+    const resolved = resolveRoleSkills(role, binding.skills, skills);
     return {
       role: {
         role,
@@ -335,8 +351,9 @@ const make = Effect.gen(function* () {
         binding,
         body: parsed.body ?? builtinRoles[role].body,
         bodySource: parsed.body === null ? "builtin" : "file",
+        skills: resolved.skills,
       } satisfies FactoryRole,
-      issues: [...parsed.issues, ...bindingIssues(role, binding, providers)],
+      issues: [...parsed.issues, ...bindingIssues(role, binding, providers), ...resolved.issues],
     };
   });
 
@@ -349,8 +366,9 @@ const make = Effect.gen(function* () {
     const text = yield* readText(path.join(directory, FACTORY_FILE_NAME));
     if (Option.isNone(text)) return Option.none<LoadedFactory>();
     const { definition, issues } = parseFactoryJson(name, text.value);
+    const skills = availableSkills(yield* readFactorySkillNames(fileSystem, path, directory));
     const roles = yield* Effect.forEach(ROLE_NAMES, (role) =>
-      loadRole(directory, role, definition.roles[role], providers),
+      loadRole(directory, role, definition.roles[role], providers, skills),
     );
     return Option.some<LoadedFactory>({
       id: makeFactoryId(project.projectId, name),
@@ -358,6 +376,7 @@ const make = Effect.gen(function* () {
       name,
       definition,
       roles: roles.map((loaded) => loaded.role),
+      skills,
       issues: [...issues, ...roles.flatMap((loaded) => loaded.issues)],
     });
   });
@@ -601,6 +620,7 @@ const make = Effect.gen(function* () {
       definition: view.factory.definition,
       projects: view.projects,
       roles: view.factory.roles,
+      skills: view.factory.skills,
       issues: view.issues,
       scheduledTaskIds: view.scheduledTaskIds,
       threads: view.threads,
@@ -618,12 +638,36 @@ const make = Effect.gen(function* () {
       });
     }
 
+    const directory = factoryDirectory(project, input.definition.name);
+    const issues: Array<FactoryIssue> = [];
+    const skillWrites: Array<{ readonly name: string; readonly text: string }> = [];
+    const skillRemovals: Array<string> = [];
+    for (const { name, file } of input.skills ?? []) {
+      if (skillWrites.some((write) => write.name === name) || skillRemovals.includes(name)) {
+        issues.push({
+          code: "invalid_definition",
+          role: null,
+          field: "skills",
+          message: `The skill ${name} is changed twice in this save.`,
+        });
+        continue;
+      }
+      if (file === null) skillRemovals.push(name);
+      else skillWrites.push({ name, text: file.body });
+    }
+    // Roles this save changes may name the skills it writes, and not the ones it deletes.
+    const savedSkills = availableSkills([
+      ...(yield* readFactorySkillNames(fileSystem, path, directory).pipe(
+        Effect.catch(unavailable("read")),
+      )).filter((name) => !skillRemovals.includes(name)),
+      ...skillWrites.map((write) => write.name),
+    ]);
+
     const rolePaths: { [Role in FactoryRoleName]?: FactoryRolePath } = {
       ...input.definition.roles,
     };
     const writes: Array<{ readonly rolePath: FactoryRolePath; readonly text: string }> = [];
     const removals: Array<FactoryRolePath> = [];
-    const issues: Array<FactoryIssue> = [];
     const changed = new Set<FactoryRoleName>();
     for (const { role, file } of input.roles ?? []) {
       if (changed.has(role)) {
@@ -644,12 +688,10 @@ const make = Effect.gen(function* () {
       }
       rolePaths[role] = rolePath;
       writes.push({ rolePath, text: renderRoleFile(file.binding, file.body) });
+      const binding = effectiveBinding(builtinRoles[role].binding, file.binding);
       issues.push(
-        ...bindingIssues(
-          role,
-          effectiveBinding(builtinRoles[role].binding, file.binding),
-          catalog.providers,
-        ),
+        ...bindingIssues(role, binding, catalog.providers),
+        ...resolveRoleSkills(role, binding.skills, savedSkills).issues,
       );
     }
     const touched = [...writes.map((write) => write.rolePath), ...removals];
@@ -671,9 +713,23 @@ const make = Effect.gen(function* () {
       });
     }
 
-    const directory = factoryDirectory(project, input.definition.name);
     yield* Effect.gen(function* () {
       yield* fileSystem.makeDirectory(directory, { recursive: true });
+      for (const { name, text } of skillWrites) {
+        const skillDirectory = path.join(directory, SKILLS_DIRECTORY, name);
+        yield* fileSystem.makeDirectory(skillDirectory, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(skillDirectory, SKILL_FILE_NAME), text);
+      }
+      for (const name of skillRemovals) {
+        yield* fileSystem
+          .remove(path.join(directory, SKILLS_DIRECTORY, name, SKILL_FILE_NAME))
+          .pipe(
+            Effect.catchTags({
+              PlatformError: (error) =>
+                error.reason._tag === "NotFound" ? Effect.void : Effect.fail(error),
+            }),
+          );
+      }
       for (const { rolePath, text } of writes) {
         const target = path.join(directory, rolePath);
         yield* fileSystem.makeDirectory(path.dirname(target), { recursive: true });
