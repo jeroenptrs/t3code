@@ -51,6 +51,7 @@ export * from "./threadMetadataMcp.ts";
 export * from "./threadPullRequest.ts";
 export * from "./jira.ts";
 export * from "./insights.ts";
+export * from "./factories.ts";
 export * from "./threadSearch.ts";
 export * from "./threadTags.ts";
 export * from "./threadTitle.ts";

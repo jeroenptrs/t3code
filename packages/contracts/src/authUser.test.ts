@@ -20,6 +20,14 @@ describe("authUserEffectiveScopes", () => {
     expect(AuthUserRoleScopes.operator).not.toContain("access:write");
     expect(AuthUserRoleScopes.administrator).toContain("access:write");
   });
+
+  it("lets operators view factories and only administrators manage them", () => {
+    expect(AuthUserRoleScopes.reader).not.toContain("factories:read");
+    expect(AuthUserRoleScopes.operator).toContain("factories:read");
+    expect(AuthUserRoleScopes.operator).not.toContain("factories:manage");
+    expect(AuthUserRoleScopes.administrator).toContain("factories:read");
+    expect(AuthUserRoleScopes.administrator).toContain("factories:manage");
+  });
 });
 
 describe("AuthUserIdentity", () => {

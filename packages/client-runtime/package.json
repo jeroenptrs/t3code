@@ -287,6 +287,10 @@
       "types": "./src/state/providerInstanceDisplay.ts",
       "default": "./src/state/providerInstanceDisplay.ts"
     },
+    "./state/factories": {
+      "types": "./src/state/factories.ts",
+      "default": "./src/state/factories.ts"
+    },
     "./state/insights": {
       "types": "./src/state/insights.ts",
       "default": "./src/state/insights.ts"
