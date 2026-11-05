@@ -593,6 +593,7 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "propose-jira-issues":
     case "propose-jira-comment":
     case "propose-jira-transition":
+    case "propose-jira-labels":
       return 0;
     case "other":
     case "update":

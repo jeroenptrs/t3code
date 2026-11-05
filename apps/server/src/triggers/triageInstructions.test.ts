@@ -31,8 +31,22 @@ describe("renderTriageInstructions", () => {
       text,
       'Trigger "Fix <label> bugs" fired on a Jira event of type `issue.opened` because',
     );
-    assert.include(text, "Add the label `needs-triage` to the item");
+    assert.include(
+      text,
+      "Propose the label `needs-triage` on the issue with `propose_jira_labels` and wait for the decision.",
+    );
+    assert.notInclude(text, "If no tool can add a label");
     assert.include(text, "`<trigger-data-…>`");
+  });
+
+  it("keeps the generic label sentence for sources without a label tool", () => {
+    const text = render("label", { kind: "event", source: "gitlab", type: "merge_request.opened" });
+    assert.include(
+      text,
+      "Add the label `needs-triage` to the item through the tool for its source",
+    );
+    assert.include(text, "If no tool can add a label, say so.");
+    assert.notInclude(text, "propose_jira_labels");
   });
 
   it.each([

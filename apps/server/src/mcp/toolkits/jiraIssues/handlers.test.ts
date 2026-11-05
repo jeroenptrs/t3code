@@ -4,6 +4,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnItemId,
   type JiraIssueSummary,
   type OrchestrationV2ServerCommand as OrchestrationCommand,
   type ThreadJiraIssueLink,
@@ -110,6 +111,9 @@ const makeHarness = Effect.fn("makeJiraIssuesToolkitHarness")(function* (
   options: HarnessOptions = {},
 ) {
   const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
+  const proposed = yield* Ref.make<
+    ReadonlyArray<Parameters<JiraProposals.JiraProposals["Service"]["propose"]>[0]>
+  >([]);
   const thread = {
     ...v2PullRequestThread({
       id: THREAD_ID,
@@ -162,7 +166,20 @@ const makeHarness = Effect.fn("makeJiraIssuesToolkitHarness")(function* (
       JiraIdentities.JiraIdentities,
       JiraIdentities.make("config" in options ? options.config : jiraConfig),
     ),
-    Layer.mock(JiraProposals.JiraProposals)({}),
+    Layer.mock(JiraProposals.JiraProposals)({
+      propose: (input) =>
+        Ref.update(proposed, (recorded) => [...recorded, input]).pipe(
+          Effect.as({
+            proposalId: TurnItemId.make("turn-item:jira-proposal:1"),
+            status: "applied" as const,
+            result: {
+              issues: [{ site: SITE, key: "ABC-1", url: `https://${SITE}/browse/ABC-1` }],
+              addedLabels: ["needs-info"],
+            },
+            error: null,
+          }),
+        ),
+    }),
     Layer.succeed(SecureRandom.SecureRandom, testRandom),
     McpToolAccessTestkit.liveThreadsLayer,
   );
@@ -187,7 +204,7 @@ const makeHarness = Effect.fn("makeJiraIssuesToolkitHarness")(function* (
       Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
       Effect.provide(layerDependencies),
     );
-  return { commands, call };
+  return { commands, proposed, call };
 });
 
 describe("Jira issue toolkit handlers", () => {
@@ -396,6 +413,37 @@ describe("Jira issue toolkit handlers", () => {
       for (const harness of [subagent, elsewhere, unconfigured]) {
         expect(yield* Ref.get(harness.commands)).toEqual([]);
       }
+    }),
+  );
+
+  it.effect("proposes labels for the calling thread and reports the labels added", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const result = yield* harness.call("propose_jira_labels", {
+        key: "ABC-1",
+        labels: ["triage", "needs-info"],
+        clientRequestId: "label-1",
+      });
+      expect(result).toEqual({
+        proposalId: "turn-item:jira-proposal:1",
+        status: "applied",
+        issues: [{ site: SITE, key: "ABC-1", url: `https://${SITE}/browse/ABC-1` }],
+        addedLabels: ["needs-info"],
+      });
+      expect(yield* Ref.get(harness.proposed)).toEqual([
+        {
+          threadId: THREAD_ID,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          request: {
+            kind: "labels",
+            site: undefined,
+            key: "ABC-1",
+            labels: ["triage", "needs-info"],
+          },
+          clientRequestId: "label-1",
+          timeoutMs: undefined,
+        },
+      ]);
     }),
   );
 });

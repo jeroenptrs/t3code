@@ -4,6 +4,7 @@ import {
   JiraError,
   JiraIssueDraft,
   JiraIssueKeyString,
+  JiraLabelsProposal,
   JiraProposalResult,
   JiraProposalStatus,
   JiraStatusCategory,
@@ -360,6 +361,15 @@ const ProposeJiraTransitionInput = Schema.Struct({
   ...ProposalWait,
 });
 
+const ProposeJiraLabelsInput = Schema.Struct({
+  key: JiraIssueKeyString.annotate({ description: "Issue key, for example ABC-123." }),
+  site: ProposalSite,
+  labels: JiraLabelsProposal.fields.labels.annotate({
+    description: "Labels to add. A label has no spaces.",
+  }),
+  ...ProposalWait,
+});
+
 export const JiraProposalToolResult = Schema.Struct({
   proposalId: Schema.String,
   status: JiraProposalStatus.annotate({
@@ -367,7 +377,10 @@ export const JiraProposalToolResult = Schema.Struct({
       "pending: waiting for the user, the card stays open. approved: the user approved it and it is being written. applied: done. rejected: the user declined. failed: error says why; the user may approve it again.",
   }),
   issues: Schema.optional(JiraProposalResult.fields.issues).annotate({
-    description: "Issues written: the created ones, or the issue commented on or moved.",
+    description: "Issues written: the created ones, or the issue commented on, moved or labeled.",
+  }),
+  addedLabels: Schema.optional(JiraProposalResult.fields.addedLabels).annotate({
+    description: "Labels added. Labels the issue already had are left out.",
   }),
   error: Schema.optional(Schema.String),
 });
@@ -420,6 +433,13 @@ const ProposeJiraTransitionTool = proposalTool(
   ProposeJiraTransitionInput,
 );
 
+const ProposeJiraLabelsTool = proposalTool(
+  "propose_jira_labels",
+  "Propose Jira labels",
+  "Propose adding labels to a Jira issue for the user, shown as a card in this thread, and wait for their decision. Use it when the user wants labels added on their behalf. Labels are only added, never removed.",
+  ProposeJiraLabelsInput,
+);
+
 export const JiraIssuesToolkit = Toolkit.make(
   LinkJiraIssueTool,
   UnlinkJiraIssueTool,
@@ -429,4 +449,5 @@ export const JiraIssuesToolkit = Toolkit.make(
   ProposeJiraIssuesTool,
   ProposeJiraCommentTool,
   ProposeJiraTransitionTool,
+  ProposeJiraLabelsTool,
 );

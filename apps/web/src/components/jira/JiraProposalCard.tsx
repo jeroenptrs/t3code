@@ -39,6 +39,7 @@ import {
   initialJiraProposalEdits,
   jiraDraftEditErrors,
   jiraIssueTypeOptions,
+  jiraLabelsEditError,
   jiraProposalApproveLabel,
   jiraProposalDecisionInput,
   jiraProposalDisplay,
@@ -348,6 +349,14 @@ function JiraProposalForm(props: {
         />
       ) : null}
 
+      {proposal.kind === "labels" && edits.kind === "labels" ? (
+        <JiraLabelsEditor
+          value={edits.labels}
+          disabled={submitting}
+          onChange={(labels) => setEdits(() => ({ kind: "labels", labels }))}
+        />
+      ) : null}
+
       {form.discarded ? (
         <p role="status" className="text-xs text-muted-foreground">
           This proposal changed elsewhere. Your edits were reset to the latest version.
@@ -421,7 +430,36 @@ function JiraProposalHeading(props: {
           {proposal.transitionName}
         </>
       );
+    case "labels":
+      return (
+        <>
+          Add labels to <JiraIssueKeyLink threadRef={props.threadRef} issue={proposal} />
+        </>
+      );
   }
+}
+
+/** Comma-separated, since Jira labels never contain commas or spaces. */
+function JiraLabelsEditor(props: {
+  readonly value: string;
+  readonly disabled: boolean;
+  readonly onChange: (value: string) => void;
+}) {
+  const error = jiraLabelsEditError(props.value);
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <Input
+        size="sm"
+        aria-label="Labels"
+        placeholder="Comma-separated labels"
+        value={props.value}
+        disabled={props.disabled}
+        aria-invalid={error !== null || undefined}
+        onChange={(event) => props.onChange(event.currentTarget.value)}
+      />
+      {error === null ? null : <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
 }
 
 /** Why Approve is off, or what the server refused; the token case links to where to add one. */

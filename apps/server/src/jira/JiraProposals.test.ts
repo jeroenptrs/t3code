@@ -74,13 +74,16 @@ const basic = (who: string) =>
  * Jira as the bot's bearer token and Alice's and Bob's personal tokens. Created issues are
  * numbered from ABC-101; `failCreates` and `failEdits` make the given create and issue edit
  * attempts (1-based) fail. Like many projects, its create screen has no story points or sprint.
+ * `labels` holds each issue's labels, which label edits add to.
  */
 const makeJira = (options: {
   readonly failCreates?: ReadonlyArray<number>;
   readonly failEdits?: ReadonlyArray<number>;
   readonly transitionsFor?: (who: string) => ReadonlyArray<unknown>;
+  readonly labels?: Record<string, ReadonlyArray<string>>;
 }) => {
   const requests: Array<Recorded> = [];
+  const labels = new Map(Object.entries(options.labels ?? {}));
   let createAttempts = 0;
   let editAttempts = 0;
   let created = 100;
@@ -134,10 +137,23 @@ const makeJira = (options: {
         created += 1;
         return answer(201, { id: String(created), key: `ABC-${created}` });
       }
-      if (request.method === "PUT" && /^\/rest\/api\/3\/issue\/[A-Z]+-\d+$/.test(path)) {
+      const issueKey = /^\/rest\/api\/3\/issue\/([A-Z]+-\d+)$/.exec(path)?.[1];
+      if (request.method === "GET" && issueKey !== undefined) {
+        return answer(200, {
+          id: "1",
+          key: issueKey,
+          fields: { labels: labels.get(issueKey) ?? [] },
+        });
+      }
+      if (request.method === "PUT" && issueKey !== undefined) {
         editAttempts += 1;
         if (options.failEdits?.includes(editAttempts)) {
           return answer(400, { errors: { customfield_10020: "Sprint 7 is closed." } });
+        }
+        const adds = (body as { update?: { labels?: ReadonlyArray<{ add: string }> } }).update
+          ?.labels;
+        if (adds !== undefined) {
+          labels.set(issueKey, [...(labels.get(issueKey) ?? []), ...adds.map((op) => op.add)]);
         }
         return answer(204, null);
       }
@@ -151,7 +167,7 @@ const makeJira = (options: {
       return answer(404, null);
     }),
   );
-  return { requests, client };
+  return { requests, client, labels };
 };
 
 const memorySecretStore = Layer.sync(ServerSecretStore.ServerSecretStore, () => {
@@ -576,6 +592,77 @@ it.effect("refuses an approval whose transition the issue no longer offers", () 
       jira.requests.some((entry) => entry.method === "POST" && entry.path.includes("/ABC-1/")),
     );
   }).pipe(Effect.provide(layerFor("proposal-transition", jira.client)));
+});
+
+it.effect("adds proposed labels to the labels the issue has, never removing one", () => {
+  const jira = makeJira({ labels: { "ABC-1": ["backend", "triage"] } });
+  return Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:proposal-labels");
+    yield* startRun(threadId);
+    yield* storeToken(ALICE, "alice");
+    const { call, proposalId } = yield* propose(
+      threadId,
+      { kind: "labels", key: "ABC-1", labels: ["triage", "needs-info"] },
+      "label-1",
+    );
+    const card = yield* readCard(threadId, proposalId);
+    assert.deepStrictEqual(card.proposal, {
+      kind: "labels",
+      site: SITE,
+      key: "ABC-1",
+      labels: ["triage", "needs-info"],
+    });
+
+    const outcome = yield* decide(ALICE, threadId, proposalId, {
+      type: "approve",
+      proposal: card.proposal,
+    });
+    assert.equal(outcome.status, "applied");
+    assert.deepStrictEqual(outcome.result, {
+      issues: [{ site: SITE, key: "ABC-1", url: `https://${SITE}/browse/ABC-1` }],
+      addedLabels: ["needs-info"],
+    });
+    assert.deepStrictEqual(jira.labels.get("ABC-1"), ["backend", "triage", "needs-info"]);
+    assert.deepStrictEqual(
+      jira.requests
+        .filter((entry) => entry.path === "/rest/api/3/issue/ABC-1")
+        .map((entry) => [entry.method, entry.who]),
+      [
+        ["GET", "alice"],
+        ["PUT", "alice"],
+      ],
+    );
+    assert.include(yield* Fiber.join(call), { status: "applied" });
+  }).pipe(Effect.provide(layerFor("proposal-labels", jira.client)));
+});
+
+it.effect("retries a failed labels approval by adding only the labels still missing", () => {
+  const jira = makeJira({ failEdits: [1], labels: { "ABC-1": ["backend"] } });
+  return Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:proposal-labels-retry");
+    yield* startRun(threadId);
+    yield* storeToken(ALICE, "alice");
+    const { proposalId } = yield* propose(
+      threadId,
+      { kind: "labels", key: "ABC-1", labels: ["triage", "needs-info"] },
+      "label-retry",
+    );
+    const approve = {
+      type: "approve",
+      proposal: (yield* readCard(threadId, proposalId)).proposal,
+    } as const;
+
+    const failed = yield* decide(ALICE, threadId, proposalId, approve);
+    assert.equal(failed.status, "failed");
+    assert.deepStrictEqual(jira.labels.get("ABC-1"), ["backend"]);
+
+    // Someone else adds one of the labels before the retry.
+    jira.labels.set("ABC-1", ["backend", "needs-info", "urgent"]);
+    const retried = yield* decide(ALICE, threadId, proposalId, approve);
+    assert.equal(retried.status, "applied");
+    assert.deepStrictEqual(retried.result?.addedLabels, ["triage"]);
+    assert.deepStrictEqual(jira.labels.get("ABC-1"), ["backend", "needs-info", "urgent", "triage"]);
+  }).pipe(Effect.provide(layerFor("proposal-labels-retry", jira.client)));
 });
 
 it.effect("keeps a proposal open after its run ends, where only a user can decide it", () => {

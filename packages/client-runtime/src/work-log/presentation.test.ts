@@ -300,19 +300,26 @@ describe("Jira proposal tool presentation", () => {
       resolveWorkEntryToolPresentation(proposal("propose_jira_transition", { key: "ABC-1" }))
         ?.displayName,
     ).toBe("Proposed a Jira transition");
+    expect(
+      resolveWorkEntryToolPresentation(
+        proposal("propose_jira_labels", { key: "ABC-1", labels: ["triage"] }),
+      )?.displayName,
+    ).toBe("Proposed Jira labels");
   });
 
   it("summarizes proposals by what they ask for", () => {
     const issues = proposal("propose_jira_issues", drafts(2));
     const comment = proposal("propose_jira_comment", { key: "ABC-1", body: "Done" });
     const transition = proposal("propose_jira_transition", { key: "ABC-1" });
+    const labels = proposal("propose_jira_labels", { key: "ABC-1", labels: ["triage"] });
     expect(summarizeToolGroup([issues, { ...issues, toolData: undefined }]).summary).toBe(
       "Proposed 3 Jira issues",
     );
     expect(summarizeToolGroup([comment, transition]).summary).toBe(
       "Proposed 1 Jira comment and proposed 1 Jira transition",
     );
-    expect(toolGroupSummaryKind([issues, comment, transition])).toBe("jira");
+    expect(summarizeToolGroup([labels, labels]).summary).toBe("Proposed 2 Jira label changes");
+    expect(toolGroupSummaryKind([issues, comment, transition, labels])).toBe("jira");
   });
 });
 

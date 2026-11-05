@@ -40,7 +40,7 @@ When the item fits no instruction, when two instructions conflict for it, or whe
 Ask. Write one message that names the item, says in one or two sentences why it fits no instruction, and asks one concrete question whose answer lets you proceed. Then stop and wait for a reply. Do not change files, comment on the item, or move it before you have an answer.
 
 [label]
-Label and stop. Add the label \`<label>\` to the item through the tool for its source, such as the Jira or merge request tools you have. If no tool can add a label, say so. Then write one message that names the item and says in one or two sentences why it fits no instruction, and stop. Do not change files, comment on the item, or move it.
+Label and stop. <label instruction> Then write one message that names the item and says in one or two sentences why it fits no instruction, and stop. Do not change files, comment on the item, or move it.
 
 [stop]
 Stop. Write one message that names the item and says in one or two sentences why it fits no instruction, then stop. Do not change files, comment on the item, move it, or ask a question.
@@ -48,6 +48,12 @@ Stop. Write one message that names the item and says in one or two sentences why
 In every case, keep that message short and specific so a person reading the thread list knows what to decide without opening the item.`;
 
 const FALLBACK_MARKER = /^\[(ask|label|stop)\]\n/;
+
+/** Jira has a proposal tool for labels; other sources depend on what the agent has. */
+const labelInstruction = (origin: TriageOrigin, label: string) =>
+  origin.kind === "event" && origin.source === "jira"
+    ? `Propose the label \`${label}\` on the issue with \`propose_jira_labels\` and wait for the decision.`
+    : `Add the label \`${label}\` to the item through the tool for its source, such as the merge request tools you have. If no tool can add a label, say so.`;
 
 export function renderTriageInstructions(input: {
   readonly taskTitle: string;
@@ -65,6 +71,6 @@ export function renderTriageInstructions(input: {
       return marker[1] === input.triage.fallback ? [paragraph.slice(marker[0].length)] : [];
     })
     .join("\n\n")
-    .replaceAll("<label>", input.triage.label ?? "");
+    .replaceAll("<label instruction>", labelInstruction(input.origin, input.triage.label ?? ""));
   return `## Triage\n\n${opening}\n\n${body}`;
 }
