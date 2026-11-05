@@ -1682,7 +1682,13 @@ export const layerWithOptions = (
               Effect.tap((runtime) => Effect.sync(() => (attachedTo = runtime))),
               Effect.uninterruptible,
             );
-            if (attached !== undefined) {
+            // A retained session's thread may return after another instance re-scoped its credential.
+            const slot =
+              attached === undefined ? yield* mcpSessions.read(input.threadId) : undefined;
+            if (
+              attached !== undefined ||
+              (slot !== undefined && slot.providerInstanceId !== input.providerInstanceId)
+            ) {
               const prepared = yield* prepareMcpSession(
                 input.threadId,
                 input.providerInstanceId,
@@ -1710,7 +1716,7 @@ export const layerWithOptions = (
                 });
               }
               const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
-              if (entry !== undefined) {
+              if (attached !== undefined && entry !== undefined) {
                 yield* withActivityError(
                   input.providerSessionId,
                   writeProviderSessionEvents({
