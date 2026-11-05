@@ -115,11 +115,17 @@ export class FactoryService extends Context.Service<
       filter: WorkItemFilter,
     ) => Effect.Effect<WorkItemListResult, WorkItemError>;
     readonly readWorkItem: (workItemId: WorkItemId) => Effect.Effect<WorkItem, WorkItemError>;
-    /** Records the item at `new`, then sends it to the Foreman as a fresh session's message. */
+    /**
+     * Records the item at `new`. Sends it to the Foreman as a fresh session's message when the
+     * factory has no active item, and otherwise leaves it queued behind the active one.
+     */
     readonly createWorkItem: (
       input: WorkItemCreateInput,
     ) => Effect.Effect<WorkItem, FactoryError | WorkItemError>;
-    /** The item's Foreman moves it on and names the threads that worked on it. */
+    /**
+     * The item's Foreman moves it on and names the threads that worked on it. Ending the item
+     * sends the factory's next queued one.
+     */
     readonly advanceWorkItem: (
       callerThreadId: ThreadId,
       input: WorkItemAdvanceInput,
@@ -129,7 +135,10 @@ export class FactoryService extends Context.Service<
       callerThreadId: ThreadId,
       input: WorkItemGateInput,
     ) => Effect.Effect<WorkItem, WorkItemError | WorkItemTransitionError>;
-    /** Records a person's answer, then tells the Foreman in the item's session. */
+    /**
+     * Records a person's answer, then tells the Foreman in the item's session. A rejection ends
+     * the item and sends the factory's next queued one.
+     */
     readonly answerWorkItemGate: (
       userId: AuthUserId | null,
       input: WorkItemAnswerGateInput,
@@ -165,6 +174,7 @@ const WorkItemRow = Schema.Struct({
   gate: Schema.fromJsonString(WorkItemGate),
   foremanThreadId: Schema.NullOr(ThreadId),
   foremanRunId: Schema.NullOr(RunId),
+  dispatchedAt: Schema.NullOr(Schema.String),
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });
@@ -259,9 +269,10 @@ const make = Effect.gen(function* () {
   const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  // One launch per factory at a time, and one stage change per item at a time.
+  // One launch per factory at a time. The ledger lock serializes a factory's stage changes with
+  // its dispatches, so two items that end together cannot both send the next one.
   const foremanLocks = yield* KeyedLock.make<FactoryId>();
-  const workItemLocks = yield* KeyedLock.make<WorkItemId>();
+  const ledgerLocks = yield* KeyedLock.make<FactoryId>();
 
   const factoryDirectory = (project: ProjectRow, name: FactoryName) =>
     path.join(project.workspaceRoot, ...FACTORIES_DIRECTORY, name);
@@ -824,6 +835,7 @@ const make = Effect.gen(function* () {
         w.gate_json AS "gate",
         w.foreman_thread_id AS "foremanThreadId",
         w.foreman_run_id AS "foremanRunId",
+        w.dispatched_at AS "dispatchedAt",
         w.created_at AS "createdAt",
         w.updated_at AS "updatedAt"
       FROM fork_factory_work_items w
@@ -964,19 +976,33 @@ const make = Effect.gen(function* () {
     return transitionId;
   });
 
-  /** Loads the item under its lock and checks that `callerThreadId` is its Foreman. */
+  const loadWorkItem = (workItemId: WorkItemId) =>
+    loadWorkItems({ workItemIds: [workItemId] }).pipe(
+      Effect.catch(ledgerUnavailable),
+      Effect.flatMap(([item]) =>
+        item === undefined ? Effect.fail(workItemNotFound(workItemId)) : Effect.succeed(item),
+      ),
+    );
+
+  /** Runs `use` on the item as it is under its factory's ledger lock. */
+  const withLedgerItem = <A, E, R>(
+    workItemId: WorkItemId,
+    use: (item: WorkItemSummary) => Effect.Effect<A, E, R>,
+  ) =>
+    loadWorkItem(workItemId).pipe(
+      Effect.flatMap(({ factoryId }) =>
+        ledgerLocks.withLock(factoryId, Effect.flatMap(loadWorkItem(workItemId), use)),
+      ),
+    );
+
+  /** Like `withLedgerItem`, once `callerThreadId` proves to be the item's Foreman. */
   const withForemanItem = <A, E, R>(
     callerThreadId: ThreadId,
     workItemId: WorkItemId,
     use: (item: WorkItemSummary) => Effect.Effect<A, E, R>,
   ) =>
-    workItemLocks.withLock(
-      workItemId,
+    withLedgerItem(workItemId, (item) =>
       Effect.gen(function* () {
-        const [item] = yield* loadWorkItems({ workItemIds: [workItemId] }).pipe(
-          Effect.catch(ledgerUnavailable),
-        );
-        if (item === undefined) return yield* workItemNotFound(workItemId);
         const listed = yield* sql<{ readonly found: number }>`
           SELECT 1 AS found FROM fork_factory_threads
           WHERE thread_id = ${callerThreadId} AND factory_id = ${item.factoryId}
@@ -991,6 +1017,81 @@ const make = Effect.gen(function* () {
         return yield* use(item);
       }),
     );
+
+  const foremanUnreachable = workItemUnavailable(
+    "The Foreman thread could not be sent the work item.",
+  );
+
+  const sendToForeman = (input: ThreadManagementService.ThreadManagementSendInput) =>
+    threadManagement.sendToThread(input).pipe(Effect.catch(foremanUnreachable));
+
+  /** Sends a queued item to its factory's Foreman as a fresh session's message. */
+  const dispatchWorkItem = Effect.fn("FactoryService.dispatchWorkItem")(function* (
+    item: WorkItemSummary,
+  ) {
+    const factory = yield* read(item.factoryId);
+    const threadId = yield* ensureForeman(factory);
+    yield* sql`
+      UPDATE fork_factory_work_items SET foreman_thread_id = ${threadId}
+      WHERE work_item_id = ${item.id}
+    `.pipe(Effect.catch(ledgerUnavailable));
+    const sent = yield* sendToForeman({
+      projectId: factory.projectId,
+      commandId: CommandId.make(`factory-work-item:${item.id}`),
+      threadId,
+      messageId: MessageId.make(`factory-work-item:${item.id}`),
+      text: renderWorkItemMessage({
+        workItemId: item.id,
+        factoryName: factory.name,
+        title: item.title,
+        source: item.source,
+      }),
+      attachments: [],
+      mode: "queue",
+      freshContext: true,
+      createdBy: "agent",
+      creationSource: "server",
+    } satisfies freshContext.FreshSendInput);
+    const at = yield* nowIso;
+    yield* sql`
+      UPDATE fork_factory_work_items
+      SET foreman_run_id = ${sent.run.id}, dispatched_at = ${at}, updated_at = ${at}
+      WHERE work_item_id = ${item.id}
+    `.pipe(Effect.catch(ledgerUnavailable));
+  });
+
+  /**
+   * Call under the factory's ledger lock. A factory has one active item: sent, and not yet done,
+   * failed, or dropped. When it has none, this sends the oldest queued item. An item that cannot
+   * be sent is failed by the server and the next one is tried. Returns those failures by item.
+   */
+  const dispatchNext = Effect.fn("FactoryService.dispatchNext")(function* (factoryId: FactoryId) {
+    const failures = new Map<WorkItemId, FactoryError | WorkItemError>();
+    for (;;) {
+      // A sent item sorts first, so a queued first row means the factory has no active item.
+      const [next] = yield* sql<{ readonly id: string; readonly sent: number }>`
+        SELECT work_item_id AS "id", dispatched_at IS NOT NULL AS sent
+        FROM fork_factory_work_items
+        WHERE factory_id = ${factoryId} AND stage NOT IN ('done', 'failed', 'dropped')
+        ORDER BY dispatched_at IS NULL, created_at, rowid
+        LIMIT 1
+      `.pipe(Effect.catch(ledgerUnavailable));
+      if (next === undefined || next.sent === 1) return failures;
+      const item = yield* loadWorkItem(WorkItemId.make(next.id));
+      const error = yield* dispatchWorkItem(item).pipe(
+        Effect.as(null),
+        Effect.catch((cause) => Effect.succeed(cause)),
+      );
+      if (error === null) return failures;
+      failures.set(item.id, error);
+      // The item stays on record as failed, so the person sees what did not start.
+      yield* moveWorkItem({ item, to: "failed", actor: { kind: "server" }, note: error.message });
+    }
+  });
+
+  /** Once an item ends, under the same lock. A failed send is on the next item's own record. */
+  const dispatchAfterEnd = (factoryId: FactoryId) =>
+    dispatchNext(factoryId).pipe(Effect.ignore({ log: true }));
 
   const advanceWorkItem = Effect.fn("FactoryService.advanceWorkItem")(function* (
     callerThreadId: ThreadId,
@@ -1022,6 +1123,9 @@ const make = Effect.gen(function* () {
           note: input.note ?? null,
           threads: input.threads ?? [],
         });
+        if (input.stage !== item.stage && isTerminalWorkItemStage(input.stage)) {
+          yield* dispatchAfterEnd(item.factoryId);
+        }
       }),
     );
     return yield* readWorkItem(input.workItemId);
@@ -1057,13 +1161,6 @@ const make = Effect.gen(function* () {
     return yield* readWorkItem(input.workItemId);
   });
 
-  const foremanUnreachable = workItemUnavailable(
-    "The Foreman thread could not be sent the work item.",
-  );
-
-  const sendToForeman = (input: ThreadManagementService.ThreadManagementSendInput) =>
-    threadManagement.sendToThread(input).pipe(Effect.catch(foremanUnreachable));
-
   const createWorkItem = Effect.fn("FactoryService.createWorkItem")(function* (
     input: WorkItemCreateInput,
   ) {
@@ -1076,63 +1173,16 @@ const make = Effect.gen(function* () {
     yield* sql`
       INSERT INTO fork_factory_work_items (
         work_item_id, factory_id, title, source_json, stage, gate_json,
-        foreman_thread_id, foreman_run_id, created_at, updated_at
+        foreman_thread_id, foreman_run_id, dispatched_at, created_at, updated_at
       ) VALUES (
         ${workItemId}, ${factory.id}, ${input.title}, ${sourceJson}, 'new', ${gateJson}, NULL, NULL,
-        ${createdAt}, ${createdAt}
+        NULL, ${createdAt}, ${createdAt}
       )
     `.pipe(Effect.catch(ledgerUnavailable));
 
-    yield* Effect.gen(function* () {
-      const threadId = yield* ensureForeman(factory);
-      yield* sql`
-        UPDATE fork_factory_work_items SET foreman_thread_id = ${threadId}
-        WHERE work_item_id = ${workItemId}
-      `.pipe(Effect.catch(ledgerUnavailable));
-      const sent = yield* sendToForeman({
-        projectId: factory.projectId,
-        commandId: CommandId.make(`factory-work-item:${workItemId}`),
-        threadId,
-        messageId: MessageId.make(`factory-work-item:${workItemId}`),
-        text: renderWorkItemMessage({
-          workItemId,
-          factoryName: factory.name,
-          title: input.title,
-          source,
-        }),
-        attachments: [],
-        mode: "queue",
-        freshContext: true,
-        createdBy: "agent",
-        creationSource: "server",
-      } satisfies freshContext.FreshSendInput);
-      yield* sql`
-        UPDATE fork_factory_work_items
-        SET foreman_run_id = ${sent.run.id}, updated_at = ${yield* nowIso}
-        WHERE work_item_id = ${workItemId}
-      `.pipe(Effect.catch(ledgerUnavailable));
-    }).pipe(
-      // The item stays on record as failed, so the person sees what did not start.
-      Effect.tapError((error) =>
-        workItemLocks
-          .withLock(
-            workItemId,
-            loadWorkItems({ workItemIds: [workItemId] }).pipe(
-              Effect.flatMap(([item]) =>
-                item === undefined
-                  ? Effect.void
-                  : moveWorkItem({
-                      item,
-                      to: "failed",
-                      actor: { kind: "server" },
-                      note: error.message,
-                    }),
-              ),
-            ),
-          )
-          .pipe(Effect.ignore({ log: true })),
-      ),
-    );
+    const failures = yield* ledgerLocks.withLock(factory.id, dispatchNext(factory.id));
+    const failure = failures.get(workItemId);
+    if (failure !== undefined) return yield* failure;
     return yield* readWorkItem(workItemId);
   });
 
@@ -1140,13 +1190,8 @@ const make = Effect.gen(function* () {
     userId: AuthUserId | null,
     input: WorkItemAnswerGateInput,
   ) {
-    const answered = yield* workItemLocks.withLock(
-      input.workItemId,
+    yield* withLedgerItem(input.workItemId, (item) =>
       Effect.gen(function* () {
-        const [item] = yield* loadWorkItems({ workItemIds: [input.workItemId] }).pipe(
-          Effect.catch(ledgerUnavailable),
-        );
-        if (item === undefined) return yield* workItemNotFound(input.workItemId);
         const gate = item.gate;
         if (item.stage !== "waiting" || gate.state !== "waiting") {
           return yield* new WorkItemError({
@@ -1172,31 +1217,36 @@ const make = Effect.gen(function* () {
             resumeStage: gate.resumeStage,
           },
         });
-        return { item, question: gate.question, to, transitionId };
+        const projectId = parseFactoryId(item.factoryId)?.projectId;
+        // Steers the item's session when it is running; no fresh context, so the Foreman keeps it.
+        // Sent before the next item, so a rejection reaches this item's session.
+        const unsent =
+          item.foremanThreadId === null || projectId === undefined
+            ? null
+            : yield* sendToForeman({
+                projectId,
+                commandId: CommandId.make(`factory-gate-answer:${transitionId}`),
+                threadId: item.foremanThreadId,
+                messageId: MessageId.make(`factory-gate-answer:${transitionId}`),
+                text: renderGateAnswerMessage({
+                  workItemId: item.id,
+                  question: gate.question,
+                  decision: input.decision,
+                  note: input.note,
+                  stage: to,
+                }),
+                attachments: [],
+                mode: "auto",
+                createdBy: "agent",
+                creationSource: "server",
+              }).pipe(
+                Effect.as(null),
+                Effect.catch((cause) => Effect.succeed(cause)),
+              );
+        if (isTerminalWorkItemStage(to)) yield* dispatchAfterEnd(item.factoryId);
+        if (unsent !== null) return yield* unsent;
       }),
     );
-    const { item } = answered;
-    const projectId = parseFactoryId(item.factoryId)?.projectId;
-    if (item.foremanThreadId !== null && projectId !== undefined) {
-      // Steers the item's session when it is running; no fresh context, so the Foreman keeps it.
-      yield* sendToForeman({
-        projectId,
-        commandId: CommandId.make(`factory-gate-answer:${answered.transitionId}`),
-        threadId: item.foremanThreadId,
-        messageId: MessageId.make(`factory-gate-answer:${answered.transitionId}`),
-        text: renderGateAnswerMessage({
-          workItemId: item.id,
-          question: answered.question,
-          decision: input.decision,
-          note: input.note,
-          stage: answered.to,
-        }),
-        attachments: [],
-        mode: "auto",
-        createdBy: "agent",
-        creationSource: "server",
-      });
-    }
     return yield* readWorkItem(input.workItemId);
   });
 
