@@ -2,10 +2,14 @@ import {
   CommandId,
   type MessageId,
   type OrchestrationV2ThreadProjection,
+  type ThreadId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
@@ -57,12 +61,53 @@ function delegatedCompletionRetryKey(
   return `${request.threadId}:${completion.parentRunId}:${completion.generation}:${completion.messageId}`;
 }
 
-export const layer = Layer.effectDiscard(
+/** The default never waits; the live layer is the worker that dispatches continuations. */
+export class ProviderContinuationService extends Context.Reference<{
+  /** Waits until no continuation for the thread is taken but uncommitted; false when none was. */
+  readonly awaitSettled: (threadId: ThreadId) => Effect.Effect<boolean>;
+}>("t3/orchestration-v2/ProviderContinuationService", {
+  defaultValue: () => ({ awaitSettled: () => Effect.succeed(false) }),
+}) {}
+
+interface InFlight {
+  readonly count: number;
+  readonly settled: Deferred.Deferred<void>;
+}
+
+export const layer = Layer.effect(
+  ProviderContinuationService,
   Effect.gen(function* () {
     const ids = yield* IdAllocator.IdAllocatorV2;
     const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const retryAttempts = yield* Ref.make(new Map<string, number>());
+    const inFlight = yield* Ref.make(new Map<ThreadId, InFlight>());
+
+    const begin = (threadId: ThreadId) =>
+      Deferred.make<void>().pipe(
+        Effect.flatMap((settled) =>
+          Ref.update(inFlight, (current) => {
+            const entry = current.get(threadId);
+            return new Map(current).set(
+              threadId,
+              entry === undefined ? { count: 1, settled } : { ...entry, count: entry.count + 1 },
+            );
+          }),
+        ),
+      );
+
+    const end = (threadId: ThreadId) =>
+      Ref.modify(inFlight, (current) => {
+        const entry = current.get(threadId);
+        if (entry === undefined) return [Effect.void, current] as const;
+        const updated = new Map(current);
+        if (entry.count > 1) {
+          updated.set(threadId, { ...entry, count: entry.count - 1 });
+          return [Effect.void, updated] as const;
+        }
+        updated.delete(threadId);
+        return [Deferred.succeed(entry.settled, undefined), updated] as const;
+      }).pipe(Effect.flatten);
 
     const clearRetryAttempt = (key: string) =>
       Ref.update(retryAttempts, (current) => {
@@ -290,7 +335,17 @@ export const layer = Layer.effectDiscard(
       },
     );
 
+    // Take requests as they arrive so a thread counts as in flight while earlier ones dispatch.
+    const taken =
+      yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
     yield* requests.take.pipe(
+      Effect.tap((request) => begin(request.threadId)),
+      Effect.flatMap((request) => Queue.offer(taken, request)),
+      Effect.forever,
+      Effect.forkScoped,
+    );
+
+    yield* Queue.take(taken).pipe(
       Effect.flatMap((request) =>
         dispatchContinuation(request).pipe(
           Effect.catchCause((cause) =>
@@ -336,10 +391,22 @@ export const layer = Layer.effectDiscard(
               }
             }),
           ),
+          Effect.ensuring(end(request.threadId)),
         ),
       ),
       Effect.forever,
       Effect.forkScoped,
     );
+
+    return {
+      awaitSettled: Effect.fn("ProviderContinuationService.awaitSettled")(function* (
+        threadId: ThreadId,
+      ) {
+        const entry = (yield* Ref.get(inFlight)).get(threadId);
+        if (entry === undefined) return false;
+        yield* Deferred.await(entry.settled);
+        return true;
+      }),
+    };
   }),
 );
