@@ -413,10 +413,19 @@ export const JiraTransitionProposal = Schema.Struct({
 });
 export type JiraTransitionProposal = typeof JiraTransitionProposal.Type;
 
+/** Adds labels to an issue and keeps the ones it has. */
+export const JiraLabelsProposal = Schema.Struct({
+  kind: Schema.Literal("labels"),
+  ...JiraIssueKey.fields,
+  labels: Schema.Array(JiraLabel).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+});
+export type JiraLabelsProposal = typeof JiraLabelsProposal.Type;
+
 export const JiraProposal = Schema.Union([
   JiraCreateIssuesProposal,
   JiraCommentProposal,
   JiraTransitionProposal,
+  JiraLabelsProposal,
 ]);
 export type JiraProposal = typeof JiraProposal.Type;
 
@@ -434,7 +443,10 @@ export const JiraProposalStatus = Schema.Literals([
 ]);
 export type JiraProposalStatus = typeof JiraProposalStatus.Type;
 
-/** What an approval wrote. Issues are the created ones, or the issue commented on or transitioned. */
+/**
+ * What an approval wrote. Issues are the created ones, or the issue commented on, transitioned or
+ * labeled.
+ */
 export const JiraProposalResult = Schema.Struct({
   issues: Schema.Array(
     Schema.Struct({
@@ -444,6 +456,8 @@ export const JiraProposalResult = Schema.Struct({
       draftIndex: Schema.optional(NonNegativeInt),
     }),
   ),
+  /** For `labels`, the labels the issue did not have yet. */
+  addedLabels: Schema.optional(Schema.Array(JiraLabel)),
 });
 export type JiraProposalResult = typeof JiraProposalResult.Type;
 
