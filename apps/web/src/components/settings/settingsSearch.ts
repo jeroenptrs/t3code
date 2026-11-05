@@ -20,6 +20,7 @@ export type SettingsPath =
   | "/settings/general"
   | "/settings/diagnostics"
   | "/settings/voice"
+  | "/settings/home"
   | "/settings/appearance"
   | "/settings/chat"
   | "/settings/diffs"
@@ -93,6 +94,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/diagnostics": "Diagnostics",
   "/settings/projects": "Projects",
   "/settings/general": "General",
+  "/settings/home": "Home",
   "/settings/appearance": "Appearance",
   "/settings/chat": "Chat",
   "/settings/diffs": "Diffs & pull requests",
@@ -127,6 +129,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: null,
     paths: [
       "/settings/general",
+      "/settings/home",
       "/settings/appearance",
       "/settings/chat",
       "/settings/diffs",
@@ -886,6 +889,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/about",
   },
   {
+    id: "home",
+    title: "Home",
+    to: "/settings/home",
+    searchTerms: ["agent all projects machines fleet questions approvals instructions agents.md"],
+    desktopOnly: true,
+    localEnvironmentOnly: true,
+  },
+  {
     id: "keybindings",
     title: "Keybindings",
     to: "/settings/keybindings",
@@ -1322,6 +1333,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/projects": "project",
   "/settings/general": null,
   "/settings/voice": null,
+  "/settings/home": null,
   "/settings/appearance": null,
   "/settings/chat": null,
   "/settings/diffs": null,
