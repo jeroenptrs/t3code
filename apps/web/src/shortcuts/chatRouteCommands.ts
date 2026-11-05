@@ -24,6 +24,7 @@ import { readProjects, readThreadShell } from "../state/entities";
 import { defaultProjectFallbackReadyAtom } from "../state/projects";
 import { environmentPresentations } from "../state/presentation";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
+import { primaryServerConfigAtom } from "../state/server";
 import { readEnvironmentScope } from "../state/session";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
@@ -81,6 +82,11 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         useUiStateStore.getState().projectOrder,
         lastUsedProjectKey,
         appAtomRegistry.get(defaultProjectFallbackReadyAtom(lastUsedProjectKey)),
+        {
+          primaryEnvironmentId: appAtomRegistry.get(primaryEnvironmentIdAtom),
+          homeWorkspaceRoot:
+            appAtomRegistry.get(primaryServerConfigAtom)?.homeWorkspaceRoot ?? null,
+        },
       ),
       handleNewThread,
     };
