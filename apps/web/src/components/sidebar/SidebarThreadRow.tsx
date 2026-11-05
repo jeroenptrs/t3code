@@ -495,6 +495,13 @@ export function SortableThreadRow(
   // Keyed by variant so a card/slim switch remounts the row.
   return <SidebarThreadRow key={rowProps.variant} {...rowProps} thread={thread} sortable={bag} />;
 }
+
+/** A row outside the sortable list, such as under a factory. It reads the live shell too. */
+export function StaticThreadRow(props: Omit<SidebarThreadRowProps, "sortable">) {
+  const thread =
+    useThreadShell(scopeThreadRef(props.thread.environmentId, props.thread.id)) ?? props.thread;
+  return <SidebarThreadRow key={props.variant} {...props} thread={thread} />;
+}
 export type SidebarSweepAction = "settle" | "unsettle" | "unsnooze";
 const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
   pin: (
@@ -610,7 +617,7 @@ export function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; clas
   return <Icon aria-hidden className={cn("shrink-0", props.className)} />;
 }
 
-type SidebarThreadRowProps = {
+export type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   // "folder" is a one-line row inside a boring sidebar project folder;
   // "folder-multiline" adds the card's branch and PR line under it.

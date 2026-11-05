@@ -121,6 +121,7 @@ export function summarizeT3ToolCalls(
   const projectIds = selected.map(
     (call) => id(call.output?.id) ?? id(call.output?.projectId) ?? id(call.input?.projectId),
   );
+  const factoryIds = selected.map((call) => id(call.output?.id) ?? id(call.input?.factoryId));
   const threadIds = selected.map(
     (call) =>
       id(call.output?.threadId) ??
@@ -348,6 +349,15 @@ export function summarizeT3ToolCalls(
         "clone",
         quantity(countEntities(entityIds("cwd")), "repository", "repositories"),
       );
+      break;
+    case "factory-list":
+      label = phrase("Listed", "list", `factories ${times}`);
+      break;
+    case "factory-read":
+      label = phrase("Read", "read", quantity(countEntities(factoryIds), "factory", "factories"));
+      break;
+    case "factory-save":
+      label = phrase("Saved", "save", quantity(countEntities(factoryIds), "factory", "factories"));
       break;
     case "environment-read":
       label = phrase("Checked", "check", `environment preferences ${times}`);

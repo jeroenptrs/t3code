@@ -63,6 +63,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
+  FactoryIcon,
   FileSearchIcon,
   FolderGit2Icon,
   FolderIcon,
@@ -281,6 +282,9 @@ import { useBreakDownJiraIssue } from "./jira/useBreakDownJiraIssue";
 import { JiraIcon } from "./Icons";
 import { useJiraIssueLinking } from "../hooks/useJiraIssueLinking";
 import { useCanReadInsights } from "../state/insights";
+import { useFactoryEnvironments } from "../state/factories";
+import { showsFactoriesTab } from "./factories/factories.logic";
+import { openFactoriesTab } from "./factories/useSidebarFactories";
 import { jiraEnvironment, useJiraCapabilities, useJiraEnvironmentId } from "../state/jira";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
@@ -544,6 +548,7 @@ function OpenCommandPaletteDialog(props: {
   const workspaceJiraConfigured = workspaceJiraCapabilities?.configured === true;
   // Fork-only. Administrators only, like the sidebar entry.
   const canReadInsights = useCanReadInsights();
+  const factoryEnvironments = useFactoryEnvironments();
   // The Jira pages open issues in their own panel and read through the workspace environment;
   // elsewhere an issue is open beside the active thread, in its environment.
   const onJiraPage = pathname === "/issues" || pathname === "/sprint-planning";
@@ -1913,6 +1918,58 @@ function OpenCommandPaletteDialog(props: {
         await navigate({ to: "/insights" });
       },
     });
+  }
+
+  if (showsFactoriesTab(factoryEnvironments)) {
+    actionItems.push({
+      kind: "action",
+      value: "action:factories",
+      searchTerms: ["factories", "factory", "foreman", "roles", "sidebar"],
+      title: "Open Factories",
+      icon: <FactoryIcon className={ITEM_ICON_CLASS} />,
+      run: async () => openFactoriesTab(factoryEnvironments),
+    });
+    const spansEnvironments =
+      factoryEnvironments.filter(({ factories }) => (factories?.length ?? 0) > 0).length > 1;
+    const factoryItems = factoryEnvironments.flatMap(({ environmentId, factories }) =>
+      (factories ?? []).map((factory) => {
+        const projectTitle =
+          projects.find(
+            (project) =>
+              project.environmentId === environmentId && project.id === factory.projectId,
+          )?.title ?? null;
+        const environmentLabel = spansEnvironments
+          ? (environmentLabelById.get(environmentId) ?? null)
+          : null;
+        return {
+          kind: "action" as const,
+          value: `factory:${environmentId}:${factory.id}`,
+          searchTerms: [factory.name, ...(projectTitle === null ? [] : [projectTitle])],
+          title: factory.name,
+          description:
+            [projectTitle, environmentLabel].filter((part) => part !== null).join(" · ") ||
+            undefined,
+          icon: <FactoryIcon className={ITEM_ICON_CLASS} />,
+          run: async () => {
+            await navigate({
+              to: "/factories/$environmentId/$factoryId",
+              params: { environmentId, factoryId: factory.id },
+            });
+          },
+        };
+      }),
+    );
+    if (factoryItems.length > 0) {
+      actionItems.push({
+        kind: "submenu",
+        value: "action:go-to-factory",
+        searchTerms: ["factory", "factories", "go to", "open"],
+        title: "Go to factory…",
+        icon: <FactoryIcon className={ITEM_ICON_CLASS} />,
+        addonIcon: <FactoryIcon className={ADDON_ICON_CLASS} />,
+        groups: [{ value: "factories", label: "Factories", items: factoryItems }],
+      });
+    }
   }
 
   if (primaryEnvironmentId !== null && homeThreadId !== null) {

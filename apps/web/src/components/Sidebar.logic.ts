@@ -1482,3 +1482,60 @@ export function sortScopedProjectsForSidebar<
       left.id.localeCompare(right.id),
   );
 }
+
+type FactoryPartitionThread = Pick<SidebarThreadSummary, "environmentId" | "id">;
+
+/** Scoped keys of every thread a listed factory owns; a factory lists its own environment's threads. */
+export function factoryOwnedThreadKeys(
+  environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly factories: ReadonlyArray<{ readonly threadIds: ReadonlyArray<ThreadId> }> | null;
+  }>,
+): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const { environmentId, factories } of environments) {
+    for (const factory of factories ?? []) {
+      for (const threadId of factory.threadIds) {
+        keys.add(scopedThreadKey(scopeThreadRef(environmentId, threadId)));
+      }
+    }
+  }
+  return keys;
+}
+
+/**
+ * Threads a factory owns leave Home for the Factories tab. Home keeps the input array when no
+ * factory owns any thread, so its sorting and grouping see the same list as before.
+ */
+export function partitionFactoryThreads<T extends FactoryPartitionThread>(
+  threads: readonly T[],
+  ownedKeys: ReadonlySet<string>,
+): { readonly home: readonly T[]; readonly owned: ReadonlyMap<string, T> } {
+  if (ownedKeys.size === 0) return { home: threads, owned: new Map() };
+  const home: T[] = [];
+  const owned = new Map<string, T>();
+  for (const thread of threads) {
+    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    if (ownedKeys.has(key)) owned.set(key, thread);
+    else home.push(thread);
+  }
+  return { home, owned };
+}
+
+/**
+ * What an attention badge counts, the way the server counts a factory's: unarchived threads whose
+ * latest run failed, plus unarchived threads waiting on an answer from the user.
+ */
+export function countThreadAttention(
+  threads: ReadonlyArray<
+    Pick<SidebarThreadSummary, "archivedAt" | "hasPendingUserInput" | "latestRun">
+  >,
+): number {
+  let count = 0;
+  for (const thread of threads) {
+    if (thread.archivedAt !== null) continue;
+    if (thread.latestRun?.status === "failed") count += 1;
+    if (thread.hasPendingUserInput) count += 1;
+  }
+  return count;
+}
