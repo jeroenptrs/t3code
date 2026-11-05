@@ -35,6 +35,7 @@ import {
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { filterSettingsSections } from "./settings-search";
+import { useFactoriesEntry } from "../factories/FactoriesScreen";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 
 export function SettingsRouteScreen() {
@@ -165,9 +166,30 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
   const workspace = useWorkspaceTabs();
   const query = workspace?.state.tabs.settings.query ?? "";
   const overflowRows = useOverflowRows();
+  const factories = useFactoriesEntry();
   const indexSections = useSettingsIndexSections();
   const sections = filterSettingsSections(
-    [{ rows: overflowRows }, { title: "Connections", rows: props.connections }, ...indexSections],
+    [
+      {
+        rows: [
+          ...overflowRows,
+          ...(factories.visible
+            ? [
+                {
+                  id: "SettingsFactories",
+                  icon: "hammer" as const,
+                  label: "Factories",
+                  value: factories.attention > 0 ? `${factories.attention}` : undefined,
+                  valuePosition: "trailing" as const,
+                  target: "SettingsFactories" as const,
+                },
+              ]
+            : []),
+        ],
+      },
+      { title: "Connections", rows: props.connections },
+      ...indexSections,
+    ],
     query,
   );
 
