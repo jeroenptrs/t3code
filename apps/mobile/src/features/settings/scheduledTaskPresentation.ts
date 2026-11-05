@@ -1,3 +1,5 @@
+import type { ScheduledTaskSchedule } from "@t3tools/contracts";
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -54,4 +56,19 @@ export function formatNextScheduledTaskRun(nextRunAt: string, now: number): stri
     ...(next.getFullYear() !== current.getFullYear() ? { year: "numeric" as const } : {}),
   });
   return `Next run ${date} at ${time}`;
+}
+
+export const TRIGGER_SCHEDULE_LABELS = {
+  jira: "On Jira change",
+  gitlab: "On GitLab change",
+  slack: "On Slack message",
+  manual: "Manual",
+} as const;
+
+export function formatTriggerSchedule(
+  schedule: Extract<ScheduledTaskSchedule, { readonly type: keyof typeof TRIGGER_SCHEDULE_LABELS }>,
+): string {
+  const label = TRIGGER_SCHEDULE_LABELS[schedule.type];
+  const count = schedule.type === "manual" ? 0 : (schedule.filters?.length ?? 0);
+  return count === 0 ? label : `${label} · ${count} filter${count === 1 ? "" : "s"}`;
 }
