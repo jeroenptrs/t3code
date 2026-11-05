@@ -4,6 +4,7 @@ import {
   AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
   AuthFactoriesManageScope,
+  AuthFactoriesReadScope,
   AuthInsightsWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -101,6 +102,12 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.insightsMergeContributors]: AuthInsightsWriteScope,
   // Saving rewrites a factory's files, which decide what its agents run.
   [WS_METHODS.factoriesSave]: AuthFactoriesManageScope,
+  [WS_METHODS.triggerTemplatesList]: AuthFactoriesReadScope,
+  // Templates are shared project files that decide what runs, so only administrators change them.
+  [WS_METHODS.triggerTemplatesSave]: AuthFactoriesManageScope,
+  [WS_METHODS.triggerTemplatesDelete]: AuthFactoriesManageScope,
+  // Raising an event starts the scheduled tasks it matches.
+  [WS_METHODS.triggersRaise]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
