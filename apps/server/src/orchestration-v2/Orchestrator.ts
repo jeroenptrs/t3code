@@ -10346,9 +10346,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (cause) => new OrchestratorProjectionError({ threadId: command.parentThreadId, cause }),
           ),
         );
-      const parentRun = parentProjection.runs.find(
+      const namedRun = parentProjection.runs.find(
         (candidate) => candidate.id === command.parentRunId,
       );
+      // A woken turn's call can pass the MCP check while its ended run's completion is queued and
+      // reach here after the run that continued that provider conversation started.
+      const continuingRun =
+        namedRun?.status === "completed"
+          ? parentProjection.runs.find(
+              (candidate) =>
+                candidate.ordinal > namedRun.ordinal &&
+                isActiveRun(candidate) &&
+                candidate.rootNodeId !== null &&
+                candidate.providerInstanceId === namedRun.providerInstanceId &&
+                candidate.providerThreadId === namedRun.providerThreadId,
+            )
+          : undefined;
+      const parentRun = continuingRun ?? namedRun;
+      const parentNodeId = continuingRun?.rootNodeId ?? command.parentNodeId;
       if (
         parentRun === undefined ||
         !(isActiveRun(parentRun) || (yield* backgroundSubagentOutlivesRun(parentRun)))
@@ -10366,9 +10381,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Parent run ${command.parentRunId} is stopping.`,
         });
       }
-      const parentNode = parentProjection.nodes.find(
-        (candidate) => candidate.id === command.parentNodeId,
-      );
+      const parentNode = parentProjection.nodes.find((candidate) => candidate.id === parentNodeId);
       if (
         parentNode === undefined ||
         parentNode.runId !== parentRun.id ||
@@ -10377,7 +10390,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Parent node ${command.parentNodeId} is not part of active run ${parentRun.id}.`,
+          cause: `Parent node ${parentNodeId} is not part of active run ${parentRun.id}.`,
         });
       }
 
@@ -10432,7 +10445,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         id: taskNodeId,
         threadId: command.parentThreadId,
         runId: parentRun.id,
-        parentNodeId: command.parentNodeId,
+        parentNodeId,
         origin: "app_owned",
         createdBy: command.createdBy,
         driver: targetAdapter.driver,
@@ -10455,7 +10468,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         id: taskNodeId,
         threadId: command.parentThreadId,
         runId: parentRun.id,
-        parentNodeId: command.parentNodeId,
+        parentNodeId,
         rootNodeId: parentRun.rootNodeId,
         kind: "subagent",
         status: "running",
