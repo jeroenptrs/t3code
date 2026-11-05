@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import {
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   ScheduledTaskSchedule,
+  ScheduledTaskTriage,
   ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
 
@@ -102,5 +103,19 @@ describe("webhook filters", () => {
       expect(acceptsEvent(type, [{ path: "event.issue.key", op: "exists" }])).toBe(false);
     }
     expect(decodeUpsertSchedule({ type: "manual", filters: [] })).toEqual({ type: "manual" });
+  });
+});
+
+describe("ScheduledTaskTriage", () => {
+  const decodeTriage = Schema.decodeUnknownSync(ScheduledTaskTriage);
+
+  it("requires a label only for the label fallback", () => {
+    expect(decodeTriage({ fallback: "ask" })).toEqual({ fallback: "ask" });
+    expect(decodeTriage({ fallback: "label", label: "needs-triage" })).toEqual({
+      fallback: "label",
+      label: "needs-triage",
+    });
+    expect(() => decodeTriage({ fallback: "label" })).toThrow(/triage label is required/);
+    expect(() => decodeTriage({ fallback: "label", label: "  " })).toThrow();
   });
 });
