@@ -44,6 +44,16 @@ keeps that shape and binds it to what T3 Code already has.
   workspace project can span backend and frontend repos), trigger templates,
   roles, and skills are referenced by name. The factory itself is the wiring plus
   the Foreman's instructions.
+- **Role prompts live on disk, with a baked-in default and the app as editor.**
+  Three layers, lowest precedence first. The server ships one built-in
+  instruction block per role, so a factory with no role files works. A role
+  file at `.t3/factories/<name>/roles/<role>.md` carries the bindings in
+  frontmatter and replaces the built-in body with its own. The Factories view
+  edits those files and validates the bindings against the provider catalog.
+  The database never stores a prompt. At launch the server appends the role body
+  to the thread's instructions, the way Jira breakdown threads get theirs, binds
+  the named skills into the provider's skill directory for that worktree, and
+  the Foreman's task for the work item is the user message.
 - **Access.** Operators view factories and their runs. Administrators manage
   them. The guard is a scope pair in `CLIENT_GUARDED_RPC_SCOPES`, so management
   can open to operators later without a redesign.
@@ -137,6 +147,8 @@ Each milestone ships on its own.
   pass before handing back" rule as instructions.
 - Run real work through it and record where instructions alone fail. Whatever
   fails twice becomes a server gate.
+- Role instruction bodies and stage skills are reviewed by a maintainer before a
+  milestone that writes them is called done.
 
 ### M4. Native triggers and triage
 
