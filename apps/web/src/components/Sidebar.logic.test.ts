@@ -9,6 +9,7 @@ import { AsyncResult } from "effect/reactivity";
 import {
   shouldCreateNewThreadInCurrentProject,
   deleteSelectedThreadEntries,
+  filterSidebarV2VisibleThreads,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
   orderItemsByPreferredIds,
@@ -134,6 +135,27 @@ describe("deleteSelectedThreadEntries", () => {
       deletedThreadKeys: testCase.deletedThreadKeys,
       firstFailure: testCase.firstFailure,
     });
+  });
+});
+
+describe("sidebar Home thread row", () => {
+  it("hides only the current Home thread, which has its own row", () => {
+    const environmentId = EnvironmentId.make("environment-primary");
+    const otherEnvironmentId = EnvironmentId.make("environment-remote");
+    const homeThreadId = ThreadId.make("home:current");
+    const current = makeThreadFixture({ id: homeThreadId, environmentId });
+    const older = makeThreadFixture({ id: ThreadId.make("home:older"), environmentId });
+    const sameIdElsewhere = makeThreadFixture({
+      id: homeThreadId,
+      environmentId: otherEnvironmentId,
+    });
+
+    expect(
+      filterSidebarV2VisibleThreads([current, older, sameIdElsewhere], null, new Set(), {
+        environmentId,
+        threadId: homeThreadId,
+      }).map((thread) => `${thread.environmentId}:${thread.id}`),
+    ).toEqual([`${environmentId}:home:older`, `${otherEnvironmentId}:${homeThreadId}`]);
   });
 });
 
