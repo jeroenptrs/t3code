@@ -23,6 +23,7 @@ describe("toIssueSummary", () => {
               avatarUrls: { "48x48": "https://avatar/48", "24x24": "https://avatar/24" },
             },
             updated: "2026-10-01T12:34:56.789+0200",
+            labels: ["backend", "", 7, "agent"],
             customfield_10020: [
               { id: 7, name: "Sprint 7", state: "closed", boardId: 1 },
               "com.atlassian.greenhopper.service.sprint.Sprint@1[id=8,name=Sprint 8,state=ACTIVE]",
@@ -51,6 +52,7 @@ describe("toIssueSummary", () => {
       ],
       storyPoints: 5,
       updated: "2026-10-01T10:34:56.789Z",
+      labels: ["backend", "agent"],
     });
   });
 
@@ -83,6 +85,7 @@ describe("toIssueSummary", () => {
     expect(bare.sprints).toEqual([]);
     expect(bare.storyPoints).toBeNull();
     expect(bare.updated).toBeNull();
+    expect(bare.labels).toEqual([]);
     expect(summary("done", { customfield_10016: "3" }).storyPoints).toBeNull();
   });
 
