@@ -77,6 +77,10 @@ Current experimental dependencies, all open upstream as of 2026-11-05:
 | [#31129](https://github.com/pingdotgg/t3code/pull/31129) delivery modes on bound tasks     | Steer or restart on trigger delivery (M4)  |
 | [#26254](https://github.com/pingdotgg/t3code/pull/26254) multi-repo projects               | Factories spanning several repos           |
 | [#15350](https://github.com/pingdotgg/t3code/pull/15350) Docker sandboxes                  | Per-role runners (later)                   |
+| [#21877](https://github.com/pingdotgg/t3code/pull/21877) follow-ups wait for nested work   | Foreman's revision loop sees final results |
+
+The pinned head SHAs and the commits that carry them are in the
+[software factories ledger](software-factories-ledger.md).
 
 Delegation bugs we depend on being fixed: `parent_not_active` after a handoff
 or settled parent ([#23006](https://github.com/pingdotgg/t3code/issues/23006),
