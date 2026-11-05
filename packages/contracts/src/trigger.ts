@@ -34,7 +34,7 @@ export type TriggerSourceKind = typeof TriggerSourceKind.Type;
 export const TriggerFilterSourceKind = Schema.Literals(["jira", "gitlab", "slack"]);
 export type TriggerFilterSourceKind = typeof TriggerFilterSourceKind.Type;
 
-export const TRIGGER_EVENT_TYPES = {
+const TRIGGER_EVENT_TYPES = {
   jira: ["issue.status_changed", "issue.labels_changed", "issue.assignee_changed"],
   gitlab: [
     "merge_request.opened",
