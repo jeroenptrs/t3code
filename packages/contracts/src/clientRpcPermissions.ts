@@ -108,6 +108,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.triggerTemplatesDelete]: AuthFactoriesManageScope,
   // Raising an event starts the scheduled tasks it matches.
   [WS_METHODS.triggersRaise]: AuthOrchestrationOperateScope,
+  // A work item starts the Foreman's agent, and a gate answer moves the item on.
+  [WS_METHODS.factoriesWorkItemsCreate]: AuthFactoriesManageScope,
+  [WS_METHODS.factoriesWorkItemsAnswerGate]: AuthFactoriesManageScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
