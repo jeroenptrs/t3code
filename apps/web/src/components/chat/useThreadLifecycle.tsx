@@ -21,6 +21,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   type EnvironmentId,
+  isHomeThreadId,
   type ScopedThreadRef,
   type ThreadId,
   ProviderInteractionMode,
@@ -57,6 +58,7 @@ import { newMessageId } from "~/lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { composerDraftHasUserContent, useComposerDraftStore } from "../../composerDraftStore";
 import { useEnvironmentScope, useEnvironmentScopeDenied } from "~/state/session";
+import { readPrimaryEnvironmentId } from "../../state/environments";
 import { threadEnvironment } from "../../state/threads";
 import { vcsEnvironment } from "../../state/vcs";
 import { useChildThreadInputs, readThreadShell, waitForThreadShell } from "../../state/entities";
@@ -474,13 +476,22 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   };
   const handleStopBackgroundWorkStable = useStableCallback(handleStopBackgroundWork);
   const openRelatedThreadGenerationRef = useRef(0);
-  // A task delegated to a linked environment opens there; the default is this thread's own.
+  // A task delegated to a linked environment opens there; the default is this thread's own,
+  // except a Home thread missing here: this desktop's Home sent that message from its hub.
   // `intent` comes from the rows that open a subagent, and says the thread is one.
   const onOpenRelatedThread = async (
     threadId: ThreadId,
-    threadEnvironmentId: EnvironmentId = environmentId,
+    linkedEnvironmentId?: EnvironmentId,
     intent?: SideThreadOpenIntent,
   ) => {
+    const primaryEnvironmentId = readPrimaryEnvironmentId();
+    const threadEnvironmentId =
+      linkedEnvironmentId ??
+      (isHomeThreadId(threadId) &&
+      primaryEnvironmentId !== null &&
+      readThreadShell(scopeThreadRef(environmentId, threadId)) === null
+        ? primaryEnvironmentId
+        : environmentId);
     const generation = ++openRelatedThreadGenerationRef.current;
     const threadRef = scopeThreadRef(threadEnvironmentId, threadId);
     const isEnvironmentLive = () =>

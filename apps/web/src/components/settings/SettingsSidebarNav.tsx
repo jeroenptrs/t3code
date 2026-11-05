@@ -18,6 +18,7 @@ import {
   FolderTreeIcon,
   GitBranchIcon,
   GlobeIcon,
+  HouseIcon,
   InfoIcon,
   MessageSquareTextIcon,
   MessagesSquareIcon,
@@ -39,8 +40,11 @@ import {
 import { resolveEventKeys } from "@t3tools/shared/keybindings";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { T, useGT, useMessages } from "gt-react";
+import { useAtomValue } from "@effect/atom-react";
 
+import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
+import { primaryServerConfigAtom } from "../../state/server";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import {
@@ -99,6 +103,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
 > = {
   "/settings/general": Settings2Icon,
+  "/settings/home": HouseIcon,
   "/settings/diagnostics": WrenchIcon,
   "/settings/voice": MicIcon,
   "/settings/appearance": PaletteIcon,
@@ -152,23 +157,30 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const canReadUsers = useCanReadPortalUsers();
   const canOpenAccount = useCanOpenAccountSettings();
   const canReadInsights = useCanReadInsights();
+  // Only a desktop app's own server can run Home.
+  const canRunHome = useAtomValue(
+    primaryServerConfigAtom,
+    (config) => isElectron && config?.homeWorkspaceRoot != null,
+  );
   // Empty groups hide.
-  const navGroups = SETTINGS_NAV_GROUPS.map((group) => ({
-    ...group,
-    paths: group.paths.filter(
-      (to) =>
-        (to !== "/settings/account" || canOpenAccount) &&
-        (to !== "/settings/users" || canReadUsers) &&
-        (to !== "/settings/insights" || canReadInsights),
-    ),
-  })).filter((group) => group.paths.length > 0);
+  const navGroups = settingsNavGroups(useHasSecretProvidersEnvironment())
+    .map((group) => ({
+      ...group,
+      paths: group.paths.filter(
+        (to) =>
+          (to !== "/settings/account" || canOpenAccount) &&
+          (to !== "/settings/users" || canReadUsers) &&
+          (to !== "/settings/insights" || canReadInsights) &&
+          (to !== "/settings/home" || canRunHome),
+      ),
+    }))
+    .filter((group) => group.paths.length > 0);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   // Below md the nav is an icon rail; searching expands it over the page.
   const [compactSearchOpen, setCompactSearchOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const searchableItems = useAvailableSettingsSearchItems();
-  const navGroups = settingsNavGroups(useHasSecretProvidersEnvironment());
   const results = searchSettings(query, searchableItems, m);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;

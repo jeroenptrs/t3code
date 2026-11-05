@@ -82,6 +82,17 @@ it("Esc clears a search of spaces and a held Esc keeps Settings open", async () 
   await expect.element(settings).not.toBeInTheDocument();
 });
 
+// Fork: Home and the Portal pages show only where the server and the session allow them.
+const FORK_GATED_PATHS = new Set([
+  "/settings/home",
+  "/settings/account",
+  "/settings/users",
+  "/settings/insights",
+]);
+const SHOWN_NAV_GROUPS = settingsNavGroups(false)
+  .map((group) => group.paths.filter((path) => !FORK_GATED_PATHS.has(path)))
+  .filter((paths) => paths.length > 0);
+
 function renderNav() {
   return render(
     <SidebarProvider defaultOpen>
@@ -114,9 +125,7 @@ it("moves Tab through every settings section", async () => {
   await using _screen = await renderNav();
   await userEvent.click(page.getByRole("combobox", { name: "Search settings" }));
 
-  const sections = settingsNavGroups(false)
-    .flatMap((group) => group.paths)
-    .map((to) => SETTINGS_SECTION_LABELS[to]);
+  const sections = SHOWN_NAV_GROUPS.flat().map((to) => SETTINGS_SECTION_LABELS[to]);
   const tabbed: string[] = [];
   for (let step = 0; step < sections.length; step += 1) {
     await userEvent.tab();
@@ -141,7 +150,7 @@ it.each([1280, 390])("names each group by a heading outside it at %ipx wide", as
     );
   }
   const groups = page.getByRole("group").elements();
-  expect(groups).toHaveLength(settingsNavGroups(false).length);
+  expect(groups).toHaveLength(SHOWN_NAV_GROUPS.length);
   for (const group of groups) {
     const first = group.querySelector("[data-settings-section]")?.textContent;
     const heading = document.getElementById(group.getAttribute("aria-labelledby") ?? "");
