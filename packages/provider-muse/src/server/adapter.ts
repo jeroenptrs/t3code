@@ -2218,6 +2218,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                       reasoningEffort: effort,
                       runtimePolicy: turnInput.runtimePolicy,
                       mcpCapabilities: mcpSession?.capabilities,
+                      factoryRole: mcpSession?.factoryRole,
                     }),
                   },
                   ...parts,
