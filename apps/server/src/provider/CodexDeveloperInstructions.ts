@@ -1,5 +1,9 @@
 import type { V2TurnStartParams__AdditionalContextEntry } from "effect-codex-app-server/schema";
-import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import type { FactoryRoleInstructions } from "@t3tools/provider-core/server/mcpSession";
+import {
+  buildFactoryRoleInstructions,
+  buildRuntimeInstructions,
+} from "@t3tools/provider-core/server/runtimeInstructions";
 
 import {
   T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
@@ -36,7 +40,29 @@ export interface CodexRuntimeInfo {
   readonly modelName?: string | undefined;
   readonly reasoningEffort?: string | undefined;
   readonly mcpCapabilities?: ReadonlySet<string> | undefined;
+  readonly factoryRole?: FactoryRoleInstructions | undefined;
 }
+
+/** Cuts at the last line break that fits, else at the last whole character that fits. */
+const splitUtf8 = (text: string, maxBytes: number): ReadonlyArray<string> => {
+  const chunks: Array<string> = [];
+  let rest = text;
+  while (Buffer.byteLength(rest, "utf8") > maxBytes) {
+    let end = 0;
+    let bytes = 0;
+    for (const character of rest) {
+      bytes += Buffer.byteLength(character, "utf8");
+      if (bytes > maxBytes) break;
+      end += character.length;
+    }
+    const lineBreak = rest.lastIndexOf("\n", end - 1);
+    const cut = lineBreak > 0 ? lineBreak + 1 : end;
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  if (rest.length > 0) chunks.push(rest);
+  return chunks;
+};
 
 /** Keep this outside collaboration mode; model-catalog mode text overrides client developer_instructions. */
 export function buildCodexAdditionalContext(
@@ -44,6 +70,14 @@ export function buildCodexAdditionalContext(
   toolsAvailable: boolean | T3CodeToolAvailability = true,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);
+  const { factoryRole, ...rest } = runtime;
+  const role =
+    factoryRole === undefined
+      ? []
+      : splitUtf8(
+          buildFactoryRoleInstructions(factoryRole),
+          CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
+        );
   // Split values to fit per-entry caps; number keys because Codex emits them in key order.
   return {
     ...Object.fromEntries(
@@ -54,8 +88,14 @@ export function buildCodexAdditionalContext(
     ),
     t3_code_runtime: {
       kind: "application",
-      value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
+      value: buildRuntimeInstructions({ harness: "Codex", ...rest }),
     },
     ...(tools ? { t3_code_tools: { kind: "application", value: tools } } : {}),
+    ...Object.fromEntries(
+      role.map((part, index) => [
+        `t3_code_factory_role_${String(index + 1).padStart(2, "0")}`,
+        { kind: "application" as const, value: part },
+      ]),
+    ),
   };
 }
