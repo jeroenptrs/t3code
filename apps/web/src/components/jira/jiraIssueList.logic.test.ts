@@ -33,6 +33,7 @@ function issue(key: string, patch: Partial<JiraIssueSummary> = {}): JiraIssueSum
     sprints: [],
     storyPoints: null,
     updated: null,
+    labels: [],
     ...patch,
   };
 }
