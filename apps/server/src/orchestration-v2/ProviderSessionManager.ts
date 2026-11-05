@@ -41,6 +41,7 @@ import {
   withMetrics,
 } from "../observability/Metrics.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
+import * as FactorySkills from "../factories/FactorySkills.ts";
 import * as FactoryThreads from "../factories/FactoryThreads.ts";
 import * as JiraBreakdownThreads from "../jira/JiraBreakdownThreads.ts";
 import * as JiraIdentities from "../jira/JiraIdentities.ts";
@@ -375,6 +376,13 @@ export const layerWithOptions = (
           onNone: () => Effect.succeed(null),
           onSome: (threads) => threads.roleOf(threadId),
         });
+      // Fork-only and optional like the above. Runs before a thread's provider session starts or
+      // the thread joins one, so the provider finds the role's skills in the thread's directory.
+      const factorySkills = yield* Effect.serviceOption(FactorySkills.FactorySkills);
+      const materializeFactorySkills = (threadId: ThreadId, cwd: string | null) =>
+        cwd === null || Option.isNone(factorySkills)
+          ? Effect.void
+          : factorySkills.value.materialize(threadId, cwd);
       const withFactoryRole = (
         config: McpProviderSession.McpProviderSessionConfig,
         factoryRole: McpProviderSession.FactoryRoleInstructions | null,
@@ -2247,7 +2255,10 @@ export const layerWithOptions = (
                     cause: `Provider ${existing.runtime.driver} does not support attaching multiple app threads to one session.`,
                   });
                 }
-                if (!attached) yield* agentScope.clear(input.threadId);
+                if (!attached) {
+                  yield* agentScope.clear(input.threadId);
+                  yield* materializeFactorySkills(input.threadId, cwd);
+                }
                 yield* ensureThreadAttached({
                   providerSessionId: input.providerSessionId,
                   threadId: input.threadId,
@@ -2267,6 +2278,7 @@ export const layerWithOptions = (
                     }),
                 ),
               );
+              yield* materializeFactorySkills(input.threadId, cwd);
               const prepared = yield* prepareMcpSession(
                 input.threadId,
                 input.modelSelection.instanceId,
