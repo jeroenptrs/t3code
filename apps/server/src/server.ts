@@ -703,7 +703,9 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
     Layer.mergeAll(
       JiraIdentities.layer,
       JiraBreakdownThreads.layer,
-      FactoryThreads.layer.pipe(Layer.provide(ProjectStore.layer)),
+      FactoryThreads.layer.pipe(
+        Layer.provide(Layer.merge(ProjectStore.layer, ProjectionStoreV2.layer)),
+      ),
     ),
   ),
   Layer.provide(ProviderUsageAnalytics.layer),

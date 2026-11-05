@@ -60,3 +60,7 @@ with its actor, and only a person's gate answer moves an item out of `waiting`.
   created or ended does.
 - `FactoryThreads` reads the role body on every session prepare, outside the MCP
   credential, so an edited role file applies from the next session.
+- A child the Foreman delegates has no row, since writing one would race its
+  first session. `FactoryThreads` finds it by lineage and gives it the implement
+  or review body its task's role names. The task record keeps that role only as
+  the prompt prefix `taskPrompt` writes, which `taskRoleOfPrompt` reads back.
