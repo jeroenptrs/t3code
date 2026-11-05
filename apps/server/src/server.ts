@@ -986,8 +986,7 @@ const layerMakeRoutes = Layer.mergeAll(
   // WebSocket subscriber.
   Layer.provide(layerDiffWalkthroughService),
   // Started over the WebSocket; shares the Jira services below.
-  Layer.provide(layerJiraBreakdowns),
-  Layer.provide(TriggerTemplateService.layer),
+  Layer.provide(Layer.merge(layerJiraBreakdowns, TriggerTemplateService.layer)),
   // The same instance the ingestion worker uses.
   Layer.provide(layerInsights),
   // Factories, shared by the WebSocket and /mcp.
