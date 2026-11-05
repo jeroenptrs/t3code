@@ -131,6 +131,10 @@
       "types": "./src/scheduledTaskWorktree.ts",
       "default": "./src/scheduledTaskWorktree.ts"
     },
+    "./scheduled-task-trigger": {
+      "types": "./src/scheduledTaskTrigger.ts",
+      "default": "./src/scheduledTaskTrigger.ts"
+    },
     "./portal-user": {
       "types": "./src/portalUser.ts",
       "default": "./src/portalUser.ts"
