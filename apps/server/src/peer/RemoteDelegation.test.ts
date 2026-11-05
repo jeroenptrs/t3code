@@ -36,6 +36,7 @@ import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import { notHomeLayer } from "../home/HomeTestkit.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -472,49 +473,48 @@ const boxToolkitLayer = (thread: BoxThread) => {
         ),
       ),
   });
-  return Layer.merge(
-    McpHttpServer.layerOrchestratorToolkit,
-    McpHttpServer.layerProjectRegistration,
-  ).pipe(
-    Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
-    Layer.provide(NodeCrypto.layer),
-    Layer.provide(layerBoxThreads),
-    Layer.provide(layerBoxLaunches),
-    Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
-    Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
-    Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
-    Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
-    Layer.provide(
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
-    ),
-    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
-    Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
-    Layer.provide(
-      ServerConfig.layerTest(process.cwd(), { prefix: "t3-remote-delegation-box-" }).pipe(
-        Layer.provide(NodeServices.layer),
+  return Layer.merge(McpHttpServer.layerOrchestratorToolkit, McpHttpServer.layerProjectRegistration)
+    .pipe(Layer.provide(notHomeLayer))
+    .pipe(
+      Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+      Layer.provide(NodeCrypto.layer),
+      Layer.provide(layerBoxThreads),
+      Layer.provide(layerBoxLaunches),
+      Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+      Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+      Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+      Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+      Layer.provide(
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
       ),
-    ),
-    Layer.provide(
-      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-    ),
-    Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
-    Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-    Layer.provide(
-      Layer.mock(ProjectService.ProjectService)({
-        getById: () => Effect.succeedNone,
-        // More than a page, so finding the project with this repository pages.
-        listPage: ({ cursor, limit }) =>
-          Effect.succeed({
-            projects: boxProjects.slice(cursor, cursor + limit),
-            nextCursor: cursor + limit < boxProjects.length ? cursor + limit : null,
-          }),
-      }),
-    ),
-    Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
-    Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-    Layer.provide(ServerSettings.layerTest()),
-    Layer.provide(NodeServices.layer),
-  );
+      Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+      Layer.provide(Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({})),
+      Layer.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-remote-delegation-box-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
+      ),
+      Layer.provide(
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      ),
+      Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+      Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+      Layer.provide(
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () => Effect.succeedNone,
+          // More than a page, so finding the project with this repository pages.
+          listPage: ({ cursor, limit }) =>
+            Effect.succeed({
+              projects: boxProjects.slice(cursor, cursor + limit),
+              nextCursor: cursor + limit < boxProjects.length ? cursor + limit : null,
+            }),
+        }),
+      ),
+      Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
+      Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(NodeServices.layer),
+    );
 };
 
 const mcpClient = McpSchema.McpServerClient.of({
@@ -576,6 +576,7 @@ const makeLaptop = (
       Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
     );
     const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
+      Layer.provide(notHomeLayer),
       Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
       Layer.provideMerge(
         RemoteDelegation.layer.pipe(

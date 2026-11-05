@@ -46,6 +46,7 @@ const refuseOutsideConstruction = (token: symbol) => {
 let declare: <P, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
   remote: RemoteCheck<P> | undefined,
+  home?: HomeRoute<P, A, E, R>,
 ) => Declaration<(params: P) => Effect.Effect<A, E, R>>;
 
 /**
@@ -57,6 +58,16 @@ type RemoteCheck<P> = (
   params: P,
 ) => Effect.Effect<unknown, OrchestratorMcpFailure, Effect.Services<typeof writingCaller>>;
 let remoteCheckOf: <Handler>(declaration: Declaration<Handler>) => RemoteCheck<never> | undefined;
+
+/**
+ * Home's route for a tool (docs/internals/home.md). It gets the call with its
+ * `environmentId` and answers for Home, here or through the desktop relay.
+ * None leaves the call to the tool's own rule, as for any other caller.
+ */
+type HomeRoute<P, A, E, R> = (params: P) => Effect.Effect<Option.Option<A>, E, R>;
+let homeRouteOf: <Handler>(
+  declaration: Declaration<Handler>,
+) => HomeRoute<never, unknown, unknown, unknown> | undefined;
 
 type CheckedHandlerOf<D> = D extends Declaration<infer Handler> ? Handler : never;
 
@@ -74,19 +85,29 @@ let handlersLayer: <Tools extends Record<string, Tool.Any>, EX, RX>(
 export class Declaration<out Handler> {
   readonly #handle: Handler;
   readonly #remote: RemoteCheck<never> | undefined;
+  readonly #home: HomeRoute<never, unknown, unknown, unknown> | undefined;
   private constructor(
     token: typeof builtHere,
     handle: Handler,
     remote: RemoteCheck<never> | undefined,
+    home: HomeRoute<never, unknown, unknown, unknown> | undefined,
   ) {
     refuseOutsideConstruction(token);
     this.#handle = handle;
     this.#remote = remote;
+    this.#home = home;
   }
   static {
-    declare = (handle, remote) => new Declaration(builtHere, handle, remote);
+    declare = (handle, remote, home) =>
+      new Declaration(
+        builtHere,
+        handle,
+        remote,
+        home as HomeRoute<never, unknown, unknown, unknown> | undefined,
+      );
     checkedHandler = Struct.lambda<CheckedHandler>((declaration) => declaration.#handle);
     remoteCheckOf = (declaration) => declaration.#remote;
+    homeRouteOf = (declaration) => declaration.#home;
   }
 }
 
@@ -258,6 +279,17 @@ export const startsThreads = <P, A, E, R>(
   );
 };
 
+/** Gives a tool Home's route, which runs before the tool's own rule; see `HomeRoute`. */
+export const routesHome = <P, A, E, R, A2, E2, R2>(
+  home: (params: P) => Effect.Effect<Option.Option<A2>, E2, R2>,
+  declaration: Declaration<(params: P) => Effect.Effect<A, E, R>>,
+): Declaration<(params: P) => Effect.Effect<A | A2, E | E2, R | R2>> =>
+  declare<P, A | A2, E | E2, R | R2>(
+    checkedHandler(declaration),
+    remoteCheckOf(declaration) as RemoteCheck<P> | undefined,
+    home,
+  );
+
 /** One tool with two access rules, picked per call, such as create versus update. */
 export const either = <P, A, E, R, A2, E2, R2>(
   useFirst: (params: P) => boolean,
@@ -385,25 +417,39 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
   const handlers: Record<string, unknown> = { ...checked };
   for (const [name, declaration] of Object.entries<Declaration<unknown>>(declarations)) {
     const tool = toolkit.tools[name];
-    if (tool === undefined || !takesLinkedEnvironment(tool)) continue;
-    const remote = remoteCheckOf(declaration);
-    if (remote === undefined)
-      return yield* Effect.die(
-        `${name} takes a linked environment, but it acts as its calling thread, which is here.`,
+    if (tool === undefined) continue;
+    type Handle = (params: object) => Effect.Effect<unknown, Tool.Failure<Tools[keyof Tools]>>;
+    if (takesLinkedEnvironment(tool)) {
+      const remote = remoteCheckOf(declaration);
+      if (remote === undefined)
+        return yield* Effect.die(
+          `${name} takes a linked environment, but it acts as its calling thread, which is here.`,
+        );
+      const here = handlers[name] as Handle;
+      handlers[name] = ({ environmentId, ...params }: { readonly environmentId?: EnvironmentId }) =>
+        Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const target = PeerForwarding.remoteTarget(scope, environmentId);
+          if (target === undefined) return yield* here(params);
+          if (scope.linkedEnvironments === false)
+            return yield* PeerForwarding.linkedEnvironmentsOff;
+          yield* (remote as RemoteCheck<typeof params>)(params);
+          if (Option.isNone(forwarding)) return yield* linksUnavailable;
+          return yield* forwarding.value.call(scope, tool, target, { ...params, environmentId });
+        });
+    }
+    const home = homeRouteOf(declaration) as
+      | ((
+          params: object,
+        ) => Effect.Effect<Option.Option<unknown>, Tool.Failure<Tools[keyof Tools]>>)
+      | undefined;
+    if (home === undefined) continue;
+    const rest = handlers[name] as Handle;
+    handlers[name] = (params: object) =>
+      Effect.flatMap(
+        home(params),
+        Option.match({ onNone: () => rest(params), onSome: Effect.succeed }),
       );
-    const here = handlers[name] as (
-      params: object,
-    ) => Effect.Effect<unknown, Tool.Failure<Tools[keyof Tools]>>;
-    handlers[name] = ({ environmentId, ...params }: { readonly environmentId?: EnvironmentId }) =>
-      Effect.gen(function* () {
-        const scope = yield* McpInvocationContext.McpInvocationContext;
-        const target = PeerForwarding.remoteTarget(scope, environmentId);
-        if (target === undefined) return yield* here(params);
-        if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
-        yield* (remote as RemoteCheck<typeof params>)(params);
-        if (Option.isNone(forwarding)) return yield* linksUnavailable;
-        return yield* forwarding.value.call(scope, tool, target, { ...params, environmentId });
-      });
   }
   return handlers as Toolkit.HandlersFrom<Tools>;
 });
