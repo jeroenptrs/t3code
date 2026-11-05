@@ -4,6 +4,7 @@ import { remarkEnableOrderedListNumbers } from "@t3tools/shared/markdownPipeline
 import { findRevealRef } from "./markdownFindContext";
 import {
   type EnvironmentId,
+  isHomeThreadId,
   type MessageId,
   type ScheduledTaskId,
   type ServerProviderSkill,
@@ -464,7 +465,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ? { environmentId: ctx.activeThreadEnvironmentId, threadId: senderThreadId }
       : null,
   );
-  const senderLabel = senderShell?.title.trim() || "Agent";
+  // Home's messages into another machine's threads come from a thread this machine lacks.
+  const senderLabel =
+    senderShell?.title.trim() ||
+    (senderThreadId && isHomeThreadId(senderThreadId) ? "Home" : "Agent");
   const resolvedContext = resolveUserMessageContext({ ...row.message, text: userMessage.text });
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;

@@ -20,6 +20,11 @@ export class DesktopState extends Context.Service<
     // Set by DesktopUpdates.configure, which runs before the first backend start.
     readonly canInstallUpdates: Ref.Ref<boolean>;
     readonly primaryBackendStartup: SubscriptionRef.SubscriptionRef<PrimaryBackendStartup>;
+    /**
+     * While Home is on, the renderer relays its calls to other environments.
+     * On macOS, closing the window then hides it so the relay keeps running.
+     */
+    readonly keepAliveOnClose: Ref.Ref<boolean>;
   }
 >()("@t3tools/desktop/app/DesktopState") {}
 
@@ -28,6 +33,7 @@ const make = Effect.all({
   quitting: Ref.make(false),
   canInstallUpdates: Ref.make(false),
   primaryBackendStartup: SubscriptionRef.make<PrimaryBackendStartup>({ _tag: "Starting" }),
+  keepAliveOnClose: Ref.make(false),
 });
 
 export const layer = Layer.effect(DesktopState, make);
