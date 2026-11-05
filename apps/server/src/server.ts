@@ -76,6 +76,7 @@ import * as JiraRemoteLinkReactor from "./jira/JiraRemoteLinkReactor.ts";
 import * as JiraService from "./jira/JiraService.ts";
 import * as InsightsIngestor from "./insights/InsightsIngestor.ts";
 import * as InsightsService from "./insights/InsightsService.ts";
+import * as FactoryService from "./factories/FactoryService.ts";
 import * as InsightsStore from "./insights/InsightsStore.ts";
 import * as Scheduler from "./scheduling/Scheduler.ts";
 import * as JiraUserCredentials from "./jira/JiraUserCredentials.ts";
@@ -976,6 +977,8 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(layerJiraBreakdowns),
   // The same instance the ingestion worker uses.
   Layer.provide(layerInsights),
+  // Factories, shared by the WebSocket and /mcp.
+  Layer.provide(FactoryService.layer),
   // One instance, so every client reads through the same Jira caches.
   Layer.provide(layerJiraService),
 ).pipe(

@@ -16,6 +16,7 @@ import {
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   AuthDiagnosticsReadScope,
+  AuthFactoriesReadScope,
   AuthInsightsReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -176,6 +177,9 @@ export const RPC_REQUIRED_SCOPES = {
   // writes are client-guarded above.
   [WS_METHODS.insightsOverview]: AuthInsightsReadScope,
   [WS_METHODS.insightsConfig]: AuthInsightsReadScope,
+  // Operators view factories; saving one is client-guarded above with the manage scope.
+  [WS_METHODS.factoriesList]: AuthFactoriesReadScope,
+  [WS_METHODS.factoriesRead]: AuthFactoriesReadScope,
   [WS_METHODS.sourceControlLookupRepository]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlAppAccess]: AuthOrchestrationReadScope,
   [WS_METHODS.sourceControlStarred]: AuthOrchestrationReadScope,

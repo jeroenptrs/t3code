@@ -14,6 +14,7 @@ import { ServerConfig } from "../config.ts";
 import { DiffWalkthroughService } from "../diffWalkthrough/DiffWalkthroughService.ts";
 import { DiffWalkthroughWriter } from "../diffWalkthrough/DiffWalkthroughWriter.ts";
 import { DeviceService } from "../device/DeviceService.ts";
+import { FactoryService } from "../factories/FactoryService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { FleetBroker } from "../home/FleetBroker.ts";
@@ -97,10 +98,11 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ThreadManagementService)({}),
   Layer.mock(ThreadSearch)({}),
   Layer.mock(VcsStatusBroadcaster)({}),
-  // Fork MCP toolkits: Jira issues and diff walkthroughs.
+  // Fork MCP toolkits: Jira issues, diff walkthroughs, and factories.
   Layer.mock(CheckpointDiffQuery)({}),
   Layer.mock(DiffWalkthroughService)({}),
   Layer.mock(DiffWalkthroughWriter)({}),
+  Layer.mock(FactoryService)({}),
   Layer.mock(JiraIdentities)({ configured: false, list: [], services: [] }),
   Layer.mock(JiraProposals)({}),
   Layer.mock(JiraService)({}),

@@ -7,6 +7,7 @@ import {
   AuthAccessWriteScope,
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
+  ProjectId,
   ProviderInstanceId,
   SecretProviderId,
   ThreadId,
@@ -17,9 +18,13 @@ import {
   AuthTerminalOperateScope,
   AuthInsightsReadScope,
   AuthInsightsWriteScope,
+  AuthFactoriesManageScope,
+  AuthFactoriesReadScope,
   AuthUserRoleScopes,
+  FactoryId,
   InsightsContributorId,
   WS_METHODS,
+  WsFactoriesRpcGroup,
   WsInsightsRpcGroup,
   WsRpcGroup,
   clientRpcRequiredScopes,
@@ -332,6 +337,74 @@ describe("Insights authorization", () => {
         status: "included",
       });
       expect(handled).toEqual(["config", "update"]);
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("Factories authorization", () => {
+  const factory = {
+    id: FactoryId.make("factory:project-1:triage"),
+    projectId: ProjectId.make("project-1"),
+    name: "triage",
+    definition: { name: "triage", projects: [], triggers: [], roles: {} },
+    projects: [],
+    roles: [],
+    issues: [],
+    scheduledTaskIds: [],
+    threads: [],
+    attention: { gatesWaiting: 0, failedRuns: 0, questions: 0, total: 0 },
+  };
+  const clientWith = (
+    scopes: ReadonlyArray<(typeof AuthUserRoleScopes)["administrator"][number]>,
+    handled: Array<string>,
+  ) =>
+    RpcTest.makeClient(WsFactoriesRpcGroup).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          WsFactoriesRpcGroup.toLayer({
+            [WS_METHODS.factoriesList]: () =>
+              Effect.sync(() => handled.push("list")).pipe(Effect.as({ factories: [] })),
+            [WS_METHODS.factoriesRead]: () => Effect.die("unused"),
+            [WS_METHODS.factoriesSave]: () =>
+              Effect.sync(() => handled.push("save")).pipe(Effect.as(factory)),
+          }),
+          RpcAuthorization.layer(scopes),
+        ),
+      ),
+    );
+  const save = { projectId: factory.projectId, definition: factory.definition };
+
+  it.effect("refuses a reader before any factory handler runs", () =>
+    Effect.gen(function* () {
+      const handled: Array<string> = [];
+      const client = yield* clientWith(AuthUserRoleScopes.reader, handled);
+      expect(yield* client[WS_METHODS.factoriesList]({}).pipe(Effect.flip)).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthFactoriesReadScope,
+      });
+      expect(handled).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("lets an operator view factories but not save one", () =>
+    Effect.gen(function* () {
+      const handled: Array<string> = [];
+      const client = yield* clientWith(AuthUserRoleScopes.operator, handled);
+      yield* client[WS_METHODS.factoriesList]({});
+      expect(yield* client[WS_METHODS.factoriesSave](save).pipe(Effect.flip)).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthFactoriesManageScope,
+      });
+      expect(handled).toEqual(["list"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("lets an administrator save a factory", () =>
+    Effect.gen(function* () {
+      const handled: Array<string> = [];
+      const client = yield* clientWith(AuthUserRoleScopes.administrator, handled);
+      yield* client[WS_METHODS.factoriesSave](save);
+      expect(handled).toEqual(["save"]);
     }).pipe(Effect.scoped),
   );
 });
