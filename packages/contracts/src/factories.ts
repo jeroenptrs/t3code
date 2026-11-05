@@ -50,6 +50,13 @@ export function parseFactoryId(
   return { projectId, name };
 }
 
+/** A skill's directory under `skills/`, named as the Agent Skills format requires. */
+export const FactorySkillName = TrimmedNonEmptyString.check(
+  Schema.isPattern(FACTORY_NAME_PATTERN),
+  Schema.isMaxLength(64),
+);
+export type FactorySkillName = typeof FactorySkillName.Type;
+
 export const FactoryRoleName = Schema.Literals(["foreman", "implement", "review"]);
 export type FactoryRoleName = typeof FactoryRoleName.Type;
 
@@ -113,6 +120,13 @@ export type FactoryDefinition = typeof FactoryDefinition.Type;
 export const FactoryRoleSource = Schema.Literals(["builtin", "file"]);
 export type FactoryRoleSource = typeof FactoryRoleSource.Type;
 
+export const FactorySkill = Schema.Struct({
+  name: FactorySkillName,
+  /** `file` when `skills/<name>/SKILL.md` exists, which replaces a built-in skill of that name. */
+  source: FactoryRoleSource,
+});
+export type FactorySkill = typeof FactorySkill.Type;
+
 export const FactoryRole = Schema.Struct({
   role: FactoryRoleName,
   /** Null when `factory.json` names no file for the role. */
@@ -125,6 +139,8 @@ export const FactoryRole = Schema.Struct({
   /** The role's instructions: the file's body when it has one, else the built-in body. */
   body: Schema.String,
   bodySource: FactoryRoleSource,
+  /** `binding.skills` that exist, in order. A name that does not is an `unknown_skill` issue. */
+  skills: Schema.Array(FactorySkill),
 });
 export type FactoryRole = typeof FactoryRole.Type;
 
@@ -141,6 +157,7 @@ export const FactoryIssueCode = Schema.Literals([
   "unknown_model",
   "invalid_model_options",
   "unsupported_runtime_mode",
+  "unknown_skill",
 ]);
 export type FactoryIssueCode = typeof FactoryIssueCode.Type;
 
@@ -205,6 +222,8 @@ export const Factory = Schema.Struct({
   projects: Schema.Array(FactoryProject),
   /** Foreman, implement, and review, in that order. */
   roles: Schema.Array(FactoryRole),
+  /** Every skill a role here can name: the built-in ones and those under `skills/`, by name. */
+  skills: Schema.Array(FactorySkill),
   issues: Schema.Array(FactoryIssue),
   scheduledTaskIds: Schema.Array(ScheduledTaskId),
   threads: Schema.Array(FactoryThread),
@@ -226,12 +245,27 @@ export const FactoryRoleChange = Schema.Struct({
 });
 export type FactoryRoleChange = typeof FactoryRoleChange.Type;
 
-/** Writes `factory.json` and the given role files, creating the factory when it is new. */
+export const FactorySkillFile = Schema.Struct({
+  /** The whole `SKILL.md`: frontmatter with `name` and `description`, then the instructions. */
+  body: Schema.String.check(Schema.isMaxLength(65_536)),
+});
+export type FactorySkillFile = typeof FactorySkillFile.Type;
+
+export const FactorySkillChange = Schema.Struct({
+  name: FactorySkillName,
+  /** Null deletes `skills/<name>/SKILL.md`, so a built-in skill of that name applies again. */
+  file: Schema.NullOr(FactorySkillFile),
+});
+export type FactorySkillChange = typeof FactorySkillChange.Type;
+
+/** Writes `factory.json` and the given role and skill files, creating the factory when it is new. */
 export const FactorySaveInput = Schema.Struct({
   projectId: ProjectId,
   definition: FactoryDefinition,
   /** At most one change per role. A role left out keeps its file as it is. */
   roles: Schema.optionalKey(Schema.Array(FactoryRoleChange)),
+  /** At most one change per skill. A skill left out keeps its files as they are. */
+  skills: Schema.optionalKey(Schema.Array(FactorySkillChange)),
 });
 export type FactorySaveInput = typeof FactorySaveInput.Type;
 
