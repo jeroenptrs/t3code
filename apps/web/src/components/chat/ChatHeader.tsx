@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  isHomeThreadId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -262,6 +263,15 @@ export const ChatHeader = memo(function ChatHeader({
         {activeProject ? (
           <>
             <WorkspaceBreadcrumbItem className="shrink">
+              {isHomeThreadId(activeThreadId) ? (
+                // Home's folder belongs to Home alone, so its crumb starts no thread.
+                <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 text-muted-foreground">
+                  <ProjectFavicon project={activeProject} className="size-3.5" />
+                  <WorkspaceBreadcrumbText className="max-w-40">
+                    {activeProjectName}
+                  </WorkspaceBreadcrumbText>
+                </span>
+              ) : (
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -283,6 +293,7 @@ export const ChatHeader = memo(function ChatHeader({
                 </TooltipTrigger>
                 <TooltipPopup side="top">New thread in {activeProjectName}</TooltipPopup>
               </Tooltip>
+              )}
             </WorkspaceBreadcrumbItem>
             <WorkspaceBreadcrumbSeparator>
               <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
