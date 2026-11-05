@@ -9,6 +9,7 @@ import { vi } from "vite-plus/test";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthFactoriesManageScope,
   AuthInsightsReadScope,
   AuthInsightsWriteScope,
   AuthOrchestrationOperateScope,
@@ -16,11 +17,13 @@ import {
   AuthPreviewOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthUserRoleScopes,
   ThreadId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
   ScheduledTaskId,
   WS_METHODS,
+  type AuthEnvironmentScope,
   type AuthSessionState,
   type PeerLinkSummary,
 } from "@t3tools/contracts";
@@ -555,6 +558,25 @@ it.effect.each([
       );
       expect(registry.get(command.permissionAtom(env))).toBe(true);
       yield* command.authorize(registry, env);
+    }),
+  ),
+);
+
+it.effect("saving a factory needs factories:manage, which an operator grant lacks", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const save = createCommandPermissions(runtime, WS_METHODS.factoriesSave);
+      const role = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+        AsyncResult.success({ ...grant(false), scopes, permissions: scopes });
+      registry.set(sessions(env), role(AuthUserRoleScopes.operator));
+      expect(registry.get(save.permissionAtom(env))).toBe(false);
+      expect(yield* save.authorize(registry, env).pipe(Effect.flip)).toMatchObject({
+        requiredPermission: AuthFactoriesManageScope,
+      });
+      registry.set(sessions(env), role(AuthUserRoleScopes.administrator));
+      expect(registry.get(save.permissionAtom(env))).toBe(true);
+      yield* save.authorize(registry, env);
     }),
   ),
 );
