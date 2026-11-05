@@ -20,6 +20,9 @@ import {
   MAX_WEBHOOK_FILTERS,
   resolveEnvironmentMachineKind,
   scheduledTaskThreadMode,
+  TRIGGER_SOURCE_FIELDS,
+  type TriggerFilterSourceKind,
+  type TriggerSourceField,
 } from "@t3tools/contracts";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -32,7 +35,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import {
-  DEFAULT_WEBHOOK_PROMPT,
   emptyWebhookFilterDraft,
   parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
@@ -43,6 +45,11 @@ import {
 import { scheduledTaskWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-worktree";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
 import type { MessageResolver } from "../../i18n/messages";
+import {
+  emptyTriggerFilterDraft,
+  parseTriggerFilterDrafts,
+  type TriggerFilterDraft,
+} from "@t3tools/client-runtime/scheduled-task-trigger";
 import { useRef, useState, type ReactNode } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -59,7 +66,6 @@ import {
 import { Menu } from "../../components/ui/Menu";
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
@@ -81,10 +87,13 @@ import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-en
 import {
   changeDraftProject,
   editDraft,
+  isTriggerFilterMode,
   parseIntervalMinutes,
   scheduledTaskDefaultModel,
   scheduleFromDraft,
   unbindDraftFromThread,
+  switchScheduleMode,
+  type ScheduleDraft,
   type ScheduledTaskDraft as Draft,
 } from "./scheduledTaskDraft";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
@@ -100,6 +109,8 @@ import {
 import {
   formatNextScheduledTaskRun,
   formatScheduledTaskInterval,
+  formatTriggerSchedule,
+  TRIGGER_SCHEDULE_LABELS,
 } from "./scheduledTaskPresentation";
 
 type ScheduledTaskRoutes = {
@@ -131,6 +142,14 @@ function describeSchedule(
   resolve: MessageResolver,
   locale: string,
 ): string {
+  const { schedule } = task;
+  if (
+    schedule.type === "jira" ||
+    schedule.type === "gitlab" ||
+    schedule.type === "slack" ||
+    schedule.type === "manual"
+  )
+    return formatTriggerSchedule(schedule);
   if (task.schedule.type === "webhook") return resolve(msg("On webhook"));
   if (task.schedule.type === "once") {
     const runAt = new Date(task.schedule.runAt);
@@ -295,12 +314,19 @@ function SelectRow(props: {
   );
 }
 
-function WebhookFilterRows(props: {
+function FilterRows(props: {
   readonly filters: ReadonlyArray<WebhookFilterDraft>;
   readonly disabled: boolean;
   readonly onChange: (
     update: (filters: ReadonlyArray<WebhookFilterDraft>) => ReadonlyArray<WebhookFilterDraft>,
   ) => void;
+  readonly newFilter: () => WebhookFilterDraft;
+  readonly renderPath: (
+    filter: WebhookFilterDraft,
+    onChangePath: (path: string) => void,
+  ) => ReactNode;
+  readonly valuePlaceholders?: { readonly one: string; readonly list: string };
+  readonly footer: string;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -331,13 +357,7 @@ function WebhookFilterRows(props: {
               <SymbolView name="trash" size={16} tintColorClassName="accent-danger-foreground" />
             </Pressable>
           </View>
-          <FormField
-            label={gt("Path", { $context: "webhook payload field path" })}
-            value={filter.path}
-            placeholder="body.action"
-            disabled={props.disabled}
-            onChange={(path) => update(filter.id, { path })}
-          />
+          {props.renderPath(filter, (path) => update(filter.id, { path }))}
           <SelectRow
             label={gt("Test", { $context: "noun, the comparison a webhook filter applies" })}
             value={m(WEBHOOK_FILTER_OPS.find((option) => option.op === filter.op)?.label ?? "")}
@@ -355,8 +375,9 @@ function WebhookFilterRows(props: {
             <FormField
               label={filter.op === "in" ? gt("Values, comma-separated") : gt("Value")}
               value={filter.value}
-              // oxlint-disable-next-line t3code/no-untranslated-copy -- webhook action values
-              placeholder={filter.op === "in" ? "opened, reopened" : "opened"}
+              placeholder={
+                filter.op === "in" ? props.valuePlaceholders?.list : props.valuePlaceholders?.one
+              }
               disabled={props.disabled}
               onChange={(value) => update(filter.id, { value })}
             />
@@ -369,9 +390,7 @@ function WebhookFilterRows(props: {
           disabled={props.disabled}
           onPress={() =>
             props.onChange((filters) =>
-              filters.length < MAX_WEBHOOK_FILTERS
-                ? [...filters, emptyWebhookFilterDraft()]
-                : filters,
+              filters.length < MAX_WEBHOOK_FILTERS ? [...filters, props.newFilter()] : filters,
             )
           }
           className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
@@ -383,16 +402,92 @@ function WebhookFilterRows(props: {
         </Pressable>
       ) : null}
       {props.filters.length > 0 ? (
-        <Text className="px-4 pb-3 text-sm text-foreground-muted">
-          <T>
-            Runs only when every filter matches. Other requests are logged as filtered. Separate “is
-            one of” values with commas; a value can't contain a comma.
-          </T>
-        </Text>
+        <Text className="px-4 pb-3 text-sm text-foreground-muted">{props.footer}</Text>
       ) : null}
     </>
   );
 }
+
+function WebhookFilterRows(props: {
+  readonly filters: ReadonlyArray<WebhookFilterDraft>;
+  readonly disabled: boolean;
+  readonly onChange: (
+    update: (filters: ReadonlyArray<WebhookFilterDraft>) => ReadonlyArray<WebhookFilterDraft>,
+  ) => void;
+}) {
+  return (
+    <FilterRows
+      {...props}
+      newFilter={emptyWebhookFilterDraft}
+      renderPath={(filter, onChangePath) => (
+        <FormField
+          label="Path"
+          value={filter.path}
+          placeholder="body.action"
+          disabled={props.disabled}
+          onChange={onChangePath}
+        />
+      )}
+      valuePlaceholders={{ one: "opened", list: "opened, reopened" }}
+      footer="Runs only when every filter matches. Other requests are logged as filtered. Separate “is one of” values with commas; a value can't contain a comma."
+    />
+  );
+}
+
+function TriggerFilterRows(props: {
+  readonly source: TriggerFilterSourceKind;
+  readonly filters: ReadonlyArray<TriggerFilterDraft>;
+  readonly disabled: boolean;
+  readonly onChange: (
+    update: (filters: ReadonlyArray<TriggerFilterDraft>) => ReadonlyArray<TriggerFilterDraft>,
+  ) => void;
+}) {
+  const fields: ReadonlyArray<TriggerSourceField> = TRIGGER_SOURCE_FIELDS[props.source];
+  return (
+    <FilterRows
+      filters={props.filters}
+      disabled={props.disabled}
+      onChange={props.onChange}
+      newFilter={() => emptyTriggerFilterDraft(props.source)}
+      renderPath={(filter, onChangePath) => (
+        <SelectRow
+          label="Field"
+          value={fields.find((field) => field.path === filter.path)?.label ?? filter.path}
+          actions={
+            props.disabled
+              ? []
+              : fields.map((field) => ({
+                  id: field.path,
+                  title: field.label,
+                  subtitle: field.description,
+                  state: field.path === filter.path ? ("on" as const) : undefined,
+                }))
+          }
+          onSelect={onChangePath}
+        />
+      )}
+      footer={`Runs only when every filter matches. Separate “is one of” values with commas; a value can't contain a comma.${
+        fields.some((field) => field.array)
+          ? " List fields, such as labels, match when any item does."
+          : ""
+      }`}
+    />
+  );
+}
+
+const SCHEDULE_MODES: ReadonlyArray<{
+  readonly mode: ScheduleDraft["mode"];
+  readonly label: string;
+}> = [
+  { mode: "fixed_time", label: "At a time" },
+  { mode: "once", label: "Once" },
+  { mode: "interval", label: "Interval" },
+  { mode: "webhook", label: "On webhook" },
+  { mode: "jira", label: TRIGGER_SCHEDULE_LABELS.jira },
+  { mode: "gitlab", label: TRIGGER_SCHEDULE_LABELS.gitlab },
+  { mode: "slack", label: TRIGGER_SCHEDULE_LABELS.slack },
+  { mode: "manual", label: TRIGGER_SCHEDULE_LABELS.manual },
+];
 
 function PickerRow(props: {
   readonly label: string;
@@ -849,6 +944,16 @@ function TaskForm({
       Dialog.alert(gt("Invalid filter"), parsedFilters.error);
       return;
     }
+    if (isTriggerFilterMode(draft.schedule.mode)) {
+      const parsedTriggerFilters = parseTriggerFilterDrafts(
+        draft.schedule.triggerFilters,
+        draft.schedule.mode,
+      );
+      if ("error" in parsedTriggerFilters) {
+        Dialog.alert("Invalid filter", parsedTriggerFilters.error);
+        return;
+      }
+    }
     if (draft.schedule.mode === "webhook" && schedule === null) {
       Dialog.alert(
         gt("Invalid webhook settings"),
@@ -973,6 +1078,13 @@ function TaskForm({
             onChange={(title) => setDraft((current) => ({ ...current, title }))}
           />
           {promptField}
+          {isTriggerFilterMode(draft.schedule.mode) ? (
+            <Text className="px-4 pb-3 text-sm text-foreground-muted">
+              {
+                "The prompt can use {{event.<field>}} for one field and {{event}} for the whole event."
+              }
+            </Text>
+          ) : null}
         </SettingsSection>
 
         <SettingsSection title={gt("Context", { $context: "section heading: project and model" })}>
@@ -1149,47 +1261,32 @@ function TaskForm({
         </SettingsSection>
 
         <SettingsSection title={gt("Schedule", { $context: "noun, section heading" })}>
-          <View className="px-4 py-3">
-            <SegmentedControl
-              variant="card"
-              options={[
-                { value: "fixed_time", label: gt("At a time") },
+          <SelectRow
+            label="Trigger"
+            value={SCHEDULE_MODES.find((entry) => entry.mode === draft.schedule.mode)?.label ?? ""}
+            actions={
+              saving
+                ? []
+                : SCHEDULE_MODES.filter(
+                    (entry) =>
+                      entry.mode === draft.schedule.mode ||
                 // Older servers reject one-time schedules on save.
-                ...(offersOnce || draft.schedule.mode === "once"
-                  ? [
-                      {
-                        value: "once" as const,
-                        label: gt("Once", { $context: "one-time schedule option" }),
-                      },
-                    ]
-                  : []),
-                { value: "interval", label: gt("Interval") },
-                ...(webhookDenial === undefined || draft.schedule.mode === "webhook"
-                  ? [{ value: "webhook" as const, label: gt("On webhook") }]
-                  : []),
-              ]}
-              selected={draft.schedule.mode}
-              onSelect={(mode) => {
+                      ((entry.mode !== "once" || offersOnce) &&
+                        (entry.mode !== "webhook" || webhookDenial === undefined)),
+                  ).map((entry) => ({
+                    id: entry.mode,
+                    title: entry.label,
+                    state: entry.mode === draft.schedule.mode ? ("on" as const) : undefined,
+                  }))
+            }
+            onSelect={(id) => {
+              const mode = SCHEDULE_MODES.find((entry) => entry.mode === id)?.mode;
+              if (!mode || mode === draft.schedule.mode) return;
                 setTimePickerOpen(false);
                 setRunAtPicker(null);
-                setDraft((current) => ({
-                  ...current,
-                  prompt:
-                    mode === "webhook" && !current.prompt.trim()
-                      ? DEFAULT_WEBHOOK_PROMPT
-                      : current.prompt,
-                  schedule: {
-                    ...current.schedule,
-                    mode,
-                    runAt:
-                      mode === "once" && !current.schedule.runAt
-                        ? new Date(Math.ceil(Date.now() / 3_600_000) * 3_600_000).toISOString()
-                        : current.schedule.runAt,
-                  },
-                }));
+              setDraft((current) => switchScheduleMode(current, mode, Date.now()));
               }}
             />
-          </View>
           {draft.schedule.mode === "fixed_time" ? (
             <>
               <Pressable
@@ -1425,6 +1522,25 @@ function TaskForm({
                 </T>
               </Text>
             </>
+          ) : isTriggerFilterMode(draft.schedule.mode) ? (
+            <TriggerFilterRows
+              source={draft.schedule.mode}
+              filters={draft.schedule.triggerFilters}
+              disabled={saving}
+              onChange={(update) =>
+                setDraft((current) => ({
+                  ...current,
+                  schedule: {
+                    ...current.schedule,
+                    triggerFilters: update(current.schedule.triggerFilters),
+                  },
+                }))
+              }
+            />
+          ) : draft.schedule.mode === "manual" ? (
+            <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
+              Runs only when you tap Run now or an agent starts it.
+            </Text>
           ) : (
             <>
               <FormField
@@ -1743,7 +1859,7 @@ function EnvironmentTasks({
                   title: task.enabled ? gt("Pause") : gt("Resume"),
                   attributes: { disabled: !canOperate },
                 },
-                ...(task.schedule.type === "webhook"
+                ...(task.schedule.type === "webhook" || isTriggerFilterMode(task.schedule.type)
                   ? []
                   : [{ id: "run", title: gt("Run now"), attributes: { disabled: !canOperate } }]),
                 {

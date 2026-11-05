@@ -26,6 +26,7 @@ import ForkMigration0013 from "./ForkMigrations/013_Insights.ts";
 import ForkMigration0014 from "./ForkMigrations/014_InsightsJiraIssues.ts";
 import ForkMigration0015 from "./ForkMigrations/015_AuthStepUpBindings.ts";
 import ForkMigration0016 from "./ForkMigrations/016_FactoryThreads.ts";
+import ForkMigration0017 from "./ForkMigrations/017_TriggerObservations.ts";
 
 export const forkMigrationsTable = "fork_sql_migrations";
 
@@ -46,6 +47,7 @@ export const forkMigrationEntries = [
   [14, "InsightsJiraIssues", ForkMigration0014],
   [15, "AuthStepUpBindings", ForkMigration0015],
   [16, "FactoryThreads", ForkMigration0016],
+  [17, "TriggerObservations", ForkMigration0017],
 ] as const;
 
 export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);

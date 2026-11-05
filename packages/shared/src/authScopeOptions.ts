@@ -3,7 +3,6 @@ import {
   AuthAccessWriteScope,
   AuthDiagnosticsReadScope,
   AuthFactoriesReadScope,
-  AuthFactoriesWriteScope,
   AuthEnvironmentMaintainScope,
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
