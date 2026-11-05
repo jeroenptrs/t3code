@@ -2,6 +2,7 @@
  * Fork-only Jira Cloud read side. The server reads Jira over REST as one designated identity and
  * clients only ever see the public shapes here; tokens never leave the server.
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -116,6 +117,7 @@ export const JiraIssueSummary = Schema.Struct({
   /** Null when the site has no story points field or the issue has no estimate. */
   storyPoints: Schema.NullOr(Schema.Number),
   updated: Schema.NullOr(IsoDateTime),
+  labels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type JiraIssueSummary = typeof JiraIssueSummary.Type;
 

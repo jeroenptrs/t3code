@@ -79,6 +79,10 @@ const SETTINGS_SEARCH_TERMS = {
     "cron",
     msg("recurring", { $context: "settings search keyword" }),
     msg("webhook", { $context: "settings search keyword" }),
+    msg("trigger", { $context: "settings search keyword" }),
+    "jira",
+    "gitlab",
+    "slack",
   ],
   SettingsProjectOverview: [
     msg("project", { $context: "settings search keyword" }),

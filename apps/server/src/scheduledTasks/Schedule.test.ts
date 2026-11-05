@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
-import { isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 
 describe("scheduled task schedule calculation", () => {
   it("skips to the next matching fixed-time weekday", () => {
@@ -109,5 +109,26 @@ describe("scheduled task schedule calculation", () => {
         { type: "fixed_time", timeOfDay: "09:00" },
       ),
     ).toBe(false);
+  });
+
+  it("treats event sources as unscheduled schedules compared by type and filters", () => {
+    const now = DateTime.makeUnsafe("2026-11-05T10:00:00.000Z");
+    const status = { path: "event.status", op: "equals", value: "Done" } as const;
+    for (const schedule of [
+      { type: "jira", filters: [status] },
+      { type: "gitlab" },
+      { type: "slack" },
+      { type: "manual" },
+    ] as const) {
+      expect(nextScheduledRunAt(schedule, now)).toBeNull();
+      expect(isMissedFixedTimeRun(schedule, now, DateTime.add(now, { days: 1 }))).toBe(false);
+    }
+    expect(
+      isSameSchedule({ type: "jira", filters: [status] }, { type: "jira", filters: [status] }),
+    ).toBe(true);
+    expect(isSameSchedule({ type: "jira" }, { type: "jira", filters: [] })).toBe(true);
+    expect(isSameSchedule({ type: "jira", filters: [status] }, { type: "jira" })).toBe(false);
+    expect(isSameSchedule({ type: "jira" }, { type: "gitlab" })).toBe(false);
+    expect(isSameSchedule({ type: "manual" }, { type: "manual" })).toBe(true);
   });
 });

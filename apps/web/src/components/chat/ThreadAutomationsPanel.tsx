@@ -22,7 +22,7 @@ import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { ScheduledRelativeLabel } from "../settings/ScheduledTasksSettings";
-import { scheduleLabel } from "../settings/scheduledTasksSettings.logic";
+import { isTriggerFilterSource, scheduleLabel } from "../settings/scheduledTasksSettings.logic";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -238,8 +238,9 @@ export function ThreadAutomationsPanel(props: {
                 </>
               }
             />
-            {/* Webhook tasks need a request from their URL. */}
-            {task.schedule.type === "webhook" ? null : (
+            {/* Webhook and event tasks need a request or an event to fill their prompt. */}
+            {task.schedule.type === "webhook" ||
+            isTriggerFilterSource(task.schedule.type) ? null : (
               <SharedTooltipTrigger
                 render={
                   <ThreadDetailsControl
