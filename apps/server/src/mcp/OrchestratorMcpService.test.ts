@@ -58,6 +58,7 @@ import {
   OrchestratorThreadAboveModeLimitError,
 } from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ProviderContinuationService from "../orchestration-v2/ProviderContinuationService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -74,6 +75,8 @@ import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import type { ProjectionRecordFilter } from "../orchestration-v2/ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
 const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
 
@@ -1974,6 +1977,169 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
+  );
+
+  const wokenTurnCall = (tool: "delegate_task" | "t3_thread_send") =>
+    Effect.gen(function* () {
+      const continuationRunId = RunId.make("run:mcp-providers-continuation");
+      const continuationRootId = NodeId.make("node:mcp-providers-continuation-root");
+      const targetThreadId = ThreadId.make("thread:mcp-providers-woken-target");
+      const dispatching = yield* Deferred.make<void>();
+      const commit = yield* Deferred.make<void>();
+      const parentRunIds = yield* Ref.make<ReadonlyArray<RunId>>([]);
+      let committed = false;
+      const ended = parentProjection([]);
+      const endedRun = { ...ended.runs[0]!, status: "completed" as const };
+      const parent = () =>
+        ({
+          ...ended,
+          thread: { ...ended.thread, archivedAt: null, deletedAt: null },
+          messages: [],
+          runs: committed
+            ? [
+                endedRun,
+                {
+                  ...endedRun,
+                  id: continuationRunId,
+                  ordinal: 2,
+                  status: "running",
+                  rootNodeId: continuationRootId,
+                },
+              ]
+            : [endedRun],
+        }) as OrchestrationV2ThreadProjection;
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: continuationRunId,
+        parentNodeId: continuationRootId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Review the change.",
+        title: null,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        IdAllocator.layer,
+        ProviderContinuationRequests.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          getThreadRecords: (threadId) =>
+            Effect.sync(() => (threadId === parentThreadId ? parent() : childProjection)),
+          getThreadShell: (threadId) =>
+            Effect.sync(() =>
+              threadId === parentThreadId
+                ? liveThreadShell(threadId, { activeRunId: committed ? continuationRunId : null })
+                : liveThreadShell(threadId),
+            ),
+          getProjectThreadRecords: ({ threadId }) =>
+            Effect.succeed(idleThreadProjection(liveThreadShell(threadId))),
+          // The continuation's commit waits in the event sink while the woken agent acts.
+          dispatch: (command) =>
+            command.type === "message.dispatch"
+              ? Deferred.succeed(dispatching, undefined).pipe(
+                  Effect.andThen(Deferred.await(commit)),
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      committed = true;
+                    }),
+                  ),
+                  Effect.as({ sequence: 1, storedEvents: [] } as never),
+                )
+              : Ref.update(parentRunIds, (ids) =>
+                  command.type === "delegated_task.request" ? [...ids, command.parentRunId] : ids,
+                ).pipe(
+                  Effect.as({
+                    sequence: 2,
+                    storedEvents: [
+                      {
+                        sequence: 2,
+                        commandId: null,
+                        event: { type: "subagent.updated", payload: task },
+                      },
+                    ],
+                  } as never),
+                ),
+          sendToThread: () =>
+            Effect.succeed({
+              run: { id: RunId.make("run:mcp-providers-woken-target"), status: "running" },
+              delivery: "started",
+            } as never),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* requests.offer({
+          threadId: parentThreadId,
+          providerThreadId: ProviderThreadId.make("provider-thread:mcp-providers-woken"),
+          driver: ProviderDriverKind.make("codex"),
+          detail: null,
+        });
+        yield* Deferred.await(dispatching);
+        const call = yield* Effect.forkChild(
+          tool === "delegate_task"
+            ? service
+                .delegateTask(scope, { task: "Review the change.", mode: "async" })
+                .pipe(Effect.asVoid)
+            : service
+                .sendToThread(scope, { threadId: targetThreadId, message: "hello" })
+                .pipe(Effect.asVoid),
+          { startImmediately: true },
+        );
+        yield* Deferred.succeed(commit, undefined);
+        yield* Fiber.join(call);
+        if (tool === "delegate_task") {
+          assert.deepEqual(yield* Ref.get(parentRunIds), [continuationRunId]);
+        }
+      }).pipe(
+        Effect.provide(
+          layerOrchestratorService.pipe(
+            Layer.provideMerge(
+              ProviderContinuationService.layer.pipe(Layer.provideMerge(dependencies)),
+            ),
+          ),
+        ),
+      );
+    });
+
+  // quarantine: #23006 the MCP gates cannot see a continuation offered but not yet committed
+  it.effect.skip(
+    "lets a delegate_task call from a woken turn through once its continuation run commits",
+    () => wokenTurnCall("delegate_task"),
+  );
+
+  // quarantine: #23006 the MCP gates cannot see a continuation offered but not yet committed
+  it.effect.skip(
+    "lets a t3_thread_send call from a woken turn through once its continuation run commits",
+    () => wokenTurnCall("t3_thread_send"),
   );
 
   it.effect("driver-only delegation skips an instance the project turned off", () =>
