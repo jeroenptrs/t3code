@@ -584,6 +584,9 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "project-delete":
     case "project-clone":
     case "factory-save":
+    case "work-item-create":
+    case "work-item-advance":
+    case "work-item-gate":
     case "environment-update":
     case "theme-set":
     case "attachment-prepare":
