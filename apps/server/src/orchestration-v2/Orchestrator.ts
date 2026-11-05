@@ -849,6 +849,8 @@ function jiraProposalTitle(proposal: JiraProposal): string {
       return `Comment on ${proposal.key}`;
     case "transition":
       return `Move ${proposal.key}: ${proposal.transitionName}`;
+    case "labels":
+      return `Label ${proposal.key}: ${proposal.labels.join(", ")}`;
   }
 }
 
@@ -3484,52 +3486,52 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
    * The watch is recorded first so the wake's own thread events carry it.
    */
   const dispatchWatchSync = Effect.fn("orchestrationV2.dispatch.watchSync")(function* (
-      command: Extract<
-        OrchestrationV2ServerCommand,
+    command: Extract<
+      OrchestrationV2ServerCommand,
       { readonly type: "thread.pull-request-watch.sync" | "thread.jira-issue-watch.sync" }
-      >,
+    >,
     subject: string,
     watchStartedAt: (thread: OrchestrationV2AppThread) => string | undefined,
-      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
-      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
-    ) {
-      const thread = yield* projectionStore
-        .getThread(command.threadId)
-        .pipe(
-          Effect.mapError(
-            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-          ),
-        );
-      const inactive =
-        thread.archivedAt !== null ||
-        thread.settledOverride === "settled" ||
-        thread.settledAt !== null ||
-        isProviderNativeSubagentThread(thread);
-    if (watchStartedAt(thread) !== command.startedAt || (command.wake && inactive)) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-        cause: `The ${subject} watch ended or its thread settled while it was read.`,
-        });
-      }
-      yield* dispatchThreadMutation(command, events, effects);
-      if (command.wake === undefined) return;
-      yield* dispatchMessage(
-        {
-          type: "message.dispatch",
-          commandId: command.commandId,
-          threadId: command.threadId,
-          messageId: command.wake.messageId,
-          text: command.wake.text,
-          notification: command.wake.notification,
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          creationSource: "server",
-        },
-        events,
-        effects,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
       );
+    const inactive =
+      thread.archivedAt !== null ||
+      thread.settledOverride === "settled" ||
+      thread.settledAt !== null ||
+      isProviderNativeSubagentThread(thread);
+    if (watchStartedAt(thread) !== command.startedAt || (command.wake && inactive)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `The ${subject} watch ended or its thread settled while it was read.`,
+      });
+    }
+    yield* dispatchThreadMutation(command, events, effects);
+    if (command.wake === undefined) return;
+    yield* dispatchMessage(
+      {
+        type: "message.dispatch",
+        commandId: command.commandId,
+        threadId: command.threadId,
+        messageId: command.wake.messageId,
+        text: command.wake.text,
+        notification: command.wake.notification,
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+      },
+      events,
+      effects,
+    );
   });
 
   // Deleted after the share change commits: the files of waiting messages it dismissed or dropped.
@@ -3659,7 +3661,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return yield* refuse(
           `Thread ${command.threadId} is settled or archived and cannot watch ${subject}.`,
-      );
+        );
       }
       // A subagent or delegated task reports to its parent thread, which owns the work. Its own
       // watch would wake it on every change of something it was not asked to babysit.
@@ -11850,28 +11852,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: thread.providerInstanceId,
         occurredAt: input.now,
         payload: {
-            ...withoutJiraIssueWatches(thread),
+          ...withoutJiraIssueWatches(thread),
           pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
         },
       });
     }
-      // Fork-only. Jira watches end in their own event, which keeps the reverse lookup in step.
-      if (thread.jiraIssues?.some((link) => link.watch !== undefined)) {
-        yield* emitEvent({
-          type: "thread.jira-issues-synced",
-          threadId: thread.id,
-          providerInstanceId: thread.providerInstanceId,
-          occurredAt: input.now,
-          payload: {
-            ...withoutJiraIssueWatches(thread),
-            ...(thread.pullRequests === undefined
-              ? {}
-              : {
-                  pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
-                }),
-          },
-        });
-      }
+    // Fork-only. Jira watches end in their own event, which keeps the reverse lookup in step.
+    if (thread.jiraIssues?.some((link) => link.watch !== undefined)) {
+      yield* emitEvent({
+        type: "thread.jira-issues-synced",
+        threadId: thread.id,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: input.now,
+        payload: {
+          ...withoutJiraIssueWatches(thread),
+          ...(thread.pullRequests === undefined
+            ? {}
+            : {
+                pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
+              }),
+        },
+      });
+    }
     const cohortRunIds = new Set(input.cohortRunIds);
     for (const run of runs) {
       if (run.delegatedCompletion?.delivery != null) cohortRunIds.add(run.id);
