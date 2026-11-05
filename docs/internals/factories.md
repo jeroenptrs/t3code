@@ -49,7 +49,14 @@ with its actor, and only a person's gate answer moves an item out of `waiting`.
 - Each item is a `freshContext` queue send, and that send's run is the item's
   `foreman_run_id`. A `delegate_task` child joins the item whose fresh run last
   preceded its parent's run.
-- A queued item starts once the Foreman's run ends, which it does while children
-  work. So an earlier item's child wakes can land in a later item's session.
+- A factory has one active item: sent, and not yet `done`, `failed`, or
+  `dropped`. A `waiting` item stays active, because the gate answer continues
+  its session. A new item waits at `new` with a null `dispatched_at` (fork
+  migration 018) until the active one ends, so no child wakes into a later
+  item's session. The stage change that ends an item sends the oldest queued
+  one under the same per-factory lock. An item the server cannot send fails,
+  and the next one is tried.
+  In M2 nothing sends a queued item when the server starts. The next item
+  created or ended does.
 - `FactoryThreads` reads the role body on every session prepare, outside the MCP
   credential, so an edited role file applies from the next session.
