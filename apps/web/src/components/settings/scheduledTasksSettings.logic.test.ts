@@ -8,6 +8,7 @@ import {
   type ScheduledTask,
   ThreadId,
 } from "@t3tools/contracts";
+import { parseTriageDraft } from "@t3tools/client-runtime/scheduled-task-trigger";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type {
@@ -358,6 +359,20 @@ describe("event scheduled tasks", () => {
       }),
     ).toBeNull();
     expect(scheduleFromDraft({ ...draft, scheduleMode: "manual" })).toEqual({ type: "manual" });
+  });
+});
+
+describe("scheduled task triage", () => {
+  it("sends triage only when changed, clears it with null, and requires a label", () => {
+    const draft = taskToDraft({ ...legacyTask, triage: { fallback: "label", label: "triage" } });
+    expect(draft.triage).toMatchObject({ fallback: "label", label: "triage" });
+    expect(parseTriageDraft(draft.triage)).toEqual({});
+    expect(parseTriageDraft({ ...draft.triage, fallback: "ask" })).toEqual({
+      triage: { fallback: "ask" },
+    });
+    expect(parseTriageDraft({ ...draft.triage, fallback: "off" })).toEqual({ triage: null });
+    expect(parseTriageDraft({ ...draft.triage, label: " " })).toHaveProperty("error");
+    expect(parseTriageDraft(taskToDraft(legacyTask).triage)).toEqual({});
   });
 });
 

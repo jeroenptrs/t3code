@@ -44,7 +44,9 @@ import {
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
 import {
   emptyTriggerFilterDraft,
+  parseTriageDraft,
   parseTriggerFilterDrafts,
+  TRIAGE_FALLBACK_OPTIONS,
   type TriggerFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-trigger";
 import { useRef, useState, type ReactNode } from "react";
@@ -76,6 +78,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { resolveNewTaskBranchLabel } from "../threads/new-task-context-presentation";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { ScheduledTaskPromptField } from "./components/ScheduledTaskPromptField";
+import { ScheduledTaskTemplates } from "./ScheduledTaskTemplates";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
@@ -506,6 +509,12 @@ export function SettingsScheduledTasksRouteScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<ScheduledTaskRoutes>>();
   const insets = useSafeAreaInsets();
   const environmentMenu = useSettingsEnvironmentMenu();
+  const projectIdsFor = (environmentId: EnvironmentId) =>
+    selectedProjectKey === null
+      ? null
+      : (selectedGroup?.members
+          .filter((member) => member.project.environmentId === environmentId)
+          .map((member) => member.project.id) ?? []);
   const newTask = () => {
     if (visibleEnvironments.length === 0) return;
     resetEditor();
@@ -540,15 +549,7 @@ export function SettingsScheduledTasksRouteScreen() {
               key={environment.environmentId}
               environment={environment}
               now={now}
-              projectIds={
-                selectedProjectKey === null
-                  ? null
-                  : (selectedGroup?.members
-                      .filter(
-                        (member) => member.project.environmentId === environment.environmentId,
-                      )
-                      .map((member) => member.project.id) ?? [])
-              }
+              projectIds={projectIdsFor(environment.environmentId)}
               onEdit={(task) => {
                 startEditor({
                   environmentId: environment.environmentId,
@@ -566,6 +567,13 @@ export function SettingsScheduledTasksRouteScreen() {
               : "No environments match these filters. Change the filter above."}
           </Text>
         )}
+        <ScheduledTaskTemplates
+          targets={visibleEnvironments.map((environment) => ({
+            environment,
+            projectIds: projectIdsFor(environment.environmentId),
+          }))}
+          projectSelected={selectedProjectKey !== null}
+        />
       </ScrollView>
     </SettingsScreen>
   );
@@ -869,6 +877,11 @@ function TaskForm({
       Dialog.alert("Project unavailable", "Choose a project in this environment.");
       return;
     }
+    const triage = parseTriageDraft(draft.triage);
+    if ("error" in triage) {
+      Dialog.alert("Triage label is required", triage.error);
+      return;
+    }
     const input: ScheduledTaskUpsertInput = {
       ...(draft.task ? { id: draft.task.id, requireExisting: true } : {}),
       title: draft.title.trim(),
@@ -894,6 +907,7 @@ function TaskForm({
         clampManagedRuntimeMode(config?.managedPolicy, draft.runtimeMode) ?? draft.runtimeMode,
       interactionMode: draft.task?.interactionMode ?? "default",
       creationSource: draft.task?.creationSource ?? "mobile",
+      ...triage,
     };
     submissionPending.current = true;
     setSaving(true);
@@ -1397,6 +1411,41 @@ function TaskForm({
               ) : null}
             </>
           )}
+          <SelectRow
+            label="Triage"
+            value={
+              TRIAGE_FALLBACK_OPTIONS.find((option) => option.value === draft.triage.fallback)
+                ?.label ?? ""
+            }
+            borderTop
+            actions={
+              saving
+                ? []
+                : TRIAGE_FALLBACK_OPTIONS.map((option) => ({
+                    id: option.value,
+                    title: option.label,
+                    state: option.value === draft.triage.fallback ? ("on" as const) : undefined,
+                  }))
+            }
+            onSelect={(id) => {
+              const option = TRIAGE_FALLBACK_OPTIONS.find((entry) => entry.value === id);
+              if (option)
+                setDraft({ ...draft, triage: { ...draft.triage, fallback: option.value } });
+            }}
+          />
+          <Text className="px-4 pb-3 text-sm text-foreground-muted">
+            What the agent does when the item fits no instruction. Off sends the prompt as written.
+          </Text>
+          {draft.triage.fallback === "label" ? (
+            <FormField
+              label="Label to add"
+              value={draft.triage.label}
+              placeholder="needs-triage"
+              disabled={saving}
+              borderTop
+              onChange={(label) => setDraft({ ...draft, triage: { ...draft.triage, label } })}
+            />
+          ) : null}
           <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
             <Text textRole="body" className="min-w-0 flex-1 text-foreground">
               Enabled

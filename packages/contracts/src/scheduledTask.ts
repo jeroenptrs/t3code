@@ -291,6 +291,24 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
 ]);
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
 
+export const ScheduledTaskTriage = Schema.Struct({
+  fallback: Schema.Literals(["ask", "label", "stop"]),
+  label: Schema.optional(TrimmedNonEmptyString),
+})
+  .check(
+    Schema.makeFilter(
+      (triage) =>
+        triage.fallback !== "label" ||
+        triage.label !== undefined ||
+        "A triage label is required when the fallback is to add a label.",
+    ),
+  )
+  .annotate({
+    description:
+      "Append triage instructions to every run. `fallback` is what the agent does with an item no instruction covers. `label` is required for `label`.",
+  });
+export type ScheduledTaskTriage = typeof ScheduledTaskTriage.Type;
+
 export const ScheduledTaskRunStatus = Schema.Literals(["never", "running", "succeeded", "failed"]);
 export type ScheduledTaskRunStatus = typeof ScheduledTaskRunStatus.Type;
 
@@ -346,6 +364,7 @@ export const ScheduledTask = Schema.Struct({
   webhook: Schema.optional(ScheduledTaskWebhookEndpoint),
   /** Why the task cannot run regardless of `enabled`, such as a managed policy refusing webhooks. */
   blockedByPolicy: Schema.optionalKey(Schema.String),
+  triage: Schema.optionalKey(ScheduledTaskTriage),
 });
 export type ScheduledTask = typeof ScheduledTask.Type;
 
@@ -379,6 +398,9 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   createdBy: Schema.optional(OrchestrationV2Actor),
   creationSource: Schema.optional(OrchestrationV2CreationSource),
+  triage: Schema.optional(Schema.NullOr(ScheduledTaskTriage)).annotate({
+    description: "Omitted: keep stored. null clears.",
+  }),
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 
