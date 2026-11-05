@@ -208,6 +208,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [15, "AuthStepUpBindings"],
       [16, "FactoryThreads"],
       [17, "TriggerObservations"],
+      [18, "ScheduledTaskTriage"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
