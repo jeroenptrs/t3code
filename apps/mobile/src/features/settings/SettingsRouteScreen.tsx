@@ -36,6 +36,7 @@ import { usePaneRole } from "../../components/ui/Pane";
 import { I18nProvider, useGT, useLanguagePreference } from "../../i18n/I18nProvider";
 import { nativeLanguageName } from "@t3tools/client-runtime/locales";
 import { SUPPORTED_LOCALES } from "../../i18n/locales";
+import { useFactoriesEntry } from "../factories/FactoriesScreen";
 
 export function SettingsRouteScreen() {
   const list = useSettingsListPlacement();
@@ -192,10 +193,27 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
   const workspace = useWorkspaceTabs();
   const query = workspace?.state.tabs.settings.query ?? "";
   const overflowRows = useOverflowRows();
+  const factories = useFactoriesEntry();
   const indexSections = useSettingsIndexSections();
   const sections = filterSettingsSections(
     [
-      { rows: overflowRows },
+      {
+        rows: [
+          ...overflowRows,
+          ...(factories.visible
+            ? [
+                {
+                  id: "SettingsFactories",
+                  icon: "hammer" as const,
+                  label: gt("Factories"),
+                  value: factories.attention > 0 ? `${factories.attention}` : undefined,
+                  valuePosition: "trailing" as const,
+                  target: "SettingsFactories" as const,
+                },
+              ]
+            : []),
+        ],
+      },
       { title: gt("Connections"), rows: props.connections },
       ...indexSections,
     ],
