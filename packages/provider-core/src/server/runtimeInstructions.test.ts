@@ -14,6 +14,23 @@ describe("buildRuntimeInstructions", () => {
     assert.notInclude(instructions, "<pull_request_linking>");
   });
 
+  it("appends a factory role's body only for a thread that runs as one", () => {
+    const factoryRole = {
+      factoryId: "factory:project-1:triage",
+      role: "foreman",
+      body: "Route every work item.\n",
+    };
+    const withRole = buildRuntimeInstructions({ harness: "Codex", factoryRole });
+    const without = buildRuntimeInstructions({ harness: "Codex" });
+
+    assert.isTrue(
+      withRole.endsWith(
+        '<factory_role factory="factory:project-1:triage" role="foreman">\nRoute every work item.\n</factory_role>',
+      ),
+    );
+    assert.notInclude(without, "<factory_role");
+  });
+
   it("links PRs the agent creates, takes over, or pushes to, and no others", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
 
