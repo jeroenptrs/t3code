@@ -911,6 +911,23 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "propose-jira-labels": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Proposed {count} Jira label change} other {Proposed {count} Jira label changes}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to propose {count} Jira label change} other {Tried to propose {count} Jira label changes}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "list-issues": {
       const count = selected.length;
       label = done
