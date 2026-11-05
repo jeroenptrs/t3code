@@ -49,6 +49,29 @@ export function useFactoryEnvironments(): ReadonlyArray<FactoryEnvironment> {
   return useAtomValue(factoryEnvironmentsAtom);
 }
 
+const NO_SESSION_ATOM = Atom.make(AsyncResult.initial<AuthSessionState>()).pipe(
+  Atom.withLabel("web-factories:session:none"),
+);
+
+export interface FactoryAccess {
+  /** False until the environment's session first answers, so nothing flashes in and out. */
+  readonly loaded: boolean;
+  readonly canRead: boolean;
+  readonly canManage: boolean;
+}
+
+export function useFactoryAccess(environmentId: EnvironmentId | null): FactoryAccess {
+  const result = useAtomValue(
+    environmentId === null ? NO_SESSION_ATOM : environmentSession.sessionStateAtom(environmentId),
+  );
+  const session = sessionOrNull(result);
+  return {
+    loaded: result._tag !== "Initial",
+    canRead: canReadFactories(session),
+    canManage: canManageFactories(session),
+  };
+}
+
 const isFactoryError = Schema.is(FactoryError);
 
 /** The factory error behind a failed read or save, or null when the failure was not one. */
