@@ -2100,6 +2100,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                       model: session.model ?? undefined,
                       reasoningEffort: effort,
                       mcpCapabilities: mcpSession?.capabilities,
+                      factoryRole: mcpSession?.factoryRole,
                     }),
                   },
                   ...parts,
