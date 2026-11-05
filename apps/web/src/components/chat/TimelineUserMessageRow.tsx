@@ -9,6 +9,7 @@ import { T, useGT, useMessages, Var } from "gt-react";
 import { findRevealRef } from "./markdownFindContext";
 import {
   type EnvironmentId,
+  isHomeThreadId,
   type MessageId,
   type ScheduledTaskId,
   type ServerProviderSkill,
@@ -501,7 +502,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const senderShell = useQuietThreadShell(folded ? senderRef : null);
   const senderTitle = senderShell?.title.trim() || row.message.linkedSender?.title.trim();
   const senderLabel =
-    senderTitle || gt("Agent", { $context: "sender of a message from another agent" });
+    senderTitle ||
+    // Home's messages into another machine's threads come from a thread this machine lacks.
+    (senderRef !== null && isHomeThreadId(senderRef.threadId)
+      ? "Home"
+      : gt("Agent", { $context: "sender of a message from another agent" }));
   // Only an environment this client is connected to can open the sender's thread there.
   const linkedSenderEnvironment = useEnvironment(row.message.linkedSender?.environmentId ?? null);
   const canOpenSender =

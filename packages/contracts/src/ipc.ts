@@ -1065,6 +1065,8 @@ export interface DesktopBridge {
   getClientPlatform: () => string;
   restartAudioService?: () => Promise<boolean>;
   setNotificationBadge: (badge: { count: number; image: string | null }) => Promise<void>;
+  /** While Home is on, macOS hides the window on close instead of destroying the renderer. */
+  setKeepAliveOnClose: (keepAlive: boolean) => Promise<void>;
   onNotificationBadgeClear: (listener: () => void) => () => void;
   onTrackpadScrollBegin: (listener: () => void) => () => void;
   onTrackpadScrollEnd: (listener: () => void) => () => void;

@@ -1,3 +1,4 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { AnyRouter } from "@tanstack/react-router";
 import { msg } from "gt-react";
 
@@ -13,9 +14,12 @@ import { toastManager } from "../components/ui/toast";
 import { getThemeSnapshot, setAppearanceMode } from "../hooks/useTheme";
 import { m } from "../i18n/messages";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { readPrimaryEnvironmentId } from "../state/environments";
+import { primaryServerSettingsAtom } from "../state/server";
 import { type CommandHandler, type CommandScopeOptions, registerCommands } from "./dispatcher";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { resolveThreadRouteTarget } from "../threadRoutes";
+import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 
 function consume(event: KeyboardEvent): void {
   event.preventDefault();
@@ -32,7 +36,7 @@ const toggleOverlay =
   };
 
 /**
- * Palette, theme and usage shortcuts. They read the route, panels and theme
+ * Palette, theme, usage and Home shortcuts. They read the route, panels and theme
  * when the key is pressed, and are live only while the palette is mounted.
  */
 export function installCommandPaletteCommands(
@@ -98,6 +102,17 @@ export function installCommandPaletteCommands(
         consume(event);
         dispatchCommandPalette({ _tag: "SetOpen", open: false });
         void router.navigate({ to: "/usage" });
+      },
+      "home.open": (event) => {
+        const environmentId = readPrimaryEnvironmentId();
+        const homeThreadId = appAtomRegistry.get(primaryServerSettingsAtom).home.threadId;
+        if (environmentId === null || homeThreadId === null) return false;
+        consume(event);
+        dispatchCommandPalette({ _tag: "SetOpen", open: false });
+        void router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(scopeThreadRef(environmentId, homeThreadId)),
+        });
       },
       "commandPalette.toggle": toggleOverlay("commandPalette.toggle"),
       "filePicker.toggle": toggleOverlay("filePicker.toggle"),
