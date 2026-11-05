@@ -122,6 +122,7 @@ export function summarizeT3ToolCalls(
     (call) => id(call.output?.id) ?? id(call.output?.projectId) ?? id(call.input?.projectId),
   );
   const factoryIds = selected.map((call) => id(call.output?.id) ?? id(call.input?.factoryId));
+  const workItemIds = selected.map((call) => id(call.output?.id) ?? id(call.input?.workItemId));
   const threadIds = selected.map(
     (call) =>
       id(call.output?.threadId) ??
@@ -358,6 +359,37 @@ export function summarizeT3ToolCalls(
       break;
     case "factory-save":
       label = phrase("Saved", "save", quantity(countEntities(factoryIds), "factory", "factories"));
+      break;
+    case "work-item-list":
+      label = phrase("Listed", "list", `work items ${times}`);
+      break;
+    case "work-item-read":
+      label = phrase(
+        "Read",
+        "read",
+        quantity(countEntities(workItemIds), "work item", "work items"),
+      );
+      break;
+    case "work-item-create":
+      label = phrase(
+        "Created",
+        "create",
+        quantity(countEntities(workItemIds), "work item", "work items"),
+      );
+      break;
+    case "work-item-advance":
+      label = phrase(
+        "Advanced",
+        "advance",
+        quantity(countEntities(workItemIds), "work item", "work items"),
+      );
+      break;
+    case "work-item-gate":
+      label = phrase(
+        "Gated",
+        "gate",
+        quantity(countEntities(workItemIds), "work item", "work items"),
+      );
       break;
     case "environment-read":
       label = phrase("Checked", "check", `environment preferences ${times}`);

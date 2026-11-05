@@ -53,6 +53,11 @@ export type T3McpToolSummaryAction =
   | "factory-list"
   | "factory-read"
   | "factory-save"
+  | "work-item-list"
+  | "work-item-read"
+  | "work-item-create"
+  | "work-item-advance"
+  | "work-item-gate"
   | "environment-read"
   | "environment-links"
   | "environment-link"
@@ -431,6 +436,14 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_factory_list: tool(["List", "Listing", "Listed", "factories"], "factory-list"),
   t3_factory_read: tool(["Read", "Reading", "Read", "a factory"], "factory-read"),
   t3_factory_save: tool(["Save", "Saving", "Saved", "a factory"], "factory-save"),
+  t3_work_item_list: tool(["List", "Listing", "Listed", "work items"], "work-item-list"),
+  t3_work_item_read: tool(["Read", "Reading", "Read", "a work item"], "work-item-read"),
+  t3_work_item_create: tool(["Create", "Creating", "Created", "a work item"], "work-item-create"),
+  t3_work_item_advance: tool(
+    ["Advance", "Advancing", "Advanced", "a work item"],
+    "work-item-advance",
+  ),
+  t3_work_item_gate: tool(["Gate", "Gating", "Gated", "a work item"], "work-item-gate"),
   t3_attachment_prepare_upload: tool(
     ["Prepare", "Preparing", "Prepared", "an attachment upload"],
     "attachment-prepare",
