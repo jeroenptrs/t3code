@@ -150,6 +150,28 @@ const assertInsightsSchema = Effect.gen(function* () {
   );
 });
 
+const assertFactoryThreadsSchema = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const columns = yield* sql<{ readonly name: string; readonly pk: number }>`
+    PRAGMA table_info(fork_factory_threads)
+  `;
+  assert.deepStrictEqual(
+    columns.map(({ name, pk }) => [name, pk]),
+    [
+      ["factory_id", 0],
+      ["thread_id", 1],
+      ["role", 0],
+      ["created_at", 0],
+    ],
+  );
+  const indexes = yield* sql<{ readonly name: string }>`
+    SELECT name FROM sqlite_master
+    WHERE type = 'index' AND tbl_name = 'orchestration_v2_projection_messages'
+      AND name = 'idx_fork_messages_scheduled_task'
+  `;
+  assert.equal(indexes.length, 1);
+});
+
 it.effect("server startup records upstream and fork migrations in separate ledgers", () =>
   Effect.gen(function* () {
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
@@ -160,6 +182,7 @@ it.effect("server startup records upstream and fork migrations in separate ledge
     yield* assertThreadJiraIssuesSchema;
     yield* assertJiraRemoteLinksSchema;
     yield* assertInsightsSchema;
+    yield* assertFactoryThreadsSchema;
     assert.deepStrictEqual(yield* runForkMigrations(), []);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
@@ -183,6 +206,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [13, "Insights"],
       [14, "InsightsJiraIssues"],
       [15, "AuthStepUpBindings"],
+      [16, "FactoryThreads"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
@@ -191,6 +215,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
     yield* assertThreadJiraIssuesSchema;
     yield* assertJiraRemoteLinksSchema;
     yield* assertInsightsSchema;
+    yield* assertFactoryThreadsSchema;
   }).pipe(Effect.provide(memoryDatabase())),
 );
 
