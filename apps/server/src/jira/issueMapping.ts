@@ -39,6 +39,7 @@ const SUMMARY_FIELDS = [
   "priority",
   "assignee",
   "updated",
+  "labels",
 ];
 
 export const summaryFields = (ids: JiraFieldIds): ReadonlyArray<string> => [
@@ -179,6 +180,9 @@ export const toIssueSummary = (
     sprints: context.fieldIds.sprint === null ? [] : toSprints(fields[context.fieldIds.sprint]),
     storyPoints: toStoryPoints(fields, context.fieldIds),
     updated: toIsoDateTime(fields.updated),
+    labels: Array.isArray(fields.labels)
+      ? fields.labels.filter((label): label is string => stringOrNull(label) !== null)
+      : [],
   };
 };
 
