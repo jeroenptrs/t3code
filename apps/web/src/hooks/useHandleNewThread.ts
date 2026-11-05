@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import {
   scopedProjectKey,
   scopeProjectRef,
@@ -36,19 +37,19 @@ import {
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
+  defaultNewThreadProjectRef,
   threadHasStarted,
 } from "../lib/chatThreadActions";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
-import { environmentServerConfigsAtom } from "../state/server";
+import { environmentServerConfigsAtom, primaryServerConfigAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { getClientSettings, useClientSettings } from "./useSettings";
 import { getLocalStorageItem, useLocalStorage } from "./useLocalStorage";
 import * as Schema from "effect/Schema";
-import { useAtomValue } from "@effect/atom-react";
 import { defaultProjectFallbackReadyAtom } from "../state/projects";
 import { useThreadRouteTarget } from "./useThreadRouteTarget";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
@@ -481,16 +482,23 @@ export function resolveDefaultProjectRef(
   lastUsedProjectKey: string | null,
   fallbackReady = true,
   groupingSettings?: ProjectGroupingSettings,
+  home: Parameters<typeof defaultNewThreadProjectRef>[1] = {
+    primaryEnvironmentId: null,
+    homeWorkspaceRoot: null,
+  },
 ): ScopedProjectRef | null {
   const lastUsed = projects.find(
     (project) =>
       project.archivedAt == null &&
       scopedProjectKey(scopeProjectRef(project.environmentId, project.id)) === lastUsedProjectKey,
   );
-  if (lastUsed) return scopeProjectRef(lastUsed.environmentId, lastUsed.id);
+  if (lastUsed) {
+    const ref = defaultNewThreadProjectRef([lastUsed], home);
+    if (ref) return ref;
+  }
   if (!fallbackReady) return null;
   const liveProjects = projects.filter((project) => project.archivedAt == null);
-  const [firstProject] = orderItemsByPreferredIds({
+  const firstProject = orderItemsByPreferredIds({
     items: liveProjects,
     preferredIds: projectOrder,
     getId: getProjectOrderKey,
@@ -498,7 +506,7 @@ export function resolveDefaultProjectRef(
       getProjectOrderKey(project),
       legacyProjectCwdPreferenceKey(project.workspaceRoot),
     ],
-  });
+  }).find((project) => defaultNewThreadProjectRef([project], home) !== null);
   if (!firstProject) return null;
   const defaultProject = groupingSettings
     ? resolveGroupDefaultProject(firstProject, liveProjects, groupingSettings)
@@ -531,12 +539,21 @@ export function useHandleNewThread() {
   const projects = useProjects();
   const handleNewThread = useNewThreadHandler();
   const groupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const primaryEnvironmentId = useAtomValue(
+    primaryServerConfigAtom,
+    (config) => config?.environment.environmentId ?? null,
+  );
+  const homeWorkspaceRoot = useAtomValue(
+    primaryServerConfigAtom,
+    (config) => config?.homeWorkspaceRoot ?? null,
+  );
   const defaultProjectRef = resolveDefaultProjectRef(
     projects,
     projectOrder,
     lastUsedProjectKey,
     defaultProjectFallbackReady,
     groupingSettings,
+    { primaryEnvironmentId, homeWorkspaceRoot },
   );
 
   return {

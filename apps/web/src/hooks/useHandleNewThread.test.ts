@@ -246,6 +246,7 @@ vi.mock("../state/presentation", () => ({
 }));
 vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
+  primaryServerConfigAtom: "primary-config",
   primaryServerSettingsAtom: "primary-settings",
 }));
 vi.mock("../threadRoutes", () => ({
