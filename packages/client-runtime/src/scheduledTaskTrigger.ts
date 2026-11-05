@@ -25,8 +25,6 @@ export const DEFAULT_TRIGGER_PROMPT = {
 /** Same row shape as a webhook filter; the path is an `event.` field of the source. */
 export type TriggerFilterDraft = WebhookFilterDraft;
 
-export const TRIGGER_FILTER_OPS = WEBHOOK_FILTER_OPS;
-
 let lastTriggerFilterDraftId = 0;
 const nextTriggerFilterDraftId = () => `trigger-filter-${++lastTriggerFilterDraftId}`;
 
