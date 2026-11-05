@@ -652,19 +652,94 @@ describe("FactoryService work items", () => {
         assert.strictEqual(run!.freshContext, true);
         assert.strictEqual(item.foremanRunId, run!.id);
         assert.strictEqual(item.foremanThreadId, foremanThreadId);
+        assert.isNotNull(item.dispatchedAt);
         assert.strictEqual(item.stage, "new");
         assert.deepStrictEqual(item.source, {
           kind: "manual",
           text: "Users cannot sign in with SSO.",
         });
-
-        // The next item goes to the same Foreman, in a fresh session of its own.
-        const second = yield* factories.createWorkItem({ factoryId, title: "Next", text: "More." });
-        assert.lengthOf(yield* Ref.get(recorded.launches), 1);
-        assert.strictEqual(second.foremanThreadId, foremanThreadId);
-        const secondRun = (yield* runs(foremanThreadId)).find((r) => r.id === second.foremanRunId);
-        assert.strictEqual(secondRun?.freshContext, true);
         assert.strictEqual(yield* factories.foremanThread(factoryId), foremanThreadId);
+      }),
+    ),
+  );
+
+  it.effect("sends one item at a time and the next once the Foreman ends the active one", () =>
+    withWorkItems(({ factoryId, recorded }) =>
+      Effect.gen(function* () {
+        const factories = yield* FactoryService.FactoryService;
+        const first = yield* factories.createWorkItem({ factoryId, title: "One", text: "One." });
+        const second = yield* factories.createWorkItem({ factoryId, title: "Two", text: "Two." });
+        const foreman = first.foremanThreadId!;
+
+        assert.lengthOf(yield* Ref.get(recorded.sends), 1);
+        assert.deepStrictEqual(
+          (yield* runs(foreman)).map((run) => run.id),
+          [first.foremanRunId],
+        );
+        assert.deepStrictEqual(
+          [second.stage, second.foremanThreadId, second.foremanRunId, second.dispatchedAt],
+          ["new", null, null, null],
+        );
+
+        yield* factories.advanceWorkItem(foreman, { workItemId: first.id, stage: "implement" });
+        yield* factories.advanceWorkItem(foreman, { workItemId: first.id, stage: "review" });
+        assert.lengthOf(yield* Ref.get(recorded.sends), 1);
+        yield* factories.advanceWorkItem(foreman, { workItemId: first.id, stage: "done" });
+
+        const sent = yield* factories.readWorkItem(second.id);
+        const [, send] = yield* Ref.get(recorded.sends);
+        assert.strictEqual(send!.messageId, `factory-work-item:${second.id}`);
+        assert.strictEqual(sent.foremanThreadId, foreman);
+        assert.isNotNull(sent.dispatchedAt);
+        const run = (yield* runs(foreman)).find((candidate) => candidate.id === sent.foremanRunId);
+        assert.strictEqual(run?.freshContext, true);
+        assert.lengthOf(yield* Ref.get(recorded.launches), 1);
+      }),
+    ),
+  );
+
+  it.effect("keeps the next item queued while a gate holds the active one, until it drops", () =>
+    withWorkItems(({ factoryId, recorded }) =>
+      Effect.gen(function* () {
+        const factories = yield* FactoryService.FactoryService;
+        const first = yield* factories.createWorkItem({ factoryId, title: "One", text: "One." });
+        const second = yield* factories.createWorkItem({ factoryId, title: "Two", text: "Two." });
+        const foreman = first.foremanThreadId!;
+        const gate = { workItemId: first.id, question: "Proceed?" };
+
+        // An approved gate continues the first item's session, so the second still waits.
+        yield* factories.gateWorkItem(foreman, { ...gate, resumeStage: "implement" });
+        yield* factories.answerWorkItemGate(null, {
+          workItemId: first.id,
+          decision: "approved",
+          note: "",
+        });
+        assert.isNull((yield* factories.readWorkItem(second.id)).dispatchedAt);
+
+        yield* factories.gateWorkItem(foreman, { ...gate, resumeStage: "review" });
+        yield* factories.answerWorkItemGate(null, {
+          workItemId: first.id,
+          decision: "rejected",
+          note: "",
+        });
+
+        // The rejection reaches the first item's session before the second item's fresh one.
+        assert.deepStrictEqual(
+          (yield* Ref.get(recorded.sends)).map((send) => [send.mode, send.freshContext === true]),
+          [
+            ["queue", true],
+            ["auto", false],
+            ["auto", false],
+            ["queue", true],
+          ],
+        );
+        const sent = yield* factories.readWorkItem(second.id);
+        assert.strictEqual(
+          (yield* Ref.get(recorded.sends)).at(-1)!.messageId,
+          `factory-work-item:${second.id}`,
+        );
+        const run = (yield* runs(foreman)).find((candidate) => candidate.id === sent.foremanRunId);
+        assert.strictEqual(run?.freshContext, true);
       }),
     ),
   );
@@ -851,19 +926,19 @@ describe("FactoryService work items", () => {
       Effect.gen(function* () {
         const factories = yield* FactoryService.FactoryService;
         const first = yield* factories.createWorkItem({ factoryId, title: "One", text: "One." });
+        const second = yield* factories.createWorkItem({ factoryId, title: "Two", text: "Two." });
         const foreman = first.foremanThreadId!;
         // A gate answer adds a run to the first item's session, without fresh context.
         yield* factories.gateWorkItem(foreman, {
           workItemId: first.id,
           question: "Proceed?",
-          resumeStage: "implement",
+          resumeStage: "review",
         });
         yield* factories.answerWorkItemGate(null, {
           workItemId: first.id,
           decision: "approved",
           note: "",
         });
-        const second = yield* factories.createWorkItem({ factoryId, title: "Two", text: "Two." });
         const [, continued] = (yield* runs(foreman)).toSorted((a, b) => a.ordinal - b.ordinal);
         assert.notStrictEqual(continued!.freshContext, true);
 
@@ -875,15 +950,17 @@ describe("FactoryService work items", () => {
           childThreadId: implementer,
           taskRole: "implementation",
         });
+        yield* factories.advanceWorkItem(foreman, { workItemId: first.id, stage: "done" });
+        const secondRunId = (yield* factories.readWorkItem(second.id)).foremanRunId!;
         yield* factories.attachDelegatedChild({
           parentThreadId: foreman,
-          parentRunId: second.foremanRunId!,
+          parentRunId: secondRunId,
           childThreadId: reviewer,
           taskRole: "review",
         });
         yield* factories.attachDelegatedChild({
           parentThreadId: otherThread,
-          parentRunId: second.foremanRunId!,
+          parentRunId: secondRunId,
           childThreadId: ThreadId.make("thread-unrelated"),
           taskRole: "implementation",
         });
