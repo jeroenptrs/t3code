@@ -29,6 +29,8 @@ export interface FactoryRoleInstructions {
   readonly factoryId: string;
   readonly role: string;
   readonly body: string;
+  /** The skills the role binds, in binding order, as written to `.agents/skills/<name>/`. */
+  readonly skills: ReadonlyArray<{ readonly name: string; readonly description: string }>;
 }
 
 export function withAgentDeviceEnvironment(
