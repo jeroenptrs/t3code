@@ -312,8 +312,12 @@ export const FACTORY_FOREMAN_THREAD_ID_PREFIX = "factory-foreman:";
 export const WorkItemId = TrimmedNonEmptyString.pipe(Schema.brand("WorkItemId"));
 export type WorkItemId = typeof WorkItemId.Type;
 
-/** `waiting`: a gate holds the item for a person. `done`, `failed`, and `dropped` are terminal. */
+/**
+ * `queued`: the item waits for the factory's active item to end, and only the server moves it on.
+ * `waiting`: a gate holds the item for a person. `done`, `failed`, and `dropped` are terminal.
+ */
 export const WorkItemStage = Schema.Literals([
+  "queued",
   "new",
   "implement",
   "review",
@@ -407,10 +411,7 @@ export const WorkItemSummary = Schema.Struct({
   foremanThreadId: Schema.NullOr(ThreadId),
   /** The Foreman run the item was sent as; null until it was sent. */
   foremanRunId: Schema.NullOr(RunId),
-  /**
-   * When the server sent the item to its Foreman. Null while it waits for the factory's active
-   * item to end, and on an item that was never sent.
-   */
+  /** When the server sent the item to its Foreman. Null while it is queued, or if never sent. */
   dispatchedAt: Schema.NullOr(IsoDateTime),
   threads: Schema.Array(WorkItemThread),
   createdAt: IsoDateTime,
@@ -435,6 +436,7 @@ export const isTerminalWorkItemStage = (stage: WorkItemStage): boolean =>
   TERMINAL_WORK_ITEM_STAGES.has(stage);
 
 const NEXT_WORK_ITEM_STAGES = {
+  queued: ["new"],
   new: ["implement", "waiting", "dropped", "failed"],
   implement: ["review", "waiting", "failed", "dropped"],
   review: ["implement", "done", "waiting", "failed"],
