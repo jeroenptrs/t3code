@@ -1,6 +1,7 @@
 /**
  * Fork-only. One factory: its definition, its three roles, and what of its work needs a person.
- * Operators read it; administrators edit the definition and role files and save them in one go.
+ * Operators read it; administrators edit the definition and role files and save them in one go,
+ * and manage the skills its roles bind one at a time.
  */
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -52,6 +53,7 @@ import {
   type FactoryRoleDraft,
 } from "./FactoryPage.logic";
 import { FactoryRoleCard, type FactoryModelChoices } from "./FactoryRoleCard";
+import { FactorySkillsSection } from "./FactorySkillsSection";
 import { FactoryNeedsYou, FactoryWorkItems } from "./FactoryWorkItems";
 import type { WorkItemSearch } from "./workItems.logic";
 
@@ -301,6 +303,11 @@ function FactoryView(props: {
         factory={factory}
         search={props.workItemSearch}
         onSearchChange={props.onWorkItemSearchChange}
+      />
+      <FactorySkillsSection
+        environmentId={environmentId}
+        factory={factory}
+        canManage={props.canManage}
       />
       <div className="flex flex-col gap-4">
         <h2 className="font-medium">Roles</h2>
