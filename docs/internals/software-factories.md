@@ -278,3 +278,39 @@ item went new, implement, review, implement, review, and stopped at a gate.
   character that is not a letter, digit, or whitespace. Review pointed out
   that this drops hyphens, and the Foreman held the item with three options
   instead of choosing. Earlier trials had no gates; this one earned it.
+
+One work item ran on 2026-11-06, after M6, to see the canvas follow it: a
+one-line change with two tests in a throwaway project, every role on Claude
+Haiku, created from the manual trigger. The canvas was sampled every eight
+seconds from the same inputs the client derives it from: the factory read, the
+active work items, and the thread shells. The item went new, implement,
+review, done in about a minute with no gate.
+
+- **Each stage lit one edge, and the lit node moved with the run.** At `new`
+  the Manual-to-Foreman edge carried the item's title and the Foreman node was
+  lit while its session started. At `implement` the edge moved to Implement
+  and the implementer's node lit while the Foreman's run showed completed. At
+  `review` the edge moved to Review, and for one sample the Foreman and the
+  reviewer were lit together, because the Foreman's run was still active when
+  the child started. At `done` nothing was lit.
+- **The Foreman lights up between children.** Its run resumes each time a
+  child reports, so the Foreman node blinks on between the implement and
+  review stages. That is the real state, not a glitch, but a person watching
+  may read it as a stall. A later milestone can mark the Foreman as waiting
+  on a child instead of idle.
+- **The Output node shows the implementer's branch, and the trial could not
+  see it.** The implementer's thread shell carried `trial/trim-hyphens`, the
+  branch the Foreman named, so the client's Output node reads that from the
+  implement stage on. The MCP thread list has no branch field, so the sample
+  showed the "Branch or PR" placeholder. Verifying the Output node needs the
+  web client or the WebSocket projection, not the MCP tools.
+- **A thread's role on the canvas is the ledger's, not lineage.** Each child
+  appeared on its role's node as soon as the Foreman's advance named it. A
+  child the Foreman delegates without naming it in the advance would run
+  unlit until the next advance, since `factory.threads` is what the canvas
+  reads.
+- **The reviewer's worktree branch is not the item's.** The server gave the
+  reviewer a worktree on `t3/trim-slug-hyphens` while it reviewed the
+  implementer's `trial/trim-hyphens` commit in detached HEAD. The Output node
+  reads the implementer's shell only, so that did not show; the M5 note on a
+  task that names a branch still holds.
