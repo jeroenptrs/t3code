@@ -96,7 +96,7 @@ describe("FactorySkills.materialize", () => {
           yield* fileSystem.readFileString(`${worktree}/.agents/skills/style/SKILL.md`),
           "---\nname: style\n---\n",
         );
-        for (const linkRoot of [".claude", ".codex"]) {
+        for (const linkRoot of [".claude", ".codex", ".grok", ".kiro"]) {
           for (const name of ["implement", "run-checks", "style"]) {
             const link = `${worktree}/${linkRoot}/skills/${name}`;
             assert.strictEqual(yield* fileSystem.readLink(link), `../../.agents/skills/${name}`);
@@ -110,12 +110,18 @@ describe("FactorySkills.materialize", () => {
           "/.agents/skills/implement",
           "/.claude/skills/implement",
           "/.codex/skills/implement",
+          "/.grok/skills/implement",
+          "/.kiro/skills/implement",
           "/.agents/skills/run-checks",
           "/.claude/skills/run-checks",
           "/.codex/skills/run-checks",
+          "/.grok/skills/run-checks",
+          "/.kiro/skills/run-checks",
           "/.agents/skills/style",
           "/.claude/skills/style",
           "/.codex/skills/style",
+          "/.grok/skills/style",
+          "/.kiro/skills/style",
         ]);
         assert.strictEqual(yield* git(worktree, ["status", "--porcelain"]), "");
 
@@ -153,7 +159,12 @@ describe("FactorySkills.materialize", () => {
       );
       assert.deepStrictEqual(
         excludedPaths(yield* fileSystem.readFileString(`${main}/.git/info/exclude`)),
-        ["/.agents/skills/implement", "/.codex/skills/implement"],
+        [
+          "/.agents/skills/implement",
+          "/.codex/skills/implement",
+          "/.grok/skills/implement",
+          "/.kiro/skills/implement",
+        ],
       );
       assert.strictEqual(yield* git(main, ["status", "--porcelain"]), "");
     }).pipe(Effect.scoped, Effect.provide(layerGit)),
