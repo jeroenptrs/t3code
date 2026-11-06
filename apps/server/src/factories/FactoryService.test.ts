@@ -754,7 +754,13 @@ describe("FactoryService work items", () => {
         );
         assert.deepStrictEqual(
           [second.stage, second.foremanThreadId, second.foremanRunId, second.dispatchedAt],
-          ["new", null, null, null],
+          ["queued", null, null, null],
+        );
+        assert.deepStrictEqual(
+          (yield* factories.listWorkItems({ factoryId, stage: "queued" })).workItems.map(
+            (item) => item.id,
+          ),
+          [second.id],
         );
 
         yield* factories.advanceWorkItem(foreman, { workItemId: first.id, stage: "implement" });
@@ -767,9 +773,40 @@ describe("FactoryService work items", () => {
         assert.strictEqual(send!.messageId, `factory-work-item:${second.id}`);
         assert.strictEqual(sent.foremanThreadId, foreman);
         assert.isNotNull(sent.dispatchedAt);
+        assert.strictEqual(sent.stage, "new");
+        assert.deepStrictEqual(
+          sent.transitions.map(({ from, to, actor }) => ({ from, to, actor })),
+          [{ from: "queued", to: "new", actor: { kind: "server" } }],
+        );
         const run = (yield* runs(foreman)).find((candidate) => candidate.id === sent.foremanRunId);
         assert.strictEqual(run?.freshContext, true);
         assert.lengthOf(yield* Ref.get(recorded.launches), 1);
+
+        // Two items queue behind the second. It then ends with nothing sent after it, as after a
+        // restart or a failed send, so the factory has queued items and no active one.
+        const third = yield* factories.createWorkItem({ factoryId, title: "Three", text: "3." });
+        const fourth = yield* factories.createWorkItem({ factoryId, title: "Four", text: "4." });
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE fork_factory_work_items SET stage = 'done' WHERE work_item_id = ${second.id}`;
+
+        // A new item queues behind both, and the oldest queued one is sent.
+        const fifth = yield* factories.createWorkItem({ factoryId, title: "Five", text: "5." });
+        assert.deepStrictEqual(
+          [
+            (yield* factories.readWorkItem(third.id)).stage,
+            (yield* factories.readWorkItem(fourth.id)).stage,
+            fifth.stage,
+          ],
+          ["new", "queued", "queued"],
+        );
+        assert.strictEqual(
+          (yield* Ref.get(recorded.sends)).at(-1)!.messageId,
+          `factory-work-item:${third.id}`,
+        );
+        assert.strictEqual(
+          (yield* factories.readWorkItem(third.id)).transitions[0]!.note,
+          "No item was active, so the server sent the oldest queued one to the Foreman.",
+        );
       }),
     ),
   );

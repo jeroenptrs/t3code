@@ -294,6 +294,11 @@ function WorkItemDetails(props: {
   return (
     <div className="flex flex-col gap-3 py-1 whitespace-normal">
       <p className="max-h-40 overflow-y-auto text-sm whitespace-pre-wrap">{item.source.text}</p>
+      {item.stage === "queued" ? (
+        <p className="text-xs text-muted-foreground">
+          Queued behind this factory's active item. It goes to the Foreman when that item ends.
+        </p>
+      ) : null}
       {item.gate.state === "waiting" ? (
         <WorkItemGateAnswer
           environmentId={props.environmentId}
