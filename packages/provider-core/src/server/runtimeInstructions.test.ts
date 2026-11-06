@@ -19,6 +19,7 @@ describe("buildRuntimeInstructions", () => {
       factoryId: "factory:project-1:triage",
       role: "foreman",
       body: "Route every work item.\n",
+      skills: [],
     };
     const withRole = buildRuntimeInstructions({ harness: "Codex", factoryRole });
     const without = buildRuntimeInstructions({ harness: "Codex" });
@@ -29,6 +30,33 @@ describe("buildRuntimeInstructions", () => {
       ),
     );
     assert.notInclude(without, "<factory_role");
+  });
+
+  it("lists the role's skills and where they are, after its body", () => {
+    const instructions = buildRuntimeInstructions({
+      harness: "Claude",
+      factoryRole: {
+        factoryId: "factory:project-1:triage",
+        role: "implement",
+        body: "You implement one task.\n",
+        skills: [
+          { name: "implement", description: "Takes one task to a commit." },
+          { name: "house-style", description: "" },
+        ],
+      },
+    });
+
+    assert.isTrue(
+      instructions.endsWith(
+        `<factory_role factory="factory:project-1:triage" role="implement">
+You implement one task.
+
+Your skills are in .agents/skills/<name>/SKILL.md under your working directory. Read each one before you start, and follow it:
+- implement: Takes one task to a commit.
+- house-style
+</factory_role>`,
+      ),
+    );
   });
 
   it("links PRs the agent creates, takes over, or pushes to, and no others", () => {
