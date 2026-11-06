@@ -45,10 +45,9 @@ no level has is an `unknown_skill` issue. The built-in skills are in
 
 ## Skills in the role's worktree
 
-Claude reads `.claude/skills`, Codex and Antigravity `.agents/skills`, and fx
-`.codex/skills`, so `FactorySkills.materialize` writes each skill
-a thread's role binds to `<cwd>/.agents/skills/<name>/` and links
-`.claude/skills/<name>` and `.codex/skills/<name>` to it. It runs when the
+`FactorySkills.materialize` writes each skill a thread's role binds to
+`<cwd>/.agents/skills/<name>/` and links `<root>/<name>` to it for each root in
+`LINK_ROOTS`, so every provider in the table below finds it. It runs when the
 thread's provider session opens or the thread joins one, before the provider
 reads its skills, so an edited skill applies from the thread's next session.
 
@@ -62,6 +61,23 @@ reads its skills, so an edited skill applies from the thread's next session.
   skipped, and so is a path that something other than a link already holds.
 - Nothing removes a skill. One the role stops binding stays until the worktree
   goes.
+
+| Provider     | Project roots it reads                                               | Decision                                             | Verified by                                                                                         |
+| ------------ | -------------------------------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Claude       | `.claude/skills`                                                     | Linked through `.claude/skills`                      | `ClaudeSkills.ts`                                                                                   |
+| Codex        | `.agents/skills`, `.codex/skills`                                    | Already found                                        | `codex app-server` `skills/list` (0.166.0) lists a linked skill once                                |
+| Cursor       | `.cursor`, `.agents`, `.codex`, `.claude` `/skills`                  | Already found                                        | `provider-cursor/src/server/skills.ts`                                                              |
+| fx           | `.fx/skills`, `skills`, `.agents/skills`, and others                 | Already found                                        | `provider-fx/src/server/skills.ts`                                                                  |
+| Antigravity  | `.gemini/skills`, `.agents/skills`, `.agent/skills`                  | Already found                                        | `AntigravitySkills.ts`                                                                              |
+| Grok         | `.grok/skills`, up to the repo root                                  | Linked through `.grok/skills`                        | [xAI docs](https://docs.x.ai/build/features/skills-plugins-marketplaces). CLI not run               |
+| OpenCode     | `.opencode`, `.claude`, `.agents` `/skills`, up to the worktree root | Already found                                        | [OpenCode docs](https://opencode.ai/docs/skills/). CLI not run                                      |
+| Pi           | `.agents/skills`, up to the repo root                                | Already found                                        | [Pi docs](https://cdn.jsdelivr.net/npm/@earendil-works/pi-coding-agent/docs/skills.md). CLI not run |
+| Kiro         | `.kiro/skills`                                                       | Linked through `.kiro/skills`                        | [Kiro docs](https://kiro.dev/docs/skills/). CLI not run                                             |
+| Muse         | Unknown. A third-party post says `.agents/skills`                    | Not supported. The adapter lists no skills           | Adapter code                                                                                        |
+| ACP registry | Whatever the agent advertises as a `$` command                       | Not supported. T3 cannot know where each agent reads | `provider-acp-registry/src/server/probe.ts`                                                         |
+
+To add a provider whose only project root is a plain directory of skill folders,
+add that root to `LINK_ROOTS`.
 
 ## Ownership
 
