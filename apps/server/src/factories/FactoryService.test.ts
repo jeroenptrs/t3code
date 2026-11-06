@@ -645,11 +645,21 @@ const withWorkItems = <A, E>(
     E,
     FactoryService.FactoryService | Orchestrator.OrchestratorV2 | SqlClient.SqlClient
   >,
-  options: { readonly defaultModel?: boolean } = {},
+  options: {
+    readonly defaultModel?: boolean;
+    /** More files in the checkout, relative to the factory directory. */
+    readonly files?: Record<string, string>;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const root = yield* checkout({
       ".t3/factories/triage/factory.json": factoryJson({ name: "triage" }),
+      ...Object.fromEntries(
+        Object.entries(options.files ?? {}).map(([relative, text]) => [
+          `.t3/factories/triage/${relative}`,
+          text,
+        ]),
+      ),
     });
     const backend = {
       ...project("project-backend", "backend", root),
@@ -1017,6 +1027,80 @@ describe("FactoryService work items", () => {
           { threadId: reviewer, role: "review" },
         ]);
       }),
+    ),
+  );
+  it.effect("gives a Foreman's delegated child its role's binding over the call's arguments", () =>
+    withWorkItems(
+      ({ factoryId }) =>
+        Effect.gen(function* () {
+          const factories = yield* FactoryService.FactoryService;
+          const item = yield* factories.createWorkItem({
+            factoryId,
+            title: "Fix",
+            text: "Fix it.",
+          });
+          const foreman = item.foremanThreadId!;
+          const parentRunId = item.foremanRunId!;
+          const prepare = (
+            parentThreadId: ThreadId,
+            delegation: FactoryService.FactoryDelegation,
+          ) => factories.prepareDelegation({ parentThreadId, parentRunId, delegation });
+
+          // The trial: the Foreman passes no isolation, and the implement role binds a worktree.
+          const implement = yield* prepare(foreman, { task: "Fix it.", role: "implementation" });
+          assert.deepStrictEqual(implement, {
+            task: "Fix it.",
+            role: "implementation",
+            isolation: "worktree",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          });
+
+          const review = yield* prepare(foreman, {
+            task: "Review it.",
+            role: "review",
+            isolation: "worktree",
+            runtimeMode: "approval-required",
+            target: { providerInstanceId: ProviderInstanceId.make("claude"), model: "haiku" },
+          });
+          assert.deepStrictEqual(review, {
+            task: "Review it.",
+            role: "review",
+            isolation: "shared",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            target: { providerInstanceId: codex, model: "gpt-6", options: [] },
+          });
+
+          // A role with no binding, and a thread no factory owns, keep the call as it is.
+          const research = { task: "Look around.", role: "research", isolation: "shared" } as const;
+          assert.deepStrictEqual(yield* prepare(foreman, research), research);
+          const unowned = { task: "Fix it.", role: "implementation" } as const;
+          assert.deepStrictEqual(yield* prepare(otherThread, unowned), unowned);
+
+          const logged = (yield* factories.readWorkItem(item.id)).transitions;
+          assert.deepStrictEqual(
+            logged.map(({ from, to, actor }) => ({ from, to, actor })),
+            [
+              { from: "new", to: "new", actor: { kind: "server" } },
+              { from: "new", to: "new", actor: { kind: "server" } },
+            ],
+          );
+          assert.strictEqual(
+            logged[0]!.note,
+            "Applied the implement role's binding to a delegated task: isolation worktree, runtime mode full-access, interaction mode default.",
+          );
+          assert.strictEqual(
+            logged[1]!.note,
+            "Applied the review role's binding to a delegated task: isolation shared, runtime mode full-access, interaction mode default, model codex/gpt-6. It replaced the call's isolation worktree, runtime mode approval-required, model claude/haiku.",
+          );
+        }),
+      {
+        files: {
+          "roles/review.md":
+            "---\nisolation: shared\nmodel:\n  instanceId: codex\n  model: gpt-6\n---\n",
+        },
+      },
     ),
   );
 });
