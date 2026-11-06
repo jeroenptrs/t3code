@@ -8,7 +8,14 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildFactorySaveInput, factoryDraft, factoryDraftChanged } from "./FactoryPage.logic";
+import {
+  buildFactorySaveInput,
+  factoryDraft,
+  factoryDraftChanged,
+  skillDeleteMessage,
+  skillTemplate,
+  withSkillName,
+} from "./FactoryPage.logic";
 
 const projectId = ProjectId.make("project-api");
 const taskId = ScheduledTaskId.make("task-nightly");
@@ -54,10 +61,10 @@ const factory: Factory = {
       binding: { ...builtinRole("review").binding, model, skills: ["review-checklist"] },
       body: "Review against the task.",
       bodySource: "file",
-      skills: [{ name: "review-checklist", source: "file" }],
+      skills: [{ name: "review-checklist", source: "factory", description: "", replaces: null }],
     },
   ],
-  skills: [{ name: "review-checklist", source: "file" }],
+  skills: [{ name: "review-checklist", source: "factory", description: "", replaces: null }],
   issues: [],
   scheduledTaskIds: [taskId],
   threads: [],
@@ -122,5 +129,28 @@ describe("buildFactorySaveInput", () => {
       roles: { ...draft.roles, implement: { ...draft.roles.implement, useBuiltin: true } },
     };
     expect(buildFactorySaveInput(factory, edited).roles).toBeUndefined();
+  });
+});
+
+describe("withSkillName", () => {
+  it.each([
+    [skillTemplate("lint"), "run-checks", skillTemplate("run-checks")],
+    // Only the frontmatter's name changes, not a line in the instructions.
+    ["---\nname: a\n---\nname: keep\n", "b", "---\nname: b\n---\nname: keep\n"],
+    ["---\ndescription: x\n---\nname: keep\n", "b", "---\ndescription: x\n---\nname: keep\n"],
+    ["No frontmatter.\nname: keep\n", "b", "No frontmatter.\nname: keep\n"],
+  ])("sets the frontmatter name of %j to %s", (body, name, expected) => {
+    expect(withSkillName(body, name)).toBe(expected);
+  });
+});
+
+describe("skillDeleteMessage", () => {
+  it.each([
+    ["factory", "home", "The home skill of that name applies instead."],
+    ["home", "builtin", "The built-in skill of that name applies instead."],
+    ["factory", null, "Roles that bind lint then go without it."],
+  ] as const)("names what applies after a %s skill over %s goes", (source, replaces, after) => {
+    const message = skillDeleteMessage({ name: "lint", source, description: "", replaces });
+    expect(message.split("\n")[1]).toBe(after);
   });
 });

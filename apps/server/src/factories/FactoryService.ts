@@ -74,7 +74,6 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import {
-  availableSkills,
   bindingIssues,
   defaultRolePath,
   effectiveBinding,
@@ -82,14 +81,13 @@ import {
   FACTORY_FILE_NAME,
   parseFactoryJson,
   parseRoleFile,
-  readFactorySkillNames,
   renderFactoryJson,
   renderRoleFile,
   resolveProjects,
   resolveRoleSkills,
-  SKILL_FILE_NAME,
-  SKILLS_DIRECTORY,
+  toFactorySkill,
 } from "./factoryFiles.ts";
+import * as FactorySkillStore from "./FactorySkillStore.ts";
 import { builtinRoles } from "./roles/index.ts";
 import type { freshContext } from "./upstream/index.ts";
 import {
@@ -297,6 +295,7 @@ const make = Effect.gen(function* () {
   const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const skillStore = yield* FactorySkillStore.FactorySkillStore;
   // One launch per factory at a time. The ledger lock serializes a factory's stage changes with
   // its dispatches, so two items that end together cannot both send the next one.
   const foremanLocks = yield* KeyedLock.make<FactoryId>();
@@ -382,7 +381,7 @@ const make = Effect.gen(function* () {
     const text = yield* readText(path.join(directory, FACTORY_FILE_NAME));
     if (Option.isNone(text)) return Option.none<LoadedFactory>();
     const { definition, issues } = parseFactoryJson(name, text.value);
-    const skills = availableSkills(yield* readFactorySkillNames(fileSystem, path, directory));
+    const skills = (yield* skillStore.resolve(directory)).map(toFactorySkill);
     const roles = yield* Effect.forEach(ROLE_NAMES, (role) =>
       loadRole(directory, role, definition.roles[role], providers, skills),
     );
@@ -656,28 +655,9 @@ const make = Effect.gen(function* () {
 
     const directory = factoryDirectory(project, input.definition.name);
     const issues: Array<FactoryIssue> = [];
-    const skillWrites: Array<{ readonly name: string; readonly text: string }> = [];
-    const skillRemovals: Array<string> = [];
-    for (const { name, file } of input.skills ?? []) {
-      if (skillWrites.some((write) => write.name === name) || skillRemovals.includes(name)) {
-        issues.push({
-          code: "invalid_definition",
-          role: null,
-          field: "skills",
-          message: `The skill ${name} is changed twice in this save.`,
-        });
-        continue;
-      }
-      if (file === null) skillRemovals.push(name);
-      else skillWrites.push({ name, text: file.body });
-    }
-    // Roles this save changes may name the skills it writes, and not the ones it deletes.
-    const savedSkills = availableSkills([
-      ...(yield* readFactorySkillNames(fileSystem, path, directory).pipe(
-        Effect.catch(unavailable("read")),
-      )).filter((name) => !skillRemovals.includes(name)),
-      ...skillWrites.map((write) => write.name),
-    ]);
+    const savedSkills = yield* skillStore
+      .resolve(directory)
+      .pipe(Effect.catch(unavailable("read")));
 
     const rolePaths: { [Role in FactoryRoleName]?: FactoryRolePath } = {
       ...input.definition.roles,
@@ -731,21 +711,6 @@ const make = Effect.gen(function* () {
 
     yield* Effect.gen(function* () {
       yield* fileSystem.makeDirectory(directory, { recursive: true });
-      for (const { name, text } of skillWrites) {
-        const skillDirectory = path.join(directory, SKILLS_DIRECTORY, name);
-        yield* fileSystem.makeDirectory(skillDirectory, { recursive: true });
-        yield* fileSystem.writeFileString(path.join(skillDirectory, SKILL_FILE_NAME), text);
-      }
-      for (const name of skillRemovals) {
-        yield* fileSystem
-          .remove(path.join(directory, SKILLS_DIRECTORY, name, SKILL_FILE_NAME))
-          .pipe(
-            Effect.catchTags({
-              PlatformError: (error) =>
-                error.reason._tag === "NotFound" ? Effect.void : Effect.fail(error),
-            }),
-          );
-      }
       for (const { rolePath, text } of writes) {
         const target = path.join(directory, rolePath);
         yield* fileSystem.makeDirectory(path.dirname(target), { recursive: true });
