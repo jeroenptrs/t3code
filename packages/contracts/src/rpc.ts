@@ -155,6 +155,15 @@ import {
   FactoryListResult,
   FactoryReadInput,
   FactorySaveInput,
+  FactorySkillDeleteInput,
+  FactorySkillDeleteResult,
+  FactorySkillError,
+  FactorySkillListInput,
+  FactorySkillListResult,
+  FactorySkillReadInput,
+  FactorySkillReadResult,
+  FactorySkillSaveInput,
+  FactorySkillSaveResult,
   WorkItem,
   WorkItemAnswerGateInput,
   WorkItemCreateInput,
@@ -824,6 +833,10 @@ export const WS_METHODS = {
   factoriesList: "factories.list",
   factoriesRead: "factories.read",
   factoriesSave: "factories.save",
+  factoriesSkillsList: "factories.skills.list",
+  factoriesSkillsRead: "factories.skills.read",
+  factoriesSkillsSave: "factories.skills.save",
+  factoriesSkillsDelete: "factories.skills.delete",
   factoriesWorkItemsList: "factories.workItems.list",
   factoriesWorkItemsRead: "factories.workItems.read",
   factoriesWorkItemsCreate: "factories.workItems.create",
@@ -1849,6 +1862,32 @@ const WsFactoriesSaveRpc = Rpc.make(WS_METHODS.factoriesSave, {
   error: FactoriesRpcError,
 });
 
+const FactorySkillsRpcError = Schema.Union([FactorySkillError, EnvironmentAuthorizationError]);
+
+const WsFactoriesSkillsListRpc = Rpc.make(WS_METHODS.factoriesSkillsList, {
+  payload: FactorySkillListInput,
+  success: FactorySkillListResult,
+  error: FactorySkillsRpcError,
+});
+
+const WsFactoriesSkillsReadRpc = Rpc.make(WS_METHODS.factoriesSkillsRead, {
+  payload: FactorySkillReadInput,
+  success: FactorySkillReadResult,
+  error: FactorySkillsRpcError,
+});
+
+const WsFactoriesSkillsSaveRpc = Rpc.make(WS_METHODS.factoriesSkillsSave, {
+  payload: FactorySkillSaveInput,
+  success: FactorySkillSaveResult,
+  error: FactorySkillsRpcError,
+});
+
+const WsFactoriesSkillsDeleteRpc = Rpc.make(WS_METHODS.factoriesSkillsDelete, {
+  payload: FactorySkillDeleteInput,
+  success: FactorySkillDeleteResult,
+  error: FactorySkillsRpcError,
+});
+
 const WorkItemsRpcError = Schema.Union([
   FactoryError,
   WorkItemError,
@@ -2854,6 +2893,10 @@ export const WsFactoriesRpcGroup = RpcGroup.make(
   WsFactoriesListRpc,
   WsFactoriesReadRpc,
   WsFactoriesSaveRpc,
+  WsFactoriesSkillsListRpc,
+  WsFactoriesSkillsReadRpc,
+  WsFactoriesSkillsSaveRpc,
+  WsFactoriesSkillsDeleteRpc,
   WsFactoriesWorkItemsListRpc,
   WsFactoriesWorkItemsReadRpc,
   WsFactoriesWorkItemsCreateRpc,
