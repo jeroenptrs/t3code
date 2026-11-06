@@ -67,6 +67,7 @@ describe("workItemFailureMessage", () => {
 
 describe("workItemStageBadgeVariant", () => {
   it.each([
+    ["queued", "outline"],
     ["new", "default"],
     ["implement", "default"],
     ["review", "default"],
