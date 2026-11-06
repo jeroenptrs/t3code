@@ -77,10 +77,12 @@ the item's log.
   preceded its parent's run.
 - A factory has one active item: sent, and not yet `done`, `failed`, or
   `dropped`. A `waiting` item stays active, because the gate answer continues
-  its session. A new item waits at `new` with a null `dispatched_at` (fork
-  migration 020) until the active one ends, so no child wakes into a later
-  item's session. The stage change that ends an item sends the oldest queued
-  one under the same per-factory lock. An item the server cannot send fails,
+  its session. A new item created while one is active or queued starts at `queued`
+  (fork migration 021 moved older waiting rows there), so no child wakes into
+  a later item's session. The stage change that ends an item, and a creation
+  that finds no active item, move the oldest queued one to `new` and send it,
+  under the same per-factory lock. Only the
+  server moves an item out of `queued`. An item the server cannot send fails,
   and the next one is tried.
   In M2 nothing sends a queued item when the server starts. The next item
   created or ended does.
