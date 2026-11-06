@@ -95,7 +95,15 @@ function NewWorkItemDialog(props: {
       return;
     }
     props.onClose();
-    toastManager.add({ type: "success", title: "Work item sent to the Foreman" });
+    toastManager.add(
+      result.value.stage === "queued"
+        ? {
+            type: "success",
+            title: "Work item queued",
+            description: "It goes to the Foreman when the active item ends.",
+          }
+        : { type: "success", title: "Work item sent to the Foreman" },
+    );
   };
 
   return (
@@ -117,6 +125,7 @@ function NewWorkItemDialog(props: {
             <DialogTitle>New work item</DialogTitle>
             <DialogDescription>
               The Foreman gets the request as a new message and routes it to implement and review.
+              While another item is active, this one waits in the queue.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
