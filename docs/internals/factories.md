@@ -12,7 +12,11 @@ state and never a prompt. The design and milestones are in
   factory.json        name, projects, triggers, roles
   roles/<role>.md     YAML frontmatter with bindings, then the instructions
   skills/<skill>/     SKILL.md and its supporting files, in the Agent Skills format
+
+<T3 home>/skills/<skill>/   home skills, shared by every project on this server
 ```
+
+T3 home is the server's base directory, not its userdata state directory.
 
 - The directory names the factory. A `name` in `factory.json` that differs is
   an issue, and the directory's name wins.
@@ -20,7 +24,10 @@ state and never a prompt. The design and milestones are in
   different factory, and its `fork_factory_threads` rows stay with the old id.
 - `factory.json` lists the file for each role that has one. A role it leaves
   out uses `roles/<role>.md` when that file exists, else the built-in default.
-- A save writes skill and role files first and `factory.json` last.
+- A save writes role files first and `factory.json` last. Skills are saved and
+  deleted one at a time through `FactorySkillStore`, which refuses a SKILL.md
+  whose frontmatter `name` is not the skill's directory, since providers load a
+  skill by that name.
 
 ## Precedence
 
@@ -30,9 +37,10 @@ keeps the built-in value. The body is all or nothing: a role file with a
 non-blank body replaces the built-in instructions whole. The built-ins are in
 `apps/server/src/factories/roles/`.
 
-Skills resolve the same way, by name. A `skills/<name>/` with a `SKILL.md`
-replaces the built-in skill of that name whole, and a name a role binds that is
-neither is an `unknown_skill` issue. The built-in skills are in
+Skills resolve by name across three levels, highest first: the factory's
+`skills/<name>/`, then T3 home's, then the built-in skill. A level that has a
+`SKILL.md` for the name replaces the lower ones whole. A name a role binds that
+no level has is an `unknown_skill` issue. The built-in skills are in
 `apps/server/src/factories/skills/`.
 
 ## Skills in the role's worktree
@@ -44,6 +52,8 @@ a thread's role binds to `<cwd>/.agents/skills/<name>/` and links
 thread's provider session opens or the thread joins one, before the provider
 reads its skills, so an edited skill applies from the thread's next session.
 
+- A home skill's directory is copied the same way as a factory skill's,
+  supporting files included.
 - It writes a file only when its content differs.
 - It adds each path it owns to the checkout's exclude file, from
   `git rev-parse --git-path info/exclude`, which linked worktrees share. The
