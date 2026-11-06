@@ -239,3 +239,45 @@ checked:
   no stage skills yet, the Haiku Foreman held a trivial item at a gate to ask
   whether it could mark it done. With the stage skills in place it routed both
   items without asking.
+
+One more work item ran on 2026-11-06, after M5: a one-line fix with a test
+in the same kind of throwaway project, every role on Claude Haiku. The
+implement role bound a second skill, `commit-style`, saved at the home level
+through `t3_factory_skill_save`, which asks for a `Trial-Skill:` trailer on
+every commit. The request was two sentences and named the branch; the
+Foreman's task carried the goal, the base commit, and the done criteria. The
+item went new, implement, review, implement, review, and stopped at a gate.
+
+- **Children read their skills.** The first implementer ran `cat` on both
+  `SKILL.md` files before anything else, and its commit carried the
+  `Trial-Skill` trailer. Both reviewers read the review skill first. The
+  provider event log is where this shows; the ledger still does not record
+  it.
+- **A thinner task is not yet a thin task.** With the new Foreman
+  instruction, the task still listed six procedural steps, including how to
+  run the checks and what to put in the commit message. A Haiku Foreman
+  repeats the procedure it was told not to repeat. Once more and the task
+  format becomes a template the server fills, with the Foreman writing only
+  the goal and the done criteria.
+- **The task's path beat the role's isolation.** The server gave the child a
+  worktree, but the task named the project checkout, so the child worked
+  there and left it on the feature branch. The rework child then found the
+  branch checked out elsewhere and committed on the worktree's own branch.
+  The M3 note on isolation stands, in a new form: the task must not name a
+  checkout, and the child's working directory should be the one the server
+  prepared. A server rule that strips or overrides a path in a Foreman's
+  task is the next step if it happens again.
+- **A skill bound to one role confuses the next.** The reviewer listed the
+  `Trial-Skill` trailer as an unexplained extra line, because the review role
+  does not bind `commit-style`. A convention skill belongs on every role that
+  sees its output, or the Foreman's task should say which skills the
+  implementer followed.
+- **The rework dropped the convention.** The second implementer's commit has
+  no `Trial-Skill` trailer. Its task was the review's findings, and nothing
+  in it pointed back at the skills, so the child fixed the code and wrote an
+  ordinary message. The skills block in the role instructions is sent on
+  every session, so the child had it; the task's focus on the findings won.
+- **A gate for an open decision is right.** The request said to drop every
+  character that is not a letter, digit, or whitespace. Review pointed out
+  that this drops hyphens, and the Foreman held the item with three options
+  instead of choosing. Earlier trials had no gates; this one earned it.
