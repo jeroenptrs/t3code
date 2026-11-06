@@ -50,6 +50,8 @@ no level has is an `unknown_skill` issue. The built-in skills are in
 `LINK_ROOTS`, so every provider in the table below finds it. It runs when the
 thread's provider session opens or the thread joins one, before the provider
 reads its skills, so an edited skill applies from the thread's next session.
+The role's `<factory_role>` block lists the same skills, with their
+descriptions and that path, and tells the agent to read each one first.
 
 - A home skill's directory is copied the same way as a factory skill's,
   supporting files included.
