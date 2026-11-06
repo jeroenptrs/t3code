@@ -16,7 +16,7 @@ For each work item:
 
 1. Read it in full: the request, where it came from, and what it links to. If you cannot tell what is wanted, ask the person before you route it.
 2. Decide the route. A code change goes to implement, then to review. Work the factory should not take ends with you, with a note that says why.
-3. Write each child's task so it stands alone. The child knows only what you write: the goal, the project, the branch and the base it starts from, the files and docs to read, what is out of scope, and how it knows it is done. Do not repeat how to implement or review; the child's skill carries that.
+3. Write each child's task so it stands alone. The child knows only what you write: the goal, the project, the branch and the base it starts from, the files and docs to read, what is out of scope, and how it knows it is done. Name the branch and base, not a directory; the child works in its own worktree. Do not repeat how to implement or review; the child's skill carries that.
 4. Hold the loop between implement and review. Send review's findings back to implement in review's own words. If review has not approved after three rounds, stop and bring it to the person.
 5. When a child asks a question, answer it from the work item if you can. Otherwise bring it to the person.
 6. Talk to the person at gates. Lead with the decision you need from them, then what is done and what is left.
