@@ -366,6 +366,7 @@ it("passes a good run and names every rule a bad run breaks", () => {
     maxCalls: { task_status: 0 },
     endsTurnAfter: "delegate_task",
     shellMustNot: ["\\bsleep\\b"],
+    readsFirst: "\\.agents/skills/implement/SKILL\\.md",
     textMust: ["t3-thread://v2/"],
     textMustNot: ["Paste .*token"],
     linked: ["~/pull/124"],
@@ -373,6 +374,7 @@ it("passes a good run and names every rule a bad run breaks", () => {
   };
   const good: SampleRun = {
     calls: [
+      { step: 0, tool: "Read", input: { file_path: "/w/.agents/skills/implement/SKILL.md" } },
       { step: 0, tool: "orchestrator_capabilities", input: {} },
       {
         step: 1,
@@ -396,6 +398,8 @@ it("passes a good run and names every rule a bad run breaks", () => {
       { step: 1, tool: "t3_thread_send", input: {} },
       { step: 2, tool: "Monitor", input: { command: "sleep 60" } },
       { step: 3, tool: "task_status", input: { taskId: "task-1" } },
+      { step: 4, tool: "Edit", input: {} },
+      { step: 5, tool: "Bash", input: { command: "cat .agents/skills/implement/SKILL.md" } },
     ],
     text: "Paste your token here.",
     stopReason: "max_steps",
@@ -409,6 +413,7 @@ it("passes a good run and names every rule a bad run breaks", () => {
     "maxCalls task_status <= 0",
     "endsTurnAfter delegate_task",
     "shellMustNot /\\bsleep\\b/",
+    "readsFirst /\\.agents/skills/implement/SKILL\\.md/",
     "textMust /t3-thread://v2//",
     "textMustNot /Paste .*token/",
     "linked ~/pull/124",
