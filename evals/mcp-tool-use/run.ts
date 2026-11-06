@@ -17,6 +17,7 @@ import {
   ComposerContextRecord,
   DeviceOperationError,
   DeviceSummary,
+  FactoryRoleName,
   OrchestratorMcpTaskRole,
   PreviewAutomationError,
   PreviewAutomationUnavailableError,
@@ -58,6 +59,8 @@ import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { FactoriesToolkit } from "../../apps/server/src/mcp/toolkits/factories/tools.ts";
+import { builtinSkillEntries } from "../../apps/server/src/factories/factoryFiles.ts";
+import { builtinRoles } from "../../apps/server/src/factories/roles/index.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
 import { IssuesToolkit } from "../../apps/server/src/mcp/toolkits/issues/tools.ts";
 import { MessageToolkit } from "../../apps/server/src/mcp/toolkits/message/tools.ts";
@@ -243,6 +246,11 @@ const McpToolUseExpect = Schema.Struct({
   shellMustNot: Schema.optional(Schema.Array(Schema.String)),
   /** Regexes that some shell command must match, each. */
   shellMust: Schema.optional(Schema.Array(Schema.String)),
+  /**
+   * Regex on a file the agent must read, with Read or a shell command, before its first Edit or
+   * Write.
+   */
+  readsFirst: Schema.optional(Schema.String),
   /** Case-sensitive regexes on the agent's visible text. */
   textMust: Schema.optional(Schema.Array(Schema.String)),
   textMustNot: Schema.optional(Schema.Array(Schema.String)),
@@ -345,6 +353,12 @@ export const McpToolUseCase = Schema.Struct({
     forge: Schema.optional(Schema.Boolean),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
+    /**
+     * The thread runs as this built-in factory role: T3's text gets the role's `<factory_role>`
+     * block, built from source with its bound built-in skills, and the shell simulator knows that
+     * each skill's SKILL.md is in `.agents/skills/<name>/` under the working directory.
+     */
+    factoryRole: Schema.optional(FactoryRoleName),
     context: Schema.optional(Schema.String),
     priorTurns: Schema.optional(
       Schema.Array(
@@ -591,7 +605,12 @@ const visibleT3Tools = (options: {
  * `browser` say whether the thread holds the `device` and `preview` capabilities, as agent device
  * and browser access decide.
  */
-const claudeQueryOptions = (model: Model, device = true, browser = true) => {
+const claudeQueryOptions = (
+  model: Model,
+  device = true,
+  browser = true,
+  role?: FactoryRoleName,
+) => {
   // Refs whose text follows a capability read its flag; older ones ignore it.
   const input: Parameters<typeof makeClaudeQueryOptions>[0] & {
     readonly deviceToolsAvailable?: boolean;
@@ -604,13 +623,31 @@ const claudeQueryOptions = (model: Model, device = true, browser = true) => {
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
     deviceToolsAvailable: device,
     browserToolsAvailable: browser,
+    ...(role === undefined ? {} : { factoryRole: factoryRoleInstructions(role) }),
   };
   return makeClaudeQueryOptions(input);
 };
 
+/** The instructions T3 gives a thread of the built-in `role`, with its built-in skills. */
+const factoryRoleInstructions = (role: FactoryRoleName) => ({
+  factoryId: "factory:project-app:acme",
+  role,
+  body: builtinRoles[role].body,
+  skills: builtinRoles[role].binding.skills.flatMap((name) =>
+    builtinSkillEntries.flatMap((skill) =>
+      skill.name === name && skill.source === "builtin" ? [skill] : [],
+    ),
+  ),
+});
+
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
-export const t3SystemAppend = (model: Model, device = true, browser = true) => {
-  const { systemPrompt } = claudeQueryOptions(model, device, browser);
+export const t3SystemAppend = (
+  model: Model,
+  device = true,
+  browser = true,
+  role?: FactoryRoleName,
+) => {
+  const { systemPrompt } = claudeQueryOptions(model, device, browser, role);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
@@ -701,6 +738,7 @@ export const buildBase = (
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
     readonly arm?: Arm;
+    readonly factoryRole?: FactoryRoleName | undefined;
   },
 ) => {
   const t3 = visibleT3Tools(options);
@@ -726,7 +764,10 @@ export const buildBase = (
   const { model } = options;
   const append = options.nativeSubagent
     ? ""
-    : forArm(t3SystemAppend(model, options.deviceAccess, options.browserAccess), options.arm);
+    : forArm(
+        t3SystemAppend(model, options.deviceAccess, options.browserAccess, options.factoryRole),
+        options.arm,
+      );
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -797,6 +838,7 @@ const buildCodexBase = (
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
     readonly arm?: Arm;
+    readonly factoryRole?: FactoryRoleName | undefined;
   },
 ): Base => {
   const t3 = visibleT3Tools(options);
@@ -831,7 +873,13 @@ const buildCodexBase = (
     return [JSON.parse(clean(JSON.stringify(item))) as Block];
   });
   const context = buildCodexAdditionalContext(
-    { model: options.model, reasoningEffort: effort },
+    {
+      model: options.model,
+      reasoningEffort: effort,
+      ...(options.factoryRole === undefined
+        ? {}
+        : { factoryRole: factoryRoleInstructions(options.factoryRole) }),
+    },
     { browser: options.browserAccess ?? true, device: options.deviceAccess ?? true },
   );
   input.push(
@@ -1974,6 +2022,12 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
           `The agent made these changes through T3's tools; gh, git fetch and the host show them: ${sample.forgeChanges.join("; ")}`,
         ]
       : []),
+    ...(testCase.setup.factoryRole === undefined
+      ? []
+      : factoryRoleInstructions(testCase.setup.factoryRole).skills.map(
+          (skill) =>
+            `T3 wrote ${skill.name}'s skill to .agents/skills/${skill.name}/SKILL.md under the working directory, with exactly this content: ${skill.text}`,
+        )),
     ...(context ? [`The agent was told: ${context}`] : []),
     `The agent's task: ${testCase.prompt}`,
     ...namedPathsLine(testCase),
@@ -2549,6 +2603,17 @@ export const gradeSample = (
       `shellMust /${p}/`,
       shell.some((c) => test(p, c) || test(p, argvForm(c))),
     );
+  if (expect.readsFirst !== undefined) {
+    const pattern = expect.readsFirst;
+    const read = calls.findIndex(
+      (call) =>
+        isRecord(call.input) &&
+        ((call.tool === "Read" && test(pattern, valueText(call.input.file_path))) ||
+          (typeof call.input.command === "string" && test(pattern, call.input.command))),
+    );
+    const change = calls.findIndex((call) => call.tool === "Edit" || call.tool === "Write");
+    add(`readsFirst /${pattern}/`, read !== -1 && (change === -1 || read < change));
+  }
   for (const p of expect.textMust ?? []) add(`textMust /${p}/`, test(p, run.text));
   for (const p of expect.textMustNot ?? []) add(`textMustNot /${p}/`, !test(p, run.text));
   for (const p of expect.finalTextMust ?? [])
@@ -3219,6 +3284,7 @@ const main = Effect.gen(function* () {
     browserAccess: boolean,
     links: boolean,
     forge: boolean,
+    factoryRole: FactoryRoleName | undefined,
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -3233,6 +3299,7 @@ const main = Effect.gen(function* () {
               deviceAccess,
               browserAccess,
               arm: flags.arm,
+              factoryRole,
             }),
           ),
         )
@@ -3248,6 +3315,7 @@ const main = Effect.gen(function* () {
               deviceAccess,
               browserAccess,
               arm: flags.arm,
+              factoryRole,
             });
             return role === "native-subagent"
               ? Effect.promise(() =>
@@ -3258,18 +3326,19 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.forge !== false}`;
-  const base = yield* buildFor("top", true, true, false, true);
-  const bases = new Map<string, Base>([["top:true:true:false:true", base]]);
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.forge !== false}:${setup.factoryRole ?? ""}`;
+  const base = yield* buildFor("top", true, true, false, true, undefined);
+  const bases = new Map<string, Base>([["top:true:true:false:true:", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", device, browser, links, forge] = key.split(":") as [
+    const [role = "top", device, browser, links, forge, factoryRole] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
       string,
       string,
       string,
       string,
+      FactoryRoleName | "",
     ];
     bases.set(
       key,
@@ -3279,6 +3348,7 @@ const main = Effect.gen(function* () {
         browser === "true",
         links === "true",
         forge === "true",
+        factoryRole || undefined,
       ),
     );
   }
