@@ -6,6 +6,9 @@ import type {
   FactoryRoleChange,
   FactoryRoleName,
   FactorySaveInput,
+  FactorySkill,
+  FactorySkillLevel,
+  FactorySkillSource,
   ScheduledTaskId,
 } from "@t3tools/contracts";
 
@@ -133,4 +136,43 @@ export function issuesFor(
   field: string | null,
 ): ReadonlyArray<FactoryIssue> {
   return issues.filter((issue) => issue.role === role && issue.field === field);
+}
+
+export const SKILL_SOURCE_LABEL: Readonly<Record<FactorySkillSource, string>> = {
+  builtin: "Built-in",
+  home: "Home",
+  factory: "This factory",
+};
+
+/** A new SKILL.md: the frontmatter a provider loads it by, then room for the instructions. */
+export const skillTemplate = (name: string) => `---\nname: ${name}\ndescription: \n---\n\n`;
+
+const SKILL_FRONTMATTER = /^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/;
+
+/** `body` with its frontmatter `name` set to `name`; unchanged when the frontmatter has none. */
+export function withSkillName(body: string, name: string): string {
+  const frontmatter = SKILL_FRONTMATTER.exec(body)?.[0];
+  if (frontmatter === undefined) return body;
+  return frontmatter.replace(/^name:[^\r\n]*/m, `name: ${name}`) + body.slice(frontmatter.length);
+}
+
+/**
+ * The levels an edit of `skill` can save at, the default first. A built-in or home skill saves as
+ * a copy in this factory unless the person picks home, so editing never lands somewhere unseen.
+ */
+export function skillSaveLevels(source: FactorySkillSource): ReadonlyArray<FactorySkillLevel> {
+  return source === "factory" ? ["factory"] : ["factory", "home"];
+}
+
+/** What the delete confirmation asks, with what a role that binds the skill gets afterwards. */
+export function skillDeleteMessage(skill: FactorySkill): string {
+  const question =
+    skill.source === "home"
+      ? `Delete the home skill ${skill.name}? Every factory on this server that has no ${skill.name} of its own loses it.`
+      : `Delete this factory's skill ${skill.name}?`;
+  const after =
+    skill.replaces === null
+      ? `Roles that bind ${skill.name} then go without it.`
+      : `The ${skill.replaces === "home" ? "home" : "built-in"} skill of that name applies instead.`;
+  return `${question}\n${after}`;
 }

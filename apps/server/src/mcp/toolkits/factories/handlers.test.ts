@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as FactoryService from "../../../factories/FactoryService.ts";
+import * as FactorySkillStore from "../../../factories/FactorySkillStore.ts";
 import { builtinRoles } from "../../../factories/roles/index.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
@@ -134,6 +135,15 @@ const call = (
     advanceWorkItem: (threadId) => foremanOnly(threadId, "advanceWorkItem", calls),
     gateWorkItem: (threadId) => foremanOnly(threadId, "gateWorkItem", calls),
   });
+  const skillStore = Layer.mock(FactorySkillStore.FactorySkillStore)({
+    list: () => Effect.sync(() => calls.push("skills.list")).pipe(Effect.as({ skills: [] })),
+    save: ({ name, source }) =>
+      Effect.sync(() => calls.push("skills.save")).pipe(
+        Effect.as({ skill: { name, source, description: "", replaces: null } }),
+      ),
+    delete: ({ name, source }) =>
+      Effect.sync(() => calls.push("skills.delete")).pipe(Effect.as({ name, source })),
+  });
   return McpServer.McpServer.pipe(
     Effect.flatMap((server) => server.callTool({ name: tool, arguments: args })),
     Effect.flatMap(({ content }) =>
@@ -147,7 +157,7 @@ const call = (
     Effect.provide(
       McpHttpServer.toolkitRegistration(FactoriesToolkit, FactoriesHandlers.layer).pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-        Layer.provide(service),
+        Layer.provide(Layer.merge(service, skillStore)),
         Layer.provideMerge(
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getThreadShell: (threadId) => Effect.succeed(shells.get(threadId) ?? null),
@@ -159,6 +169,12 @@ const call = (
 };
 
 const save = { projectId: "project-1", definition: factory.definition };
+const skillSave = {
+  name: "run-checks",
+  source: "home",
+  file: { body: "---\nname: run-checks\n---\n" },
+};
+const skillDelete = { name: "run-checks", source: "home", file: null };
 const create = { factoryId: factory.id, title: "Fix the login bug", text: "SSO fails." };
 const advance = { workItemId: workItem.id, stage: "implement" };
 const gate = { workItemId: workItem.id, question: "Ship it?", resumeStage: "done" };
@@ -169,6 +185,16 @@ it.effect.each([
   ["t3_factory_save", threadCaller(supervisedThreadId), save, ["capability_denied"]],
   ["t3_factory_save", readOnlyClient, save, ["capability_denied"]],
   ["t3_factory_save", threadCaller(fullAccessThreadId), save, ["ran", "save"]],
+  ["t3_factory_skill_list", readOnlyClient, {}, ["ran", "skills.list"]],
+  ["t3_factory_skill_save", threadCaller(supervisedThreadId), skillSave, ["capability_denied"]],
+  ["t3_factory_skill_save", readOnlyClient, skillDelete, ["capability_denied"]],
+  ["t3_factory_skill_save", threadCaller(fullAccessThreadId), skillSave, ["ran", "skills.save"]],
+  [
+    "t3_factory_skill_save",
+    threadCaller(fullAccessThreadId),
+    skillDelete,
+    ["ran", "skills.delete"],
+  ],
   ["t3_work_item_list", threadCaller(supervisedThreadId), {}, ["ran", "listWorkItems"]],
   // The Foreman runs full access, above a supervised caller.
   [
