@@ -35,13 +35,17 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { parseSkillFile } from "./factoryFiles.ts";
 import * as FactoryService from "./FactoryService.ts";
+import * as FactorySkillStore from "./FactorySkillStore.ts";
 import { builtinRoles } from "./roles/index.ts";
+import { builtinSkills } from "./skills/index.ts";
 
 const codex = ProviderInstanceId.make("codex");
 const provider: ServerProvider = {
@@ -139,11 +143,28 @@ interface Fixture {
   readonly projects: ReadonlyArray<ProjectStore.ProjectRow>;
   readonly tasks?: ReadonlyArray<ScheduledTask>;
   readonly shells?: ReadonlyArray<OrchestrationV2ThreadShell>;
+  /** T3 home, for its skills; an empty one when left out. */
+  readonly home?: string;
 }
+
+const layerSkillStore = (home?: string) =>
+  FactorySkillStore.layer.pipe(
+    Layer.provide(
+      Layer.orDie(ServerConfig.layerTest(process.cwd(), home ?? { prefix: "t3-factories-home-" })),
+    ),
+  );
+
+const builtinSkill = (name: string) => ({
+  name,
+  source: "builtin" as const,
+  description: parseSkillFile(builtinSkills[name]!).description,
+  replaces: null,
+});
 
 const layerFor = (fixture: Fixture) =>
   FactoryService.layer.pipe(
     Layer.provideMerge(Layer.orDie(SqlitePersistence.layerMemory)),
+    Layer.provide(layerSkillStore(fixture.home)),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectStore.ProjectStoreV2)({ list: () => Effect.succeed(fixture.projects) }),
@@ -231,18 +252,24 @@ describe("FactoryService", () => {
         body: "Fix the bug.",
         bodySource: "file",
         skills: [
-          { name: "run-checks", source: "file" },
-          { name: "implement", source: "builtin" },
+          { name: "run-checks", source: "factory", description: "", replaces: null },
+          builtinSkill("implement"),
         ],
       });
       assert.strictEqual(review?.binding.runtimeMode, "approval-required");
       assert.strictEqual(review?.body, builtinRoles.review.body);
       assert.strictEqual(review?.bodySource, "builtin");
-      assert.deepStrictEqual(review?.skills, [{ name: "review", source: "file" }]);
+      const factoryReview = {
+        name: "review",
+        source: "factory" as const,
+        description: "",
+        replaces: "builtin" as const,
+      };
+      assert.deepStrictEqual(review?.skills, [factoryReview]);
       assert.deepStrictEqual(factory.skills, [
-        { name: "implement", source: "builtin" },
-        { name: "review", source: "file" },
-        { name: "run-checks", source: "file" },
+        builtinSkill("implement"),
+        factoryReview,
+        { name: "run-checks", source: "factory", description: "", replaces: null },
       ]);
       assert.deepStrictEqual(factory.projects, [
         { name: "backend", projectId: backend.projectId },
@@ -294,67 +321,67 @@ describe("FactoryService", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect(
-    "writes a new factory, reads it back, and removes role and skill files on request",
-    () =>
-      Effect.gen(function* () {
-        const root = yield* checkout({});
-        const backend = project("project-backend", "backend", root);
-        const fileSystem = yield* FileSystem.FileSystem;
-        const save = (input: FactorySaveInput) =>
-          FactoryService.FactoryService.use((factories) => factories.save(input)).pipe(
-            Effect.provide(layerFor({ projects: [backend] })),
-          );
-        const implement: FactoryRoleFile = {
-          binding: {
-            model: { instanceId: codex, model: "gpt-6" },
-            skills: ["run-checks"],
-            tools: ["Read", "Edit"],
-          },
-          body: "Fix the bug the task names.",
-        };
-        const definition = { name: "triage", projects: ["backend"], triggers: [], roles: {} };
-        const skillText =
-          "---\nname: run-checks\ndescription: Runs the checks.\n---\n\nRun them.\n";
-
-        // The role may name the skill the same save writes.
-        const saved = yield* save({
-          projectId: backend.projectId,
-          definition,
-          roles: [{ role: "implement", file: implement }],
-          skills: [{ name: "run-checks", file: { body: skillText } }],
-        });
-        assert.deepStrictEqual(saved.definition.roles, { implement: "roles/implement.md" });
-        assert.deepStrictEqual(saved.roles[1]?.fileBinding, implement.binding);
-        assert.strictEqual(saved.roles[1]?.body, implement.body);
-        assert.deepStrictEqual(saved.roles[1]?.skills, [{ name: "run-checks", source: "file" }]);
-        assert.deepStrictEqual(saved.issues, []);
-        const roleFile = `${root}/.t3/factories/triage/roles/implement.md`;
-        const skillFile = `${root}/.t3/factories/triage/skills/run-checks/SKILL.md`;
-        assert.isTrue(yield* fileSystem.exists(roleFile));
-        assert.strictEqual(yield* fileSystem.readFileString(skillFile), skillText);
-
-        const reset = yield* save({
-          projectId: backend.projectId,
-          definition: saved.definition,
-          roles: [{ role: "implement", file: null }],
-          skills: [{ name: "run-checks", file: null }],
-        });
-        assert.deepStrictEqual(reset.definition.roles, {});
-        assert.strictEqual(reset.roles[1]?.source, "builtin");
-        assert.deepStrictEqual(reset.roles[1]?.skills, [{ name: "implement", source: "builtin" }]);
-        assert.deepStrictEqual(
-          reset.skills.map((skill) => skill.name),
-          ["implement", "review"],
+  it.effect("writes a new factory, reads it back, and removes role files on request", () =>
+    Effect.gen(function* () {
+      const skillText = "---\nname: run-checks\ndescription: Runs the checks.\n---\n\nRun them.\n";
+      const root = yield* checkout({
+        ".t3/factories/triage/skills/run-checks/SKILL.md": skillText,
+      });
+      const backend = project("project-backend", "backend", root);
+      const fileSystem = yield* FileSystem.FileSystem;
+      const save = (input: FactorySaveInput) =>
+        FactoryService.FactoryService.use((factories) => factories.save(input)).pipe(
+          Effect.provide(layerFor({ projects: [backend] })),
         );
-        assert.isFalse(yield* fileSystem.exists(roleFile));
-        assert.isFalse(yield* fileSystem.exists(skillFile));
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      const implement: FactoryRoleFile = {
+        binding: {
+          model: { instanceId: codex, model: "gpt-6" },
+          skills: ["run-checks"],
+          tools: ["Read", "Edit"],
+        },
+        body: "Fix the bug the task names.",
+      };
+      const definition = { name: "triage", projects: ["backend"], triggers: [], roles: {} };
+
+      const saved = yield* save({
+        projectId: backend.projectId,
+        definition,
+        roles: [{ role: "implement", file: implement }],
+      });
+      assert.deepStrictEqual(saved.definition.roles, { implement: "roles/implement.md" });
+      assert.deepStrictEqual(saved.roles[1]?.fileBinding, implement.binding);
+      assert.strictEqual(saved.roles[1]?.body, implement.body);
+      assert.deepStrictEqual(saved.roles[1]?.skills, [
+        {
+          name: "run-checks",
+          source: "factory",
+          description: "Runs the checks.",
+          replaces: null,
+        },
+      ]);
+      assert.deepStrictEqual(saved.issues, []);
+      const roleFile = `${root}/.t3/factories/triage/roles/implement.md`;
+      assert.isTrue(yield* fileSystem.exists(roleFile));
+
+      const reset = yield* save({
+        projectId: backend.projectId,
+        definition: saved.definition,
+        roles: [{ role: "implement", file: null }],
+      });
+      assert.deepStrictEqual(reset.definition.roles, {});
+      assert.strictEqual(reset.roles[1]?.source, "builtin");
+      assert.deepStrictEqual(reset.roles[1]?.skills, [builtinSkill("implement")]);
+      assert.isFalse(yield* fileSystem.exists(roleFile));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("refuses a model or skill the factory does not offer and writes nothing", () =>
     Effect.gen(function* () {
       const root = yield* checkout({});
+      // Only T3 home has run-checks, which is enough.
+      const home = yield* checkout({
+        "skills/run-checks/SKILL.md": "---\nname: run-checks\n---\n",
+      });
       const backend = project("project-backend", "backend", root);
       const fileSystem = yield* FileSystem.FileSystem;
       const error = yield* FactoryService.FactoryService.use((factories) =>
@@ -365,19 +392,22 @@ describe("FactoryService", () => {
             {
               role: "review",
               file: {
-                binding: { model: { instanceId: codex, model: "gpt-1" }, skills: ["lint"] },
+                binding: {
+                  model: { instanceId: codex, model: "gpt-1" },
+                  skills: ["lint", "run-checks"],
+                },
                 body: null,
               },
             },
           ],
         }),
-      ).pipe(Effect.provide(layerFor({ projects: [backend] })), Effect.flip);
+      ).pipe(Effect.provide(layerFor({ projects: [backend], home })), Effect.flip);
       assert.strictEqual(error.code, "invalid");
       assert.deepStrictEqual(
-        error.issues?.map((issue) => [issue.code, issue.role]),
+        error.issues?.map((issue) => [issue.code, issue.role, issue.message.includes("lint")]),
         [
-          ["unknown_model", "review"],
-          ["unknown_skill", "review"],
+          ["unknown_model", "review", false],
+          ["unknown_skill", "review", true],
         ],
       );
       assert.isFalse(yield* fileSystem.exists(`${root}/.t3/factories/triage`));
@@ -607,6 +637,7 @@ const layerOrchestration = Layer.mergeAll(
 /** Real orchestration and thread management; the launch, Git, and catalogs are fake. */
 const layerWorkItems = (backend: ProjectStore.ProjectRow, recorded: Recorded) =>
   FactoryService.layer.pipe(
+    Layer.provide(layerSkillStore()),
     Layer.provide(layerRecordedLaunch(recorded)),
     Layer.provide(layerRecordedSends(recorded)),
     Layer.provide(ThreadManagementService.layer),

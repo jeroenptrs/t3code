@@ -350,6 +350,7 @@ describe("Factories authorization", () => {
     definition: { name: "triage", projects: [], triggers: [], roles: {} },
     projects: [],
     roles: [],
+    skills: [],
     issues: [],
     scheduledTaskIds: [],
     threads: [],
@@ -368,6 +369,15 @@ describe("Factories authorization", () => {
             [WS_METHODS.factoriesRead]: () => Effect.die("unused"),
             [WS_METHODS.factoriesSave]: () =>
               Effect.sync(() => handled.push("save")).pipe(Effect.as(factory)),
+            [WS_METHODS.factoriesSkillsList]: () =>
+              Effect.sync(() => handled.push("skills.list")).pipe(Effect.as({ skills: [] })),
+            [WS_METHODS.factoriesSkillsRead]: () => Effect.die("unused"),
+            [WS_METHODS.factoriesSkillsSave]: () =>
+              Effect.sync(() => handled.push("skills.save")).pipe(Effect.as({ skill })),
+            [WS_METHODS.factoriesSkillsDelete]: () =>
+              Effect.sync(() => handled.push("skills.delete")).pipe(
+                Effect.as({ name: skill.name, source: "home" as const }),
+              ),
             [WS_METHODS.factoriesWorkItemsList]: () =>
               Effect.sync(() => handled.push("workItems.list")).pipe(Effect.as({ workItems: [] })),
             [WS_METHODS.factoriesWorkItemsRead]: () => Effect.die("unused"),
@@ -381,6 +391,13 @@ describe("Factories authorization", () => {
       ),
     );
   const save = { projectId: factory.projectId, definition: factory.definition };
+  const skill = { name: "run-checks", source: "home" as const, description: "", replaces: null };
+  const skillSave = {
+    name: skill.name,
+    source: skill.source,
+    body: "---\nname: run-checks\n---\n",
+  };
+  const skillDelete = { name: skill.name, source: skill.source };
   const workItemId = WorkItemId.make("work-item:1");
   const workItem = {
     id: workItemId,
@@ -423,28 +440,45 @@ describe("Factories authorization", () => {
       const client = yield* clientWith(AuthUserRoleScopes.operator, handled);
       yield* client[WS_METHODS.factoriesList]({});
       yield* client[WS_METHODS.factoriesWorkItemsList]({ factoryId: factory.id });
+      yield* client[WS_METHODS.factoriesSkillsList]({});
       expect(yield* client[WS_METHODS.factoriesSave](save).pipe(Effect.flip)).toMatchObject({
         _tag: "EnvironmentAuthorizationError",
         requiredPermission: AuthFactoriesManageScope,
       });
+      expect(
+        yield* client[WS_METHODS.factoriesSkillsSave](skillSave).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthFactoriesManageScope });
+      expect(
+        yield* client[WS_METHODS.factoriesSkillsDelete](skillDelete).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthFactoriesManageScope });
       expect(
         yield* client[WS_METHODS.factoriesWorkItemsCreate](create).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthFactoriesManageScope });
       expect(
         yield* client[WS_METHODS.factoriesWorkItemsAnswerGate](answer).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthFactoriesManageScope });
-      expect(handled).toEqual(["list", "workItems.list"]);
+      expect(handled).toEqual(["list", "workItems.list", "skills.list"]);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("lets an administrator save a factory, create work items, and answer gates", () =>
+  it.effect(
+    "lets an administrator save a factory and its skills, create work items, and answer gates",
+    () =>
     Effect.gen(function* () {
       const handled: Array<string> = [];
       const client = yield* clientWith(AuthUserRoleScopes.administrator, handled);
       yield* client[WS_METHODS.factoriesSave](save);
       yield* client[WS_METHODS.factoriesWorkItemsCreate](create);
       yield* client[WS_METHODS.factoriesWorkItemsAnswerGate](answer);
-      expect(handled).toEqual(["save", "workItems.create", "workItems.answerGate"]);
+        yield* client[WS_METHODS.factoriesSkillsSave](skillSave);
+        yield* client[WS_METHODS.factoriesSkillsDelete](skillDelete);
+        expect(handled).toEqual([
+          "save",
+          "workItems.create",
+          "workItems.answerGate",
+          "skills.save",
+          "skills.delete",
+        ]);
     }).pipe(Effect.scoped),
   );
 });

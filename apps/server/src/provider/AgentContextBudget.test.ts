@@ -15,6 +15,7 @@ import { DiffWalkthroughService } from "../diffWalkthrough/DiffWalkthroughServic
 import { DiffWalkthroughWriter } from "../diffWalkthrough/DiffWalkthroughWriter.ts";
 import { DeviceService } from "../device/DeviceService.ts";
 import { FactoryService } from "../factories/FactoryService.ts";
+import { FactorySkillStore } from "../factories/FactorySkillStore.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { FleetBroker } from "../home/FleetBroker.ts";
@@ -103,6 +104,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(DiffWalkthroughService)({}),
   Layer.mock(DiffWalkthroughWriter)({}),
   Layer.mock(FactoryService)({}),
+  Layer.mock(FactorySkillStore)({}),
   Layer.mock(JiraIdentities)({ configured: false, list: [], services: [] }),
   Layer.mock(JiraProposals)({}),
   Layer.mock(JiraService)({}),

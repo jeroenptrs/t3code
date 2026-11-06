@@ -1,6 +1,6 @@
 /**
  * Fork-only software factories client state. Operators read factories, what they own, and their
- * work items; administrators save definitions, create work items, and answer gates. Nothing here
+ * work items; administrators save definitions and skills, create work items, and answer gates. Nothing here
  * polls: a view re-reads when shown again after its stale time or when a command lands.
  */
 import { WS_METHODS, type EnvironmentId } from "@t3tools/contracts";
@@ -55,6 +55,13 @@ export function createFactoriesEnvironmentAtoms<R, E>(
       staleTimeMs: 15_000,
       refreshTrigger,
     }),
+    /** One skill's SKILL.md at one level: built-in, home, or the factory's. */
+    skill: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:factories:skill",
+      tag: WS_METHODS.factoriesSkillsRead,
+      staleTimeMs: 15_000,
+      refreshTrigger,
+    }),
     /** Re-reads every view, for an explicit refresh. */
     refresh: (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) =>
       registry.update(epoch(environmentId), (value) => value + 1),
@@ -62,6 +69,25 @@ export function createFactoriesEnvironmentAtoms<R, E>(
       label: "environment-command:factories:save",
       tag: WS_METHODS.factoriesSave,
       // One save at a time per environment, so two edits cannot land out of order.
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+      onSuccess: bumpEpoch,
+    }),
+    /** Writes a home or factory skill's SKILL.md; every factory that sees it re-reads. */
+    saveSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:factories:save-skill",
+      tag: WS_METHODS.factoriesSkillsSave,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+      onSuccess: bumpEpoch,
+    }),
+    deleteSkill: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:factories:delete-skill",
+      tag: WS_METHODS.factoriesSkillsDelete,
       concurrency: {
         mode: "serial",
         key: ({ environmentId }) => environmentId,

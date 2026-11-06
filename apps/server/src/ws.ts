@@ -269,6 +269,7 @@ import * as JiraProposals from "./jira/JiraProposals.ts";
 import * as JiraBreakdownService from "./jira/JiraBreakdownService.ts";
 import * as InsightsService from "./insights/InsightsService.ts";
 import * as FactoryService from "./factories/FactoryService.ts";
+import * as FactorySkillStore from "./factories/FactorySkillStore.ts";
 import * as JiraUserCredentials from "./jira/JiraUserCredentials.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
@@ -3764,10 +3765,15 @@ const layerWsFactoriesRpc = (currentSession: EnvironmentAuth.AuthenticatedSessio
   ServerWsFactoriesRpcGroup.toLayer(
   Effect.gen(function* () {
     const factories = yield* FactoryService.FactoryService;
+      const skills = yield* FactorySkillStore.FactorySkillStore;
     return ServerWsFactoriesRpcGroup.of({
       [WS_METHODS.factoriesList]: (input) => factories.list(input.projectId),
       [WS_METHODS.factoriesRead]: (input) => factories.read(input.factoryId),
       [WS_METHODS.factoriesSave]: (input) => factories.save(input),
+        [WS_METHODS.factoriesSkillsList]: (input) => skills.list(input),
+        [WS_METHODS.factoriesSkillsRead]: (input) => skills.read(input),
+        [WS_METHODS.factoriesSkillsSave]: (input) => skills.save(input),
+        [WS_METHODS.factoriesSkillsDelete]: (input) => skills.delete(input),
         [WS_METHODS.factoriesWorkItemsList]: (input) => factories.listWorkItems(input),
         [WS_METHODS.factoriesWorkItemsRead]: (input) => factories.readWorkItem(input.workItemId),
         [WS_METHODS.factoriesWorkItemsCreate]: (input) => factories.createWorkItem(input),
@@ -3802,6 +3808,7 @@ export const layer = Layer.unwrap(
     const jiraBreakdowns = yield* JiraBreakdownService.JiraBreakdownService;
     const insights = yield* InsightsService.InsightsService;
     const factories = yield* FactoryService.FactoryService;
+    const factorySkills = yield* FactorySkillStore.FactorySkillStore;
     const home = yield* HomeService.HomeService;
     const fleet = yield* FleetService.FleetService;
     const fleetBroker = yield* FleetBroker.FleetBroker;
@@ -3933,6 +3940,7 @@ export const layer = Layer.unwrap(
                 // Shared with the ingestion worker, so a reset cursor drops its walk in progress.
                 Layer.provide(Layer.succeed(InsightsService.InsightsService, insights)),
                 Layer.provide(Layer.succeed(FactoryService.FactoryService, factories)),
+                Layer.provide(Layer.succeed(FactorySkillStore.FactorySkillStore, factorySkills)),
                 // Shared with /mcp, so Home's grant, relay, and watches are one per server.
                 Layer.provide(Layer.succeed(HomeService.HomeService, home)),
                 Layer.provide(Layer.succeed(FleetService.FleetService, fleet)),

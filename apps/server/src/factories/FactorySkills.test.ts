@@ -72,10 +72,14 @@ describe("FactorySkills.materialize", () => {
         yield* fileSystem.writeFileString(`${runChecks}/SKILL.md`, "---\nname: run-checks\n---\n");
         yield* fileSystem.writeFileString(`${runChecks}/scripts/check.sh`, "#!/bin/sh\nexit 0\n");
         yield* fileSystem.chmod(`${runChecks}/scripts/check.sh`, 0o755);
+        const style = `${root}/home/skills/style`;
+        yield* fileSystem.makeDirectory(style, { recursive: true });
+        yield* fileSystem.writeFileString(`${style}/SKILL.md`, "---\nname: style\n---\n");
         const implementText = "---\nname: implement\n---\n";
         const skills: ReadonlyArray<FactoryThreads.BoundSkill> = [
           { name: "implement", source: "builtin", text: implementText },
-          { name: "run-checks", source: "file", directory: runChecks },
+          { name: "run-checks", source: "factory", directory: runChecks },
+          { name: "style", source: "home", directory: style },
         ];
 
         const main = yield* repository(root, {});
@@ -88,8 +92,12 @@ describe("FactorySkills.materialize", () => {
         const script = `${worktree}/.agents/skills/run-checks/scripts/check.sh`;
         assert.strictEqual(yield* fileSystem.readFileString(script), "#!/bin/sh\nexit 0\n");
         assert.strictEqual((yield* fileSystem.stat(script)).mode & 0o777, 0o755);
+        assert.strictEqual(
+          yield* fileSystem.readFileString(`${worktree}/.agents/skills/style/SKILL.md`),
+          "---\nname: style\n---\n",
+        );
         for (const linkRoot of [".claude", ".codex"]) {
-          for (const name of ["implement", "run-checks"]) {
+          for (const name of ["implement", "run-checks", "style"]) {
             const link = `${worktree}/${linkRoot}/skills/${name}`;
             assert.strictEqual(yield* fileSystem.readLink(link), `../../.agents/skills/${name}`);
             assert.isTrue(yield* fileSystem.exists(`${link}/SKILL.md`));
@@ -105,6 +113,9 @@ describe("FactorySkills.materialize", () => {
           "/.agents/skills/run-checks",
           "/.claude/skills/run-checks",
           "/.codex/skills/run-checks",
+          "/.agents/skills/style",
+          "/.claude/skills/style",
+          "/.codex/skills/style",
         ]);
         assert.strictEqual(yield* git(worktree, ["status", "--porcelain"]), "");
 

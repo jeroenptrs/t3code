@@ -6,6 +6,14 @@ import {
   FactoryListResult,
   FactoryReadInput,
   FactorySaveInput,
+  FactorySkillError,
+  FactorySkillLevel,
+  FactorySkillListInput,
+  FactorySkillListResult,
+  FactorySkillName,
+  FactorySkillReadInput,
+  FactorySkillReadResult,
+  FactorySkillSaveInput,
   OrchestratorMcpFailure,
   WorkItem,
   WorkItemAdvanceInput,
@@ -30,6 +38,11 @@ const shared = {
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
   ],
+};
+
+const skillShared = {
+  ...shared,
+  failure: Schema.Union([OrchestratorMcpFailure, FactorySkillError]),
 };
 
 const workItemShared = {
@@ -65,9 +78,41 @@ const FactoryReadTool = Tool.make("t3_factory_read", {
 const FactorySaveTool = Tool.make("t3_factory_save", {
   ...shared,
   description:
-    "Write a factory's `factory.json` and the role files you pass; creates it if new. A passed file replaces the whole role file, body included. Omitted roles keep their files; `file: null` deletes one so the built-in role applies. A binding the provider lacks fails with `issues`.",
+    "Write a factory's `factory.json` and the role files you pass; creates it if new. A passed file replaces the whole role file, body included. Omitted roles keep their files; `file: null` deletes one so the built-in role applies. A binding the provider lacks fails with `issues`. Skills: t3_factory_skill_save.",
   parameters: FactorySaveInput,
   success: Factory,
+}).annotate(Tool.Destructive, true);
+
+const FactorySkillListTool = Tool.make("t3_factory_skill_list", {
+  ...skillShared,
+  description:
+    "List skills roles can bind, with source and description. Without factoryId: home and built-in skills. A factory skill replaces a home one of the same name, which replaces a built-in one.",
+  parameters: FactorySkillListInput,
+  success: FactorySkillListResult,
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
+const FactorySkillReadTool = Tool.make("t3_factory_skill_read", {
+  ...skillShared,
+  description: "Read a skill's SKILL.md at one level: builtin, home, or factory (needs factoryId).",
+  parameters: FactorySkillReadInput,
+  success: FactorySkillReadResult,
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
+const FactorySkillSaveTool = Tool.make("t3_factory_skill_save", {
+  ...skillShared,
+  description:
+    "Write a skill's whole SKILL.md at home (every project on this server) or in a factory (needs factoryId). Use this, not file edits, for these skills. Frontmatter `name` must match. `file: null` deletes it so the lower level applies.",
+  parameters: Schema.Struct({
+    name: FactorySkillName,
+    source: FactorySkillLevel,
+    factoryId: Schema.optionalKey(FactoryId),
+    file: Schema.NullOr(Schema.Struct({ body: FactorySkillSaveInput.fields.body })),
+  }),
+  success: Schema.Struct({ name: FactorySkillName, source: FactorySkillLevel }),
 }).annotate(Tool.Destructive, true);
 
 const WorkItemListTool = Tool.make("t3_work_item_list", {
@@ -120,6 +165,9 @@ export const FactoriesToolkit = Toolkit.make(
   FactoryListTool,
   FactoryReadTool,
   FactorySaveTool,
+  FactorySkillListTool,
+  FactorySkillReadTool,
+  FactorySkillSaveTool,
   WorkItemListTool,
   WorkItemReadTool,
   WorkItemCreateTool,

@@ -19,25 +19,22 @@ import { taskRoleOfPrompt } from "../mcp/delegatedTaskModes.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import {
-  availableSkills,
   defaultRolePath,
   effectiveBinding,
   FACTORIES_DIRECTORY,
   FACTORY_FILE_NAME,
   parseFactoryJson,
   parseRoleFile,
-  readFactorySkillNames,
   resolveRoleSkills,
-  SKILLS_DIRECTORY,
 } from "./factoryFiles.ts";
+import * as FactorySkillStore from "./FactorySkillStore.ts";
 import { builtinRoles } from "./roles/index.ts";
-import { builtinSkills } from "./skills/index.ts";
 import { workItemRoleForTask } from "./workItems.ts";
 
-/** A skill a role binds: a built-in skill's SKILL.md, or the factory's own skill directory. */
+/** A skill a role binds: a built-in skill's SKILL.md, or a home or factory skill directory. */
 export type BoundSkill =
   | { readonly name: string; readonly source: "builtin"; readonly text: string }
-  | { readonly name: string; readonly source: "file"; readonly directory: string };
+  | { readonly name: string; readonly source: "home" | "factory"; readonly directory: string };
 
 export class FactoryThreads extends Context.Service<
   FactoryThreads,
@@ -63,6 +60,7 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const skillStore = yield* FactorySkillStore.FactorySkillStore;
 
   const readText = (filePath: string) =>
     fileSystem.readFileString(filePath).pipe(
@@ -160,18 +158,12 @@ const make = Effect.gen(function* () {
       if (found === null) return [];
       const { directory, file } = yield* roleFile(found.factoryId, found.role);
       const names = effectiveBinding(builtinRoles[found.role].binding, file?.binding ?? {}).skills;
-      const available = availableSkills(
-        directory === null ? [] : yield* readFactorySkillNames(fileSystem, path, directory),
-      );
+      const available = yield* skillStore.resolve(directory);
       // An unknown name is an issue on the factory's page; the session opens without it.
-      return resolveRoleSkills(found.role, names, available).skills.flatMap(
-        ({ name, source }): ReadonlyArray<BoundSkill> => {
-          if (source === "file" && directory !== null) {
-            return [{ name, source, directory: path.join(directory, SKILLS_DIRECTORY, name) }];
-          }
-          const text = builtinSkills[name];
-          return text === undefined ? [] : [{ name, source: "builtin", text }];
-        },
+      return resolveRoleSkills(found.role, names, available).skills.map((skill): BoundSkill =>
+        skill.source === "builtin"
+          ? { name: skill.name, source: skill.source, text: skill.text }
+          : { name: skill.name, source: skill.source, directory: skill.directory },
       );
     },
     Effect.catch((error) =>
