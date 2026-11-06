@@ -91,6 +91,11 @@ the item's log.
   mode, and the model when the binding names one. A call argument that differs
   loses, and the item's log notes what applied and what it replaced. Other
   threads' delegations, and a Foreman's other roles, keep their arguments.
+- Before an item's first child, the same step runs `git var GIT_COMMITTER_IDENT`
+  in the project checkout. When Git has no committer identity, the server holds
+  the item at a gate that says what is unset, and the delegation fails, so no
+  child guesses an identity. The person sets it and approves; the Foreman's next
+  delegation checks again.
 - A child the Foreman delegates has no row, since writing one would race its
   first session. `FactoryThreads` finds it by lineage and gives it the implement
   or review body its task's role names. The task record keeps that role only as
