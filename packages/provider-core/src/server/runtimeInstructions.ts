@@ -49,8 +49,17 @@ ${JIRA_BREAKDOWN_GUIDANCE.map((line) => `- ${line}`).join("\n")}
  * Codex adapter sends it as entries of its own to stay under Codex's per-entry cap.
  */
 export function buildFactoryRoleInstructions(factoryRole: FactoryRoleInstructions): string {
+  const skills =
+    factoryRole.skills.length === 0
+      ? ""
+      : `
+
+Your skills are in .agents/skills/<name>/SKILL.md under your working directory. Read each one before you start, and follow it:
+${factoryRole.skills
+  .map(({ name, description }) => `- ${name}${description ? `: ${toSingleLine(description)}` : ""}`)
+  .join("\n")}`;
   return `<factory_role factory="${factoryRole.factoryId}" role="${factoryRole.role}">
-${factoryRole.body.trim()}
+${factoryRole.body.trim()}${skills}
 </factory_role>`;
 }
 

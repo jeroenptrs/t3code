@@ -493,7 +493,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           ...makeProviderSession({
             providerSessionId: input.providerSessionId,
             now,
-          instanceId,
+            instanceId,
             ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }),
           }),
           ...(options.extensionStatuses === undefined
@@ -4737,6 +4737,7 @@ it.effect(
         factoryId: "factory:project-1:triage",
         role: "foreman",
         body,
+        skills: [],
       });
       const foremanRole = yield* Ref.make(role("Route every work item."));
       const effect = Effect.gen(function* () {
