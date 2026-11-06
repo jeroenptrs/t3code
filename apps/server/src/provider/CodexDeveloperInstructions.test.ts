@@ -13,6 +13,7 @@ const factoryRole = {
   factoryId: "factory:project-1:triage",
   role: "foreman",
   body: "Route 🦊 each work item to implement, then review.\n".repeat(300),
+  skills: [{ name: "implement", description: "Takes one 🦊 task to a commit." }],
 };
 
 describe("buildCodexAdditionalContext", () => {
