@@ -313,7 +313,9 @@ function WorkItemDetails(props: {
             <li key={transition.id} className="flex flex-wrap items-baseline gap-x-2 text-xs">
               <Timestamp value={transition.at} />
               <span>
-                {WORK_ITEM_STAGE_LABELS[transition.from]} to {WORK_ITEM_STAGE_LABELS[transition.to]}
+                {transition.from === transition.to
+                  ? WORK_ITEM_STAGE_LABELS[transition.to]
+                  : `${WORK_ITEM_STAGE_LABELS[transition.from]} to ${WORK_ITEM_STAGE_LABELS[transition.to]}`}
               </span>
               <span className="text-muted-foreground">
                 by {workItemActorLabel(transition.actor)}

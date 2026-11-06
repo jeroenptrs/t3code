@@ -1,10 +1,13 @@
 /**
- * Fork-only work item helpers for `FactoryService`: the messages the Foreman reads and the role a
- * delegated task's child takes on an item. Plain functions; the ledger itself is in the service.
+ * Fork-only work item helpers for `FactoryService`: the messages the Foreman reads, the role a
+ * delegated task's child takes on an item, and that role's binding laid over the delegation. Plain
+ * functions; the ledger itself is in the service.
  */
 import type {
+  FactoryEffectiveBinding,
   FactoryName,
   FactoryRoleName,
+  OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpTaskRole,
   WorkItemGateDecision,
   WorkItemId,
@@ -58,3 +61,67 @@ export const workItemRoleForTask = (
   taskRole: OrchestratorMcpTaskRole | undefined,
 ): FactoryRoleName | null =>
   taskRole === "implementation" ? "implement" : taskRole === "review" ? "review" : null;
+
+/**
+ * The delegation with the role's isolation, modes, and model in place of the call's, and the note
+ * the item's log keeps. A null model leaves the call's target as it is.
+ */
+export function bindDelegation(
+  role: FactoryRoleName,
+  delegation: OrchestratorMcpDelegateTaskInput,
+  binding: FactoryEffectiveBinding,
+): { readonly delegation: OrchestratorMcpDelegateTaskInput; readonly note: string } {
+  const applied = [
+    `isolation ${binding.isolation}`,
+    `runtime mode ${binding.runtimeMode}`,
+    `interaction mode ${binding.interactionMode}`,
+  ];
+  const replaced: Array<string> = [];
+  if (delegation.isolation !== undefined && delegation.isolation !== binding.isolation) {
+    replaced.push(`isolation ${delegation.isolation}`);
+  }
+  if (delegation.runtimeMode !== undefined && delegation.runtimeMode !== binding.runtimeMode) {
+    replaced.push(`runtime mode ${delegation.runtimeMode}`);
+  }
+  if (
+    delegation.interactionMode !== undefined &&
+    delegation.interactionMode !== binding.interactionMode
+  ) {
+    replaced.push(`interaction mode ${delegation.interactionMode}`);
+  }
+  let target = delegation.target;
+  const model = binding.model;
+  if (model !== null) {
+    applied.push(`model ${model.instanceId}/${model.model}`);
+    const { driverKind, ...requested } = delegation.target ?? {};
+    if (
+      driverKind !== undefined ||
+      (requested.providerInstanceId !== undefined &&
+        requested.providerInstanceId !== model.instanceId) ||
+      (requested.model !== undefined && requested.model !== model.model)
+    ) {
+      replaced.push(
+        `model ${requested.providerInstanceId ?? driverKind ?? model.instanceId}/${requested.model ?? "default"}`,
+      );
+    }
+    // Empty options clear what the parent would pass on, so the model's defaults apply.
+    target = {
+      ...requested,
+      providerInstanceId: model.instanceId,
+      model: model.model,
+      options: model.options ?? [],
+    };
+  }
+  return {
+    delegation: {
+      ...delegation,
+      isolation: binding.isolation,
+      runtimeMode: binding.runtimeMode,
+      interactionMode: binding.interactionMode,
+      ...(target === undefined ? {} : { target }),
+    },
+    note: `Applied the ${role} role's binding to a delegated task: ${applied.join(", ")}.${
+      replaced.length === 0 ? "" : ` It replaced the call's ${replaced.join(", ")}.`
+    }`,
+  };
+}
