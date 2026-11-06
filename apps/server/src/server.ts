@@ -75,6 +75,7 @@ import * as InsightsIngestor from "./insights/InsightsIngestor.ts";
 import * as InsightsService from "./insights/InsightsService.ts";
 import * as FactoryService from "./factories/FactoryService.ts";
 import * as FactorySkills from "./factories/FactorySkills.ts";
+import * as FactorySkillStore from "./factories/FactorySkillStore.ts";
 import * as FactoryThreads from "./factories/FactoryThreads.ts";
 import * as InsightsStore from "./insights/InsightsStore.ts";
 import * as Scheduler from "./scheduling/Scheduler.ts";
@@ -683,6 +684,7 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
       FactorySkills.layer.pipe(
         Layer.provideMerge(
       FactoryThreads.layer.pipe(
+            Layer.provide(FactorySkillStore.layer),
         Layer.provide(Layer.merge(ProjectStore.layer, ProjectionStoreV2.layer)),
       ),
     ),
@@ -976,8 +978,8 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(Layer.merge(layerJiraBreakdowns, TriggerTemplateService.layer)),
   // The same instance the ingestion worker uses.
   Layer.provide(layerInsights),
-  // Factories, shared by the WebSocket and /mcp.
-  Layer.provide(FactoryService.layer),
+    // Factories and their skills, shared by the WebSocket and /mcp.
+    Layer.provide(FactoryService.layer.pipe(Layer.provideMerge(FactorySkillStore.layer))),
   // One instance, so every client reads through the same Jira caches.
   Layer.provide(layerJiraService),
   )
