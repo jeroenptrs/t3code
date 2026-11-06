@@ -1,6 +1,6 @@
 /**
  * Puts a factory role's skills where every provider looks in the thread's working directory:
- * `.agents/skills/<name>/`, with `.claude/skills/<name>` and `.codex/skills/<name>` linking to it.
+ * `.agents/skills/<name>/`, with a link to it under each of `LINK_ROOTS`.
  * Git's info/exclude hides each path it adds, so the agent's `git status` stays clean. A skill the
  * role stops binding stays until the worktree goes.
  */
@@ -33,7 +33,10 @@ const SKILLS_ROOT = [".agents", "skills"] as const;
 const LINK_ROOTS = [
   [".claude", "skills"],
   [".codex", "skills"],
+  [".grok", "skills"],
+  [".kiro", "skills"],
 ] as const;
+const SKILL_ROOT_DIRECTORIES = [SKILLS_ROOT, ...LINK_ROOTS].map(([directory]) => directory);
 const EXCLUDE_HEADER = "# Skills T3 Code binds for factory roles";
 
 interface SkillFile {
@@ -77,7 +80,7 @@ const make = Effect.gen(function* () {
     const tracked = yield* git.execute({
       operation: "FactorySkills.tracked",
       cwd,
-      args: ["ls-files", "-z", "--", ".agents", ".claude", ".codex"],
+      args: ["ls-files", "-z", "--", ...SKILL_ROOT_DIRECTORIES],
       timeoutMs: 10_000,
     });
     return {
