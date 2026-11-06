@@ -26,7 +26,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { FactoryFieldIssues } from "./FactoryIssues";
-import { issuesFor, type FactoryRoleDraft } from "./FactoryPage.logic";
+import { issuesFor, SKILL_SOURCE_LABEL, type FactoryRoleDraft } from "./FactoryPage.logic";
 
 const FACTORY_ROLE_LABEL = {
   foreman: "Foreman",
@@ -67,9 +67,7 @@ function SkillList(props: { readonly skills: ReadonlyArray<FactorySkill> }) {
       {props.skills.map((skill) => (
         <li key={skill.name} className="flex items-center gap-1.5 text-sm">
           {skill.name}
-          <Badge variant="outline">
-            {skill.source === "file" ? `skills/${skill.name}` : "Built-in"}
-          </Badge>
+          <Badge variant="outline">{SKILL_SOURCE_LABEL[skill.source]}</Badge>
         </li>
       ))}
     </ul>

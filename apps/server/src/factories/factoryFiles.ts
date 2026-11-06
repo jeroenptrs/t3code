@@ -1,7 +1,7 @@
 /**
  * The factory definition files: parsing them into what the service reports, rendering them back,
  * resolving role skills, and checking role bindings against the provider catalog. Pure functions,
- * apart from listing a factory's skill directories; the services do the rest of the I/O.
+ * apart from reading one level's skill directories; the services do the rest of the I/O.
  */
 import {
   FactoryDefinition,
@@ -14,6 +14,7 @@ import {
   type FactoryRoleName,
   type FactorySkill,
   FactorySkillName,
+  type FactorySkillSource,
   FactoryTrigger,
   ModelSelection,
   type ProjectId,
@@ -27,6 +28,7 @@ import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
@@ -39,7 +41,7 @@ export const FACTORY_FILE_NAME = "factory.json";
 
 export const defaultRolePath = (role: FactoryRoleName) => `roles/${role}.md`;
 
-/** A factory's skills are `skills/<name>/SKILL.md`, beside any supporting files. */
+/** A factory's and T3 home's skills are `skills/<name>/SKILL.md`, beside any supporting files. */
 export const SKILLS_DIRECTORY = "skills";
 
 export const SKILL_FILE_NAME = "SKILL.md";
@@ -243,49 +245,129 @@ export const effectiveBinding = (
   tools: file.tools ?? defaults.tools,
 });
 
-/** The skill directories under the factory's `skills/` that hold a SKILL.md, sorted. */
-export const readFactorySkillNames = Effect.fn("factoryFiles.readFactorySkillNames")(function* (
+/**
+ * A SKILL.md: the frontmatter's `name` and `description`, and what follows it. `problem` says why
+ * a provider would not load it: no frontmatter, or one that is not a YAML mapping.
+ */
+export function parseSkillFile(text: string): {
+  readonly name: string | null;
+  readonly description: string;
+  readonly body: string;
+  readonly problem: string | null;
+} {
+  const match = FRONTMATTER.exec(text);
+  if (match === null) {
+    return { name: null, description: "", body: text, problem: "SKILL.md has no frontmatter." };
+  }
+  const body = text.slice(match[0].length);
+  let raw: unknown;
+  try {
+    raw = parseYaml(match[1] ?? "");
+  } catch {
+    return { name: null, description: "", body, problem: "The frontmatter is not valid YAML." };
+  }
+  if (!isRecord(raw)) {
+    return {
+      name: null,
+      description: "",
+      body,
+      problem: "The frontmatter must be a YAML mapping with name and description.",
+    };
+  }
+  return {
+    name: typeof raw.name === "string" ? raw.name.trim() : null,
+    description: typeof raw.description === "string" ? raw.description.trim() : "",
+    body,
+    problem: null,
+  };
+}
+
+/** A skill where it lives: a built-in SKILL.md's text, or a directory that holds a SKILL.md. */
+export type SkillEntry = FactorySkill &
+  (
+    | { readonly source: "builtin"; readonly text: string }
+    | { readonly source: Exclude<FactorySkillSource, "builtin">; readonly directory: string }
+  );
+
+export const builtinSkillEntries: ReadonlyArray<SkillEntry> = Object.entries(builtinSkills).map(
+  ([name, text]) => ({
+    name,
+    source: "builtin",
+    description: parseSkillFile(text).description,
+    replaces: null,
+    text,
+  }),
+);
+
+/** The skill directories under `skillsDirectory` that hold a SKILL.md, sorted. */
+export const readSkillLevel = Effect.fn("factoryFiles.readSkillLevel")(function* (
   fileSystem: FileSystem.FileSystem,
   path: Path.Path,
-  factoryDirectory: string,
+  skillsDirectory: string,
+  source: Exclude<FactorySkillSource, "builtin">,
 ) {
-  const directory = path.join(factoryDirectory, SKILLS_DIRECTORY);
-  const entries = yield* fileSystem.readDirectoryEntries(directory).pipe(
-    Effect.catchTags({
-      PlatformError: (error) =>
-        error.reason._tag === "NotFound" ? Effect.succeed([]) : Effect.fail(error),
-    }),
+  const ifExists = <A>(effect: Effect.Effect<A, PlatformError.PlatformError>) =>
+    effect.pipe(
+      Effect.asSome,
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound" ? Effect.succeed(Option.none<A>()) : Effect.fail(error),
+      }),
+    );
+  const entries = Option.getOrElse(
+    yield* ifExists(fileSystem.readDirectoryEntries(skillsDirectory)),
+    () => [],
   );
   const names = entries
     .filter((entry) => entry.type !== "File" && isSkillName(entry.name))
     .map((entry) => entry.name)
     .toSorted();
-  const present = yield* Effect.forEach(names, (name) =>
-    fileSystem.exists(path.join(directory, name, SKILL_FILE_NAME)),
-  );
-  return names.filter((_, index) => present[index]);
+  const skills: Array<SkillEntry> = [];
+  for (const name of names) {
+    const directory = path.join(skillsDirectory, name);
+    const text = yield* ifExists(fileSystem.readFileString(path.join(directory, SKILL_FILE_NAME)));
+    if (Option.isNone(text)) continue;
+    skills.push({
+      name,
+      source,
+      description: parseSkillFile(text.value).description,
+      replaces: null,
+      directory,
+    });
+  }
+  return skills;
 });
 
 /**
- * Every skill a role can name, sorted: the built-in ones, and the factory's own, which replace a
- * built-in skill of the same name whole.
+ * One skill per name, sorted: each level, lowest first, replaces a lower one's skill whole, and the
+ * skill notes the level it replaced.
  */
-export function availableSkills(factorySkillNames: ReadonlyArray<string>): Array<FactorySkill> {
-  const sources = new Map<string, FactorySkill["source"]>();
-  for (const name of Object.keys(builtinSkills)) sources.set(name, "builtin");
-  for (const name of factorySkillNames) sources.set(name, "file");
-  return [...sources]
-    .map(([name, source]) => ({ name, source }))
-    .toSorted((left, right) => left.name.localeCompare(right.name));
+export function resolveSkills(
+  levels: ReadonlyArray<ReadonlyArray<SkillEntry>>,
+): ReadonlyArray<SkillEntry> {
+  const byName = new Map<string, SkillEntry>();
+  for (const level of levels) {
+    for (const skill of level) {
+      byName.set(skill.name, { ...skill, replaces: byName.get(skill.name)?.source ?? null });
+    }
+  }
+  return [...byName.values()].toSorted((left, right) => left.name.localeCompare(right.name));
 }
 
+export const toFactorySkill = ({
+  name,
+  source,
+  description,
+  replaces,
+}: FactorySkill): FactorySkill => ({ name, source, description, replaces });
+
 /** The skills a role's binding names that exist, in its order, and an issue for each that does not. */
-export function resolveRoleSkills(
+export function resolveRoleSkills<Skill extends FactorySkill>(
   role: FactoryRoleName,
   names: ReadonlyArray<string>,
-  available: ReadonlyArray<FactorySkill>,
-): { readonly skills: ReadonlyArray<FactorySkill>; readonly issues: ReadonlyArray<FactoryIssue> } {
-  const skills: Array<FactorySkill> = [];
+  available: ReadonlyArray<Skill>,
+): { readonly skills: ReadonlyArray<Skill>; readonly issues: ReadonlyArray<FactoryIssue> } {
+  const skills: Array<Skill> = [];
   const issues: Array<FactoryIssue> = [];
   for (const name of new Set(names)) {
     const skill = available.find((candidate) => candidate.name === name);
@@ -298,7 +380,7 @@ export function resolveRoleSkills(
         "unknown_skill",
         role,
         "skills",
-        `No skill ${name} exists: it is not built in, and the factory has no ${SKILLS_DIRECTORY}/${name}/${SKILL_FILE_NAME}.`,
+        `No skill ${name} exists: it is not built in, and neither the factory nor T3 home has ${SKILLS_DIRECTORY}/${name}/${SKILL_FILE_NAME}.`,
       ),
     );
   }
