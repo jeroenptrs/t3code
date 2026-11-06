@@ -1004,7 +1004,8 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
   ),
-).pipe(
+)
+  .pipe(
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
   ),
@@ -1033,7 +1034,8 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(FactoryService.layer),
   // One instance, so every client reads through the same Jira caches.
   Layer.provide(layerJiraService),
-).pipe(
+  )
+  .pipe(
   // The same activity instance RunExecutionService reports to, by layer memoization.
   Layer.provide(
     ServerBrowser.layer.pipe(
@@ -1063,7 +1065,7 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(layerCommandReadiness),
   Layer.provide(ServerHttp.layerBrowserApiCors),
   Layer.provide(ServerHttp.layerHttpCompression),
-);
+  );
 
 const layerMakeServer = Layer.unwrap(
   Effect.gen(function* () {
