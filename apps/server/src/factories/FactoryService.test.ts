@@ -9,6 +9,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RunId,
   RuntimeRequestId,
   type ScheduledTask,
   ScheduledTaskId,
@@ -22,6 +23,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { ChildProcessSpawner } from "effect/process";
 import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -532,6 +534,8 @@ interface Recorded {
     }>
   >;
   readonly sends: Ref.Ref<ReadonlyArray<ThreadManagementService.ThreadManagementSendInput>>;
+  /** Whether the checkout's Git resolves a committer identity. */
+  readonly gitIdentity: Ref.Ref<boolean>;
 }
 
 /** Creates the thread through the real orchestrator, without workspace preparation. */
@@ -621,6 +625,22 @@ const layerWorkItems = (backend: ProjectStore.ProjectRow, recorded: Recorded) =>
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({
           resolveCommit: () => Effect.succeed({ commitSha: "c0ffee" }),
+          // Git with only user.name set, as `git var` and `git config --get` answer.
+          execute: (input) =>
+            Effect.map(Ref.get(recorded.gitIdentity), (identity) => {
+              const found = identity || input.args.includes("user.name");
+              return {
+                exitCode: ChildProcessSpawner.ExitCode(
+                  found ? 0 : input.args[0] === "var" ? 128 : 1,
+                ),
+                stdout: found ? "Ada <ada@example.com> 1700000000 +0000\n" : "",
+                stderr: found
+                  ? ""
+                  : "*** Please tell me who you are.\n\nfatal: unable to auto-detect email address (got 'root@host.(none)')\n",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              };
+            }),
         }),
       ),
     ),
@@ -669,6 +689,7 @@ const withWorkItems = <A, E>(
     const recorded: Recorded = {
       launches: yield* Ref.make<Recorded["launches"] extends Ref.Ref<infer A> ? A : never>([]),
       sends: yield* Ref.make<ReadonlyArray<ThreadManagementService.ThreadManagementSendInput>>([]),
+      gitIdentity: yield* Ref.make(true),
     };
     return yield* test({ factoryId: makeFactoryId(backend.projectId, "triage"), recorded }).pipe(
       Effect.provide(layerWorkItems(backend, recorded)),
@@ -1101,6 +1122,49 @@ describe("FactoryService work items", () => {
             "---\nisolation: shared\nmodel:\n  instanceId: codex\n  model: gpt-6\n---\n",
         },
       },
+    ),
+  );
+  it.effect("holds an item at a gate when its checkout has no Git identity, until it has one", () =>
+    withWorkItems(({ factoryId, recorded }) =>
+      Effect.gen(function* () {
+        const factories = yield* FactoryService.FactoryService;
+        yield* Ref.set(recorded.gitIdentity, false);
+        const item = yield* factories.createWorkItem({ factoryId, title: "Fix", text: "Fix it." });
+        const delegate = (parentRunId: RunId) =>
+          factories.prepareDelegation({
+            parentThreadId: item.foremanThreadId!,
+            parentRunId,
+            delegation: { task: "Fix it.", role: "implementation" },
+          });
+
+        const held = yield* delegate(item.foremanRunId!).pipe(Effect.flip);
+        assert.strictEqual(held._tag === "WorkItemError" && held.code, "gate_waiting");
+        const gated = yield* factories.readWorkItem(item.id);
+        assert.strictEqual(gated.stage, "waiting");
+        assert.deepStrictEqual(
+          gated.transitions.map(({ from, to, actor }) => ({ from, to, actor })),
+          [{ from: "new", to: "waiting", actor: { kind: "server" } }],
+        );
+        const question = gated.gate.state === "waiting" ? gated.gate.question : "";
+        assert.include(question, "user.email");
+        assert.notInclude(question, "user.name");
+        assert.include(question, "unable to auto-detect email address");
+        assert.include(held.message, question);
+
+        yield* Ref.set(recorded.gitIdentity, true);
+        const answered = yield* factories.answerWorkItemGate(null, {
+          workItemId: item.id,
+          decision: "approved",
+          note: "Set it.",
+        });
+        assert.strictEqual(answered.stage, "implement");
+        // The Foreman delegates again from the run the gate answer started.
+        const [, resumed] = (yield* runs(item.foremanThreadId!)).toSorted(
+          (a, b) => a.ordinal - b.ordinal,
+        );
+        const bound = yield* delegate(resumed!.id);
+        assert.strictEqual(bound.isolation, "worktree");
+      }),
     ),
   );
 });
