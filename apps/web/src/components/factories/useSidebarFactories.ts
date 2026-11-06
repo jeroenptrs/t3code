@@ -1,4 +1,7 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import {
+  threadRuntimeIsActive,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/models";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { useEffect, useRef } from "react";
@@ -34,8 +37,9 @@ export function openFactoriesTab(environments: ReadonlyArray<FactoryEnvironment>
 }
 
 /**
- * One line per environment that lists factories: its thread count and the attention its
- * factories' threads need here. Either changing means the server's counts may have moved.
+ * One line per environment that lists factories: its thread count, the attention its factories'
+ * threads need here, and how many of them are running. Any changing means the server's counts or
+ * a work item's stage may have moved.
  */
 function factoryListsSignature(
   environments: ReadonlyArray<FactoryEnvironment>,
@@ -45,10 +49,12 @@ function factoryListsSignature(
   return environments.flatMap(({ environmentId, factories }) => {
     if (factories === null) return [];
     const threadCount = threads.filter((thread) => thread.environmentId === environmentId).length;
-    const attention = countThreadAttention(
-      [...owned.values()].filter((thread) => thread.environmentId === environmentId),
+    const ownedHere = [...owned.values()].filter(
+      (thread) => thread.environmentId === environmentId,
     );
-    return [`${environmentId}\t${threadCount}\t${attention}`];
+    const attention = countThreadAttention(ownedHere);
+    const running = ownedHere.filter((thread) => threadRuntimeIsActive(thread.runtime)).length;
+    return [`${environmentId}\t${threadCount}\t${attention}\t${running}`];
   });
 }
 
@@ -63,7 +69,7 @@ export function useSidebarFactories(threads: readonly EnvironmentThreadShell[]) 
   const { home, owned } = partitionFactoryThreads(threads, factoryOwnedThreadKeys(environments));
   const signature = factoryListsSignature(environments, threads, owned).join("\n");
   const seenSignature = useRef<string | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads an environment's factory list from the server when its threads come or go or an owned thread's attention moves, because the server pushes no factory updates
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads an environment's factory views from the server when its threads come or go, an owned thread's attention moves, or an owned thread starts or stops (when a work item's stage usually changes), because the server pushes no factory updates
   useEffect(() => {
     const previous = seenSignature.current;
     seenSignature.current = signature;
