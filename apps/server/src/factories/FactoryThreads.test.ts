@@ -16,13 +16,14 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as ServerConfig from "../config.ts";
 import { taskPrompt } from "../mcp/delegatedTaskModes.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as FactorySkillStore from "./FactorySkillStore.ts";
 import * as FactoryThreads from "./FactoryThreads.ts";
 import { builtinRoles } from "./roles/index.ts";
-import { builtinSkills } from "./skills/index.ts";
 
 const factoryJson = JSON.stringify({ name: "triage", roles: { review: "roles/strict-review.md" } });
 
@@ -87,14 +88,20 @@ it.effect("gives a factory's threads and its Foreman's children their role body 
       path.join(directory, "roles", "strict-review.md"),
       "---\nisolation: shared\n---\n\nBlock on any failing check.\n",
     );
-    // The factory's review skill replaces the built-in one.
-    yield* fileSystem.makeDirectory(path.join(directory, "skills", "review"), {
-      recursive: true,
-    });
-    yield* fileSystem.writeFileString(
-      path.join(directory, "skills", "review", "SKILL.md"),
-      "---\nname: review\n---\n",
-    );
+    // T3 home's implement and review skills replace the built-in ones, and the factory's review
+    // skill replaces home's.
+    const home = path.join(root, "home");
+    for (const skillDirectory of [
+      path.join(home, "skills", "implement"),
+      path.join(home, "skills", "review"),
+      path.join(directory, "skills", "review"),
+    ]) {
+      yield* fileSystem.makeDirectory(skillDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(skillDirectory, "SKILL.md"),
+        `---\nname: ${path.basename(skillDirectory)}\n---\n`,
+      );
+    }
     const projectId = ProjectId.make("project-backend");
     const factoryId = makeFactoryId(projectId, "triage");
     const backend = { projectId, workspaceRoot: root } as ProjectStore.ProjectRow;
@@ -129,6 +136,11 @@ it.effect("gives a factory's threads and its Foreman's children their role body 
     }).pipe(
       Effect.provide(
         FactoryThreads.layer.pipe(
+          Layer.provide(
+            FactorySkillStore.layer.pipe(
+              Layer.provide(Layer.orDie(ServerConfig.layerTest(root, home))),
+            ),
+          ),
           Layer.provideMerge(Layer.orDie(SqlitePersistence.layerMemory)),
           Layer.provide(
             Layer.mock(ProjectStore.ProjectStoreV2)({
@@ -153,12 +165,12 @@ it.effect("gives a factory's threads and its Foreman's children their role body 
     ]);
     const implementSkill: FactoryThreads.BoundSkill = {
       name: "implement",
-      source: "builtin",
-      text: builtinSkills.implement!,
+      source: "home",
+      directory: path.join(home, "skills", "implement"),
     };
     const reviewSkill: FactoryThreads.BoundSkill = {
       name: "review",
-      source: "file",
+      source: "factory",
       directory: path.join(directory, "skills", "review"),
     };
     assert.deepStrictEqual(skills, [
