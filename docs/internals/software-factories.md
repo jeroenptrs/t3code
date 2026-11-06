@@ -185,7 +185,35 @@ Each milestone ships on its own.
 - Nodes light up with active runs and edges show which work item is moving
   between them, built on the existing projection stream with no polling.
 
-### M7. Analysis role
+### M7. Triggers as a superset
+
+M4 stored triggers as scheduled tasks, which held up, but put them inside the
+scheduled task form, which did not: the schedule became the primary idea and
+the source a mode of it. Its Jira and GitLab sources also only diff what the
+sync reactors already fetch, so they fire for issues and merge requests a
+thread links to, never for a query or a project.
+
+- A trigger is the entity: a source, filters, and a target. The scheduled task
+  table stays as storage; the UI and MCP tools present triggers, with the
+  schedule as one source beside webhook, Jira query, GitLab projects, Slack,
+  and manual.
+- Jira query source: a JQL or saved filter polled on an interval with the
+  user's token. It fires per issue that enters the result set or changes a
+  watched field, deduplicated through the trigger observations table.
+- GitLab projects source: a list of projects or groups, polled for merge
+  requests and pipelines on the Insights ingestion path, or fed by GitLab's
+  per-project webhooks. Events: merge request opened, updated, merged, closed;
+  pipeline finished.
+- Work item target: a trigger can create a work item in a factory instead of
+  running a prompt in a thread. The Foreman is the consumer; the source
+  reference on the item carries the event.
+- Factory page: Add trigger opens the trigger form with the factory's project
+  and the work item target preselected; the trigger list shows kind and filter
+  per row.
+- Delete a factory: removes its directory, drops its work items, releases its
+  threads, behind the manage scope with confirmation.
+
+### M8. Analysis role
 
 - Analysis role that reads the work item, the Jira issue, and the relevant repos
   and writes up scope, approach, affected repos, acceptance criteria, and work
@@ -194,7 +222,7 @@ Each milestone ships on its own.
   and review checks, with a human gate on it, is decided after the canvas and
   a trial of the role as a plain hand-back.
 
-### M8. Scoring and self-improvement
+### M9. Scoring and self-improvement
 
 - Run record with outcome, stage, duration, model, and cost, with retention from
   day one.
