@@ -6,6 +6,10 @@ rule requires. Factory code reaches these PRs only through the adapter modules
 in `apps/server/src/factories/upstream/`, and `index.ts` there is the only
 import point.
 
+Check it before every upstream sync: query each listed PR and issue, graduate
+what merged (drop the cherry-pick, keep the adapter, move the row below), and
+re-hash the branch commits afterwards, since a rebuild changes every SHA.
+
 | Upstream PR                                              | Head SHA when pulled                       | Commit on this branch | What the factory work builds on it                                                                                                                                  |
 | -------------------------------------------------------- | ------------------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [#15975](https://github.com/pingdotgg/t3code/pull/15975) | `b5d05a6ebf3c0b99a097f2a197983cb1203669c6` | `c87050bde7`          | The thread-management toolkit and the watch reports that wake the Foreman.                                                                                          |
