@@ -66,6 +66,8 @@ Each request the Foreman routes is a row in `fork_factory_work_items`, with its
 threads and transitions beside it (migration 019). `canTransitionWorkItem` in
 contracts is the only stage table. Each stage change writes one transition row
 with its actor, and only a person's gate answer moves an item out of `waiting`.
+A row whose two stages match changes nothing: it is a note the server keeps on
+the item's log.
 
 - The Foreman is one thread per factory with a `factory-foreman:` id. Its
   `fork_factory_threads` row lands before the launch, so its first provider
@@ -84,6 +86,11 @@ with its actor, and only a person's gate answer moves an item out of `waiting`.
   created or ended does.
 - `FactoryThreads` reads the role body on every session prepare, outside the MCP
   credential, so an edited role file applies from the next session.
+- A Foreman's `delegate_task` with the `implementation` or `review` role takes
+  the matching role's effective binding: isolation, runtime mode, interaction
+  mode, and the model when the binding names one. A call argument that differs
+  loses, and the item's log notes what applied and what it replaced. Other
+  threads' delegations, and a Foreman's other roles, keep their arguments.
 - A child the Foreman delegates has no row, since writing one would race its
   first session. `FactoryThreads` finds it by lineage and gives it the implement
   or review body its task's role names. The task record keeps that role only as
