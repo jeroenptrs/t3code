@@ -239,6 +239,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [18, "ScheduledTaskTriage"],
       [19, "FactoryWorkItems"],
       [20, "FactoryWorkItemDispatch"],
+      [21, "FactoryWorkItemQueued"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
@@ -287,7 +288,7 @@ it.effect("leaves scheduled tasks created before the audit columns without a use
   }).pipe(Effect.provide(memoryDatabase())),
 );
 
-it.effect("marks work items sent before the dispatch column as sent when created", () =>
+it.effect("marks work items sent before the dispatch column as sent, and the rest queued", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* runMigrations();
@@ -307,13 +308,17 @@ it.effect("marks work items sent before the dispatch column as sent when created
       `;
     }
     yield* runForkMigrations();
-    const rows = yield* sql<{ readonly id: string; readonly dispatchedAt: string | null }>`
-      SELECT work_item_id AS "id", dispatched_at AS "dispatchedAt"
+    const rows = yield* sql<{
+      readonly id: string;
+      readonly stage: string;
+      readonly dispatchedAt: string | null;
+    }>`
+      SELECT work_item_id AS "id", stage, dispatched_at AS "dispatchedAt"
       FROM fork_factory_work_items ORDER BY work_item_id
     `;
     assert.deepStrictEqual(rows, [
-      { id: "work-item:sent", dispatchedAt: "2026-10-01T00:00:00.000Z" },
-      { id: "work-item:unsent", dispatchedAt: null },
+      { id: "work-item:sent", stage: "new", dispatchedAt: "2026-10-01T00:00:00.000Z" },
+      { id: "work-item:unsent", stage: "queued", dispatchedAt: null },
     ]);
   }).pipe(Effect.provide(memoryDatabase())),
 );
