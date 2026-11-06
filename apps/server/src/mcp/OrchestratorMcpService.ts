@@ -2708,6 +2708,16 @@ const make = Effect.gen(function* () {
           "Delegated tasks require an active run owned by this MCP provider session.",
         );
       }
+      // A Foreman's delegation takes the child role's binding over these arguments.
+      const delegation = Option.isNone(factories)
+        ? input
+        : yield* factories.value
+            .prepareDelegation({
+              parentThreadId: scope.thread.threadId,
+              parentRunId: parentRun.id,
+              delegation: input,
+            })
+            .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
       const providers = yield* loadProviders;
       const key = yield* requestKey(input.clientRequestId);
       const commandId = stableCommandId({
@@ -2718,21 +2728,21 @@ const make = Effect.gen(function* () {
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
       const target = yield* resolveTargetRechecking({
         parent,
-        target: input.target,
+        target: delegation.target,
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
       });
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
-        input.runtimeMode,
+        delegation.runtimeMode,
         target,
       );
       const interactionMode = yield* resolveInteractionMode(
         parent.thread.interactionMode,
-        input.interactionMode,
+        delegation.interactionMode,
       );
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
-      if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
+      if (delegation.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
         const project = yield* requireProject(parent.thread.projectId);
         const base = yield* gitDriver
           .resolveCommit({
@@ -2773,7 +2783,7 @@ const make = Effect.gen(function* () {
           parentThreadId: scope.thread.threadId,
           parentRunId: parentRun.id,
           parentNodeId: parentRun.rootNodeId,
-          task: taskPrompt(input),
+          task: taskPrompt(delegation),
           ...(input.title === undefined ? {} : { title: input.title }),
           modelSelection: target.modelSelection,
           runtimeMode,
@@ -2811,7 +2821,7 @@ const make = Effect.gen(function* () {
           parentThreadId: scope.thread.threadId,
           parentRunId: parentRun.id,
           childThreadId,
-          taskRole: input.role,
+          taskRole: delegation.role,
         });
       }
       const childRunEvent = result.storedEvents.find(

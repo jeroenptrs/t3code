@@ -26,6 +26,7 @@ import {
   isTerminalWorkItemStage,
   makeFactoryId,
   MessageId,
+  type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpTaskRole,
   parseFactoryId,
   type ProjectId,
@@ -92,6 +93,7 @@ import {
 import { builtinRoles } from "./roles/index.ts";
 import type { freshContext } from "./upstream/index.ts";
 import {
+  bindDelegation,
   renderGateAnswerMessage,
   renderWorkItemMessage,
   workItemRoleForTask,
@@ -150,6 +152,16 @@ export class FactoryService extends Context.Service<
       input: WorkItemAnswerGateInput,
     ) => Effect.Effect<WorkItem, WorkItemError | WorkItemTransitionError>;
     /**
+     * A Foreman's delegation to a role with a binding takes that binding's isolation, modes, and
+     * model over the call's, and the work item's log records it. Other delegations come back as
+     * they are.
+     */
+    readonly prepareDelegation: (input: {
+      readonly parentThreadId: ThreadId;
+      readonly parentRunId: RunId;
+      readonly delegation: FactoryDelegation;
+    }) => Effect.Effect<FactoryDelegation, FactoryError | WorkItemError>;
+    /**
      * Names a delegated task's child on the work item its Foreman parent runs, when the parent
      * is a Foreman thread. Logs and ignores failures, since delegation must not depend on it.
      */
@@ -161,6 +173,8 @@ export class FactoryService extends Context.Service<
     }) => Effect.Effect<void>;
   }
 >()("t3/factories/FactoryService") {}
+
+export type FactoryDelegation = OrchestratorMcpDelegateTaskInput;
 
 export interface WorkItemFilter {
   readonly factoryId?: FactoryId | undefined;
@@ -1306,6 +1320,79 @@ const make = Effect.gen(function* () {
     return yield* readWorkItem(input.workItemId);
   });
 
+  /** The live item whose fresh Foreman session `parentRunId` is in, if any. */
+  const foremanRunItem = Effect.fn("FactoryService.foremanRunItem")(function* (
+    parentThreadId: ThreadId,
+    parentRunId: RunId,
+  ) {
+    const items = yield* sql<{
+      readonly workItemId: string;
+      readonly foremanRunId: string;
+      readonly stage: string;
+    }>`
+      SELECT work_item_id AS "workItemId", foreman_run_id AS "foremanRunId", stage
+      FROM fork_factory_work_items
+      WHERE foreman_thread_id = ${parentThreadId} AND foreman_run_id IS NOT NULL
+    `;
+    if (items.length === 0) return null;
+    // Each item starts a fresh session, so the parent run belongs to the item whose run is the
+    // latest fresh one at or before it.
+    const { runs } = yield* threadManagement.getThreadRecords(parentThreadId, ["runs"]);
+    const parentRun = runs.find((run) => run.id === parentRunId);
+    if (parentRun === undefined) return null;
+    const sessionStart = runs
+      .filter((run) => run.freshContext === true && run.ordinal <= parentRun.ordinal)
+      .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+    const item = items.find((candidate) => candidate.foremanRunId === sessionStart?.id);
+    if (item === undefined || !isWorkItemStage(item.stage) || isTerminalWorkItemStage(item.stage))
+      return null;
+    return WorkItemId.make(item.workItemId);
+  });
+
+  /** A note on the item's log that changes no stage: a transition row from its stage to itself. */
+  const logWorkItem = Effect.fn("FactoryService.logWorkItem")(function* (
+    workItemId: WorkItemId,
+    note: string,
+  ) {
+    const actorJson = yield* encodeActor({ kind: "server" }).pipe(Effect.catch(ledgerUnavailable));
+    yield* withLedgerItem(workItemId, (item) =>
+      Effect.gen(function* () {
+        yield* sql`
+          INSERT INTO fork_factory_work_item_transitions (
+            transition_id, work_item_id, from_stage, to_stage, actor_json, note, at
+          ) VALUES (
+            ${`work-item-transition:${yield* randomUuidV4}`}, ${item.id}, ${item.stage},
+            ${item.stage}, ${actorJson}, ${note}, ${yield* nowIso}
+          )
+        `.pipe(Effect.catch(ledgerUnavailable));
+      }),
+    );
+  });
+
+  const prepareDelegation = Effect.fn("FactoryService.prepareDelegation")(function* (input: {
+    readonly parentThreadId: ThreadId;
+    readonly parentRunId: RunId;
+    readonly delegation: FactoryDelegation;
+  }) {
+    const role = workItemRoleForTask(input.delegation.role);
+    if (role === null) return input.delegation;
+    const [owner] = yield* sql<{ readonly factoryId: string }>`
+      SELECT factory_id AS "factoryId" FROM fork_factory_threads
+      WHERE thread_id = ${input.parentThreadId} AND role = 'foreman'
+    `.pipe(NodeSqliteClient.readOnly, Effect.catch(ledgerUnavailable));
+    if (owner === undefined) return input.delegation;
+    const factory = yield* read(FactoryId.make(owner.factoryId));
+    const binding =
+      factory.roles.find((candidate) => candidate.role === role)?.binding ??
+      builtinRoles[role].binding;
+    const bound = bindDelegation(role, input.delegation, binding);
+    const workItemId = yield* foremanRunItem(input.parentThreadId, input.parentRunId).pipe(
+      Effect.catch(ledgerUnavailable),
+    );
+    if (workItemId !== null) yield* logWorkItem(workItemId, bound.note);
+    return bound.delegation;
+  });
+
   const attachDelegatedChild = Effect.fn("FactoryService.attachDelegatedChild")(
     function* (input: {
       readonly parentThreadId: ThreadId;
@@ -1313,31 +1400,12 @@ const make = Effect.gen(function* () {
       readonly childThreadId: ThreadId;
       readonly taskRole: OrchestratorMcpTaskRole | undefined;
     }) {
-      const items = yield* sql<{
-        readonly workItemId: string;
-        readonly foremanRunId: string;
-        readonly stage: string;
-      }>`
-        SELECT work_item_id AS "workItemId", foreman_run_id AS "foremanRunId", stage
-        FROM fork_factory_work_items
-        WHERE foreman_thread_id = ${input.parentThreadId} AND foreman_run_id IS NOT NULL
-      `;
-      if (items.length === 0) return;
-      // Each item starts a fresh session, so the parent run belongs to the item whose run is the
-      // latest fresh one at or before it.
-      const { runs } = yield* threadManagement.getThreadRecords(input.parentThreadId, ["runs"]);
-      const parentRun = runs.find((run) => run.id === input.parentRunId);
-      if (parentRun === undefined) return;
-      const sessionStart = runs
-        .filter((run) => run.freshContext === true && run.ordinal <= parentRun.ordinal)
-        .toSorted((left, right) => right.ordinal - left.ordinal)[0];
-      const item = items.find((candidate) => candidate.foremanRunId === sessionStart?.id);
-      if (item === undefined || !isWorkItemStage(item.stage) || isTerminalWorkItemStage(item.stage))
-        return;
+      const workItemId = yield* foremanRunItem(input.parentThreadId, input.parentRunId);
+      if (workItemId === null) return;
       yield* sql`
         INSERT INTO fork_factory_work_item_threads (work_item_id, thread_id, role, created_at)
         VALUES (
-          ${item.workItemId}, ${input.childThreadId}, ${workItemRoleForTask(input.taskRole)},
+          ${workItemId}, ${input.childThreadId}, ${workItemRoleForTask(input.taskRole)},
           ${yield* nowIso}
         )
         ON CONFLICT (work_item_id, thread_id) DO NOTHING
@@ -1362,6 +1430,7 @@ const make = Effect.gen(function* () {
     advanceWorkItem,
     gateWorkItem,
     answerWorkItemGate,
+    prepareDelegation,
     attachDelegatedChild,
   });
 });
