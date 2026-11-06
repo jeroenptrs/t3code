@@ -4299,6 +4299,7 @@ it.effect(
         factoryId: "factory:project-1:triage",
         role: "foreman",
         body,
+        skills: [],
       });
       const foremanRole = yield* Ref.make(role("Route every work item."));
       const effect = Effect.gen(function* () {

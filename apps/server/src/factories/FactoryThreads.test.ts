@@ -21,6 +21,7 @@ import { taskPrompt } from "../mcp/delegatedTaskModes.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { builtinSkillEntries } from "./factoryFiles.ts";
 import * as FactorySkillStore from "./FactorySkillStore.ts";
 import * as FactoryThreads from "./FactoryThreads.ts";
 import { builtinRoles } from "./roles/index.ts";
@@ -88,20 +89,21 @@ it.effect("gives a factory's threads and its Foreman's children their role body 
       path.join(directory, "roles", "strict-review.md"),
       "---\nisolation: shared\n---\n\nBlock on any failing check.\n",
     );
-    // T3 home's implement and review skills replace the built-in ones, and the factory's review
-    // skill replaces home's.
+    // Implement keeps the built-in skill. T3 home's review skill replaces the built-in one, and
+    // the factory's review skill replaces home's.
     const home = path.join(root, "home");
-    for (const skillDirectory of [
-      path.join(home, "skills", "implement"),
-      path.join(home, "skills", "review"),
-      path.join(directory, "skills", "review"),
-    ]) {
+    for (const [skillDirectory, description] of [
+      [path.join(home, "skills", "review"), "Home review."],
+      [path.join(directory, "skills", "review"), "Triage review."],
+    ] as const) {
       yield* fileSystem.makeDirectory(skillDirectory, { recursive: true });
       yield* fileSystem.writeFileString(
         path.join(skillDirectory, "SKILL.md"),
-        `---\nname: ${path.basename(skillDirectory)}\n---\n`,
+        `---\nname: review\ndescription: ${description}\n---\n`,
       );
     }
+    const builtinImplement = builtinSkillEntries.find((skill) => skill.name === "implement");
+    assert(builtinImplement?.source === "builtin");
     const projectId = ProjectId.make("project-backend");
     const factoryId = makeFactoryId(projectId, "triage");
     const backend = { projectId, workspaceRoot: root } as ProjectStore.ProjectRow;
@@ -152,21 +154,34 @@ it.effect("gives a factory's threads and its Foreman's children their role body 
       ),
     );
 
+    // The instructions name the same skills the session gets, with their descriptions.
+    const implementRole = {
+      factoryId,
+      role: "implement",
+      body: builtinRoles.implement.body,
+      skills: [{ name: "implement", description: builtinImplement.description }],
+    };
+    const reviewRole = {
+      factoryId,
+      role: "review",
+      body: "Block on any failing check.",
+      skills: [{ name: "review", description: "Triage review." }],
+    };
     assert.deepStrictEqual(roles, [
-      { factoryId, role: "foreman", body: "Route only bugs." },
-      { factoryId, role: "implement", body: builtinRoles.implement.body },
-      { factoryId, role: "review", body: "Block on any failing check." },
+      { factoryId, role: "foreman", body: "Route only bugs.", skills: [] },
+      implementRole,
+      reviewRole,
       null,
       // A Foreman's children take the role their task asked for, from the same role files.
-      { factoryId, role: "implement", body: builtinRoles.implement.body },
-      { factoryId, role: "review", body: "Block on any failing check." },
+      implementRole,
+      reviewRole,
       null,
       null,
     ]);
     const implementSkill: FactoryThreads.BoundSkill = {
       name: "implement",
-      source: "home",
-      directory: path.join(home, "skills", "implement"),
+      source: "builtin",
+      text: builtinImplement.text,
     };
     const reviewSkill: FactoryThreads.BoundSkill = {
       name: "review",
