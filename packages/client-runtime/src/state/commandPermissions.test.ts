@@ -567,6 +567,8 @@ it.effect.each([
 
 it.effect.each([
   WS_METHODS.factoriesSave,
+  WS_METHODS.factoriesSkillsSave,
+  WS_METHODS.factoriesSkillsDelete,
   WS_METHODS.factoriesWorkItemsCreate,
   WS_METHODS.factoriesWorkItemsAnswerGate,
 ])("%s needs factories:manage, which an operator grant lacks", (method) =>
