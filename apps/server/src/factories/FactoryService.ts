@@ -153,8 +153,9 @@ export class FactoryService extends Context.Service<
     ) => Effect.Effect<WorkItem, WorkItemError | WorkItemTransitionError>;
     /**
      * A Foreman's delegation to a role with a binding takes that binding's isolation, modes, and
-     * model over the call's, and the work item's log records it. Other delegations come back as
-     * they are.
+     * model over the call's, and the work item's log records it. Before the item's first child,
+     * a checkout with no Git committer identity holds the item at a gate and fails the
+     * delegation. Other threads' delegations come back as they are.
      */
     readonly prepareDelegation: (input: {
       readonly parentThreadId: ThreadId;
@@ -1369,26 +1370,96 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * Why no child can commit in the checkout, or null when Git resolves a committer identity.
+   * `git var` fails the way `git commit` would, so this never accepts a guessed identity.
+   */
+  const missingGitIdentity = Effect.fn("FactoryService.missingGitIdentity")(function* (
+    cwd: string,
+  ) {
+    const git = (args: ReadonlyArray<string>) =>
+      gitDriver.execute({
+        operation: "FactoryService.missingGitIdentity",
+        cwd,
+        args,
+        allowNonZeroExit: true,
+      });
+    const ident = yield* git(["var", "GIT_COMMITTER_IDENT"]);
+    if (ident.exitCode === 0) return null;
+    const unset: Array<string> = [];
+    for (const key of ["user.name", "user.email"]) {
+      if ((yield* git(["config", "--get", key])).exitCode !== 0) unset.push(key);
+    }
+    const said = ident.stderr.trim().split("\n").at(-1)?.trim() ?? "";
+    return `Git has no committer identity in ${cwd}, so no child can commit there.${
+      unset.length === 0
+        ? ""
+        : ` ${unset.join(" and ")} ${unset.length === 1 ? "is" : "are"} not set.`
+    }${said === "" ? "" : ` Git says: ${said}`} Set the identity, for example with git config --global, then approve this gate.`;
+  });
+
+  /**
+   * Before an item's first child, holds the item at a gate when its checkout cannot commit.
+   * Fails with `gate_waiting` while the item waits, so the Foreman ends its turn.
+   */
+  const requireCommitIdentity = Effect.fn("FactoryService.requireCommitIdentity")(function* (
+    factory: Factory,
+    workItemId: WorkItemId,
+  ) {
+    yield* withLedgerItem(workItemId, (item) =>
+      Effect.gen(function* () {
+        if (item.threads.length > 0) return;
+        const project = yield* projectStore
+          .get(factory.projectId)
+          .pipe(Effect.catch(ledgerUnavailable));
+        if (Option.isNone(project)) return yield* workItemNotFound(workItemId);
+        const missing = yield* missingGitIdentity(project.value.workspaceRoot).pipe(
+          Effect.catch(workItemUnavailable("Git could not be asked for a committer identity.")),
+        );
+        if (missing === null) return;
+        if (canTransitionWorkItem(item.stage, "waiting", item.gate)) {
+          yield* moveWorkItem({
+            item,
+            to: "waiting",
+            actor: { kind: "server" },
+            note: missing,
+            gate: {
+              state: "waiting",
+              question: missing,
+              resumeStage: item.stage === "review" ? "review" : "implement",
+              askedAt: yield* nowIso,
+            },
+          });
+        }
+        return yield* new WorkItemError({
+          code: "gate_waiting",
+          message: `Work item ${item.id} waits at a gate for a person: ${missing} End your turn; their answer arrives as your next message.`,
+        });
+      }),
+    );
+  });
+
   const prepareDelegation = Effect.fn("FactoryService.prepareDelegation")(function* (input: {
     readonly parentThreadId: ThreadId;
     readonly parentRunId: RunId;
     readonly delegation: FactoryDelegation;
   }) {
-    const role = workItemRoleForTask(input.delegation.role);
-    if (role === null) return input.delegation;
     const [owner] = yield* sql<{ readonly factoryId: string }>`
       SELECT factory_id AS "factoryId" FROM fork_factory_threads
       WHERE thread_id = ${input.parentThreadId} AND role = 'foreman'
     `.pipe(NodeSqliteClient.readOnly, Effect.catch(ledgerUnavailable));
     if (owner === undefined) return input.delegation;
     const factory = yield* read(FactoryId.make(owner.factoryId));
+    const workItemId = yield* foremanRunItem(input.parentThreadId, input.parentRunId).pipe(
+      Effect.catch(ledgerUnavailable),
+    );
+    if (workItemId !== null) yield* requireCommitIdentity(factory, workItemId);
+    const role = workItemRoleForTask(input.delegation.role);
+    if (role === null) return input.delegation;
     const binding =
       factory.roles.find((candidate) => candidate.role === role)?.binding ??
       builtinRoles[role].binding;
     const bound = bindDelegation(role, input.delegation, binding);
-    const workItemId = yield* foremanRunItem(input.parentThreadId, input.parentRunId).pipe(
-      Effect.catch(ledgerUnavailable),
-    );
     if (workItemId !== null) yield* logWorkItem(workItemId, bound.note);
     return bound.delegation;
   });
