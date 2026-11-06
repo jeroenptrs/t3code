@@ -43,6 +43,7 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { FactoryAttentionBadge } from "./FactoryAttentionBadge";
+import { FactoryCanvas } from "./FactoryCanvas";
 import { FactoryDefinitionSection } from "./FactoryDefinitionSection";
 import { FactoryIssuesList } from "./FactoryIssues";
 import {
@@ -287,6 +288,7 @@ function FactoryView(props: {
       )}
       <FactoryNeedsYou environmentId={environmentId} factory={factory} />
       <FactoryIssuesList issues={factory.issues} />
+      <FactoryCanvas environmentId={environmentId} factoryId={factory.id} />
       <FactoryDefinitionSection
         environmentId={environmentId}
         factory={factory}
