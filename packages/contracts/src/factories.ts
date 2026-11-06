@@ -120,10 +120,24 @@ export type FactoryDefinition = typeof FactoryDefinition.Type;
 export const FactoryRoleSource = Schema.Literals(["builtin", "file"]);
 export type FactoryRoleSource = typeof FactoryRoleSource.Type;
 
+/**
+ * Where a skill's SKILL.md lives. A factory's `skills/<name>/` replaces a home skill of that name,
+ * which is `<T3 home>/skills/<name>/` and replaces a built-in one.
+ */
+export const FactorySkillSource = Schema.Literals(["builtin", "home", "factory"]);
+export type FactorySkillSource = typeof FactorySkillSource.Type;
+
+/** The levels a person or an agent writes skills at. */
+export const FactorySkillLevel = Schema.Literals(["home", "factory"]);
+export type FactorySkillLevel = typeof FactorySkillLevel.Type;
+
 export const FactorySkill = Schema.Struct({
   name: FactorySkillName,
-  /** `file` when `skills/<name>/SKILL.md` exists, which replaces a built-in skill of that name. */
-  source: FactoryRoleSource,
+  source: FactorySkillSource,
+  /** The SKILL.md frontmatter's `description`; empty when it has none. */
+  description: Schema.String,
+  /** The lower level whose skill of this name this one replaces, which applies if it goes. */
+  replaces: Schema.NullOr(FactorySkillSource),
 });
 export type FactorySkill = typeof FactorySkill.Type;
 
@@ -222,7 +236,7 @@ export const Factory = Schema.Struct({
   projects: Schema.Array(FactoryProject),
   /** Foreman, implement, and review, in that order. */
   roles: Schema.Array(FactoryRole),
-  /** Every skill a role here can name: the built-in ones and those under `skills/`, by name. */
+  /** Every skill a role here can name, by name: the factory's, then home, then built-in. */
   skills: Schema.Array(FactorySkill),
   issues: Schema.Array(FactoryIssue),
   scheduledTaskIds: Schema.Array(ScheduledTaskId),
@@ -245,27 +259,12 @@ export const FactoryRoleChange = Schema.Struct({
 });
 export type FactoryRoleChange = typeof FactoryRoleChange.Type;
 
-export const FactorySkillFile = Schema.Struct({
-  /** The whole `SKILL.md`: frontmatter with `name` and `description`, then the instructions. */
-  body: Schema.String.check(Schema.isMaxLength(65_536)),
-});
-export type FactorySkillFile = typeof FactorySkillFile.Type;
-
-export const FactorySkillChange = Schema.Struct({
-  name: FactorySkillName,
-  /** Null deletes `skills/<name>/SKILL.md`, so a built-in skill of that name applies again. */
-  file: Schema.NullOr(FactorySkillFile),
-});
-export type FactorySkillChange = typeof FactorySkillChange.Type;
-
-/** Writes `factory.json` and the given role and skill files, creating the factory when it is new. */
+/** Writes `factory.json` and the given role files, creating the factory when it is new. */
 export const FactorySaveInput = Schema.Struct({
   projectId: ProjectId,
   definition: FactoryDefinition,
   /** At most one change per role. A role left out keeps its file as it is. */
   roles: Schema.optionalKey(Schema.Array(FactoryRoleChange)),
-  /** At most one change per skill. A skill left out keeps its files as they are. */
-  skills: Schema.optionalKey(Schema.Array(FactorySkillChange)),
 });
 export type FactorySaveInput = typeof FactorySaveInput.Type;
 
@@ -304,6 +303,85 @@ export class FactoryError extends Schema.TaggedError<FactoryError>()("FactoryErr
   message: Schema.String,
   issues: Schema.optionalKey(Schema.Array(FactoryIssue)),
 }) {}
+
+/** The whole `SKILL.md`: frontmatter with `name` and `description`, then the instructions. */
+const FactorySkillBody = Schema.String.check(Schema.isMaxLength(65_536));
+
+export const FactorySkillListInput = Schema.Struct({
+  /** Omit for the home level: home and built-in skills. */
+  factoryId: Schema.optionalKey(FactoryId),
+});
+export type FactorySkillListInput = typeof FactorySkillListInput.Type;
+
+export const FactorySkillListResult = Schema.Struct({
+  /** One per name, from the highest level that has it, sorted by name. */
+  skills: Schema.Array(FactorySkill),
+});
+export type FactorySkillListResult = typeof FactorySkillListResult.Type;
+
+export const FactorySkillReadInput = Schema.Struct({
+  name: FactorySkillName,
+  source: FactorySkillSource,
+  /** Required for `factory`. */
+  factoryId: Schema.optionalKey(FactoryId),
+});
+export type FactorySkillReadInput = typeof FactorySkillReadInput.Type;
+
+export const FactorySkillReadResult = Schema.Struct({
+  skill: FactorySkill,
+  body: Schema.String,
+});
+export type FactorySkillReadResult = typeof FactorySkillReadResult.Type;
+
+export const FactorySkillSaveInput = Schema.Struct({
+  name: FactorySkillName,
+  source: FactorySkillLevel,
+  /** Required for `factory`. */
+  factoryId: Schema.optionalKey(FactoryId),
+  body: FactorySkillBody,
+});
+export type FactorySkillSaveInput = typeof FactorySkillSaveInput.Type;
+
+export const FactorySkillSaveResult = Schema.Struct({
+  skill: FactorySkill,
+});
+export type FactorySkillSaveResult = typeof FactorySkillSaveResult.Type;
+
+export const FactorySkillDeleteInput = Schema.Struct({
+  name: FactorySkillName,
+  source: FactorySkillLevel,
+  /** Required for `factory`. */
+  factoryId: Schema.optionalKey(FactoryId),
+});
+export type FactorySkillDeleteInput = typeof FactorySkillDeleteInput.Type;
+
+export const FactorySkillDeleteResult = Schema.Struct({
+  name: FactorySkillName,
+  source: FactorySkillLevel,
+});
+export type FactorySkillDeleteResult = typeof FactorySkillDeleteResult.Type;
+
+/**
+ * - `not_found`: no skill of that name at that level
+ * - `factory_not_found`: no factory with that id, or `factory` without a factory id
+ * - `invalid`: the SKILL.md frontmatter is missing, is not a mapping, or names another skill
+ * - `unavailable`: the files could not be read or written
+ */
+export const FactorySkillErrorCode = Schema.Literals([
+  "not_found",
+  "factory_not_found",
+  "invalid",
+  "unavailable",
+]);
+export type FactorySkillErrorCode = typeof FactorySkillErrorCode.Type;
+
+export class FactorySkillError extends Schema.TaggedError<FactorySkillError>()(
+  "FactorySkillError",
+  {
+    code: FactorySkillErrorCode,
+    message: Schema.String,
+  },
+) {}
 
 /** The Foreman's thread id starts with this, so clients can tell it apart. */
 export const FACTORY_FOREMAN_THREAD_ID_PREFIX = "factory-foreman:";
