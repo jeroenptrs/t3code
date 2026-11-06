@@ -137,12 +137,28 @@ const make = Effect.gen(function* () {
     return isRoleName(row.role) ? { factoryId: row.factoryId, role: row.role } : null;
   });
 
+  /** The role, its file, and the skills it binds that exist, in binding order. */
+  const boundRole = Effect.fn("FactoryThreads.boundRole")(function* (threadId: ThreadId) {
+    const found = yield* factoryRole(threadId);
+    if (found === null) return null;
+    const { directory, file } = yield* roleFile(found.factoryId, found.role);
+    const names = effectiveBinding(builtinRoles[found.role].binding, file?.binding ?? {}).skills;
+    const available = yield* skillStore.resolve(directory);
+    // An unknown name is an issue on the factory's page; the session opens without it.
+    const { skills } = resolveRoleSkills(found.role, names, available);
+    return { ...found, file, skills };
+  });
+
   const roleOf: FactoryThreads["Service"]["roleOf"] = Effect.fn("FactoryThreads.roleOf")(
     function* (threadId) {
-      const found = yield* factoryRole(threadId);
-      if (found === null) return null;
-      const { file } = yield* roleFile(found.factoryId, found.role);
-      return { ...found, body: file?.body ?? builtinRoles[found.role].body };
+      const bound = yield* boundRole(threadId);
+      if (bound === null) return null;
+      return {
+        factoryId: bound.factoryId,
+        role: bound.role,
+        body: bound.file?.body ?? builtinRoles[bound.role].body,
+        skills: bound.skills.map(({ name, description }) => ({ name, description })),
+      };
     },
     // Instructions are not part of the MCP credential, so a failed lookup only leaves them out.
     Effect.catch((error) =>
@@ -154,13 +170,9 @@ const make = Effect.gen(function* () {
 
   const skillsOf: FactoryThreads["Service"]["skillsOf"] = Effect.fn("FactoryThreads.skillsOf")(
     function* (threadId) {
-      const found = yield* factoryRole(threadId);
-      if (found === null) return [];
-      const { directory, file } = yield* roleFile(found.factoryId, found.role);
-      const names = effectiveBinding(builtinRoles[found.role].binding, file?.binding ?? {}).skills;
-      const available = yield* skillStore.resolve(directory);
-      // An unknown name is an issue on the factory's page; the session opens without it.
-      return resolveRoleSkills(found.role, names, available).skills.map((skill): BoundSkill =>
+      const bound = yield* boundRole(threadId);
+      if (bound === null) return [];
+      return bound.skills.map((skill): BoundSkill =>
         skill.source === "builtin"
           ? { name: skill.name, source: skill.source, text: skill.text }
           : { name: skill.name, source: skill.source, directory: skill.directory },
