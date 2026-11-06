@@ -46,6 +46,7 @@ export function workItemListInput(factoryId: FactoryId, search: WorkItemSearch):
 }
 
 export const WORK_ITEM_STAGE_LABELS = {
+  queued: "Queued",
   new: "New",
   implement: "Implement",
   review: "Review",
@@ -76,6 +77,7 @@ export function workItemStageBadgeVariant(
       return "warning";
     case "failed":
       return "destructive";
+    case "queued":
     case "done":
       return "outline";
     default:
