@@ -89,15 +89,15 @@ block on it.
 
 Current experimental dependencies, all open upstream as of 2026-11-05:
 
-| Upstream PR                                                                                | What we build on it                        |
-| ------------------------------------------------------------------------------------------ | ------------------------------------------ |
-| [#30323](https://github.com/pingdotgg/t3code/pull/30323) fresh provider session on send    | Foreman gets a fresh session per work item |
-| [#30326](https://github.com/pingdotgg/t3code/pull/30326) scheduled tasks run in one thread | The Foreman's long-lived thread            |
-| [#15975](https://github.com/pingdotgg/t3code/pull/15975) Home agent                        | Thread-management toolkit and wake reports |
-| [#31129](https://github.com/pingdotgg/t3code/pull/31129) delivery modes on bound tasks     | Steer or restart on trigger delivery (M4)  |
-| [#26254](https://github.com/pingdotgg/t3code/pull/26254) multi-repo projects               | Factories spanning several repos           |
-| [#15350](https://github.com/pingdotgg/t3code/pull/15350) Docker sandboxes                  | Per-role runners (later)                   |
-| [#21877](https://github.com/pingdotgg/t3code/pull/21877) follow-ups wait for nested work   | Foreman's revision loop sees final results |
+| Upstream PR                                                                                | What we build on it                                 |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------- |
+| [#30323](https://github.com/pingdotgg/t3code/pull/30323) fresh provider session on send    | Foreman gets a fresh session per work item          |
+| [#30326](https://github.com/pingdotgg/t3code/pull/30326) scheduled tasks run in one thread | The Foreman's long-lived thread                     |
+| [#15975](https://github.com/pingdotgg/t3code/pull/15975) Home agent                        | Thread-management toolkit and wake reports          |
+| [#31129](https://github.com/pingdotgg/t3code/pull/31129) delivery modes on bound tasks     | Steer or restart on trigger delivery (M4)           |
+| [#26254](https://github.com/pingdotgg/t3code/pull/26254) multi-repo projects               | Factories spanning several repos                    |
+| [#15350](https://github.com/pingdotgg/t3code/pull/15350) Docker sandboxes                  | Not pulled: a per-role `isolation: sandbox` binding |
+| [#21877](https://github.com/pingdotgg/t3code/pull/21877) follow-ups wait for nested work   | Foreman's revision loop sees final results          |
 
 The pinned head SHAs and the commits that carry them are in the
 [software factories ledger](software-factories-ledger.md).
