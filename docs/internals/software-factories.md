@@ -205,3 +205,37 @@ Each milestone ships on its own.
 
 - Nodes light up with active runs and edges show which work item is moving
   between them, built on the existing projection stream with no polling.
+
+## Trial notes
+
+Two real work items ran through a factory on the dev server on 2026-11-06,
+after M3: a one-line bug fix with a test, and a docs change, in a throwaway
+project with its own `npm run check`. Every role ran Claude Haiku. Both items
+went new, implement, review, done without a gate, in about a minute each. The
+Foreman wrote stand-alone tasks that named the branch, the base, the files,
+and the done criteria. Both implementers committed with the checks passing.
+Both reviewers ran the checks themselves and approved; one added a
+non-blocking suggestion. Where instructions alone failed, or could not be
+checked:
+
+- **Isolation is the Foreman's choice, not the role's.** The implement role
+  binds `isolation: worktree`, but the server does not apply role bindings to
+  the children a Foreman delegates; `delegate_task` runs with whatever the
+  Foreman passes. The first item's children worked in the project checkout
+  and left it on the feature branch. The second item's children got worktrees.
+  Once more and this becomes a server rule: a delegation from a Foreman takes
+  the child role's binding (isolation, model, modes) over the call's arguments.
+- **A missing precondition got improvised.** The project had no git identity.
+  The implement skill says to stop and report what is missing, but the
+  implementer set an author from the session's user and committed anyway. A
+  precondition the factory can check (git identity, a clean checkout) belongs
+  in code before the first child starts.
+- **Whether a child read its skill is not recorded.** The skills were on disk
+  in the child's directory, and the children behaved as the skills say, but
+  the Foreman's task already carried most of the same instructions. The work
+  log, not the ledger, would show a skill invocation. Nothing to fix yet; keep
+  the question for the next trial with a thinner task.
+- **A Foreman on a small model asks for confirmation.** In the M2 proof, with
+  no stage skills yet, the Haiku Foreman held a trivial item at a gate to ask
+  whether it could mark it done. With the stage skills in place it routed both
+  items without asking.
