@@ -178,19 +178,21 @@ Each milestone ships on its own.
 - Per-role skill injection at thread launch, generalised from the Jira breakdown
   injection.
 
-### M6. Analysis role and the spec artifact
+### M6. Canvas
+
+- Node graph per factory: triggers, Foreman, roles, gates, outputs, with edges
+  showing who may spawn whom.
+- Nodes light up with active runs and edges show which work item is moving
+  between them, built on the existing projection stream with no polling.
+
+### M7. Analysis role
 
 - Analysis role that reads the work item, the Jira issue, and the relevant repos
-  and writes a spec: scope, approach, affected repos, acceptance criteria, work
+  and writes up scope, approach, affected repos, acceptance criteria, and work
   packages. Runs in plan mode.
-- Spec artifact stored on the work item, handed to implement, checked by review.
-- Human gate on the spec, using the Jira proposal card pattern. Approvals work
-  from mobile.
-
-### M7. Canvas
-
-- Read-only node graph per factory: triggers, Foreman, roles, gates, outputs,
-  with edges showing who may spawn whom.
+- Whether that write-up becomes a stored spec artifact that implement receives
+  and review checks, with a human gate on it, is decided after the canvas and
+  a trial of the role as a plain hand-back.
 
 ### M8. Scoring and self-improvement
 
@@ -200,11 +202,6 @@ Each milestone ships on its own.
   definition.
 - Scheduled self-improvement run that proposes skill and definition edits as a
   merge request.
-
-### M9. Live canvas
-
-- Nodes light up with active runs and edges show which work item is moving
-  between them, built on the existing projection stream with no polling.
 
 ## Trial notes
 
