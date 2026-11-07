@@ -1,4 +1,9 @@
-import type { ScheduledTaskTimeSchedule, Trigger, TriggerSourceKind } from "@t3tools/contracts";
+import {
+  parseFactoryId,
+  type ScheduledTaskTimeSchedule,
+  type Trigger,
+  type TriggerSourceKind,
+} from "@t3tools/contracts";
 import { triggerFiltersSummary } from "@t3tools/client-runtime/scheduled-task-trigger";
 
 const MINUTE = 60_000;
@@ -70,8 +75,21 @@ export const TRIGGER_SOURCE_LABELS = {
   gitlab_projects: "GitLab projects",
 } as const satisfies Record<TriggerSourceKind, string>;
 
-/** One line per trigger: its source, then what it filters on, such as "Jira · Status equals Done". */
+/**
+ * One line per trigger: its source, then what it filters on, such as "Jira · Status equals Done",
+ * and the factory a work item trigger feeds.
+ */
 export function formatTriggerSummary(
+  trigger: Pick<Trigger, "source" | "filters"> & { readonly target?: Trigger["target"] },
+  formatSchedule: (schedule: ScheduledTaskTimeSchedule) => string,
+): string {
+  const summary = formatTriggerSource(trigger, formatSchedule);
+  const { target } = trigger;
+  if (target?.type !== "work_item") return summary;
+  return `${summary} → ${parseFactoryId(target.factoryId)?.name ?? target.factoryId}`;
+}
+
+function formatTriggerSource(
   trigger: Pick<Trigger, "source" | "filters">,
   formatSchedule: (schedule: ScheduledTaskTimeSchedule) => string,
 ): string {

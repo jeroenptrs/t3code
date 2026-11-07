@@ -2336,19 +2336,22 @@ const make = Effect.gen(function* () {
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
       }
       yield* assertLiveCallerForOtherProject(scope, parent, target.projectId);
-      // Like schedule_task: bind to this thread or start new ones, never to another thread.
-      const bindsCaller =
-        parent !== undefined &&
-        target.threadId === parent.thread.id &&
-        parent.thread.projectId === target.projectId;
-      if (target.threadId !== null && !bindsCaller && target.threadId !== existing?.threadId) {
-        return yield* failure(
-          "invalid_request",
-          "A trigger's target thread is null for new threads, or this thread in its own project.",
-        );
+      // A work item goes to the factory's Foreman, whose role decides the thread and modes.
+      if (target.type === "thread") {
+        // Like schedule_task: bind to this thread or start new ones, never to another thread.
+        const bindsCaller =
+          parent !== undefined &&
+          target.threadId === parent.thread.id &&
+          parent.thread.projectId === target.projectId;
+        if (target.threadId !== null && !bindsCaller && target.threadId !== existing?.threadId) {
+          return yield* failure(
+            "invalid_request",
+            "A trigger's target thread is null for new threads, or this thread in its own project.",
+          );
+        }
+        yield* resolveRuntimeMode(limits.runtimeMode, target.runtimeMode);
+        yield* resolveInteractionMode(limits.interactionMode, target.interactionMode);
       }
-      yield* resolveRuntimeMode(limits.runtimeMode, target.runtimeMode);
-      yield* resolveInteractionMode(limits.interactionMode, target.interactionMode);
       yield* requireProject(target.projectId);
       const { commandId, ...save } = input;
       const { task } = yield* scheduledTasks
