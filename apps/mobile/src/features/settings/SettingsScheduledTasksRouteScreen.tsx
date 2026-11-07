@@ -76,6 +76,7 @@ import { buildModelOptions } from "../../lib/modelOptions";
 import { withImplicitFastModeSelection } from "../../lib/providerOptions";
 import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
+import { jiraEnvironment } from "../../state/jira";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { resolveNewTaskBranchLabel } from "../threads/new-task-context-presentation";
@@ -91,6 +92,7 @@ import {
   editDraft,
   isTriggerFilterMode,
   parseIntervalMinutes,
+  parseJiraPollMinutes,
   scheduledTaskDefaultModel,
   scheduleFromDraft,
   unbindDraftFromThread,
@@ -425,6 +427,76 @@ function TriggerFilterRows(props: {
           : ""
       }`}
     />
+  );
+}
+
+/** Mobile edits JQL only; a saved filter chosen on web shows here and is kept. */
+function JiraQueryRows(props: {
+  readonly environmentId: EnvironmentId;
+  readonly schedule: ScheduleDraft;
+  readonly disabled: boolean;
+  readonly onChange: (patch: Partial<ScheduleDraft>) => void;
+}) {
+  const capabilities = useEnvironmentQuery(
+    jiraEnvironment.capabilities({ environmentId: props.environmentId, input: {} }),
+  ).data;
+  const sites = [...new Set(capabilities?.identities.map((identity) => identity.site) ?? [])];
+  const minutes = parseJiraPollMinutes(props.schedule.jiraPollMinutes);
+  return (
+    <>
+      <SelectRow
+        label="Site"
+        value={props.schedule.jiraSite || (sites.length === 0 ? "None configured" : "Pick a site")}
+        borderTop
+        actions={
+          props.disabled
+            ? []
+            : sites.map((site) => ({
+                id: site,
+                title: site,
+                state: site === props.schedule.jiraSite ? ("on" as const) : undefined,
+              }))
+        }
+        onSelect={(jiraSite) => props.onChange({ jiraSite })}
+      />
+      {props.schedule.jiraFilterId ? (
+        <SelectRow
+          label="Saved filter"
+          value={props.schedule.jiraFilterId}
+          borderTop
+          actions={[]}
+          onSelect={() => undefined}
+        />
+      ) : (
+        <FormField
+          label="JQL"
+          value={props.schedule.jql}
+          placeholder="project = PROJ AND labels = agent"
+          disabled={props.disabled}
+          borderTop
+          onChange={(jql) => props.onChange({ jql })}
+        />
+      )}
+      <FormField
+        label="Minutes between checks"
+        value={props.schedule.jiraPollMinutes}
+        keyboardType="number-pad"
+        disabled={props.disabled}
+        borderTop
+        onChange={(jiraPollMinutes) => props.onChange({ jiraPollMinutes })}
+      />
+      <Text
+        className={
+          minutes >= 5
+            ? "px-4 pb-3 text-sm text-foreground-muted"
+            : "px-4 pb-3 text-sm text-danger-foreground"
+        }
+      >
+        {minutes >= 5
+          ? "Checks the query as the site's service account. The first check only records the results; later checks run for issues that enter or leave them, or change."
+          : "Check every 5 minutes or more, in whole minutes."}
+      </Text>
+    </>
   );
 }
 
@@ -858,6 +930,13 @@ function TaskForm({
         return;
       }
     }
+    if (draft.schedule.mode === "jira_query" && schedule === null) {
+      Dialog.alert(
+        "Invalid Jira query",
+        "Pick a site, enter a JQL query, and check every 5 minutes or more, in whole minutes.",
+      );
+      return;
+    }
     if (draft.schedule.mode === "webhook" && schedule === null) {
       Dialog.alert(
         "Invalid webhook settings",
@@ -1237,6 +1316,17 @@ function TaskForm({
               </Text>
             </>
           ) : isTriggerFilterMode(draft.schedule.mode) ? (
+            <>
+              {draft.schedule.mode === "jira_query" ? (
+                <JiraQueryRows
+                  environmentId={environmentId}
+                  schedule={draft.schedule}
+                  disabled={saving}
+                  onChange={(patch) =>
+                    setDraft({ ...draft, schedule: { ...draft.schedule, ...patch } })
+                  }
+                />
+              ) : null}
             <TriggerFilterRows
               source={draft.schedule.mode}
               filters={draft.schedule.triggerFilters}
@@ -1245,6 +1335,7 @@ function TaskForm({
                 setDraft({ ...draft, schedule: { ...draft.schedule, triggerFilters } })
               }
             />
+            </>
           ) : draft.schedule.mode === "manual" ? (
             <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
               Runs only when you tap Run now or an agent starts it.

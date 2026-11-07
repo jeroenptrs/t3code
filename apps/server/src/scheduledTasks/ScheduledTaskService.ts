@@ -67,6 +67,7 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
 import { forkParked } from "../serverActivation.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import * as ScheduledTaskPoller from "./ScheduledTaskPoller.ts";
 import {
   redactHeaders,
   redactQuery,
@@ -197,6 +198,7 @@ function storedTriggerFilters(
     case "jira":
     case "gitlab":
     case "slack":
+    case "jira_query":
       return schedule.filters;
     default:
       return undefined;
@@ -557,6 +559,7 @@ export const layer = Layer.effect(
     const scheduler = yield* Scheduler.Scheduler;
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
     const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
+    const poller = yield* Effect.serviceOption(ScheduledTaskPoller.ScheduledTaskPoller);
     const webhookPolicyOrganization = ManagedPolicy.deniedBy(managedPolicy, "webhookTasks");
     // Existing webhook tasks stay stored but report why they do not run.
     const webhookPolicyBlock =
@@ -860,6 +863,7 @@ export const layer = Layer.effect(
       sql
         .withTransaction(
           sql`DELETE FROM scheduled_task_webhook_deliveries WHERE task_id = ${id}`.pipe(
+            Effect.andThen(deleteQueryObservations(id)),
             Effect.andThen(sql`DELETE FROM scheduled_tasks WHERE task_id = ${id}`),
           ),
         )
@@ -868,6 +872,13 @@ export const layer = Layer.effect(
             taskError("Could not delete schedule task.", { taskId: id, cause }),
           ),
         );
+
+    // A Jira query trigger's observation keys start with its id and a NUL (TriggerSources).
+    const deleteQueryObservations = (id: ScheduledTaskId) =>
+      sql`
+        DELETE FROM fork_trigger_observations
+        WHERE source = 'jira_query' AND key >= ${`${id}\u0000`} AND key < ${`${id}\u0001`}
+      `;
 
     const markRunning = (id: ScheduledTaskId, startedAtIso: string, webhookDeliveryId?: string) =>
       sql<{ task_id: string }>`
@@ -1261,8 +1272,12 @@ export const layer = Layer.effect(
             ...scheduleSource,
             updatedAt: iso(completedAt),
             lastRunAt: startedAtIso,
-            // A manual run that starts before a one-time run must not use it up.
-            nextRunAt: nextRunAt(
+            // A manual run that starts before a one-time run must not use it up, and an event
+            // run leaves a Jira query's next poll where the poll put it.
+            nextRunAt:
+              trigger === "event"
+                ? scheduleSource.nextRunAt
+                : nextRunAt(
               scheduleSource,
               scheduleSource.schedule.type === "once" ? startedAt : completedAt,
             ),
@@ -1388,6 +1403,44 @@ export const layer = Layer.effect(
       if (updated.length > 0) yield* notifyChanged;
     });
 
+    // A poll is not a run: run count and last run time stay with the prompt runs its events
+    // cause. Its failure shows on the task until a poll succeeds, and the next poll is always
+    // one interval away, so a failing query is never retried faster.
+    const pollTask = Effect.fn("ScheduledTaskService.pollTask")(function* (task: ScheduledTask) {
+      const result = yield* Option.match(poller, {
+        onNone: () =>
+          Effect.fail(taskError("Jira query triggers are not available.", { taskId: task.id })),
+        onSome: (service) => service.poll(task),
+      }).pipe(Effect.exit);
+      const error = Exit.isSuccess(result) ? null : errorMessage(result.cause);
+      const now = yield* localNow;
+      // A prompt run its events started owns the run columns while it is running.
+      yield* sql`
+        UPDATE scheduled_tasks
+        SET next_run_at = ${nextRunAt(task, now)},
+            updated_at = ${iso(now)},
+            last_run_status = CASE
+              WHEN last_run_status = 'running' THEN last_run_status
+              WHEN ${error} IS NOT NULL THEN 'failed'
+              WHEN last_run_status = 'failed' THEN
+                CASE WHEN run_count = 0 THEN 'never' ELSE 'succeeded' END
+              ELSE last_run_status
+            END,
+            last_run_error = CASE
+              WHEN last_run_status = 'running' THEN last_run_error
+              WHEN ${error} IS NOT NULL THEN ${error}
+              WHEN last_run_status = 'failed' THEN NULL
+              ELSE last_run_error
+            END
+        WHERE task_id = ${task.id} AND created_at = ${task.createdAt} AND enabled = 1
+      `.pipe(
+        Effect.mapError((cause) =>
+          taskError("Could not record the Jira query poll.", { taskId: task.id, cause }),
+        ),
+      );
+      yield* notifyChanged;
+    });
+
     const runDueTasks = Effect.fn("ScheduledTaskService.runDueTasks")(function* () {
       const now = yield* localNow;
       const nowMs = DateTime.toEpochMillis(now);
@@ -1429,6 +1482,8 @@ export const layer = Layer.effect(
                   "missed",
                   "Missed a scheduled run because the server was not running at that time.",
                 )
+              : task.schedule.type === "jira_query"
+                ? pollTask(task)
               : runTask(task, "scheduled"),
           ).pipe(
             Effect.catch((cause) =>
@@ -1552,7 +1607,8 @@ export const layer = Layer.effect(
       if (
         input.schedule.type === "jira" ||
         input.schedule.type === "gitlab" ||
-        input.schedule.type === "slack"
+        input.schedule.type === "slack" ||
+        input.schedule.type === "jira_query"
       ) {
         const unknown = unknownTriggerFilter(input.schedule.type, input.schedule.filters ?? []);
         if (unknown !== undefined) {
@@ -1643,6 +1699,14 @@ export const layer = Layer.effect(
                       storedTriggerFilters(existingTask?.schedule, input.schedule.type),
                   ),
                 }
+              : input.schedule.type === "jira_query"
+                ? {
+                    ...input.schedule,
+                    ...withFilters(
+                      input.schedule.filters ??
+                        storedTriggerFilters(existingTask?.schedule, "jira_query"),
+                    ),
+                  }
             : input.schedule;
       const webhook =
         input.schedule.type === "webhook"
@@ -1830,6 +1894,12 @@ export const layer = Layer.effect(
             DELETE FROM scheduled_task_webhook_deliveries
             WHERE task_id IN (SELECT task_id FROM scheduled_tasks WHERE thread_id = ${threadId})
           `;
+            const queries = yield* sql<{ task_id: ScheduledTaskId }>`
+            SELECT task_id FROM scheduled_tasks WHERE thread_id = ${threadId}
+          `;
+            yield* Effect.forEach(queries, ({ task_id }) => deleteQueryObservations(task_id), {
+              discard: true,
+            });
             return yield* sql<{ task_id: ScheduledTaskId }>`
             DELETE FROM scheduled_tasks WHERE thread_id = ${threadId} RETURNING task_id
           `;
@@ -1874,7 +1944,8 @@ export const layer = Layer.effect(
       if (
         task.schedule.type === "jira" ||
         task.schedule.type === "gitlab" ||
-        task.schedule.type === "slack"
+        task.schedule.type === "slack" ||
+        task.schedule.type === "jira_query"
       ) {
         return yield* taskError(
           "Event tasks run when a matching event arrives; their prompt needs one.",
