@@ -345,3 +345,36 @@ review, done in about a minute with no gate.
   implementer's `trial/trim-hyphens` commit in detached HEAD. The Output node
   reads the implementer's shell only, so that did not show; the M5 note on a
   task that names a branch still holds.
+
+One trigger of the GitLab projects source ran on the dev server on 2026-11-07,
+after M7, against a real project on a GitLab host the server's `glab` is
+signed in to, with a work item target on a throwaway factory whose roles ran
+Claude Haiku. The trigger was saved over MCP with `t3_trigger_save`, a filter
+on one merge request number, and a five-minute interval. No Jira query trigger
+ran: the dev server had no Jira service identity, and the source polls only as
+one.
+
+- **A saved trigger polls at once.** The seed poll ran three seconds after the
+  save, raised `merge_request.opened` for the one open merge request, and the
+  work item was in the Foreman's session two seconds later. The first events
+  from a Jira query come one interval after the seed instead, because that
+  source records its first result set silently.
+- **The event reached the Foreman framed.** The work item's text listed the
+  event's fields one per line, each value inside `<trigger-data-…>` tags with
+  the untrusted-data note, the same way a thread run gets its prompt. The
+  Foreman read the merge request's title, author, and branches from it.
+- **A trigger over a repository the factory does not list gates on arrival.**
+  The merge request lived in a repository that was not one of the factory's
+  projects. The Foreman held the item with two questions: what to do with a
+  merge request that already carries its implementation, and where to check
+  the repository out. That is the right stop. A GitLab projects trigger that
+  feeds a factory should name a factory project for each polled repository, or
+  the Foreman's instructions should say to review in a fresh clone.
+- **The second poll raised nothing.** Five minutes later the trigger's next
+  poll was one interval further on, its run record still showed the one run
+  the event caused, and the factory still had one work item. Polls do not count
+  as runs.
+- **Polls leave no trace in the server log.** The poll and its `glab` calls
+  log nothing at the default level, so the only evidence of a poll is the
+  trigger's next-run time moving. A debug line per poll with the request count
+  would make the cost checkable in a trial.
