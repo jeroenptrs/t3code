@@ -9,6 +9,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  attachTrigger,
   buildFactorySaveInput,
   factoryDraft,
   factoryDraftChanged,
@@ -129,6 +130,27 @@ describe("buildFactorySaveInput", () => {
       roles: { ...draft.roles, implement: { ...draft.roles.implement, useBuiltin: true } },
     };
     expect(buildFactorySaveInput(factory, edited).roles).toBeUndefined();
+  });
+});
+
+describe("attachTrigger", () => {
+  const added = ScheduledTaskId.make("task-jira");
+
+  it("saves at once when the page holds no edits", () => {
+    for (const draft of [null, factoryDraft(factory)]) {
+      expect(attachTrigger(factory, draft, added)).toEqual({
+        draft: { ...factoryDraft(factory), triggers: [taskId, added] },
+        saveNow: true,
+      });
+    }
+  });
+
+  it("adds the trigger to unsaved edits and leaves the save to the person", () => {
+    const draft = { ...factoryDraft(factory), projects: ["web", "docs"] };
+    expect(attachTrigger(factory, draft, added)).toEqual({
+      draft: { ...draft, triggers: [taskId, added] },
+      saveNow: false,
+    });
   });
 });
 

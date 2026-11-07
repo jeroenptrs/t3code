@@ -555,6 +555,14 @@ export function targetFromDraft(
   return stored?.target === undefined ? {} : { target: null };
 }
 
+/** A new trigger made from a factory's page: its project, creating work items in it. */
+export function draftForFactoryTrigger(factory: {
+  readonly id: FactoryId;
+  readonly projectId: ProjectId;
+}): Pick<DraftState, "projectId" | "factoryId"> {
+  return { projectId: factory.projectId, factoryId: factory.id };
+}
+
 export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
   const filters = webhookFilterDrafts(schedule.type === "webhook" ? schedule.filters : undefined);
