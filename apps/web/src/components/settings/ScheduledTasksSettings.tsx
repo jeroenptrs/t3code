@@ -34,6 +34,8 @@ import {
   parseTriageDraft,
   parseTriggerFilterDrafts,
   triageDraft,
+  triggerEventTypes,
+  withEventTypeDrafts,
 } from "@t3tools/client-runtime/scheduled-task-trigger";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
 import { scheduledTaskWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-worktree";
@@ -98,6 +100,7 @@ import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
+  EventTypesField,
   Field,
   TriageField,
   TriggerFiltersField,
@@ -258,6 +261,7 @@ const EMPTY_DRAFT: DraftState = {
   filters: [],
   savedFilters: [],
   triggerFilters: [],
+  eventTypes: [],
   savedTriggerFilters: [],
   ...JIRA_QUERY_DRAFT_DEFAULTS,
   ...GITLAB_PROJECTS_DRAFT_DEFAULTS,
@@ -1551,6 +1555,7 @@ function ScheduledTaskEditorForm({
       : {
           ...EMPTY_DRAFT,
           projectId: defaultScheduledTaskProjectId(scopedProjects, scope),
+          eventTypes: triggerEventTypes(prefill?.scheduleMode ?? EMPTY_DRAFT.scheduleMode) ?? [],
           ...prefill,
         },
   );
@@ -1665,7 +1670,7 @@ function ScheduledTaskEditorForm({
     }
     if (isTriggerFilterSource(draft.scheduleMode)) {
       const parsedTriggerFilters = parseTriggerFilterDrafts(
-        draft.triggerFilters,
+        withEventTypeDrafts(draft.scheduleMode, draft.eventTypes, draft.triggerFilters),
         draft.scheduleMode,
       );
       if ("error" in parsedTriggerFilters) {
@@ -1768,6 +1773,7 @@ function ScheduledTaskEditorForm({
   };
 
   const source = triggerSourceOfMode(draft.scheduleMode);
+  const eventTypeOptions = triggerEventTypes(draft.scheduleMode);
   const selectMode = (mode: ScheduleMode) =>
     setDraft((current) => {
       const suggested =
@@ -1786,7 +1792,7 @@ function ScheduledTaskEditorForm({
             }),
         // Each source has its own fields, so rows from another source can't carry over.
         ...(mode !== current.scheduleMode && isTriggerFilterSource(mode)
-          ? { triggerFilters: [] }
+          ? { triggerFilters: [], eventTypes: triggerEventTypes(mode) ?? [] }
           : {}),
         prompt: promptForScheduleMode(mode, current.prompt),
       };
@@ -2189,6 +2195,13 @@ function ScheduledTaskEditorForm({
                     onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
                   />
                 ) : null}
+                {eventTypeOptions === null ? null : (
+                  <EventTypesField
+                    types={eventTypeOptions}
+                    value={draft.eventTypes}
+                    onChange={(eventTypes) => setDraft((current) => ({ ...current, eventTypes }))}
+                  />
+                )}
                 <TriggerFiltersField
                   source={draft.scheduleMode}
                   filters={draft.triggerFilters}
