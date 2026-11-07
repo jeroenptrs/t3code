@@ -564,9 +564,30 @@ it.effect(
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect(
-  "a saved Jira query polls at the next tick, then instead of its prompt, one interval apart",
-  () =>
+const polledSchedules = [
+  {
+    schedule: {
+      type: "jira_query",
+      site: "acme.atlassian.net",
+      jql: "labels = agent",
+      everyMs: 900_000,
+    },
+    rescoped: { jql: "labels = triage" },
+  },
+  {
+    schedule: {
+      type: "gitlab_projects",
+      host: "gitlab.acme.dev",
+      projects: ["acme/app"],
+      everyMs: 900_000,
+    },
+    rescoped: { projects: [], group: "acme" },
+  },
+] as const;
+
+it.effect.each(polledSchedules)(
+  "a saved $schedule.type trigger polls at the next tick, then instead of its prompt, one interval apart",
+  ({ schedule, rescoped }) =>
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse("2026-11-05T10:00:00.000Z"));
     const polls = yield* Queue.unbounded<string>();
@@ -609,12 +630,7 @@ it.effect(
           title: "Agent-labelled issues",
           prompt: "Pick up {{event.key}}",
           enabled: true,
-          schedule: {
-            type: "jira_query",
-            site: "acme.atlassian.net",
-            jql: "labels = agent",
-            everyMs: 900_000,
-          },
+          schedule,
           projectId: "project-jira-query",
           workspaceStrategy: { type: "root" },
           modelSelection: { instanceId: "codex", model: "gpt-5.4" },
@@ -673,7 +689,7 @@ it.effect(
         const requeried = yield* service.upsert({
           ...input,
           id: created.task.id,
-          schedule: { ...input.schedule, jql: "labels = triage" } as typeof input.schedule,
+          schedule: { ...input.schedule, ...rescoped } as typeof input.schedule,
         });
         expect(requeried.task.nextRunAt).toBe("2026-11-05T10:15:10.000Z");
 
@@ -685,7 +701,7 @@ it.effect(
         "other\u0000",
       ]) {
         yield* sql`INSERT INTO fork_trigger_observations (source, key, state_json, observed_at)
-          VALUES ('jira_query', ${key}, '{}', '2026-11-05T10:00:00.000Z')`;
+          VALUES (${schedule.type}, ${key}, '{}', '2026-11-05T10:00:00.000Z')`;
       }
       yield* service.delete({ id: created.task.id });
       expect(yield* sql<{ key: string }>`SELECT key FROM fork_trigger_observations`).toEqual([
