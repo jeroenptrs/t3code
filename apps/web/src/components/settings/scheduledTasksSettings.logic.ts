@@ -30,10 +30,13 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import {
   DEFAULT_TRIGGER_PROMPT,
   parseTriggerFilterDrafts,
+  splitEventTypeFilter,
   triageDraft,
+  triggerEventTypes,
   triggerFilterDrafts,
   triggerFilterDraftsChanged,
   triggerFiltersSummary,
+  withEventTypeDrafts,
   type TriageDraft,
   type TriggerFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-trigger";
@@ -201,14 +204,16 @@ function triggerSourceSummary(
       if (source.group !== undefined) parts.push(`group ${source.group}`);
     }
     parts.push(`every ${Math.round(source.everyMs / 60_000)} minutes`);
-    if (filters.length > 0) parts.push(triggerFiltersSummary(source.kind, filters));
-    return parts.join(" · ");
+    parts.push(triggerFiltersSummary(source.kind, filters));
+    return parts.filter((part) => part !== "").join(" · ");
   }
   if (source.kind === "manual" || filters.length === 0) return label;
   if (source.kind === "webhook") {
     return `${label} · ${filters.length} filter${filters.length === 1 ? "" : "s"}`;
   }
-  return `${label} · ${triggerFiltersSummary(source.kind, filters)}`;
+  return [label, triggerFiltersSummary(source.kind, filters)]
+    .filter((part) => part !== "")
+    .join(" · ");
 }
 
 export function isTriggerFilterSource(mode: string): mode is TriggerFilterSourceKind {
@@ -282,6 +287,9 @@ export interface DraftState {
   readonly savedFilters: ReadonlyArray<WebhookFilterDraft>;
   /** Event filters for the Jira, GitLab, and Slack modes; paths are fields of that source. */
   readonly triggerFilters: ReadonlyArray<TriggerFilterDraft>;
+  /** The "Act on" picker, saved as an `event.type in` filter in front of `triggerFilters`. */
+  readonly eventTypes: ReadonlyArray<string>;
+  /** The rows the form opened with, the picker's filter included. */
   readonly savedTriggerFilters: ReadonlyArray<TriggerFilterDraft>;
   /** Jira query mode: the site, a JQL or saved filter, and the poll interval. */
   readonly jiraSite: string;
@@ -345,6 +353,9 @@ export function toDateTimeLocalValue(date: Date): string {
 }
 
 export function scheduleDraftErrors(draft: DraftState) {
+  if (triggerEventTypes(draft.scheduleMode) !== null && draft.eventTypes.length === 0) {
+    return [{ title: "Event type is required", description: "Pick at least one event to act on." }];
+  }
   if (draft.scheduleMode === "once") {
     const runAt = new Date(draft.runAt);
     if (Number.isNaN(runAt.getTime()))
@@ -485,8 +496,12 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     };
   }
   if (isTriggerFilterSource(draft.scheduleMode)) {
-    const parsed = parseTriggerFilterDrafts(draft.triggerFilters, draft.scheduleMode);
+    const rows = withEventTypeDrafts(draft.scheduleMode, draft.eventTypes, draft.triggerFilters);
+    const parsed = parseTriggerFilterDrafts(rows, draft.scheduleMode);
     if (!("filters" in parsed)) return null;
+    const filters = triggerFilterDraftsChanged(draft.savedTriggerFilters, rows)
+      ? { filters: parsed.filters }
+      : {};
     if (draft.scheduleMode === "gitlab_projects") {
       const host = draft.gitlabHost.trim();
       const projects = gitlabProjectPaths(draft.gitlabProjects);
@@ -501,9 +516,7 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
         projects,
         ...(group ? { group } : {}),
         everyMs,
-        ...(triggerFilterDraftsChanged(draft.savedTriggerFilters, draft.triggerFilters)
-          ? { filters: parsed.filters }
-          : {}),
+        ...filters,
       };
     }
     if (draft.scheduleMode === "jira_query") {
@@ -514,16 +527,12 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
           ? { jql: draft.jql.trim() }
           : { filterId: draft.jiraFilterId.trim() }),
         everyMs: Number(draft.jiraPollMinutes) * 60_000,
-        ...(triggerFilterDraftsChanged(draft.savedTriggerFilters, draft.triggerFilters)
-          ? { filters: parsed.filters }
-          : {}),
+        ...filters,
       };
     }
     return {
       type: draft.scheduleMode,
-      ...(triggerFilterDraftsChanged(draft.savedTriggerFilters, draft.triggerFilters)
-        ? { filters: parsed.filters }
-        : {}),
+      ...filters,
     };
   }
   if (draft.scheduleMode === "manual") return { type: "manual" };
@@ -566,15 +575,11 @@ export function draftForFactoryTrigger(factory: {
 export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
   const filters = webhookFilterDrafts(schedule.type === "webhook" ? schedule.filters : undefined);
-  const triggerFilters = triggerFilterDrafts(
-    schedule.type === "jira" ||
-      schedule.type === "gitlab" ||
-      schedule.type === "slack" ||
-      schedule.type === "jira_query" ||
-      schedule.type === "gitlab_projects"
-      ? schedule.filters
-      : undefined,
+  const picked = splitEventTypeFilter(
+    schedule.type,
+    "filters" in schedule && schedule.type !== "webhook" ? (schedule.filters ?? []) : [],
   );
+  const triggerFilters = triggerFilterDrafts(picked.filters);
   const weekdays =
     schedule.type === "fixed_time" && schedule.weekdays && schedule.weekdays.length > 0
       ? new Set(schedule.weekdays)
@@ -633,7 +638,8 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     filters,
     savedFilters: filters,
     triggerFilters,
-    savedTriggerFilters: triggerFilters,
+    eventTypes: picked.eventTypes,
+    savedTriggerFilters: withEventTypeDrafts(schedule.type, picked.eventTypes, triggerFilters),
     ...(schedule.type === "jira_query"
       ? {
           jiraSite: schedule.site,
