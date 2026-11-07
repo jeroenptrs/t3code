@@ -235,6 +235,27 @@ describe("scheduleFromDraft", () => {
     });
   });
 
+  it("round-trips GitLab projects, one path per line, and refuses an empty scope", () => {
+    const draft = scheduleDraftForTask({
+      schedule: {
+        type: "gitlab_projects",
+        host: "gitlab.acme.dev",
+        projects: ["acme/app", "acme/api"],
+        everyMs: 900_000,
+      },
+    });
+    expect(draft).toMatchObject({ mode: "gitlab_projects", gitlabProjects: "acme/app\nacme/api" });
+    expect(scheduleFromDraft({ ...draft, gitlabProjects: "", gitlabGroup: " acme " })).toEqual({
+      type: "gitlab_projects",
+      host: "gitlab.acme.dev",
+      projects: [],
+      group: "acme",
+      everyMs: 900_000,
+    });
+    expect(scheduleFromDraft({ ...draft, gitlabProjects: " \n" })).toBeNull();
+    expect(scheduleFromDraft({ ...draft, gitlabPollMinutes: "4" })).toBeNull();
+  });
+
   it.each(["0,5", "2,5,0", "Infinity", "150119987580", ""])(
     "rejects invalid interval minutes: %s",
     (intervalMinutes) => {

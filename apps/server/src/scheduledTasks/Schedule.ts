@@ -1,5 +1,5 @@
 import {
-  MIN_JIRA_QUERY_INTERVAL_MS,
+  MIN_POLL_INTERVAL_MS,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   type ScheduledTaskSchedule,
 } from "@t3tools/contracts";
@@ -16,9 +16,24 @@ function parseTimeOfDay(value: string): { hour: number; minute: number } | null 
 
 type ClockSchedule = Extract<ScheduledTaskSchedule, { type: "interval" | "fixed_time" | "once" }>;
 
-/** Webhook and event sources run when something raises them; a Jira query polls on the clock. */
+/** Webhook and event sources run when something raises them; polled sources run on the clock. */
 const isClockSchedule = (schedule: ScheduledTaskSchedule): schedule is ClockSchedule =>
   schedule.type === "interval" || schedule.type === "fixed_time" || schedule.type === "once";
+
+type PollSchedule = Extract<ScheduledTaskSchedule, { type: "jira_query" | "gitlab_projects" }>;
+
+/** Sources the scheduled task runner polls instead of running their prompt. */
+export const isPollSchedule = <S extends { readonly type: string }>(
+  schedule: S,
+): schedule is Extract<S, { readonly type: PollSchedule["type"] }> =>
+  schedule.type === "jira_query" || schedule.type === "gitlab_projects";
+
+/** What a poll reads. A save that changes it polls at once, and the poll re-seeds silently. */
+export function pollScopeKey(schedule: PollSchedule): string {
+  return schedule.type === "jira_query"
+    ? JSON.stringify([schedule.site, schedule.jql ?? null, schedule.filterId ?? null])
+    : JSON.stringify([schedule.host, schedule.projects.toSorted(), schedule.group ?? null]);
+}
 
 const filtersKey = (schedule: ScheduledTaskSchedule) =>
   JSON.stringify("filters" in schedule ? (schedule.filters ?? []) : []);
@@ -27,8 +42,8 @@ export function nextScheduledRunAt(
   schedule: ScheduledTaskSchedule,
   from: DateTime.DateTime,
 ): DateTime.DateTime | null {
-  if (schedule.type === "jira_query") {
-    return DateTime.addDuration(from, Math.max(schedule.everyMs, MIN_JIRA_QUERY_INTERVAL_MS));
+  if (isPollSchedule(schedule)) {
+    return DateTime.addDuration(from, Math.max(schedule.everyMs, MIN_POLL_INTERVAL_MS));
   }
   if (!isClockSchedule(schedule)) return null;
   if (schedule.type === "once") {
@@ -78,12 +93,10 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
     return b.type === "interval" && a.everyMs === b.everyMs;
   }
   if (a.type === "webhook") return b.type === "webhook";
-  if (a.type === "jira_query") {
+  if (isPollSchedule(a)) {
     return (
-      b.type === "jira_query" &&
-      a.site === b.site &&
-      a.jql === b.jql &&
-      a.filterId === b.filterId &&
+      b.type === a.type &&
+      pollScopeKey(a) === pollScopeKey(b) &&
       a.everyMs === b.everyMs &&
       filtersKey(a) === filtersKey(b)
     );
