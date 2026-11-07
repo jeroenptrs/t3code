@@ -64,16 +64,16 @@ keeps that shape and binds it to what T3 Code already has.
 
 ## Trigger seam
 
-A trigger is a source, filters, and a target. The persisted trigger is the
-scheduled task: its schedule is the source and holds the filters, and its
-project and thread binding is the target. The `Trigger` contract in
-`packages/contracts/src/trigger.ts` is what the `triggers.*` RPCs and
-`t3_trigger_save` present. `scheduledTaskTrigger` is the one mapping from a
-stored task, and `triggerUpsertToScheduledTaskUpsert` the inverse for saves, so
-there is no second service or table. The `scheduledTasks.*` RPCs stay for older
-clients and for webhook tokens and deliveries. Its `target` is a union with one
-member, `thread`. A factory target joins that union as the second member, so
-triggers start factory work items without a second trigger model.
+The seam is filled. A trigger is the entity clients and agents handle: a
+source, filters, and a target, presented through the `Trigger` contract in
+`packages/contracts/src/trigger.ts`. It is stored as a scheduled task row, so
+there is no second service or table, and a work item target lives in that row's
+`fork_target_json` (null means the thread target the row's columns describe).
+Polled sources, the Jira query and GitLab projects, run inside the scheduled
+task runner through the `ScheduledTaskPoller` port, so the runner imports no
+Jira or GitLab code. Each poll's observations are deduplicated per trigger in
+`fork_trigger_observations`, and the events a poll raises carry the trigger's
+id, so they run only that trigger and never another trigger over the same item.
 
 ## Experimental dependencies
 
@@ -113,14 +113,14 @@ finished while still running
 
 ## What exists today
 
-| Block              | Present                                                                                                          | Gap                                                                                 |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Ingress            | Scheduled tasks (interval, fixed time, once, webhook with HMAC, dedupe, filters), Slack app, Jira and PR watches | No native Jira or GitLab event sources, one trigger runs one prompt into one thread |
-| Orchestration      | `delegate_task` with roles, worktree isolation, cross-environment targets                                        | No stored roles, no work item ledger, no join over children                         |
-| Harness and access | Runtime modes, managed policy, scopes, Entra roles, provider instances, `request_secret`                         | Nothing binds them per role                                                         |
-| Tools and skills   | Per-provider skill discovery, `$skill` mentions, per-thread instruction injection for Jira breakdown             | No create, edit, or per-role injection                                              |
-| Verification       | Checkpoints, PR watch on checks, review guides, diff walkthroughs, browser and device preview, `evals/`          | No gate concept                                                                     |
-| Self-improvement   | Insights, run metrics, PostHog counts                                                                            | No per-run record, scorers, or memory                                               |
+| Block              | Present                                                                                                          | Gap                                                                                      |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Ingress            | Scheduled tasks (interval, fixed time, once, webhook with HMAC, dedupe, filters), Slack app, Jira and PR watches | No Slack producer (Slack events arrive only through `triggers.raise`), no delivery modes |
+| Orchestration      | `delegate_task` with roles, worktree isolation, cross-environment targets                                        | No stored roles, no work item ledger, no join over children                              |
+| Harness and access | Runtime modes, managed policy, scopes, Entra roles, provider instances, `request_secret`                         | Nothing binds them per role                                                              |
+| Tools and skills   | Per-provider skill discovery, `$skill` mentions, per-thread instruction injection for Jira breakdown             | No create, edit, or per-role injection                                                   |
+| Verification       | Checkpoints, PR watch on checks, review guides, diff walkthroughs, browser and device preview, `evals/`          | No gate concept                                                                          |
+| Self-improvement   | Insights, run metrics, PostHog counts                                                                            | No per-run record, scorers, or memory                                                    |
 
 ## Milestones
 
