@@ -429,7 +429,7 @@ function nextRunAfterRun(
 
 /**
  * A polled source that is new, newly on, or reads something different is due now, so its seed
- * poll runs at the next scheduler tick and its first events come one interval later.
+ * poll runs at the next scheduler tick.
  */
 function seedsPoll(
   task: Pick<ScheduledTask, "enabled" | "schedule">,
