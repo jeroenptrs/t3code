@@ -679,6 +679,23 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "factory-delete": {
+      const count = countEntities(factoryIds);
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Deleted {count} factory} other {Deleted {count} factories}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to delete {count} factory} other {Tried to delete {count} factories}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "environment-link": {
       const count = selected.length;
       label = done

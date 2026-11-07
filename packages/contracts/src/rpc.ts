@@ -158,6 +158,8 @@ import {
   FactoryListResult,
   FactoryReadInput,
   FactorySaveInput,
+  FactoryDeleteInput,
+  FactoryDeleteResult,
   FactorySkillDeleteInput,
   FactorySkillDeleteResult,
   FactorySkillError,
@@ -872,6 +874,7 @@ export const WS_METHODS = {
   factoriesList: "factories.list",
   factoriesRead: "factories.read",
   factoriesSave: "factories.save",
+  factoriesDelete: "factories.delete",
   factoriesSkillsList: "factories.skills.list",
   factoriesSkillsRead: "factories.skills.read",
   factoriesSkillsSave: "factories.skills.save",
@@ -1909,6 +1912,12 @@ const WsFactoriesReadRpc = Rpc.make(WS_METHODS.factoriesRead, {
 const WsFactoriesSaveRpc = Rpc.make(WS_METHODS.factoriesSave, {
   payload: FactorySaveInput,
   success: Factory,
+  error: FactoriesRpcError,
+});
+
+const WsFactoriesDeleteRpc = Rpc.make(WS_METHODS.factoriesDelete, {
+  payload: FactoryDeleteInput,
+  success: FactoryDeleteResult,
   error: FactoriesRpcError,
 });
 
@@ -3019,6 +3028,7 @@ export const WsFactoriesRpcGroup = RpcGroup.make(
   WsFactoriesListRpc,
   WsFactoriesReadRpc,
   WsFactoriesSaveRpc,
+  WsFactoriesDeleteRpc,
   WsFactoriesSkillsListRpc,
   WsFactoriesSkillsReadRpc,
   WsFactoriesSkillsSaveRpc,

@@ -129,6 +129,7 @@ const call = (
     list: () => Effect.sync(() => calls.push("list")).pipe(Effect.as({ factories: [] })),
     read: () => Effect.sync(() => calls.push("read")).pipe(Effect.as(factory)),
     save: () => Effect.sync(() => calls.push("save")).pipe(Effect.as(factory)),
+    delete: (factoryId) => Effect.sync(() => calls.push("delete")).pipe(Effect.as({ factoryId })),
     listWorkItems: () =>
       Effect.sync(() => calls.push("listWorkItems")).pipe(Effect.as({ workItems: [] })),
     createWorkItem: () => Effect.sync(() => calls.push("createWorkItem")).pipe(Effect.as(workItem)),
@@ -169,6 +170,7 @@ const call = (
 };
 
 const save = { projectId: "project-1", definition: factory.definition };
+const remove = { factoryId: factory.id };
 const skillSave = {
   name: "run-checks",
   source: "home",
@@ -185,6 +187,8 @@ it.effect.each([
   ["t3_factory_save", threadCaller(supervisedThreadId), save, ["capability_denied"]],
   ["t3_factory_save", readOnlyClient, save, ["capability_denied"]],
   ["t3_factory_save", threadCaller(fullAccessThreadId), save, ["ran", "save"]],
+  ["t3_factory_delete", threadCaller(supervisedThreadId), remove, ["capability_denied"]],
+  ["t3_factory_delete", threadCaller(fullAccessThreadId), remove, ["ran", "delete"]],
   ["t3_factory_skill_list", readOnlyClient, {}, ["ran", "skills.list"]],
   ["t3_factory_skill_save", threadCaller(supervisedThreadId), skillSave, ["capability_denied"]],
   ["t3_factory_skill_save", readOnlyClient, skillDelete, ["capability_denied"]],
