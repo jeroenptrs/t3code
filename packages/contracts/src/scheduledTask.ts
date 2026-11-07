@@ -247,8 +247,8 @@ export const ScheduledTaskSlackSchedule = Schema.Struct({
   description: "Run on Slack messages. Prompt can use {{event.field}} and {{event}}.",
 });
 
-export const MIN_JIRA_QUERY_INTERVAL_MS = 5 * 60_000;
-export const DEFAULT_JIRA_QUERY_INTERVAL_MS = 15 * 60_000;
+export const MIN_POLL_INTERVAL_MS = 5 * 60_000;
+export const DEFAULT_POLL_INTERVAL_MS = 15 * 60_000;
 
 /** A Jira query names exactly one of a JQL string and a saved filter. */
 export const jiraQueryFields = {
@@ -257,7 +257,7 @@ export const jiraQueryFields = {
   filterId: Schema.optional(TrimmedNonEmptyString).annotate({
     description: "Saved filter id, instead of jql.",
   }),
-  everyMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(MIN_JIRA_QUERY_INTERVAL_MS)).annotate({
+  everyMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(MIN_POLL_INTERVAL_MS)).annotate({
     description: "Poll interval. Min 300000.",
   }),
 };
@@ -278,6 +278,35 @@ export const ScheduledTaskJiraQuerySchedule = Schema.Struct({
       "Poll a Jira query as the site's service identity. Prompt can use {{event.field}} and {{event}}.",
   });
 export type ScheduledTaskJiraQuerySchedule = typeof ScheduledTaskJiraQuerySchedule.Type;
+
+/** GitLab projects polled for merge requests and pipelines: project paths, a group, or both. */
+export const gitlabProjectsFields = {
+  host: TrimmedNonEmptyString.annotate({ description: "GitLab host, such as gitlab.com." }),
+  projects: Schema.Array(TrimmedNonEmptyString).annotate({
+    description: "Project paths, such as acme/app.",
+  }),
+  group: Schema.optional(TrimmedNonEmptyString).annotate({
+    description: "Group path, such as acme. Its projects' merge requests are polled.",
+  }),
+  everyMs: jiraQueryFields.everyMs,
+};
+
+export const hasGitLabProjects = Schema.makeFilter(
+  (source: { readonly projects: ReadonlyArray<string>; readonly group?: string | undefined }) =>
+    source.projects.length > 0 || source.group !== undefined || "Name a project or a group.",
+);
+
+export const ScheduledTaskGitLabProjectsSchedule = Schema.Struct({
+  type: Schema.Literal("gitlab_projects"),
+  ...gitlabProjectsFields,
+  filters: Schema.optional(TriggerFilters),
+})
+  .check(hasGitLabProjects)
+  .annotate({
+    description:
+      "Poll GitLab projects as the host's glab login. Prompt can use {{event.field}} and {{event}}.",
+  });
+export type ScheduledTaskGitLabProjectsSchedule = typeof ScheduledTaskGitLabProjectsSchedule.Type;
 
 export const ScheduledTaskManualSchedule = Schema.Struct({
   type: Schema.Literal("manual"),
@@ -302,6 +331,7 @@ export const ScheduledTaskSchedule = Schema.Union([
   ScheduledTaskSlackSchedule,
   ScheduledTaskManualSchedule,
   ScheduledTaskJiraQuerySchedule,
+  ScheduledTaskGitLabProjectsSchedule,
 ]);
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
@@ -333,6 +363,7 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
   ScheduledTaskSlackSchedule,
   ScheduledTaskManualSchedule,
   ScheduledTaskJiraQuerySchedule,
+  ScheduledTaskGitLabProjectsSchedule,
 ]);
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
 
