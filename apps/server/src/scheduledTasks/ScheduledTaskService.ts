@@ -1097,6 +1097,8 @@ export const layer = Layer.effect(
       target: TriggerWorkItemTarget,
       run: {
         readonly event: TriggerEvent;
+        /** The frame `runForEvent` rendered the prompt with; a run with no event has no fields. */
+        readonly frameId?: string;
         readonly deliveryId?: string;
         /** A webhook's filled-in prompt; otherwise the event's fields, or the prompt. */
         readonly text?: string;
@@ -1105,7 +1107,8 @@ export const layer = Layer.effect(
       if (Option.isNone(workItemSink)) {
         return yield* taskError("This server cannot create work items.", { taskId: task.id });
       }
-      const text = run.text ?? (renderTriggerEventText(run.event) || task.prompt);
+      const text =
+        run.text ?? (renderTriggerEventText(run.event, run.frameId ?? "") || task.prompt);
       const source: WorkItemTriggerSource = {
         kind: "trigger",
         triggerId: task.id,
@@ -1134,6 +1137,7 @@ export const layer = Layer.effect(
         readonly eventId: string;
         readonly prompt: string;
         readonly event: TriggerEvent;
+        readonly frameId: string;
       },
     ) {
       // Read before reserving: nothing between the reservation and its release may fail.
@@ -1303,6 +1307,7 @@ export const layer = Layer.effect(
                     occurredAt: startedAtIso,
                     payload: { type: "manual" },
                   },
+                  ...(event === undefined ? {} : { frameId: event.frameId }),
                   ...(webhook === undefined
                     ? {}
                     : { deliveryId: webhook.deliveryId, text: webhook.prompt }),
@@ -3073,6 +3078,7 @@ export const layer = Layer.effect(
         eventId: triggerEventId(event),
         prompt: rendered.prompt,
         event,
+        frameId,
       }).pipe(
         permit.withPermits(1),
         Effect.mapError((cause) =>
