@@ -564,7 +564,9 @@ it.effect(
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("a due Jira query task polls instead of running its prompt, one interval apart", () =>
+it.effect(
+  "a saved Jira query polls at the next tick, then instead of its prompt, one interval apart",
+  () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse("2026-11-05T10:00:00.000Z"));
     const polls = yield* Queue.unbounded<string>();
@@ -603,8 +605,7 @@ it.effect("a due Jira query task polls instead of running its prompt, one interv
     );
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
-      const created = yield* service.upsert(
-        yield* decodeUpsertInput({
+        const input = yield* decodeUpsertInput({
           title: "Agent-labelled issues",
           prompt: "Pick up {{event.key}}",
           enabled: true,
@@ -619,9 +620,12 @@ it.effect("a due Jira query task polls instead of running its prompt, one interv
           modelSelection: { instanceId: "codex", model: "gpt-5.4" },
           runtimeMode: "full-access",
           interactionMode: "default",
-        }),
-      );
-      expect(created.task.nextRunAt).toBe("2026-11-05T10:15:00.000Z");
+        });
+        // Let the scheduler's startup pass and first tick run on the empty table.
+        yield* TestClock.adjust("5 seconds");
+        const created = yield* service.upsert(input);
+        // A new query is due now, so the scheduler's next 5-second tick seeds it.
+        expect(created.task.nextRunAt).toBe("2026-11-05T10:00:05.000Z");
       const settled = (status: string) =>
         service.subscribeList().pipe(
           Stream.map((result) => result.tasks[0]),
@@ -632,15 +636,23 @@ it.effect("a due Jira query task polls instead of running its prompt, one interv
         );
 
       const failed = yield* settled("failed");
-      yield* TestClock.adjust("15 minutes");
+        yield* TestClock.adjust("5 seconds");
       expect(yield* Queue.take(polls)).toBe(created.task.id);
       expect(yield* Fiber.join(failed)).toMatchObject({
         lastRunStatus: "failed",
         lastRunError: "Field 'sprintt' does not exist or you do not have permission.",
-        nextRunAt: "2026-11-05T10:30:00.000Z",
+          nextRunAt: "2026-11-05T10:15:10.000Z",
         lastRunAt: null,
         runCount: 0,
       });
+
+        // An edit that leaves the query alone keeps the next poll.
+        const edited = yield* service.upsert({
+          ...input,
+          id: created.task.id,
+          prompt: "Take {{event.key}}",
+        });
+        expect(edited.task.nextRunAt).toBe("2026-11-05T10:15:10.000Z");
 
       yield* Ref.set(failing, false);
       const cleared = yield* settled("never");
@@ -648,11 +660,22 @@ it.effect("a due Jira query task polls instead of running its prompt, one interv
       expect(yield* Queue.take(polls)).toBe(created.task.id);
       expect(yield* Fiber.join(cleared)).toMatchObject({
         lastRunError: null,
-        nextRunAt: "2026-11-05T10:45:00.000Z",
+          nextRunAt: "2026-11-05T10:30:10.000Z",
         runCount: 0,
       });
       expect(yield* Queue.size(polls)).toBe(0);
       expect(yield* Ref.get(launches)).toBe(0);
+
+        // Turning it back on, or changing the query, polls at the next tick again.
+        yield* service.setEnabled({ id: created.task.id, enabled: false });
+        const resumed = yield* service.setEnabled({ id: created.task.id, enabled: true });
+        expect(resumed.task.nextRunAt).toBe("2026-11-05T10:15:10.000Z");
+        const requeried = yield* service.upsert({
+          ...input,
+          id: created.task.id,
+          schedule: { ...input.schedule, jql: "labels = triage" } as typeof input.schedule,
+        });
+        expect(requeried.task.nextRunAt).toBe("2026-11-05T10:15:10.000Z");
 
       // Deleting the trigger drops its observations and no other trigger's.
       const sql = yield* SqlClient.SqlClient;
