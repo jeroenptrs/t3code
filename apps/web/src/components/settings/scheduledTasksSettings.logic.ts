@@ -6,10 +6,10 @@ import {
   type TriggerFilterSourceKind,
 } from "@t3tools/contracts";
 import {
-  DEFAULT_JIRA_QUERY_INTERVAL_MS,
+  DEFAULT_POLL_INTERVAL_MS,
   EnvironmentId,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
-  MIN_JIRA_QUERY_INTERVAL_MS,
+  MIN_POLL_INTERVAL_MS,
   type ProjectId,
   ScheduledTaskId,
   type ScheduledTask,
@@ -103,7 +103,8 @@ export type ScheduleMode =
   | "gitlab"
   | "slack"
   | "manual"
-  | "jira_query";
+  | "jira_query"
+  | "gitlab_projects";
 
 export const SCHEDULE_MODE_LABELS: Record<ScheduleMode, string> = {
   fixed: "At a time",
@@ -115,6 +116,7 @@ export const SCHEDULE_MODE_LABELS: Record<ScheduleMode, string> = {
   slack: "On Slack message",
   manual: "Manual",
   jira_query: "On Jira query",
+  gitlab_projects: "On GitLab projects",
 };
 
 /** Source picker entries: the schedule kinds sit under "Schedule", the event sources beside it. */
@@ -126,6 +128,7 @@ export const TRIGGER_SOURCE_LABELS: Record<Trigger["source"]["kind"], string> = 
   slack: "Slack",
   manual: "Manual",
   jira_query: "Jira query",
+  gitlab_projects: "GitLab projects",
 };
 
 export const TIME_SCHEDULE_MODES = ["fixed", "once", "interval"] as const;
@@ -173,12 +176,16 @@ export function triggerSummary(
   const { source, filters } = trigger;
   if (source.kind === "schedule") return timeScheduleLabel(source.schedule, timeZone, runAt);
   const label = TRIGGER_SOURCE_LABELS[source.kind];
-  if (source.kind === "jira_query") {
-    const minutes = Math.round(source.everyMs / 60_000);
-    const every = `${label} · every ${minutes} minutes`;
-    return filters.length === 0
-      ? every
-      : `${every} · ${triggerFiltersSummary(source.kind, filters)}`;
+  if (source.kind === "jira_query" || source.kind === "gitlab_projects") {
+    const parts = [label];
+    if (source.kind === "gitlab_projects") {
+      const count = source.projects.length;
+      if (count > 0) parts.push(`${count} project${count === 1 ? "" : "s"}`);
+      if (source.group !== undefined) parts.push(`group ${source.group}`);
+    }
+    parts.push(`every ${Math.round(source.everyMs / 60_000)} minutes`);
+    if (filters.length > 0) parts.push(triggerFiltersSummary(source.kind, filters));
+    return parts.join(" · ");
   }
   if (source.kind === "manual" || filters.length === 0) return label;
   if (source.kind === "webhook") {
@@ -188,7 +195,13 @@ export function triggerSummary(
 }
 
 export function isTriggerFilterSource(mode: string): mode is TriggerFilterSourceKind {
-  return mode === "jira" || mode === "gitlab" || mode === "slack" || mode === "jira_query";
+  return (
+    mode === "jira" ||
+    mode === "gitlab" ||
+    mode === "slack" ||
+    mode === "jira_query" ||
+    mode === "gitlab_projects"
+  );
 }
 
 const DEFAULT_PROMPTS = new Set<string>([
@@ -257,6 +270,11 @@ export interface DraftState {
   readonly jql: string;
   readonly jiraFilterId: string;
   readonly jiraPollMinutes: string;
+  /** GitLab projects mode: the host, project paths one per line, a group, and the interval. */
+  readonly gitlabHost: string;
+  readonly gitlabProjects: string;
+  readonly gitlabGroup: string;
+  readonly gitlabPollMinutes: string;
   readonly triage: TriageDraft;
 }
 
@@ -265,10 +283,35 @@ export const JIRA_QUERY_DRAFT_DEFAULTS = {
   jiraQueryKind: "jql",
   jql: "",
   jiraFilterId: "",
-  jiraPollMinutes: String(DEFAULT_JIRA_QUERY_INTERVAL_MS / 60_000),
+  jiraPollMinutes: String(DEFAULT_POLL_INTERVAL_MS / 60_000),
 } as const;
 
-const MIN_JIRA_POLL_MINUTES = MIN_JIRA_QUERY_INTERVAL_MS / 60_000;
+export const GITLAB_PROJECTS_DRAFT_DEFAULTS = {
+  gitlabHost: "",
+  gitlabProjects: "",
+  gitlabGroup: "",
+  gitlabPollMinutes: String(DEFAULT_POLL_INTERVAL_MS / 60_000),
+} as const;
+
+const MIN_POLL_MINUTES = MIN_POLL_INTERVAL_MS / 60_000;
+
+const gitlabProjectPaths = (text: string) =>
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+const invalidPollInterval = (value: string) => {
+  const minutes = Number(value);
+  return !Number.isInteger(minutes) || minutes < MIN_POLL_MINUTES
+    ? [
+        {
+          title: "Invalid interval",
+          description: `Poll every ${MIN_POLL_MINUTES} minutes or more, in whole minutes.`,
+        },
+      ]
+    : [];
+};
 
 export const WEBHOOK_SIGNATURE_DEFAULTS = {
   signatureHeader: "x-hub-signature-256",
@@ -294,8 +337,19 @@ export function scheduleDraftErrors(draft: DraftState) {
       ];
     return [];
   }
+  if (draft.scheduleMode === "gitlab_projects") {
+    if (!draft.gitlabHost.trim())
+      return [{ title: "GitLab host is required", description: "Pick the GitLab host to poll." }];
+    if (gitlabProjectPaths(draft.gitlabProjects).length === 0 && !draft.gitlabGroup.trim())
+      return [
+        {
+          title: "Projects are required",
+          description: "Enter project paths, one per line, or a group.",
+        },
+      ];
+    return invalidPollInterval(draft.gitlabPollMinutes);
+  }
   if (draft.scheduleMode === "jira_query") {
-    const minutes = Number(draft.jiraPollMinutes);
     if (!draft.jiraSite.trim())
       return [{ title: "Jira site is required", description: "Pick the Jira site to query." }];
     if (draft.jiraQueryKind === "jql" ? !draft.jql.trim() : !draft.jiraFilterId.trim())
@@ -306,14 +360,7 @@ export function scheduleDraftErrors(draft: DraftState) {
             draft.jiraQueryKind === "jql" ? "Enter a JQL query." : "Pick a saved filter.",
         },
       ];
-    if (!Number.isInteger(minutes) || minutes < MIN_JIRA_POLL_MINUTES)
-      return [
-        {
-          title: "Invalid interval",
-          description: `Poll every ${MIN_JIRA_POLL_MINUTES} minutes or more, in whole minutes.`,
-        },
-      ];
-    return [];
+    return invalidPollInterval(draft.jiraPollMinutes);
   }
   if (draft.scheduleMode !== "webhook") return [];
   if (parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes) === undefined)
@@ -421,6 +468,25 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
   if (isTriggerFilterSource(draft.scheduleMode)) {
     const parsed = parseTriggerFilterDrafts(draft.triggerFilters, draft.scheduleMode);
     if (!("filters" in parsed)) return null;
+    if (draft.scheduleMode === "gitlab_projects") {
+      const host = draft.gitlabHost.trim();
+      const projects = gitlabProjectPaths(draft.gitlabProjects);
+      const group = draft.gitlabGroup.trim();
+      const everyMs = Number(draft.gitlabPollMinutes) * 60_000;
+      if (!host || (projects.length === 0 && !group) || !(everyMs >= MIN_POLL_INTERVAL_MS)) {
+        return null;
+      }
+      return {
+        type: "gitlab_projects",
+        host,
+        projects,
+        ...(group ? { group } : {}),
+        everyMs,
+        ...(triggerFilterDraftsChanged(draft.savedTriggerFilters, draft.triggerFilters)
+          ? { filters: parsed.filters }
+          : {}),
+      };
+    }
     if (draft.scheduleMode === "jira_query") {
       return {
         type: "jira_query",
@@ -462,7 +528,8 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     schedule.type === "jira" ||
       schedule.type === "gitlab" ||
       schedule.type === "slack" ||
-      schedule.type === "jira_query"
+      schedule.type === "jira_query" ||
+      schedule.type === "gitlab_projects"
       ? schedule.filters
       : undefined,
   );
@@ -533,6 +600,14 @@ export function taskToDraft(task: ScheduledTask): DraftState {
           jiraPollMinutes: String(Math.round(schedule.everyMs / 60_000)),
         }
       : JIRA_QUERY_DRAFT_DEFAULTS),
+    ...(schedule.type === "gitlab_projects"
+      ? {
+          gitlabHost: schedule.host,
+          gitlabProjects: schedule.projects.join("\n"),
+          gitlabGroup: schedule.group ?? "",
+          gitlabPollMinutes: String(Math.round(schedule.everyMs / 60_000)),
+        }
+      : GITLAB_PROJECTS_DRAFT_DEFAULTS),
     triage: triageDraft(task.triage),
   };
 }

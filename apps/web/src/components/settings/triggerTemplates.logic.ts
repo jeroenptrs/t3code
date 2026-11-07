@@ -29,6 +29,7 @@ export const TRIGGER_SOURCE_LABELS: Record<TriggerSourceKind, string> = {
   slack: "Slack",
   manual: "Manual",
   jira_query: "Jira query",
+  gitlab_projects: "GitLab projects",
 };
 
 interface PlaceholderDraft {

@@ -82,7 +82,7 @@ it.effect("runs only the enabled tasks of the event's source whose filters match
 );
 
 it.effect(
-  "runs a Jira query trigger only for its own poll's events, and a Jira trigger for none",
+  "runs a polled trigger only for its own poll's events, and an event trigger for none",
   () =>
     Effect.gen(function* () {
       const harness = yield* makeScheduledTaskTestLayer;
@@ -105,6 +105,28 @@ it.effect(
         yield* query("query-a");
         yield* query("query-b");
         yield* tasks.upsert(taskInput({ id: ScheduledTaskId.make("jira"), title: "jira" }));
+        const projects = (id: string) =>
+          tasks.upsert(
+            taskInput({
+              id: ScheduledTaskId.make(id),
+              title: id,
+              schedule: {
+                type: "gitlab_projects",
+                host: "gitlab.acme.dev",
+                projects: ["acme/app"],
+                everyMs: 900_000,
+              },
+            }),
+          );
+        yield* projects("projects-a");
+        yield* projects("projects-b");
+        yield* tasks.upsert(
+          taskInput({
+            id: ScheduledTaskId.make("gitlab"),
+            title: "gitlab",
+            schedule: { type: "gitlab" },
+          }),
+        );
 
         const { payload } = jiraEvent() as Extract<TriggerEvent, { source: "jira" }>;
         const polled = {
@@ -128,6 +150,48 @@ it.effect(
         );
         assert.deepEqual(yield* triggers.raise(jiraEvent()), { matched: 1 });
         assert.equal((yield* Queue.take(harness.launches)).title, "jira");
+        assert.equal(yield* Queue.size(harness.launches), 0);
+
+        const mergeRequest = {
+          host: "gitlab.acme.dev",
+          repository: "acme/app",
+          number: "42",
+          url: "https://gitlab.acme.dev/acme/app/-/merge_requests/42",
+          title: "Add login",
+          state: "open",
+          previousState: "open",
+          isDraft: "false",
+          headBranch: "feature/login",
+          baseBranch: "main",
+          checksState: "failing",
+          previousChecksState: null,
+          reviewDecision: null,
+          author: "ada",
+        } as const;
+        const finished = {
+          source: "gitlab_projects",
+          type: "pipeline.finished",
+          triggerId: ScheduledTaskId.make("projects-b"),
+          occurredAt: "2026-11-05T10:00:00.000Z",
+          payload: {
+            ...mergeRequest,
+            type: "pipeline.finished",
+            pipelineId: "901",
+            pipelineStatus: "failed",
+            pipelineUrl: "https://gitlab.acme.dev/acme/app/-/pipelines/901",
+            pipelineRef: "feature/login",
+          },
+        } as const;
+        assert.deepEqual(yield* triggers.raise(finished), { matched: 1 });
+        assert.equal((yield* Queue.take(harness.launches)).title, "projects-b");
+        const opened = {
+          source: "gitlab",
+          type: "merge_request.opened",
+          occurredAt: "2026-11-05T10:00:00.000Z",
+          payload: { ...mergeRequest, type: "merge_request.opened" },
+        } as const;
+        assert.deepEqual(yield* triggers.raise(opened), { matched: 1 });
+        assert.equal((yield* Queue.take(harness.launches)).title, "gitlab");
         assert.equal(yield* Queue.size(harness.launches), 0);
       }).pipe(
         Effect.provide(

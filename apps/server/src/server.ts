@@ -9,7 +9,9 @@ import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as TriggerService from "./triggers/TriggerService.ts";
 import * as TriggerSources from "./triggers/TriggerSources.ts";
-import * as JiraQueryPoller from "./triggers/jiraQueryPoller.ts";
+import * as TriggerPoller from "./triggers/triggerPoller.ts";
+import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
+import * as ServerSourceControlHost from "./sourceControl/ServerSourceControlHost.ts";
 import * as PullRequestAutoWalkthrough from "./orchestration-v2/PullRequestAutoWalkthrough.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
@@ -699,12 +701,20 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   Layer.provide(UsageLimitSources.layerResetFallback),
   Layer.provide(layerScheduledTaskWebhookOrigin),
-  // Fork-only: the scheduled task runner polls Jira query triggers through this, and is built
-  // before layerTriggers, so it gets the poller here. TriggerSources and JiraApi are the same
-  // instances layerTriggers and layerJiraService build, by layer memoization.
+  // Fork-only: the scheduled task runner polls Jira query and GitLab projects triggers through
+  // this, and is built before layerTriggers, so it gets the poller here. TriggerSources and
+  // JiraApi are the same instances layerTriggers and layerJiraService build, by layer memoization.
   Layer.provide(
-    JiraQueryPoller.layer.pipe(
-      Layer.provide(Layer.mergeAll(TriggerSources.layer, JiraApi.layer, JiraIdentities.layer)),
+    TriggerPoller.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          TriggerSources.layer,
+          JiraApi.layer,
+          JiraIdentities.layer,
+          ProjectStore.layer,
+          GitLabCli.layer.pipe(Layer.provide(ServerSourceControlHost.layer)),
+        ),
+      ),
     ),
   ),
   // Fork-only: provider sessions get the "jira" MCP capability when Jira is configured,

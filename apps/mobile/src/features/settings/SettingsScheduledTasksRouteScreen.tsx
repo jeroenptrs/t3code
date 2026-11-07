@@ -49,6 +49,7 @@ import {
   emptyTriggerFilterDraft,
   parseTriageDraft,
   parseTriggerFilterDrafts,
+  signedInGitLabHosts,
   TRIAGE_FALLBACK_OPTIONS,
   type TriggerFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-trigger";
@@ -77,6 +78,7 @@ import { withImplicitFastModeSelection } from "../../lib/providerOptions";
 import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { jiraEnvironment } from "../../state/jira";
+import { sourceControlEnvironment } from "../../state/sourceControl";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { resolveNewTaskBranchLabel } from "../threads/new-task-context-presentation";
@@ -199,6 +201,7 @@ function FormField(props: {
   readonly disabled?: boolean;
   readonly placeholder?: string;
   readonly borderTop?: boolean;
+  readonly multiline?: boolean;
 }) {
   return (
     <View
@@ -214,6 +217,8 @@ function FormField(props: {
         onChangeText={props.onChange}
         textAlignVertical="center"
         keyboardType={props.keyboardType}
+        multiline={props.multiline}
+        autoCapitalize={props.multiline ? "none" : undefined}
         placeholder={props.placeholder}
         placeholderTextColorClassName="accent-foreground-muted"
         className="min-h-8 font-sans text-base text-foreground"
@@ -494,6 +499,86 @@ function JiraQueryRows(props: {
       >
         {minutes >= 5
           ? "Checks the query as the site's service account. The first check only records the results; later checks run for issues that enter or leave them, or change."
+          : "Check every 5 minutes or more, in whole minutes."}
+      </Text>
+    </>
+  );
+}
+
+/** Host, projects or group, and interval; the host list is the hosts glab is signed in to. */
+function GitLabProjectsRows(props: {
+  readonly environmentId: EnvironmentId;
+  readonly schedule: ScheduleDraft;
+  readonly disabled: boolean;
+  readonly onChange: (patch: Partial<ScheduleDraft>) => void;
+}) {
+  const discovery = useEnvironmentQuery(
+    sourceControlEnvironment.discovery({ environmentId: props.environmentId, input: {} }),
+  ).data;
+  const hosts = signedInGitLabHosts(discovery?.sourceControlProviders ?? []);
+  const minutes = parseJiraPollMinutes(props.schedule.gitlabPollMinutes);
+  return (
+    <>
+      {hosts.length === 0 ? (
+        <FormField
+          label="Host"
+          value={props.schedule.gitlabHost}
+          placeholder="gitlab.com"
+          disabled={props.disabled}
+          borderTop
+          onChange={(gitlabHost) => props.onChange({ gitlabHost })}
+        />
+      ) : (
+        <SelectRow
+          label="Host"
+          value={props.schedule.gitlabHost || "Pick a host"}
+          borderTop
+          actions={
+            props.disabled
+              ? []
+              : hosts.map((host) => ({
+                  id: host,
+                  title: host,
+                  state: host === props.schedule.gitlabHost ? ("on" as const) : undefined,
+                }))
+          }
+          onSelect={(gitlabHost) => props.onChange({ gitlabHost })}
+        />
+      )}
+      <FormField
+        label="Project paths, one per line"
+        value={props.schedule.gitlabProjects}
+        placeholder="acme/app"
+        disabled={props.disabled}
+        borderTop
+        multiline
+        onChange={(gitlabProjects) => props.onChange({ gitlabProjects })}
+      />
+      <FormField
+        label="Group path (optional)"
+        value={props.schedule.gitlabGroup}
+        placeholder="acme"
+        disabled={props.disabled}
+        borderTop
+        onChange={(gitlabGroup) => props.onChange({ gitlabGroup })}
+      />
+      <FormField
+        label="Minutes between checks"
+        value={props.schedule.gitlabPollMinutes}
+        keyboardType="number-pad"
+        disabled={props.disabled}
+        borderTop
+        onChange={(gitlabPollMinutes) => props.onChange({ gitlabPollMinutes })}
+      />
+      <Text
+        className={
+          minutes >= 5
+            ? "px-4 pb-3 text-sm text-foreground-muted"
+            : "px-4 pb-3 text-sm text-danger-foreground"
+        }
+      >
+        {minutes >= 5
+          ? "Checks as the host's glab sign-in on this environment. Runs when a merge request opens, changes, merges, or closes, or a pipeline finishes."
           : "Check every 5 minutes or more, in whole minutes."}
       </Text>
     </>
@@ -930,6 +1015,13 @@ function TaskForm({
         return;
       }
     }
+    if (draft.schedule.mode === "gitlab_projects" && schedule === null) {
+      Dialog.alert(
+        "Invalid GitLab projects",
+        "Pick a host, enter project paths or a group, and check every 5 minutes or more, in whole minutes.",
+      );
+      return;
+    }
     if (draft.schedule.mode === "jira_query" && schedule === null) {
       Dialog.alert(
         "Invalid Jira query",
@@ -1319,6 +1411,16 @@ function TaskForm({
             <>
               {draft.schedule.mode === "jira_query" ? (
                 <JiraQueryRows
+                  environmentId={environmentId}
+                  schedule={draft.schedule}
+                  disabled={saving}
+                  onChange={(patch) =>
+                    setDraft({ ...draft, schedule: { ...draft.schedule, ...patch } })
+                  }
+                />
+              ) : null}
+              {draft.schedule.mode === "gitlab_projects" ? (
+                <GitLabProjectsRows
                   environmentId={environmentId}
                   schedule={draft.schedule}
                   disabled={saving}

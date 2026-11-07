@@ -67,6 +67,7 @@ export const TRIGGER_SOURCE_LABELS = {
   slack: "Slack",
   manual: "Manual",
   jira_query: "Jira query",
+  gitlab_projects: "GitLab projects",
 } as const satisfies Record<TriggerSourceKind, string>;
 
 /** One line per trigger: its source, then what it filters on, such as "Jira · Status equals Done". */
@@ -77,11 +78,16 @@ export function formatTriggerSummary(
   const { source, filters } = trigger;
   if (source.kind === "schedule") return formatSchedule(source.schedule);
   const label = TRIGGER_SOURCE_LABELS[source.kind];
-  if (source.kind === "jira_query") {
-    const every = `${label} · every ${Math.round(source.everyMs / MINUTE)} minutes`;
-    return filters.length === 0
-      ? every
-      : `${every} · ${triggerFiltersSummary(source.kind, filters)}`;
+  if (source.kind === "jira_query" || source.kind === "gitlab_projects") {
+    const parts: Array<string> = [label];
+    if (source.kind === "gitlab_projects") {
+      const count = source.projects.length;
+      if (count > 0) parts.push(`${count} project${count === 1 ? "" : "s"}`);
+      if (source.group !== undefined) parts.push(`group ${source.group}`);
+    }
+    parts.push(`every ${Math.round(source.everyMs / MINUTE)} minutes`);
+    if (filters.length > 0) parts.push(triggerFiltersSummary(source.kind, filters));
+    return parts.join(" · ");
   }
   if (source.kind === "manual" || filters.length === 0) return label;
   if (source.kind === "webhook") {

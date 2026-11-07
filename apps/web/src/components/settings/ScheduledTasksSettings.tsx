@@ -102,6 +102,7 @@ import {
   WebhookFiltersField,
 } from "./scheduledTaskFields";
 import { TriggerTemplatesSection } from "./TriggerTemplatesSettings";
+import { GitLabProjectsTriggerFields } from "./GitLabProjectsTriggerFields";
 import { JiraQueryTriggerFields } from "./JiraQueryTriggerFields";
 import {
   SCHEDULE_MODE_LABELS,
@@ -111,6 +112,7 @@ import {
   changeDraftProject,
   moveDraftToThread,
   JIRA_QUERY_DRAFT_DEFAULTS,
+  GITLAB_PROJECTS_DRAFT_DEFAULTS,
   WEEKDAY_LABELS,
   timeScheduleLabel,
   triggerSourceOfMode,
@@ -196,6 +198,8 @@ const TRIGGER_SOURCE_DESCRIPTIONS: Record<TriggerFilterSourceKind, string> = {
   gitlab:
     "Runs when a GitLab merge request linked to a thread opens, changes, merges, closes, or its pipeline finishes.",
   slack: "Runs when the Slack integration passes a message to this environment.",
+  gitlab_projects:
+    "Checks GitLab projects or a group as the host's glab sign-in on this environment and runs when a merge request opens, changes, merges, or closes, or a pipeline finishes. The first check runs for the open merge requests it finds; a later change to the projects only records them.",
 };
 
 const EMPTY_DRAFT: DraftState = {
@@ -233,6 +237,7 @@ const EMPTY_DRAFT: DraftState = {
   triggerFilters: [],
   savedTriggerFilters: [],
   ...JIRA_QUERY_DRAFT_DEFAULTS,
+  ...GITLAB_PROJECTS_DRAFT_DEFAULTS,
   triage: triageDraft(undefined),
 };
 
@@ -721,7 +726,8 @@ function ScheduledTaskRow({
               task.blockedByPolicy
             ) : !task.enabled ? (
               "Paused"
-            ) : task.schedule.type === "jira_query" && task.nextRunAt ? (
+            ) : (task.schedule.type === "jira_query" || task.schedule.type === "gitlab_projects") &&
+              task.nextRunAt ? (
               <>
                 Next check <ScheduledRelativeLabel value={task.nextRunAt} />
               </>
@@ -1543,8 +1549,8 @@ function ScheduledTaskEditorForm({
         <DialogTitle>{draft.editingId ? "Edit trigger" : "New trigger"}</DialogTitle>
         <DialogDescription>
           Run a prompt when its source fires: a schedule, a webhook call, a change to a linked Jira
-          issue or GitLab merge request, an issue in a Jira query, or a Slack message. A manual
-          trigger runs only when started.
+          issue or GitLab merge request, an issue in a Jira query, a merge request or pipeline in
+          GitLab projects, or a Slack message. A manual trigger runs only when started.
         </DialogDescription>
       </DialogHeader>
 
@@ -1901,6 +1907,13 @@ function ScheduledTaskEditorForm({
                 </p>
                 {draft.scheduleMode === "jira_query" ? (
                   <JiraQueryTriggerFields
+                    environmentId={environmentId}
+                    draft={draft}
+                    onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
+                  />
+                ) : null}
+                {draft.scheduleMode === "gitlab_projects" ? (
+                  <GitLabProjectsTriggerFields
                     environmentId={environmentId}
                     draft={draft}
                     onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
