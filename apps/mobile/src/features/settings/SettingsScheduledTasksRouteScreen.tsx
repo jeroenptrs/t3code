@@ -20,6 +20,7 @@ import type {
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
+  parseFactoryId,
   resolveEnvironmentMachineKind,
   scheduledTaskThreadMode,
   TRIGGER_SOURCE_FIELDS,
@@ -79,6 +80,7 @@ import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { jiraEnvironment } from "../../state/jira";
 import { sourceControlEnvironment } from "../../state/sourceControl";
+import { connectedFactoryListsAtom } from "../../state/factories";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { resolveNewTaskBranchLabel } from "../threads/new-task-context-presentation";
@@ -91,6 +93,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   changeDraftProject,
+  draftTarget,
   editDraft,
   isTriggerFilterMode,
   parseIntervalMinutes,
@@ -960,6 +963,18 @@ function TaskForm({
     config?.environment.capabilities.oneTimeSchedules === true ||
     draft.task?.schedule.type === "once";
   const offersThreadModes = config?.environment.capabilities.scheduledTaskThreadModes === true;
+  const projectFactories = (
+    useAtomValue(connectedFactoryListsAtom).find((entry) => entry.environmentId === environmentId)
+      ?.factories ?? []
+  ).filter((factory) => factory.projectId === draft.projectId);
+  // The Foreman's role binding decides a work item's thread, workspace, and model.
+  const workItemTarget = draft.factoryId !== null;
+  const factoryName =
+    draft.factoryId === null
+      ? null
+      : (projectFactories.find((factory) => factory.id === draft.factoryId)?.name ??
+        parseFactoryId(draft.factoryId)?.name ??
+        draft.factoryId);
   const source = sourceOfMode(draft.schedule.mode);
   const selectMode = (mode: ScheduleDraft["mode"]) => {
     setTimePickerOpen(false);
@@ -1042,7 +1057,7 @@ function TaskForm({
       !draft.projectId ||
       !draft.modelSelection ||
       !schedule ||
-      (draft.workspace === "existing_worktree" && !draft.checkoutPath.trim())
+      (!workItemTarget && draft.workspace === "existing_worktree" && !draft.checkoutPath.trim())
     ) {
       Dialog.alert(
         "Incomplete trigger",
@@ -1085,6 +1100,7 @@ function TaskForm({
       interactionMode: draft.task?.interactionMode ?? "default",
       creationSource: draft.task?.creationSource ?? "mobile",
       ...triage,
+      ...draftTarget(draft, draft.projectId),
     };
     submissionPending.current = true;
     setSaving(true);
@@ -1551,6 +1567,8 @@ function TaskForm({
                   ));
               setDraft({
                 ...changeDraftProject(draft, project.id),
+                // A factory belongs to its project.
+                factoryId: null,
                 modelSelection: keepsExplicitModel
                   ? draft.modelSelection
                   : scheduledTaskDefaultModel(config, project),
@@ -1558,6 +1576,7 @@ function TaskForm({
               });
             }}
           />
+          {workItemTarget ? null : (
           <PickerRow
             label="Model"
             borderTop
@@ -1573,12 +1592,15 @@ function TaskForm({
             onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
             disabled={saving || dictationPending || environmentUnavailable}
           />
+          )}
         </SettingsSection>
 
         <SettingsSection
           title="Destination"
           footer={
-            draft.threadMode === "new_thread"
+              workItemTarget
+                ? "Each run adds a work item to this factory. Its Foreman picks the thread, workspace, and model."
+                : draft.threadMode === "new_thread"
               ? "Each run starts a new thread."
               : `${
                   draft.threadMode === "continue"
@@ -1592,23 +1614,52 @@ function TaskForm({
           {offersThreadModes ? (
             <SelectRow
               label="Runs go to"
-              value={THREAD_MODE_LABELS[draft.threadMode]}
-              actions={(Object.keys(THREAD_MODE_LABELS) as ScheduledTaskThreadMode[]).map(
-                (mode) => ({
+              value={workItemTarget ? "Work item in factory" : THREAD_MODE_LABELS[draft.threadMode]}
+              actions={[
+                ...(Object.keys(THREAD_MODE_LABELS) as ScheduledTaskThreadMode[]).map((mode) => ({
                   id: mode,
                   title: THREAD_MODE_LABELS[mode],
-                  state: draft.threadMode === mode ? "on" : undefined,
-                }),
-              )}
+                  state: !workItemTarget && draft.threadMode === mode ? ("on" as const) : undefined,
+                })),
+                ...(projectFactories.length > 0 || workItemTarget
+                  ? [
+                      {
+                        id: WORK_ITEM_DESTINATION,
+                        title: "Work item in factory",
+                        state: workItemTarget ? ("on" as const) : undefined,
+                      },
+                    ]
+                  : []),
+              ]}
               onSelect={(id) => {
+                if (id === WORK_ITEM_DESTINATION) {
+                  const first = projectFactories[0];
+                  if (!workItemTarget && first) setDraft({ ...draft, factoryId: first.id });
+                  return;
+                }
                 if (id === "new_thread")
-                  setDraft({ ...unbindDraftFromThread(draft), threadMode: id });
+                  setDraft({ ...unbindDraftFromThread(draft), threadMode: id, factoryId: null });
                 else if (id === "continue" || id === "fresh_session")
-                  setDraft({ ...draft, threadMode: id });
+                  setDraft({ ...draft, threadMode: id, factoryId: null });
               }}
             />
           ) : null}
-          {!offersThreadModes || draft.threadMode !== "new_thread" ? (
+          {workItemTarget ? (
+            <SelectRow
+              label="Factory"
+              borderTop
+              value={factoryName ?? ""}
+              actions={projectFactories.map((factory) => ({
+                id: factory.id,
+                title: factory.name,
+                state: factory.id === draft.factoryId ? "on" : undefined,
+              }))}
+              onSelect={(id) => {
+                const factory = projectFactories.find((entry) => entry.id === id);
+                if (factory) setDraft({ ...draft, factoryId: factory.id });
+              }}
+            />
+          ) : !offersThreadModes || draft.threadMode !== "new_thread" ? (
             <PickerRow
               label="Thread"
               borderTop={offersThreadModes}
@@ -1623,6 +1674,7 @@ function TaskForm({
           ) : null}
         </SettingsSection>
 
+        {workItemTarget ? null : (
         <SettingsSection title="Workspace">
           <SelectRow
             label="Run in"
@@ -1683,6 +1735,7 @@ function TaskForm({
             />
           ) : null}
         </SettingsSection>
+        )}
 
         {draft.schedule.mode === "fixed_time" ? (
           <Text className="px-2 text-sm text-foreground-muted">
@@ -1708,6 +1761,8 @@ function TaskForm({
     </View>
   );
 }
+
+const WORK_ITEM_DESTINATION = "work_item";
 
 const rotatedOnFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 

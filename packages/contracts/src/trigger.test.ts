@@ -82,6 +82,26 @@ describe("scheduledTaskTrigger", () => {
       modelSelection: { instanceId: "codex", model: "gpt-5.4" },
       runtimeMode: "auto",
       interactionMode: "default",
+      target: null,
+    });
+  });
+
+  it("maps a work item target both ways, with the thread fields at their defaults", () => {
+    const target = {
+      type: "work_item",
+      projectId: "project-1",
+      factoryId: "factory:project-1:triage",
+    } as const;
+    const stored = decodeTask({ ...task({ type: "jira" }), target });
+    const trigger = scheduledTaskTrigger(stored);
+    expect(trigger.target).toEqual(target);
+    expect(trigger).not.toHaveProperty("projectId");
+    expect(triggerUpsertToScheduledTaskUpsert(trigger)).toMatchObject({
+      projectId: "project-1",
+      threadId: null,
+      threadMode: "new_thread",
+      workspaceStrategy: { type: "root" },
+      target,
     });
   });
 
@@ -257,6 +277,20 @@ describe("TriggerSaveInput", () => {
     expect(() => decodeSave(save({ ...projects, projects: [] }, []))).toThrow();
     expect(() =>
       decodeSave(save({ ...projects, projects: ["acme/app"], everyMs: 60_000 }, [])),
+    ).toThrow();
+  });
+
+  it("accepts a work item target and refuses one without a factory", () => {
+    const target = {
+      type: "work_item",
+      projectId: "project-1",
+      factoryId: "factory:project-1:triage",
+    };
+    expect(decodeSave({ ...save({ kind: "jira" }, [statusFilter]), target }).target).toEqual(
+      target,
+    );
+    expect(() =>
+      decodeSave({ ...save({ kind: "jira" }, []), target: { ...target, factoryId: "" } }),
     ).toThrow();
   });
 });

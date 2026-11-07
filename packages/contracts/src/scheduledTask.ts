@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 
 import {
   CommandId,
+  FactoryId,
   ForwardCompatibleArray,
   IsoDateTime,
   ProjectId,
@@ -415,6 +416,17 @@ export function scheduledTaskThreadMode(
   return task.threadMode ?? (task.threadId === null ? "new_thread" : "continue");
 }
 
+/**
+ * A trigger that creates a work item in a factory of `projectId` instead of running its prompt in
+ * a thread. A task with it keeps the thread columns, which the Foreman's role binding overrides.
+ */
+export const TriggerWorkItemTarget = Schema.Struct({
+  type: Schema.Literal("work_item"),
+  projectId: ProjectId.annotate({ description: "The factory's project." }),
+  factoryId: FactoryId,
+});
+export type TriggerWorkItemTarget = typeof TriggerWorkItemTarget.Type;
+
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,
   title: TrimmedNonEmptyString,
@@ -441,6 +453,8 @@ export const ScheduledTask = Schema.Struct({
   /** Why the task cannot run regardless of `enabled`, such as a managed policy refusing webhooks. */
   blockedByPolicy: Schema.optionalKey(Schema.String),
   triage: Schema.optionalKey(ScheduledTaskTriage),
+  /** Absent: runs go to the thread the fields above describe. */
+  target: Schema.optionalKey(TriggerWorkItemTarget),
 });
 export type ScheduledTask = typeof ScheduledTask.Type;
 
@@ -477,6 +491,8 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   triage: Schema.optional(Schema.NullOr(ScheduledTaskTriage)).annotate({
     description: "Omitted: keep stored. null clears.",
   }),
+  /** Omitted: keep stored. null: runs go to the thread the fields above describe. */
+  target: Schema.optional(Schema.NullOr(TriggerWorkItemTarget)),
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 

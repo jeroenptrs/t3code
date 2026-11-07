@@ -1,6 +1,13 @@
 import { assert, it } from "@effect/vitest";
-import { ScheduledTaskId, ThreadId, type ScheduledTaskUpsertInput } from "@t3tools/contracts";
+import {
+  FactoryId,
+  ProjectId,
+  ScheduledTaskId,
+  ThreadId,
+  type ScheduledTaskUpsertInput,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -13,6 +20,7 @@ import {
   makeScheduledTaskTestLayer,
   taskInput,
 } from "./ScheduledTaskService.testkit.ts";
+import * as WorkItemSink from "./WorkItemSink.ts";
 
 const status = { path: "event.status", op: "equals", value: "In Progress" } as const;
 
@@ -21,13 +29,20 @@ const withService = <A, E>(
     readonly service: ScheduledTaskService.ScheduledTaskService["Service"];
     readonly harness: Effect.Success<typeof makeScheduledTaskTestLayer>;
   }) => Effect.Effect<A, E>,
+  sink?: WorkItemSink.WorkItemSink["Service"],
 ) =>
   Effect.gen(function* () {
     const harness = yield* makeScheduledTaskTestLayer;
     return yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       return yield* body({ service, harness });
-    }).pipe(Effect.provide(harness.layer));
+    }).pipe(
+      Effect.provide(
+        sink === undefined
+          ? harness.layer
+          : harness.layer.pipe(Layer.provide(Layer.succeed(WorkItemSink.WorkItemSink, sink))),
+      ),
+    );
   }).pipe(Effect.provide(SqlitePersistence.layerMemory));
 
 it.effect("rejects filters on fields the source does not send", () =>
@@ -163,5 +178,61 @@ it.effect("refuses an event whose filled-in prompt is too long", () =>
       assert.equal(error.message, "The filled-in prompt is too long.");
       assert.equal(yield* Queue.size(harness.launches), 0);
     }),
+  ),
+);
+
+it.effect("creates a work item for a work item target's event, and launches no thread", () =>
+  Effect.gen(function* () {
+    const created =
+      yield* Queue.unbounded<Parameters<WorkItemSink.WorkItemSink["Service"]["create"]>[0]>();
+    const projectId = ProjectId.make("project:trigger");
+    const factoryId = FactoryId.make("factory:project:trigger:triage");
+    const target = { type: "work_item", projectId, factoryId } as const;
+    yield* withService(
+      ({ service, harness }) =>
+        Effect.gen(function* () {
+          const { task } = yield* service.upsert(taskInput({ target }));
+          assert.deepEqual(task.target, target);
+          const event = jiraEvent();
+          const result = yield* service.runForEvent(task, event);
+          assert.isNull(result.threadId);
+          assert.equal(result.task.lastRunStatus, "succeeded");
+          assert.equal(result.task.runCount, 1);
+          assert.isNotNull(result.task.lastRunAt);
+          assert.equal(yield* Queue.size(harness.launches), 0);
+          assert.equal(yield* Queue.size(harness.sends), 0);
+          const item = yield* Queue.take(created);
+          assert.equal(item.factoryId, factoryId);
+          assert.equal(item.title, "issue.status_changed PROJ-7: Fix login");
+          assert.deepEqual(item.source.event, event);
+          assert.equal(item.source.triggerId, task.id);
+          assert.equal(item.source.title, "Triage");
+          assert.include(item.source.text, "Issue key: PROJ-7\nProject key: PROJ\n");
+          assert.include(item.source.text, "Previous status: To Do");
+          assert.notInclude(item.source.text, "Priority:");
+        }),
+      { create: (input) => Queue.offer(created, input).pipe(Effect.asVoid) },
+    );
+  }),
+);
+
+it.effect("records a work item target's run as failed when the factory refuses it", () =>
+  withService(
+    ({ service, harness }) =>
+      Effect.gen(function* () {
+        const target = {
+          type: "work_item",
+          projectId: ProjectId.make("project:trigger"),
+          factoryId: FactoryId.make("factory:project:trigger:gone"),
+        } as const;
+        const { task } = yield* service.upsert(taskInput({ target }));
+        const result = yield* service.runForEvent(task, jiraEvent());
+        assert.isNull(result.threadId);
+        assert.equal(result.task.lastRunStatus, "failed");
+        assert.equal(result.task.lastRunError, "Factory not found.");
+        assert.equal(result.task.runCount, 1);
+        assert.equal(yield* Queue.size(harness.launches), 0);
+      }),
+    { create: () => Effect.fail({ message: "Factory not found." }) },
   ),
 );

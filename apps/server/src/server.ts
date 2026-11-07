@@ -82,6 +82,7 @@ import * as JiraService from "./jira/JiraService.ts";
 import * as InsightsIngestor from "./insights/InsightsIngestor.ts";
 import * as InsightsService from "./insights/InsightsService.ts";
 import * as FactoryService from "./factories/FactoryService.ts";
+import * as FactoryWorkItemSink from "./factories/FactoryWorkItemSink.ts";
 import * as FactorySkills from "./factories/FactorySkills.ts";
 import * as FactorySkillStore from "./factories/FactorySkillStore.ts";
 import * as FactoryThreads from "./factories/FactoryThreads.ts";
@@ -701,6 +702,9 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   Layer.provide(UsageLimitSources.layerResetFallback),
   Layer.provide(layerScheduledTaskWebhookOrigin),
+  // Fork-only: work item triggers create their items through this sink, which reaches
+  // FactoryService once layerMakeRoutes registers it there, by layer memoization.
+  Layer.provide(FactoryWorkItemSink.layer),
   // Fork-only: the scheduled task runner polls Jira query and GitLab projects triggers through
   // this, and is built before layerTriggers, so it gets the poller here. TriggerSources and
   // JiraApi are the same instances layerTriggers and layerJiraService build, by layer memoization.
@@ -726,11 +730,11 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
       JiraBreakdownThreads.layer,
       FactorySkills.layer.pipe(
         Layer.provideMerge(
-      FactoryThreads.layer.pipe(
+          FactoryThreads.layer.pipe(
             Layer.provide(FactorySkillStore.layer),
-        Layer.provide(Layer.merge(ProjectStore.layer, ProjectionStoreV2.layer)),
-      ),
-    ),
+            Layer.provide(Layer.merge(ProjectStore.layer, ProjectionStoreV2.layer)),
+          ),
+        ),
         Layer.provide(GitVcsDriver.layer),
       ),
     ),
@@ -999,69 +1003,71 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
   ),
+  // The work item sink the scheduled task runner was given reaches this FactoryService.
+  FactoryWorkItemSink.layerRegister.pipe(Layer.provide(FactoryWorkItemSink.layer)),
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
   ),
 )
   .pipe(
-  Layer.provide(
-    PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
-  ),
-  // delegate_task to a linked environment, from /mcp and the follower above.
-  Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
-  // Links agents ask for: shown in a thread from /mcp, answered over WebSocket.
-  Layer.provide(PeerLinkRequests.layer),
-  // Background walkthrough runs, shared with automatic walkthroughs.
-  Layer.provide(layerDiffWalkthroughRuns),
-  // Both transports and the background run write walkthroughs through it; it reads changes
-  // through the shared pull request service and stores through the shared walkthrough service,
-  // both provided below.
-  Layer.provide(layerDiffWalkthroughWriter),
-  // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
-  Layer.provide(layerPullRequestService),
-  // One instance for both transports, so a walkthrough an agent writes over MCP reaches every
-  // WebSocket subscriber.
-  Layer.provide(layerDiffWalkthroughService),
-  // Started over the WebSocket; shares the Jira services below.
-  Layer.provide(Layer.merge(layerJiraBreakdowns, TriggerTemplateService.layer)),
-  // The same instance the ingestion worker uses.
-  Layer.provide(layerInsights),
+    Layer.provide(
+      PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
+    ),
+    // delegate_task to a linked environment, from /mcp and the follower above.
+    Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
+    // Links agents ask for: shown in a thread from /mcp, answered over WebSocket.
+    Layer.provide(PeerLinkRequests.layer),
+    // Background walkthrough runs, shared with automatic walkthroughs.
+    Layer.provide(layerDiffWalkthroughRuns),
+    // Both transports and the background run write walkthroughs through it; it reads changes
+    // through the shared pull request service and stores through the shared walkthrough service,
+    // both provided below.
+    Layer.provide(layerDiffWalkthroughWriter),
+    // Share the service so HTTP/WS clients single-flight reads and invalidate each other's cached patches.
+    Layer.provide(layerPullRequestService),
+    // One instance for both transports, so a walkthrough an agent writes over MCP reaches every
+    // WebSocket subscriber.
+    Layer.provide(layerDiffWalkthroughService),
+    // Started over the WebSocket; shares the Jira services below.
+    Layer.provide(Layer.merge(layerJiraBreakdowns, TriggerTemplateService.layer)),
+    // The same instance the ingestion worker uses.
+    Layer.provide(layerInsights),
     // Factories and their skills, shared by the WebSocket and /mcp.
     Layer.provide(FactoryService.layer.pipe(Layer.provideMerge(FactorySkillStore.layer))),
-  // One instance, so every client reads through the same Jira caches.
-  Layer.provide(layerJiraService),
+    // One instance, so every client reads through the same Jira caches.
+    Layer.provide(layerJiraService),
   )
   .pipe(
-  // The same activity instance RunExecutionService reports to, by layer memoization.
-  Layer.provide(
-    ServerBrowser.layer.pipe(
-      Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
+    // The same activity instance RunExecutionService reports to, by layer memoization.
+    Layer.provide(
+      ServerBrowser.layer.pipe(
+        Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
+      ),
     ),
-  ),
-  Layer.provide(PreviewBrowser.layer),
-  // Links to other environments, shared by Settings (WebSocket) and agents (/mcp).
-  Layer.provide(
-    PeerForwarding.layer.pipe(
-      Layer.provideMerge(PeerMcpClient.layer),
-      Layer.provideMerge(PeerLinks.layer),
+    Layer.provide(PreviewBrowser.layer),
+    // Links to other environments, shared by Settings (WebSocket) and agents (/mcp).
+    Layer.provide(
+      PeerForwarding.layer.pipe(
+        Layer.provideMerge(PeerMcpClient.layer),
+        Layer.provideMerge(PeerLinks.layer),
+      ),
     ),
-  ),
-  Layer.provide(
-    SpeechService.layer.pipe(
-      Layer.provide(layerServerSettings),
-      Layer.provide(SpeechModelStore.layer),
+    Layer.provide(
+      SpeechService.layer.pipe(
+        Layer.provide(layerServerSettings),
+        Layer.provide(SpeechModelStore.layer),
+      ),
     ),
-  ),
-  Layer.provide(CloudSpeech.layer.pipe(Layer.provide(SecretResolver.layer))),
-  Layer.provide(layerServerSettings),
-  Layer.provide(PreviewAutomationBroker.layer),
-  // Home and its fleet relay, shared by the WebSocket and /mcp.
-  Layer.provide(HomeLayer),
-  Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
-  Layer.provide(layerCommandReadiness),
-  Layer.provide(ServerHttp.layerBrowserApiCors),
-  Layer.provide(ServerHttp.layerHttpCompression),
+    Layer.provide(CloudSpeech.layer.pipe(Layer.provide(SecretResolver.layer))),
+    Layer.provide(layerServerSettings),
+    Layer.provide(PreviewAutomationBroker.layer),
+    // Home and its fleet relay, shared by the WebSocket and /mcp.
+    Layer.provide(HomeLayer),
+    Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
+    Layer.provide(layerCommandReadiness),
+    Layer.provide(ServerHttp.layerBrowserApiCors),
+    Layer.provide(ServerHttp.layerHttpCompression),
   );
 
 const layerMakeServer = Layer.unwrap(

@@ -22,15 +22,18 @@ export function renderWorkItemMessage(input: {
   readonly title: string;
   readonly source: WorkItemSource;
 }): string {
+  const { source } = input;
   const from =
-    input.source.kind === "manual"
+    source.kind === "manual"
       ? "a person's request"
-      : `scheduled task ${input.source.scheduledTaskId}`;
+      : source.kind === "trigger"
+        ? `trigger ${source.title} (${source.event.source})`
+        : `scheduled task ${source.scheduledTaskId}`;
   return `Work item ${input.workItemId} for the ${input.factoryName} factory, from ${from}.
 
 Title: ${input.title}
 
-${input.source.text.trim()}
+${source.text.trim()}
 
 Advance this item with t3_work_item_advance as you route it, and hold it for a person with t3_work_item_gate.`;
 }

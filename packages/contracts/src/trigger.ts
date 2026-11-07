@@ -10,9 +10,16 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { DEFAULT_MODEL } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { OrchestrationV2ThreadLaunchWorkspaceStrategy } from "./orchestrationV2.ts";
-import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
+import {
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  ProviderInteractionMode,
+  RuntimeMode,
+} from "./providerPolicy.ts";
 import {
   gitlabProjectsFields,
   hasGitLabProjects,
@@ -30,6 +37,7 @@ import {
   ScheduledTaskWebhookSchedule,
   scheduledTaskThreadMode,
   TriggerFilter,
+  TriggerWorkItemTarget,
   type ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
 
@@ -387,8 +395,7 @@ export const TriggerThreadTarget = Schema.Struct({
 });
 export type TriggerThreadTarget = typeof TriggerThreadTarget.Type;
 
-/** One member until factories add theirs. */
-export const TriggerTarget = Schema.Union([TriggerThreadTarget]);
+export const TriggerTarget = Schema.Union([TriggerThreadTarget, TriggerWorkItemTarget]);
 export type TriggerTarget = typeof TriggerTarget.Type;
 
 const {
@@ -527,6 +534,7 @@ export function scheduledTaskTrigger(task: ScheduledTask): Trigger {
     modelSelection,
     runtimeMode,
     interactionMode,
+    target,
     ...fields
   } = task;
   let source: TriggerSource;
@@ -548,7 +556,7 @@ export function scheduledTaskTrigger(task: ScheduledTask): Trigger {
     ...fields,
     source,
     filters: "filters" in schedule ? (schedule.filters ?? []) : [],
-    target: {
+    target: target ?? {
       type: "thread",
       projectId,
       threadId,
@@ -560,6 +568,16 @@ export function scheduledTaskTrigger(task: ScheduledTask): Trigger {
     },
   };
 }
+
+// A work item trigger's thread columns are unused; the server keeps a stored task's.
+const workItemThreadDefaults = {
+  threadId: null,
+  threadMode: "new_thread",
+  workspaceStrategy: { type: "root" },
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: DEFAULT_MODEL },
+  runtimeMode: DEFAULT_RUNTIME_MODE,
+  interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+} as const satisfies Omit<TriggerThreadTarget, "type" | "projectId">;
 
 /** The inverse of `scheduledTaskTrigger` for saves: the source holds the filters again. */
 export function triggerUpsertToScheduledTaskUpsert(
@@ -583,7 +601,16 @@ export function triggerUpsertToScheduledTaskUpsert(
   } else {
     schedule = { type: source.kind, filters };
   }
-  const { type: _type, ...binding } = input.target;
+  const { target } = input;
+  let binding: Omit<TriggerThreadTarget, "type"> & {
+    readonly target: TriggerWorkItemTarget | null;
+  };
+  if (target.type === "work_item") {
+    binding = { projectId: target.projectId, ...workItemThreadDefaults, target };
+  } else {
+    const { type: _type, ...thread } = target;
+    binding = { ...thread, target: null };
+  }
   return {
     ...(input.id === undefined ? {} : { id: input.id }),
     ...(input.requireExisting === undefined ? {} : { requireExisting: input.requireExisting }),
