@@ -29,9 +29,16 @@ export class TriggerService extends Context.Service<
 >()("t3/triggers/TriggerService") {}
 
 const filtersOf = (schedule: ScheduledTask["schedule"]) =>
-  schedule.type === "jira" || schedule.type === "gitlab" || schedule.type === "slack"
+  schedule.type === "jira" ||
+  schedule.type === "gitlab" ||
+  schedule.type === "slack" ||
+  schedule.type === "jira_query"
     ? (schedule.filters ?? [])
     : [];
+
+/** A Jira query trigger runs only its own poll's events; other triggers only unaddressed ones. */
+const isAddressedTo = (task: ScheduledTask, event: TriggerEvent) =>
+  task.schedule.type === "jira_query" ? event.triggerId === task.id : event.triggerId === undefined;
 
 const make = Effect.gen(function* () {
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
@@ -47,7 +54,9 @@ const make = Effect.gen(function* () {
       const { tasks } = yield* scheduledTasks.list();
       const matches: Array<ScheduledTask> = [];
       for (const task of tasks) {
-        if (!task.enabled || task.schedule.type !== event.source) continue;
+        if (!task.enabled || task.schedule.type !== event.source || !isAddressedTo(task, event)) {
+          continue;
+        }
         const failed = findFailedTriggerFilter(filtersOf(task.schedule), event);
         if (failed === null) {
           matches.push(task);

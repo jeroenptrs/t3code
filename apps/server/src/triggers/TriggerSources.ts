@@ -1,4 +1,10 @@
-import { JiraIssueSummary, ThreadPullRequestSnapshot, type TriggerEvent } from "@t3tools/contracts";
+import {
+  JiraIssueSummary,
+  type ScheduledTaskId,
+  ThreadPullRequestSnapshot,
+  type TriggerEvent,
+} from "@t3tools/contracts";
+import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -17,12 +23,17 @@ import {
   gitlabTriggerKey,
   type PullRequestTriggerKey,
 } from "./gitlabTriggerSource.ts";
-import { diffJiraIssue, jiraTriggerKey } from "./jiraTriggerSource.ts";
+import {
+  diffJiraIssue,
+  diffJiraQueryIssue,
+  type JiraQueryWatchedField,
+  jiraTriggerKey,
+} from "./jiraTriggerSource.ts";
 
 export class TriggerObservationError extends Schema.TaggedError<TriggerObservationError>()(
   "TriggerObservationError",
   {
-    source: Schema.Literals(["jira", "gitlab"]),
+    source: Schema.Literals(["jira", "gitlab", "jira_query"]),
     cause: Schema.Defect(),
   },
 ) {
@@ -48,6 +59,19 @@ export class TriggerSources extends Context.Service<
       key: PullRequestTriggerKey,
       snapshot: ThreadPullRequestSnapshot,
     ) => Effect.Effect<void, TriggerObservationError>;
+    /**
+     * One poll of a Jira query trigger: every issue in its result set. Its observations are its
+     * own, keyed by the trigger id, so two triggers over one issue each raise. The first poll,
+     * and the first after the query changed, records the set and raises nothing. An incomplete
+     * set (capped) raises no `issue.left`.
+     */
+    readonly observeJiraQuery: (input: {
+      readonly triggerId: ScheduledTaskId;
+      readonly query: string;
+      readonly issues: ReadonlyArray<JiraIssueSummary>;
+      readonly watchedFields: ReadonlySet<JiraQueryWatchedField>;
+      readonly complete: boolean;
+    }) => Effect.Effect<void, TriggerObservationError>;
     readonly events: Stream.Stream<TriggerEvent>;
   }
 >()("t3/triggers/TriggerSources") {}
@@ -92,7 +116,7 @@ const make = Effect.gen(function* () {
   });
 
   const commit = (
-    source: "jira" | "gitlab",
+    source: "jira" | "gitlab" | "jira_query",
     work: Effect.Effect<ReadonlyArray<ReadonlyArray<TriggerEvent>>, SqlError.SqlError>,
   ) =>
     sql.withTransaction(work).pipe(
@@ -149,8 +173,84 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const observeJiraQuery: TriggerSources["Service"]["observeJiraQuery"] = Effect.fn(
+    "TriggerSources.observeJiraQuery",
+  )(function* (input) {
+    yield* Effect.annotateCurrentSpan({
+      "scheduled_task.id": input.triggerId,
+      "trigger.observations": input.issues.length,
+    });
+    const occurredAt = DateTime.formatIso(yield* DateTime.now);
+    // The marker row holds the query the stored set was read with.
+    const marker = `${input.triggerId}\u0000`;
+    const issueKey = (issue: JiraIssueSummary) =>
+      `${marker}${jiraTriggerKey(issue.site, issue.key)}`;
+    const work = Effect.gen(function* () {
+      const rows = yield* sql<{ readonly key: string; readonly state_json: string }>`
+        SELECT key, state_json FROM fork_trigger_observations
+        WHERE source = 'jira_query' AND key >= ${marker} AND key < ${`${input.triggerId}\u0001`}
+      `;
+      const stored = new Map(rows.map((row) => [row.key, row.state_json]));
+      const seeding = stored.get(marker) !== input.query;
+      const events: Array<TriggerEvent> = [];
+      const writes: Array<readonly [string, string]> = [];
+      if (seeding) writes.push([marker, input.query]);
+      const context = { triggerId: input.triggerId, query: input.query, occurredAt };
+      const current = new Set<string>();
+      for (const issue of input.issues) {
+        const key = issueKey(issue);
+        current.add(key);
+        const stateJson = encodeJiraState(issue);
+        const previousJson = stored.get(key);
+        if (previousJson === stateJson) continue;
+        writes.push([key, stateJson]);
+        if (seeding) continue;
+        const previous =
+          previousJson === undefined ? null : Option.getOrNull(decodeJiraState(previousJson));
+        // An undecodable row is re-seeded rather than read as an entry.
+        if (previousJson !== undefined && previous === null) continue;
+        events.push(...diffJiraQueryIssue(previous, issue, input.watchedFields, context));
+      }
+      const left =
+        seeding || input.complete
+          ? [...stored.keys()].filter((key) => key !== marker && !current.has(key))
+          : [];
+      if (!seeding) {
+        for (const key of left) {
+          const previous = Option.getOrNull(decodeJiraState(stored.get(key)!));
+          if (previous !== null) {
+            events.push(...diffJiraQueryIssue(previous, null, input.watchedFields, context));
+          }
+        }
+      }
+      const inserts: ReadonlyArray<Record<string, string>> = writes.map(([key, stateJson]) => ({
+        source: "jira_query",
+        key,
+        state_json: stateJson,
+        observed_at: occurredAt,
+      }));
+      if (Arr.isReadonlyArrayNonEmpty(inserts)) {
+        yield* sql`
+          INSERT INTO fork_trigger_observations ${sql.insert(inserts)}
+          ON CONFLICT (source, key) DO UPDATE SET
+            state_json = excluded.state_json,
+            observed_at = excluded.observed_at
+        `;
+      }
+      if (left.length > 0) {
+        yield* sql`
+          DELETE FROM fork_trigger_observations
+          WHERE source = 'jira_query' AND key IN ${sql.in(left)}
+        `;
+      }
+      return [events];
+    });
+    yield* commit("jira_query", work);
+  });
+
   return TriggerSources.of({
     observeJiraIssues,
+    observeJiraQuery,
     observePullRequest,
     events: Stream.fromPubSub(pubsub),
   });

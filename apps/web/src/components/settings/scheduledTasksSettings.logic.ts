@@ -6,8 +6,10 @@ import {
   type TriggerFilterSourceKind,
 } from "@t3tools/contracts";
 import {
+  DEFAULT_JIRA_QUERY_INTERVAL_MS,
   EnvironmentId,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
+  MIN_JIRA_QUERY_INTERVAL_MS,
   type ProjectId,
   ScheduledTaskId,
   type ScheduledTask,
@@ -113,7 +115,8 @@ export type ScheduleMode =
   | "jira"
   | "gitlab"
   | "slack"
-  | "manual";
+  | "manual"
+  | "jira_query";
 
 export const SCHEDULE_MODE_LABELS: Record<ScheduleMode, string> = {
   fixed: "At a time",
@@ -124,6 +127,7 @@ export const SCHEDULE_MODE_LABELS: Record<ScheduleMode, string> = {
   gitlab: "On GitLab change",
   slack: "On Slack message",
   manual: "Manual",
+  jira_query: "On Jira query",
 };
 
 /** Source picker entries: the schedule kinds sit under "Schedule", the event sources beside it. */
@@ -134,6 +138,7 @@ export const TRIGGER_SOURCE_LABELS: Record<Trigger["source"]["kind"], string> = 
   gitlab: "GitLab",
   slack: "Slack",
   manual: "Manual",
+  jira_query: "Jira query",
 };
 
 export const TIME_SCHEDULE_MODES = ["fixed", "once", "interval"] as const;
@@ -199,6 +204,13 @@ export function triggerSummary(
     return timeScheduleLabel(source.schedule, timestampFormat, timeZone, runAt);
   }
   const label = TRIGGER_SOURCE_LABELS[source.kind];
+  if (source.kind === "jira_query") {
+    const minutes = Math.round(source.everyMs / 60_000);
+    const every = `${label} · every ${minutes} minutes`;
+    return filters.length === 0
+      ? every
+      : `${every} · ${triggerFiltersSummary(source.kind, filters)}`;
+  }
   if (source.kind === "manual" || filters.length === 0) return label;
   if (source.kind === "webhook") {
     return `${label} · ${filters.length} filter${filters.length === 1 ? "" : "s"}`;
@@ -207,7 +219,7 @@ export function triggerSummary(
 }
 
 export function isTriggerFilterSource(mode: string): mode is TriggerFilterSourceKind {
-  return mode === "jira" || mode === "gitlab" || mode === "slack";
+  return mode === "jira" || mode === "gitlab" || mode === "slack" || mode === "jira_query";
 }
 
 const DEFAULT_PROMPTS = new Set<string>([
@@ -272,8 +284,24 @@ export interface DraftState {
   /** Event filters for the Jira, GitLab, and Slack modes; paths are fields of that source. */
   readonly triggerFilters: ReadonlyArray<TriggerFilterDraft>;
   readonly savedTriggerFilters: ReadonlyArray<TriggerFilterDraft>;
+  /** Jira query mode: the site, a JQL or saved filter, and the poll interval. */
+  readonly jiraSite: string;
+  readonly jiraQueryKind: "jql" | "filter";
+  readonly jql: string;
+  readonly jiraFilterId: string;
+  readonly jiraPollMinutes: string;
   readonly triage: TriageDraft;
 }
+
+export const JIRA_QUERY_DRAFT_DEFAULTS = {
+  jiraSite: "",
+  jiraQueryKind: "jql",
+  jql: "",
+  jiraFilterId: "",
+  jiraPollMinutes: String(DEFAULT_JIRA_QUERY_INTERVAL_MS / 60_000),
+} as const;
+
+const MIN_JIRA_POLL_MINUTES = MIN_JIRA_QUERY_INTERVAL_MS / 60_000;
 
 export const WEBHOOK_SIGNATURE_DEFAULTS = {
   signatureHeader: "x-hub-signature-256",
@@ -301,6 +329,27 @@ export function scheduleDraftErrors(draft: DraftState, resolve: MessageResolver 
   }
   if (draft.scheduleMode === "fixed" && !draft.timeOfDay)
     return invalidRunTime(resolve(msg("Pick a time.")));
+  if (draft.scheduleMode === "jira_query") {
+    const minutes = Number(draft.jiraPollMinutes);
+    if (!draft.jiraSite.trim())
+      return [{ title: "Jira site is required", description: "Pick the Jira site to query." }];
+    if (draft.jiraQueryKind === "jql" ? !draft.jql.trim() : !draft.jiraFilterId.trim())
+      return [
+        {
+          title: "Jira query is required",
+          description:
+            draft.jiraQueryKind === "jql" ? "Enter a JQL query." : "Pick a saved filter.",
+        },
+      ];
+    if (!Number.isInteger(minutes) || minutes < MIN_JIRA_POLL_MINUTES)
+      return [
+        {
+          title: "Invalid interval",
+          description: `Poll every ${MIN_JIRA_POLL_MINUTES} minutes or more, in whole minutes.`,
+        },
+      ];
+    return [];
+  }
   if (draft.scheduleMode !== "webhook") return [];
   if (parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes) === undefined)
     return [
@@ -420,6 +469,19 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
   if (isTriggerFilterSource(draft.scheduleMode)) {
     const parsed = parseTriggerFilterDrafts(draft.triggerFilters, draft.scheduleMode);
     if (!("filters" in parsed)) return null;
+    if (draft.scheduleMode === "jira_query") {
+      return {
+        type: "jira_query",
+        site: draft.jiraSite.trim(),
+        ...(draft.jiraQueryKind === "jql"
+          ? { jql: draft.jql.trim() }
+          : { filterId: draft.jiraFilterId.trim() }),
+        everyMs: Number(draft.jiraPollMinutes) * 60_000,
+        ...(triggerFilterDraftsChanged(draft.savedTriggerFilters, draft.triggerFilters)
+          ? { filters: parsed.filters }
+          : {}),
+      };
+    }
     return {
       type: draft.scheduleMode,
       ...(triggerFilterDraftsChanged(draft.savedTriggerFilters, draft.triggerFilters)
@@ -445,7 +507,10 @@ export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
   const filters = webhookFilterDrafts(schedule.type === "webhook" ? schedule.filters : undefined);
   const triggerFilters = triggerFilterDrafts(
-    schedule.type === "jira" || schedule.type === "gitlab" || schedule.type === "slack"
+    schedule.type === "jira" ||
+      schedule.type === "gitlab" ||
+      schedule.type === "slack" ||
+      schedule.type === "jira_query"
       ? schedule.filters
       : undefined,
   );
@@ -508,6 +573,15 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     savedFilters: filters,
     triggerFilters,
     savedTriggerFilters: triggerFilters,
+    ...(schedule.type === "jira_query"
+      ? {
+          jiraSite: schedule.site,
+          jiraQueryKind: schedule.filterId === undefined ? "jql" : "filter",
+          jql: schedule.jql ?? "",
+          jiraFilterId: schedule.filterId ?? "",
+          jiraPollMinutes: String(Math.round(schedule.everyMs / 60_000)),
+        }
+      : JIRA_QUERY_DRAFT_DEFAULTS),
     triage: triageDraft(task.triage),
   };
 }
