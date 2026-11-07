@@ -408,6 +408,27 @@ function nextRunAfterRun(
   );
 }
 
+/**
+ * A Jira query that is new, newly on, or reads a different query is due now, so its seed poll
+ * runs at the next scheduler tick and its first events come one interval later.
+ */
+function seedsJiraQuery(
+  task: Pick<ScheduledTask, "enabled" | "schedule">,
+  previous: Pick<ScheduledTask, "enabled" | "schedule"> | null,
+): boolean {
+  const { schedule } = task;
+  if (!task.enabled || schedule.type !== "jira_query") return false;
+  if (previous === null || !previous.enabled || previous.schedule.type !== "jira_query") {
+    return true;
+  }
+  const before = previous.schedule;
+  return (
+    before.site !== schedule.site ||
+    before.jql !== schedule.jql ||
+    before.filterId !== schedule.filterId
+  );
+}
+
 /** An enabled one-time task with a past time would never run, so saving it is an error. */
 function requireFutureOnce(
   task: Pick<ScheduledTask, "enabled" | "schedule">,
@@ -1774,7 +1795,9 @@ export const layer = Layer.effect(
         creationSource: input.creationSource ?? "web",
         createdAt: existingTask?.createdAt ?? iso(now),
         updatedAt: iso(now),
-        nextRunAt: scheduleUnchanged
+        nextRunAt: seedsJiraQuery({ enabled: input.enabled, schedule }, existingTask)
+          ? iso(now)
+          : scheduleUnchanged
           ? existingTask.nextRunAt
           : nextRunAt({ enabled: input.enabled, schedule }, now),
         lastRunAt: existingTask?.lastRunAt ?? null,
@@ -1819,7 +1842,8 @@ export const layer = Layer.effect(
         now,
         input.id,
       );
-      const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
+      const enabled = { enabled: input.enabled, schedule: existing.schedule };
+      const next = seedsJiraQuery(enabled, existing) ? iso(now) : nextRunAt(enabled, now);
       // RETURNING so a task deleted between the load and this UPDATE is a
       // visible not-found error, not a false success.
       const updated = yield* sql<{ task_id: string }>`
