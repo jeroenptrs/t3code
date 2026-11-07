@@ -159,7 +159,7 @@ export function ThreadAutomationsPanel(props: {
                 size="icon-xs"
                 variant="ghost"
                 part="icon"
-                aria-label={gt("Manage scheduled tasks")}
+                aria-label={gt("Manage triggers")}
                 onClick={() =>
                   void navigate({
                     to: "/settings/scheduled-tasks",
@@ -172,7 +172,7 @@ export function ThreadAutomationsPanel(props: {
             }
           />
           <TooltipPopup>
-            <T>Manage scheduled tasks</T>
+            <T>Manage triggers</T>
           </TooltipPopup>
         </Tooltip>
       }
