@@ -1,6 +1,7 @@
 import {
   isListedThreadLineage,
   isWebhookDedupeTemplate,
+  parseFactoryId,
   type ScheduledTaskTimeSchedule,
   type Trigger,
   type TriggerFilterSourceKind,
@@ -14,7 +15,9 @@ import {
   ScheduledTaskId,
   type ScheduledTask,
   type ScheduledTaskThreadMode,
+  type ScheduledTaskUpsertInput,
   type ScheduledTaskUpsertSchedule,
+  type FactoryId,
   scheduledTaskThreadMode,
   type ModelSelection,
   type RuntimeMode,
@@ -143,8 +146,20 @@ export function timeScheduleLabel(schedule: ScheduledTaskTimeSchedule): string {
   return `${days} at ${schedule.timeOfDay}${zone}`;
 }
 
-/** One line per trigger: its source, then what it filters on, such as "Jira · Status equals Done". */
-export function triggerSummary(trigger: Pick<Trigger, "source" | "filters">): string {
+/**
+ * One line per trigger: its source, then what it filters on, such as "Jira · Status equals Done",
+ * and the factory a work item trigger feeds.
+ */
+export function triggerSummary(
+  trigger: Pick<Trigger, "source" | "filters"> & { readonly target?: Trigger["target"] },
+): string {
+  const summary = triggerSourceSummary(trigger);
+  const { target } = trigger;
+  if (target?.type !== "work_item") return summary;
+  return `${summary} → ${parseFactoryId(target.factoryId)?.name ?? target.factoryId}`;
+}
+
+function triggerSourceSummary(trigger: Pick<Trigger, "source" | "filters">): string {
   const { source, filters } = trigger;
   if (source.kind === "schedule") return timeScheduleLabel(source.schedule);
   const label = TRIGGER_SOURCE_LABELS[source.kind];
@@ -211,6 +226,8 @@ export interface DraftState {
   readonly projectId: string;
   readonly threadId: string;
   readonly threadMode: ScheduledTaskThreadMode;
+  /** A factory the trigger creates work items in; empty for a thread target. */
+  readonly factoryId: string;
   readonly workspaceMode: WorkspaceMode;
   readonly baseRef: string;
   readonly startFromOrigin: boolean;
@@ -493,6 +510,21 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
   };
 }
 
+/**
+ * The save's target: a work item target for a chosen factory, null to turn a stored one back into
+ * a thread target, and nothing otherwise, so servers that predate targets accept the save.
+ */
+export function targetFromDraft(
+  draft: Pick<DraftState, "factoryId">,
+  projectId: ProjectId,
+  stored: Pick<ScheduledTask, "target"> | null,
+): Pick<ScheduledTaskUpsertInput, "target"> {
+  if (draft.factoryId) {
+    return { target: { type: "work_item", projectId, factoryId: draft.factoryId as FactoryId } };
+  }
+  return stored?.target === undefined ? {} : { target: null };
+}
+
 export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
   const filters = webhookFilterDrafts(schedule.type === "webhook" ? schedule.filters : undefined);
@@ -526,6 +558,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     projectId: task.projectId,
     threadId: task.threadId ?? "",
     threadMode: scheduledTaskThreadMode(task),
+    factoryId: task.target?.factoryId ?? "",
     workspaceMode: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
     startFromOrigin:
