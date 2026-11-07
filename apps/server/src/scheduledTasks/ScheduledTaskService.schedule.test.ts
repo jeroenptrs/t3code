@@ -242,47 +242,48 @@ it.effect(
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("a due Jira query task polls instead of running its prompt, one interval apart", () =>
-  Effect.gen(function* () {
-    yield* TestClock.setTime(Date.parse("2026-11-05T10:00:00.000Z"));
-    const polls = yield* Queue.unbounded<string>();
-    const launches = yield* Ref.make(0);
-    const failing = yield* Ref.make(true);
-    const layerDependencies = Layer.mergeAll(
-      NodeCrypto.layer,
-      Scheduler.layer,
-      ManagedPolicy.layerTest(),
-      Layer.succeed(ScheduledTaskPoller.ScheduledTaskPoller, {
-        poll: (task) =>
-          Queue.offer(polls, task.id).pipe(
-            Effect.andThen(Ref.get(failing)),
-            Effect.flatMap((fail) =>
-              fail
-                ? Effect.fail(
-                    new ScheduledTaskError({
-                      message: "Field 'sprintt' does not exist or you do not have permission.",
-                      taskId: task.id,
-                    }),
-                  )
-                : Effect.void,
+it.effect(
+  "a saved Jira query polls at the next tick, then instead of its prompt, one interval apart",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-11-05T10:00:00.000Z"));
+      const polls = yield* Queue.unbounded<string>();
+      const launches = yield* Ref.make(0);
+      const failing = yield* Ref.make(true);
+      const layerDependencies = Layer.mergeAll(
+        NodeCrypto.layer,
+        Scheduler.layer,
+        ManagedPolicy.layerTest(),
+        Layer.succeed(ScheduledTaskPoller.ScheduledTaskPoller, {
+          poll: (task) =>
+            Queue.offer(polls, task.id).pipe(
+              Effect.andThen(Ref.get(failing)),
+              Effect.flatMap((fail) =>
+                fail
+                  ? Effect.fail(
+                      new ScheduledTaskError({
+                        message: "Field 'sprintt' does not exist or you do not have permission.",
+                        taskId: task.id,
+                      }),
+                    )
+                  : Effect.void,
+              ),
             ),
-          ),
-      }),
-      Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-        launch: () =>
-          Ref.update(launches, (n) => n + 1).pipe(Effect.andThen(Effect.die("launched"))),
-      }),
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-        namedProjectsRoot: "/projects",
-        isScratchProject: () => Effect.succeed(false),
-      }),
-      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
-      Layer.mock(SecretRequests.SecretRequests)({}),
-    );
-    yield* Effect.gen(function* () {
-      const service = yield* ScheduledTaskService.ScheduledTaskService;
-      const created = yield* service.upsert(
-        yield* decodeUpsertInput({
+        }),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          launch: () =>
+            Ref.update(launches, (n) => n + 1).pipe(Effect.andThen(Effect.die("launched"))),
+        }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: () => Effect.succeed(false),
+        }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const input = yield* decodeUpsertInput({
           title: "Agent-labelled issues",
           prompt: "Pick up {{event.key}}",
           enabled: true,
@@ -297,58 +298,80 @@ it.effect("a due Jira query task polls instead of running its prompt, one interv
           modelSelection: { instanceId: "codex", model: "gpt-5.4" },
           runtimeMode: "full-access",
           interactionMode: "default",
-        }),
-      );
-      expect(created.task.nextRunAt).toBe("2026-11-05T10:15:00.000Z");
-      const settled = (status: string) =>
-        service.subscribeList().pipe(
-          Stream.map((result) => result.tasks[0]),
-          Stream.filter((task) => task?.lastRunStatus === status),
-          Stream.runHead,
-          Effect.map(Option.getOrUndefined),
-          Effect.forkScoped({ startImmediately: true }),
-        );
+        });
+        // Let the scheduler's startup pass and first tick run on the empty table.
+        yield* TestClock.adjust("5 seconds");
+        const created = yield* service.upsert(input);
+        // A new query is due now, so the scheduler's next 5-second tick seeds it.
+        expect(created.task.nextRunAt).toBe("2026-11-05T10:00:05.000Z");
+        const settled = (status: string) =>
+          service.subscribeList().pipe(
+            Stream.map((result) => result.tasks[0]),
+            Stream.filter((task) => task?.lastRunStatus === status),
+            Stream.runHead,
+            Effect.map(Option.getOrUndefined),
+            Effect.forkScoped({ startImmediately: true }),
+          );
 
-      const failed = yield* settled("failed");
-      yield* TestClock.adjust("15 minutes");
-      expect(yield* Queue.take(polls)).toBe(created.task.id);
-      expect(yield* Fiber.join(failed)).toMatchObject({
-        lastRunStatus: "failed",
-        lastRunError: "Field 'sprintt' does not exist or you do not have permission.",
-        nextRunAt: "2026-11-05T10:30:00.000Z",
-        lastRunAt: null,
-        runCount: 0,
-      });
+        const failed = yield* settled("failed");
+        yield* TestClock.adjust("5 seconds");
+        expect(yield* Queue.take(polls)).toBe(created.task.id);
+        expect(yield* Fiber.join(failed)).toMatchObject({
+          lastRunStatus: "failed",
+          lastRunError: "Field 'sprintt' does not exist or you do not have permission.",
+          nextRunAt: "2026-11-05T10:15:10.000Z",
+          lastRunAt: null,
+          runCount: 0,
+        });
 
-      yield* Ref.set(failing, false);
-      const cleared = yield* settled("never");
-      yield* TestClock.adjust("15 minutes");
-      expect(yield* Queue.take(polls)).toBe(created.task.id);
-      expect(yield* Fiber.join(cleared)).toMatchObject({
-        lastRunError: null,
-        nextRunAt: "2026-11-05T10:45:00.000Z",
-        runCount: 0,
-      });
-      expect(yield* Queue.size(polls)).toBe(0);
-      expect(yield* Ref.get(launches)).toBe(0);
+        // An edit that leaves the query alone keeps the next poll.
+        const edited = yield* service.upsert({
+          ...input,
+          id: created.task.id,
+          prompt: "Take {{event.key}}",
+        });
+        expect(edited.task.nextRunAt).toBe("2026-11-05T10:15:10.000Z");
 
-      // Deleting the trigger drops its observations and no other trigger's.
-      const sql = yield* SqlClient.SqlClient;
-      for (const key of [
-        `${created.task.id}\u0000`,
-        `${created.task.id}\u0000acme\u0000PROJ-1`,
-        "other\u0000",
-      ]) {
-        yield* sql`INSERT INTO fork_trigger_observations (source, key, state_json, observed_at)
+        yield* Ref.set(failing, false);
+        const cleared = yield* settled("never");
+        yield* TestClock.adjust("15 minutes");
+        expect(yield* Queue.take(polls)).toBe(created.task.id);
+        expect(yield* Fiber.join(cleared)).toMatchObject({
+          lastRunError: null,
+          nextRunAt: "2026-11-05T10:30:10.000Z",
+          runCount: 0,
+        });
+        expect(yield* Queue.size(polls)).toBe(0);
+        expect(yield* Ref.get(launches)).toBe(0);
+
+        // Turning it back on, or changing the query, polls at the next tick again.
+        yield* service.setEnabled({ id: created.task.id, enabled: false });
+        const resumed = yield* service.setEnabled({ id: created.task.id, enabled: true });
+        expect(resumed.task.nextRunAt).toBe("2026-11-05T10:15:10.000Z");
+        const requeried = yield* service.upsert({
+          ...input,
+          id: created.task.id,
+          schedule: { ...input.schedule, jql: "labels = triage" } as typeof input.schedule,
+        });
+        expect(requeried.task.nextRunAt).toBe("2026-11-05T10:15:10.000Z");
+
+        // Deleting the trigger drops its observations and no other trigger's.
+        const sql = yield* SqlClient.SqlClient;
+        for (const key of [
+          `${created.task.id}\u0000`,
+          `${created.task.id}\u0000acme\u0000PROJ-1`,
+          "other\u0000",
+        ]) {
+          yield* sql`INSERT INTO fork_trigger_observations (source, key, state_json, observed_at)
           VALUES ('jira_query', ${key}, '{}', '2026-11-05T10:00:00.000Z')`;
-      }
-      yield* service.delete({ id: created.task.id });
-      expect(yield* sql<{ key: string }>`SELECT key FROM fork_trigger_observations`).toEqual([
-        { key: "other\u0000" },
-      ]);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))),
-    );
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+        }
+        yield* service.delete({ id: created.task.id });
+        expect(yield* sql<{ key: string }>`SELECT key FROM fork_trigger_observations`).toEqual([
+          { key: "other\u0000" },
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))),
+      );
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
