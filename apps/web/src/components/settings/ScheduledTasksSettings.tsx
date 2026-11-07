@@ -94,6 +94,7 @@ import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from ".
 import {
   EventTypesField,
   Field,
+  PollStartField,
   TriageField,
   TriggerFiltersField,
   TriggerPromptHint,
@@ -219,6 +220,7 @@ const EMPTY_DRAFT: DraftState = {
   triggerFilters: [],
   eventTypes: [],
   savedTriggerFilters: [],
+  pollStart: "changes",
   ...JIRA_QUERY_DRAFT_DEFAULTS,
   ...GITLAB_PROJECTS_DRAFT_DEFAULTS,
   triage: triageDraft(undefined),
@@ -1887,6 +1889,14 @@ function ScheduledTaskEditorForm({
                     environmentId={environmentId}
                     draft={draft}
                     onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
+                  />
+                ) : null}
+                {draft.editingId === null &&
+                (draft.scheduleMode === "jira_query" ||
+                  draft.scheduleMode === "gitlab_projects") ? (
+                  <PollStartField
+                    value={draft.pollStart}
+                    onChange={(pollStart) => setDraft((current) => ({ ...current, pollStart }))}
                   />
                 ) : null}
                 {eventTypeOptions === null ? null : (
