@@ -224,6 +224,17 @@ it.effect(
           },
         );
 
+        // Firing the current set also reads every open merge request, and keeps the marks.
+        yield* poller.poll(task({ projects: ["acme/app"] }), { fireCurrent: true });
+        assert.deepEqual(
+          (yield* take).map((call) => call.split("&with")[0]),
+          [
+            `${HOST} api projects/acme%2Fapp/merge_requests?order_by=updated_at&sort=asc&updated_after=2026-11-05T10%3A00%3A00.000Z`,
+            `${HOST} api projects/acme%2Fapp/pipelines?order_by=updated_at&sort=asc&updated_after=2026-11-05T10%3A00%3A00.000Z&per_page=100&page=1`,
+            `${HOST} api projects/acme%2Fapp/merge_requests?order_by=updated_at&sort=asc&state=opened`,
+          ],
+        );
+
         // A group reads its merge requests, then pipelines per project they name.
         yield* poller.poll(task({ projects: [], group: "acme" }));
         yield* poller.poll(task({ projects: [], group: "acme" }));

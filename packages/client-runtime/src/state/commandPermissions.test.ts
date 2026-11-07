@@ -237,6 +237,7 @@ describe("command permissions", () => {
     WS_METHODS.triggersSetEnabled,
     WS_METHODS.triggersDelete,
     WS_METHODS.triggersRunNow,
+    WS_METHODS.triggersFireCurrent,
     ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
     WS_METHODS.workflowsAnswer,
     WS_METHODS.workflowsResume,
