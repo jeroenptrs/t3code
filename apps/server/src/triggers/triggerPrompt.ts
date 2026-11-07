@@ -4,7 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import type { TriggerEvent } from "@t3tools/contracts";
 
 import { type RenderedWebhookPrompt, renderTemplate } from "../scheduledTasks/webhookTemplate.ts";
-import { gitlabTriggerKey } from "./gitlabTriggerSource.ts";
+import { gitlabPipelineKey, gitlabTriggerKey } from "./gitlabTriggerSource.ts";
 import { jiraTriggerKey } from "./jiraTriggerSource.ts";
 import { triggerFieldResolver } from "./triggerFilter.ts";
 
@@ -20,6 +20,14 @@ function triggerEventKey(event: TriggerEvent): string {
         repository: event.payload.repository,
         number: Number(event.payload.number),
       });
+    case "gitlab_projects":
+      return event.payload.pipelineId === null || event.type !== "pipeline.finished"
+        ? gitlabTriggerKey({
+            host: event.payload.host,
+            repository: event.payload.repository,
+            number: Number(event.payload.number),
+          })
+        : gitlabPipelineKey(event.payload.host, event.payload.repository, event.payload.pipelineId);
     case "slack":
       return event.payload.invocationId;
     case "manual":
