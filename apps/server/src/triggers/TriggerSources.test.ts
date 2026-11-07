@@ -154,6 +154,7 @@ it.effect("seeds a Jira query's result set silently, then raises entered, left, 
         readonly triggerId?: ScheduledTaskId;
         readonly complete?: boolean;
         readonly start?: "changes" | "current";
+        readonly fireCurrent?: boolean;
       } = {},
     ) =>
       sources.observeJiraQuery({
@@ -163,6 +164,7 @@ it.effect("seeds a Jira query's result set silently, then raises entered, left, 
         watchedFields: new Set(["status", "labels", "assignee"]),
         complete: input.complete ?? true,
         start: input.start ?? "changes",
+        fireCurrent: input.fireCurrent ?? false,
       });
     const observed = (id: ScheduledTaskId) =>
       sql<{ key: string }>`
@@ -209,6 +211,31 @@ it.effect("seeds a Jira query's result set silently, then raises entered, left, 
         assert.deepEqual(yield* observed(triggerId), ["", "PROJ-1", "PROJ-3"]);
       }),
     );
+    yield* withSources((sources) =>
+      Effect.gen(function* () {
+        // Firing the current set raises entered once per issue in it, beside the poll's own events.
+        const events = yield* collect(sources, 4);
+        const set = [issue({ status: "Done" }), issue({ key: "PROJ-3" }), issue({ key: "PROJ-4" })];
+        yield* poll(sources, set, { fireCurrent: true });
+        yield* poll(sources, set);
+        yield* poll(sources, [issue({ key: "PROJ-9" })], { triggerId: other, fireCurrent: true });
+        const collected = yield* Fiber.join(events);
+        assert.deepEqual(
+          collected
+            .map(
+              (event) => `${event.type} ${event.source === "jira_query" ? event.payload.key : ""}`,
+            )
+            .toSorted(),
+          [
+            "issue.entered PROJ-1",
+            "issue.entered PROJ-3",
+            "issue.entered PROJ-4",
+            "issue.entered PROJ-9",
+          ],
+        );
+        assert.deepEqual(yield* observed(triggerId), ["", "PROJ-1", "PROJ-3", "PROJ-4"]);
+      }),
+    );
   }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
 );
 
@@ -249,11 +276,13 @@ it.effect(
           readonly pipelines?: ReadonlyArray<GitLabPipelineState>;
           readonly triggerId?: ScheduledTaskId;
           readonly start?: "changes" | "current";
+          readonly fireCurrent?: boolean;
         },
       ) =>
         sources.observeGitLabProjects({
           triggerId: input.triggerId ?? triggerId,
           start: input.start ?? "current",
+          fireCurrent: input.fireCurrent ?? false,
           host,
           marker: {
             scope: input.scope ?? '["gitlab.acme.dev",["acme/app"],null]',
@@ -378,6 +407,33 @@ it.effect(
           });
           const [opened] = yield* Fiber.join(events);
           assert.deepEqual(described(opened!), ["merge_request.opened", "51", null]);
+        }),
+      );
+      // Firing the current set raises opened once per open merge request, ended ones excluded.
+      yield* withSources((sources) =>
+        Effect.gen(function* () {
+          const changes = ScheduledTaskId.make("task:changes");
+          const events = yield* collect(sources, 4);
+          const fire = {
+            triggerId: changes,
+            start: "changes",
+            mergeRequests: [
+              mergeRequest(50),
+              mergeRequest(51),
+              mergeRequest(52),
+              mergeRequest(53, { state: "closed" }),
+            ],
+          } as const;
+          yield* poll(sources, { ...fire, fireCurrent: true });
+          yield* poll(sources, fire);
+          yield* poll(sources, { ...fire, mergeRequests: [mergeRequest(54)] });
+          const collected = yield* Fiber.join(events);
+          assert.deepEqual(collected.slice(0, 3).map(described).toSorted(), [
+            ["merge_request.opened", "50", null],
+            ["merge_request.opened", "51", null],
+            ["merge_request.opened", "52", null],
+          ]);
+          assert.deepEqual(described(collected[3]!), ["merge_request.opened", "54", null]);
         }),
       );
     }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
