@@ -194,11 +194,13 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   SettingsKeyboard: msg("Keyboard"),
   SettingsVoice: msg("Voice"),
   SettingsFollowUp: msg("Chat", { $context: "noun, settings page title" }),
-  SettingsScheduledTasks: msg("Scheduled tasks"),
-  SettingsScheduledTaskNew: msg("New scheduled task"),
-  SettingsScheduledTaskEdit: msg("Edit scheduled task"),
+  SettingsScheduledTasks: msg("Triggers"),
+  SettingsScheduledTaskNew: msg("New trigger"),
+  SettingsScheduledTaskEdit: msg("Edit trigger"),
   SettingsScheduledTaskBranch: msg("Base branch"),
   SettingsScheduledTaskThread: msg("Destination"),
+  SettingsScheduledTaskTemplate: msg("Use template"),
+  SettingsFactories: msg("Factories"),
   SettingsClientStorage: msg("Client Storage"),
   SettingsDiagnostics: msg("Diagnostics"),
   SettingsUsageAccount: msg("Account"),
@@ -395,7 +397,7 @@ const SETTINGS_SCREENS = {
   }),
   SettingsScheduledTaskTemplate: createNativeStackScreen({
     screen: SettingsScheduledTaskTemplateRouteScreen,
-    options: settingsPage("Use template"),
+    options: settingsPage(),
   }),
   SettingsScheduledTaskModel: createNativeStackScreen({
     screen: ScheduledTaskModelPickerRouteScreen,
@@ -430,7 +432,7 @@ const SETTINGS_SCREENS = {
   SettingsFactories: createNativeStackScreen({
     screen: FactoriesScreen,
     linking: "settings/factories",
-    options: settingsPage("Factories"),
+    options: settingsPage(),
   }),
   SettingsUsage: createNativeStackScreen({
     screen: UsageRouteScreen,
