@@ -27,7 +27,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { McpAttachmentInput } from "./attachment/input.ts";
 import { McpSchema, McpServer } from "effect/ai";
@@ -1028,7 +1027,7 @@ it.effect("a caller cannot rewrite a scheduled task or trigger that runs above i
         ),
         Layer.provide(
           Layer.mock(ProjectService.ProjectService)({
-            getById: (projectId) => Effect.succeed(Option.some({ id: projectId } as never)),
+            getById: (projectId) => Effect.succeedSome({ id: projectId } as never),
           }),
         ),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
