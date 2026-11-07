@@ -131,7 +131,7 @@ export function TriggerTemplatesSection({
 
   const deleteTemplate = async (template: TriggerTemplate) => {
     if (projectId === null) return;
-    const message = `Delete the template ${template.title}?\nTasks made from it keep running.`;
+    const message = `Delete the template ${template.title}?\nTriggers made from it keep running.`;
     const confirmed =
       (await requestConfirmDialog(message, { variant: "destructive" })) ??
       window.confirm(message.replace("\n", " "));
@@ -330,7 +330,7 @@ function UseTemplateDialog({
       <DialogPopup className="max-w-md">
         <DialogHeader>
           <DialogTitle>Use {template.title}</DialogTitle>
-          <DialogDescription>Fill in the template's values for the new task.</DialogDescription>
+          <DialogDescription>Fill in the template's values for the new trigger.</DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="space-y-4">
@@ -359,7 +359,7 @@ function UseTemplateDialog({
         <DialogFooter>
           <DialogClose render={<Button variant="outline" size="sm" />}>Cancel</DialogClose>
           <Button size="sm" disabled={missing.length > 0} onClick={() => onUse(values)}>
-            Create task
+            Create trigger
           </Button>
         </DialogFooter>
       </DialogPopup>
