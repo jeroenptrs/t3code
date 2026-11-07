@@ -1,6 +1,8 @@
 import {
   isListedThreadLineage,
   isWebhookDedupeTemplate,
+  type ScheduledTaskTimeSchedule,
+  type Trigger,
   type TriggerFilterSourceKind,
 } from "@t3tools/contracts";
 import {
@@ -25,6 +27,7 @@ import {
   triageDraft,
   triggerFilterDrafts,
   triggerFilterDraftsChanged,
+  triggerFiltersSummary,
   type TriageDraft,
   type TriggerFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-trigger";
@@ -90,6 +93,59 @@ export const SCHEDULE_MODE_LABELS: Record<ScheduleMode, string> = {
   slack: "On Slack message",
   manual: "Manual",
 };
+
+/** Source picker entries: the schedule kinds sit under "Schedule", the event sources beside it. */
+export const TRIGGER_SOURCE_LABELS: Record<Trigger["source"]["kind"], string> = {
+  schedule: "Schedule",
+  webhook: "Webhook",
+  jira: "Jira",
+  gitlab: "GitLab",
+  slack: "Slack",
+  manual: "Manual",
+};
+
+export const TIME_SCHEDULE_MODES = ["fixed", "once", "interval"] as const;
+
+export function triggerSourceOfMode(mode: ScheduleMode): Trigger["source"]["kind"] {
+  return mode === "fixed" || mode === "once" || mode === "interval" ? "schedule" : mode;
+}
+
+export const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+const ONCE_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
+export function timeScheduleLabel(schedule: ScheduledTaskTimeSchedule): string {
+  if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
+  if (schedule.type === "interval") {
+    const minutes = schedule.everyMs / 60_000;
+    if (!Number.isInteger(minutes)) return `Every ${Math.round(schedule.everyMs / 1000)} seconds`;
+    return minutes === 1 ? "Every minute" : `Every ${minutes} minutes`;
+  }
+  const weekdays = schedule.weekdays ?? [];
+  const days =
+    weekdays.length === 0
+      ? "Daily"
+      : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
+        ? "Weekdays"
+        : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
+  const zone = schedule.timeZone ? ` (${schedule.timeZone.replaceAll("_", " ")})` : "";
+  return `${days} at ${schedule.timeOfDay}${zone}`;
+}
+
+/** One line per trigger: its source, then what it filters on, such as "Jira · Status equals Done". */
+export function triggerSummary(trigger: Pick<Trigger, "source" | "filters">): string {
+  const { source, filters } = trigger;
+  if (source.kind === "schedule") return timeScheduleLabel(source.schedule);
+  const label = TRIGGER_SOURCE_LABELS[source.kind];
+  if (source.kind === "manual" || filters.length === 0) return label;
+  if (source.kind === "webhook") {
+    return `${label} · ${filters.length} filter${filters.length === 1 ? "" : "s"}`;
+  }
+  return `${label} · ${triggerFiltersSummary(source.kind, filters)}`;
+}
 
 export function isTriggerFilterSource(mode: string): mode is TriggerFilterSourceKind {
   return mode === "jira" || mode === "gitlab" || mode === "slack";
