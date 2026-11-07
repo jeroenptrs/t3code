@@ -564,7 +564,7 @@ const make = Effect.gen(function* () {
       let questions = 0;
       for (const { threadId } of threads) {
         const shell = shellById.get(threadId);
-        if (shell === undefined) continue;
+        if (shell === undefined || shell.settledOverride === "settled") continue;
         if (shell.status === "failed") failedRuns += 1;
         if (shell.pendingRuntimeRequest?.kind === "user_input") questions += 1;
       }
