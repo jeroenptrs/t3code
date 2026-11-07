@@ -14,6 +14,7 @@ const SOURCE_LABELS: Record<TriggerSourceKind, string> = {
   webhook: "webhook",
   schedule: "schedule",
   manual: "manual",
+  jira_query: "Jira query",
 };
 
 /** The first paragraph, which names what started the run and where its item is. */
@@ -51,7 +52,7 @@ const FALLBACK_MARKER = /^\[(ask|label|stop)\]\n/;
 
 /** Jira has a proposal tool for labels; other sources depend on what the agent has. */
 const labelInstruction = (origin: TriageOrigin, label: string) =>
-  origin.kind === "event" && origin.source === "jira"
+  origin.kind === "event" && (origin.source === "jira" || origin.source === "jira_query")
     ? `Propose the label \`${label}\` on the issue with \`propose_jira_labels\` and wait for the decision.`
     : `Add the label \`${label}\` to the item through the tool for its source, such as the merge request tools you have. If no tool can add a label, say so.`;
 

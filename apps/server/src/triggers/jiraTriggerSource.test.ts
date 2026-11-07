@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
-import type { JiraIssueSummary } from "@t3tools/contracts";
+import { type JiraIssueSummary, ScheduledTaskId } from "@t3tools/contracts";
 
-import { diffJiraIssue } from "./jiraTriggerSource.ts";
+import { diffJiraIssue, diffJiraQueryIssue, jiraQueryWatchedFields } from "./jiraTriggerSource.ts";
 
 const AT = "2026-11-05T10:00:00.000Z";
 
@@ -124,5 +124,70 @@ describe("diffJiraIssue", () => {
       assigneeAccountId: null,
       previousAssigneeAccountId: "acc-ada",
     });
+  });
+});
+
+describe("diffJiraQueryIssue", () => {
+  const context = {
+    triggerId: ScheduledTaskId.make("task:query"),
+    query: "project = PROJ",
+    occurredAt: AT,
+  };
+  const watched = jiraQueryWatchedFields([
+    { path: "event.priority", op: "equals", value: "Highest" },
+    { path: "event.status", op: "exists" },
+  ]);
+  const types = (events: ReturnType<typeof diffJiraQueryIssue>) =>
+    events.map((event) => [event.type, event.payload.changedFields]);
+
+  it("watches status, labels, assignee, and the issue fields filters name", () => {
+    assert.deepEqual([...watched], ["status", "labels", "assignee", "priority"]);
+  });
+
+  it("raises entered and left with the trigger's id", () => {
+    const [entered] = diffJiraQueryIssue(null, issue(), watched, context);
+    assert.deepInclude(entered, {
+      source: "jira_query",
+      type: "issue.entered",
+      triggerId: context.triggerId,
+    });
+    assert.deepInclude(entered?.payload, {
+      key: "PROJ-12",
+      previousStatus: null,
+      query: "project = PROJ",
+      changedFields: [],
+    });
+    const [left] = diffJiraQueryIssue(issue({ status: "Done" }), null, watched, context);
+    assert.deepInclude(left, { type: "issue.left", triggerId: context.triggerId });
+    assert.deepInclude(left?.payload, { status: "Done", previousStatus: null });
+  });
+
+  it("raises a status change and a watched field as updated, naming what changed", () => {
+    assert.deepEqual(
+      types(
+        diffJiraQueryIssue(
+          issue(),
+          issue({ status: "In Progress", priority: "Highest" }),
+          watched,
+          context,
+        ),
+      ),
+      [
+        ["issue.status_changed", ["status", "priority"]],
+        ["issue.updated", ["status", "priority"]],
+      ],
+    );
+  });
+
+  it("raises nothing for a change to a field no filter names", () => {
+    assert.deepEqual(
+      diffJiraQueryIssue(
+        issue(),
+        issue({ summary: "Fix logout", issueType: "Story" }),
+        watched,
+        context,
+      ),
+      [],
+    );
   });
 });
