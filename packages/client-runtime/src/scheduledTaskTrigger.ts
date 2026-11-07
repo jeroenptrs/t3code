@@ -3,6 +3,7 @@ import {
   TRIGGER_SOURCE_FIELDS,
   TriggerFilter,
   type ScheduledTaskTriage,
+  type SourceControlProviderDiscoveryItem,
   type TriggerFilterSourceKind,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -11,15 +12,34 @@ import * as Schema from "effect/Schema";
 import { webhookFilterDraftsChanged, type WebhookFilterDraft } from "./scheduledTaskWebhook.ts";
 
 const JIRA_TRIGGER_PROMPT = "Work on Jira issue {{event.key}}: {{event.summary}} ({{event.url}}).";
+const GITLAB_TRIGGER_PROMPT =
+  "Look at merge request !{{event.number}} in {{event.repository}}: {{event.title}} ({{event.url}}).";
 
 export const DEFAULT_TRIGGER_PROMPT = {
   jira: JIRA_TRIGGER_PROMPT,
   jira_query: JIRA_TRIGGER_PROMPT,
-  gitlab:
-    "Look at merge request !{{event.number}} in {{event.repository}}: {{event.title}} ({{event.url}}).",
+  gitlab: GITLAB_TRIGGER_PROMPT,
+  gitlab_projects: GITLAB_TRIGGER_PROMPT,
   slack: "{{event.prompt}}",
   manual: "",
 } as const;
+
+/** The GitLab hosts the environment's glab is signed in to, which a GitLab projects trigger polls. */
+export function signedInGitLabHosts(
+  providers: ReadonlyArray<SourceControlProviderDiscoveryItem>,
+): Array<string> {
+  const hosts = new Set<string>();
+  for (const provider of providers) {
+    if (provider.kind !== "gitlab") continue;
+    for (const account of provider.auth.accounts ?? []) {
+      if (account.authenticated) hosts.add(account.host);
+    }
+    if (provider.auth.status === "authenticated" && Option.isSome(provider.auth.host)) {
+      hosts.add(provider.auth.host.value);
+    }
+  }
+  return [...hosts];
+}
 
 /** Same row shape as a webhook filter; the path is an `event.` field of the source. */
 export type TriggerFilterDraft = WebhookFilterDraft;
