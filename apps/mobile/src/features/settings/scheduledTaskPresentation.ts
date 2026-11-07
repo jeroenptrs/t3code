@@ -1,4 +1,5 @@
-import type { ScheduledTaskSchedule } from "@t3tools/contracts";
+import type { ScheduledTaskTimeSchedule, Trigger, TriggerSourceKind } from "@t3tools/contracts";
+import { triggerFiltersSummary } from "@t3tools/client-runtime/scheduled-task-trigger";
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
@@ -104,17 +105,26 @@ export function formatNextScheduledTaskRun(
   return resolve(msg("Next run {date} at {time}", { date, time }));
 }
 
-export const TRIGGER_SCHEDULE_LABELS = {
-  jira: "On Jira change",
-  gitlab: "On GitLab change",
-  slack: "On Slack message",
+export const TRIGGER_SOURCE_LABELS = {
+  schedule: "Schedule",
+  webhook: "Webhook",
+  jira: "Jira",
+  gitlab: "GitLab",
+  slack: "Slack",
   manual: "Manual",
-} as const;
+} as const satisfies Record<TriggerSourceKind, string>;
 
-export function formatTriggerSchedule(
-  schedule: Extract<ScheduledTaskSchedule, { readonly type: keyof typeof TRIGGER_SCHEDULE_LABELS }>,
+/** One line per trigger: its source, then what it filters on, such as "Jira · Status equals Done". */
+export function formatTriggerSummary(
+  trigger: Pick<Trigger, "source" | "filters">,
+  formatSchedule: (schedule: ScheduledTaskTimeSchedule) => string,
 ): string {
-  const label = TRIGGER_SCHEDULE_LABELS[schedule.type];
-  const count = schedule.type === "manual" ? 0 : (schedule.filters?.length ?? 0);
-  return count === 0 ? label : `${label} · ${count} filter${count === 1 ? "" : "s"}`;
+  const { source, filters } = trigger;
+  if (source.kind === "schedule") return formatSchedule(source.schedule);
+  const label = TRIGGER_SOURCE_LABELS[source.kind];
+  if (source.kind === "manual" || filters.length === 0) return label;
+  if (source.kind === "webhook") {
+    return `${label} · ${filters.length} filter${filters.length === 1 ? "" : "s"}`;
+  }
+  return `${label} · ${triggerFiltersSummary(source.kind, filters)}`;
 }

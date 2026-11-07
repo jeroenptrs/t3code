@@ -335,8 +335,8 @@ export function CommandPalette(props: {
       {
         key: "scheduledTasks",
         kind: "action",
-        title: gt("Scheduled tasks"),
-        searchTerms: ["schedule", "automations", "recurring"],
+        title: gt("Triggers"),
+        searchTerms: ["scheduled tasks", "schedule", "automations", "recurring", "webhook"],
         run: () => openSettings(navigation, "SettingsScheduledTasks"),
       },
       {

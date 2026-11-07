@@ -39,6 +39,7 @@ import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-ti
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
+  scheduledTaskTrigger,
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
   scheduledTaskThreadMode,
@@ -103,9 +104,15 @@ import {
 import { TriggerTemplatesSection } from "./TriggerTemplatesSettings";
 import {
   SCHEDULE_MODE_LABELS,
+  TIME_SCHEDULE_MODES,
+  TRIGGER_SOURCE_LABELS,
   WEBHOOK_SIGNATURE_DEFAULTS,
   changeDraftProject,
   moveDraftToThread,
+  WEEKDAY_LABELS,
+  timeScheduleLabel,
+  triggerSourceOfMode,
+  triggerSummary,
   isTriggerFilterSource,
   promptForScheduleMode,
   scheduleDraftErrors,
@@ -116,7 +123,6 @@ import {
   localTimeZone,
   matchesScheduledTaskScope,
   scheduleFromDraft,
-  scheduleLabel,
   scheduledTaskDefaultModel,
   weekdayShortLabel,
   taskToDraft,
@@ -192,7 +198,9 @@ const SCOPE_SUMMARY_TEMPLATES: Record<string, string> = {
   "No tasks on": msg("No tasks on {environments}"),
 };
 
-const SCHEDULE_MODES = Object.keys(SCHEDULE_MODE_LABELS) as ReadonlyArray<ScheduleMode>;
+const TRIGGER_SOURCES = Object.keys(TRIGGER_SOURCE_LABELS) as ReadonlyArray<
+  keyof typeof TRIGGER_SOURCE_LABELS
+>;
 
 const TRIGGER_SOURCE_DESCRIPTIONS: Record<TriggerFilterSourceKind, string> = {
   jira: "Runs when a Jira issue linked to a thread changes status, labels, or assignee.",
@@ -385,7 +393,7 @@ export function ScheduledTasksSettings(target: {
             }
           >
             <PlusIcon className="size-3" />
-            <T>New task</T>
+            <T>New trigger</T>
           </Button>
         }
       >
@@ -403,7 +411,7 @@ export function ScheduledTasksSettings(target: {
                 <T>No environments available</T>
               </EmptyTitle>
               <EmptyDescription>
-                <T>Connect an environment to manage scheduled tasks.</T>
+                <T>Connect an environment to manage triggers.</T>
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
@@ -497,9 +505,9 @@ function ScheduledTaskEnvironmentList({
   const populated = loaded.filter((state) => state.tasks && state.tasks.length > 0);
   const summaries: Record<string, string[]> = {
     "Not connected:": [],
-    "Loading scheduled tasks on": [],
-    "Could not load scheduled tasks:": [],
-    "No tasks on": [],
+    "Loading triggers on": [],
+    "Could not load triggers:": [],
+    "No triggers on": [],
   };
   for (const { environment, connected, tasks, error } of states) {
     const label = settingsScopeEnvironmentLabel(environment, environments);
@@ -508,11 +516,11 @@ function ScheduledTaskEnvironmentList({
         `${label} (${connectionStatusTitle(environment.connection, messages)})`,
       );
     } else if (error !== null) {
-      summaries["Could not load scheduled tasks:"]!.push(`${label}: ${error}`);
+      summaries["Could not load triggers:"]!.push(`${label}: ${error}`);
     } else if (!tasks) {
-      summaries["Loading scheduled tasks on"]!.push(label);
+      summaries["Loading triggers on"]!.push(label);
     } else if (tasks.length === 0 && populated.length > 0) {
-      summaries["No tasks on"]!.push(label);
+      summaries["No triggers on"]!.push(label);
     }
   }
 
@@ -551,17 +559,17 @@ function ScheduledTaskEnvironmentList({
       })}
       {taskId && linkedState?.tasks && linkedState.error === null && !linkedTask ? (
         <SettingsRow
-          title={gt("Task unavailable")}
+          title={gt("Trigger unavailable")}
           description={gt(
-            "This task was deleted or belongs to a different project. Check your project filter.",
+            "This trigger was deleted or belongs to a different project. Check your project filter.",
           )}
           role="status"
         />
       ) : null}
       {populated.length === 0 && loaded.length > 0 ? (
         <SettingsRow
-          title={gt("No scheduled tasks")}
-          description={gt("No tasks match this environment and project selection.")}
+          title={gt("No triggers")}
+          description={gt("No triggers match this environment and project selection.")}
         />
       ) : null}
       {Object.entries(summaries).map(([label, entries]) => {
@@ -647,29 +655,29 @@ function ScheduledTaskEnvironmentSection({
       {!connected ? (
         <SettingsRow
           title={gt("Environment disconnected")}
-          description={gt("Reconnect {label} to view its scheduled tasks.", {
+          description={gt("Reconnect {label} to view its triggers.", {
             label: environment.label,
           })}
         />
       ) : tasksQuery.error ? (
-        <SettingsRow title={gt("Could not load scheduled tasks")} description={tasksQuery.error} />
+        <SettingsRow title={gt("Could not load triggers")} description={tasksQuery.error} />
       ) : !tasks ? (
-        <SettingsRow title={gt("Loading scheduled tasks…")} role="status" />
+        <SettingsRow title={gt("Loading triggers…")} role="status" />
       ) : (
         <>
           {taskId && !linkedTask ? (
             <SettingsRow
-              title={gt("Task unavailable")}
+              title={gt("Trigger unavailable")}
               description={gt(
-                "This task was deleted or belongs to a different project. Check your project filter.",
+                "This trigger was deleted or belongs to a different project. Check your project filter.",
               )}
               role="status"
             />
           ) : null}
           {tasks.length === 0 ? (
             <SettingsRow
-              title={gt("No scheduled tasks")}
-              description={gt("No tasks match this environment and project selection.")}
+              title={gt("No triggers")}
+              description={gt("No triggers match this environment and project selection.")}
             />
           ) : (
             tasks.map((task) => (
@@ -740,7 +748,7 @@ function ScheduledTaskRow({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: gt("Could not update scheduled task"),
+          title: gt("Could not update trigger"),
           description: String(squashAtomCommandFailure(result)),
         }),
       );
@@ -753,7 +761,7 @@ function ScheduledTaskRow({
       status={
         <div className="flex flex-wrap items-center gap-2">
           <span>
-            {scheduleLabel(task.schedule, timeZone, task.nextRunAt, messages, locale)}
+            {triggerSummary(scheduledTaskTrigger(task), timeZone, task.nextRunAt)}
             {task.triage === undefined ? "" : ` · Triage: ${task.triage.fallback}`} ·{" "}
             {task.blockedByPolicy !== undefined ? (
               task.blockedByPolicy
@@ -1515,10 +1523,7 @@ function ScheduledTaskEditorForm({
       !projects.some((project) => project.id === selectedProjectId) ||
       selection === null
     ) {
-      reportFailure(
-        gt("Scheduled task is incomplete"),
-        gt("Add a title, prompt, project, and model."),
-      );
+      reportFailure(gt("Trigger is incomplete"), gt("Add a title, prompt, project, and model."));
       return;
     }
     const parsedFilters = parseWebhookFilterDrafts(draft.filters, m);
@@ -1567,7 +1572,7 @@ function ScheduledTaskEditorForm({
       reportFailure(
         gt("Once is not available here"),
         gt(
-          "This environment runs an older T3 Code. Update it to schedule a one-time task, or pick another schedule.",
+          "This environment runs an older T3 Code. Update it to schedule a one-time trigger, or pick another schedule.",
         ),
       );
       return;
@@ -1622,20 +1627,46 @@ function ScheduledTaskEditorForm({
     if (result._tag === "Failure") {
       submissionPending.current = false;
       if (!isAtomCommandInterrupted(result)) {
-        reportFailure(gt("Could not save scheduled task"), squashAtomCommandFailure(result));
+        reportFailure(gt("Could not save trigger"), squashAtomCommandFailure(result));
       }
       return;
     }
     onClose();
   };
 
+  const source = triggerSourceOfMode(draft.scheduleMode);
+  const selectMode = (mode: ScheduleMode) =>
+    setDraft((current) => {
+      const suggested =
+        mode === "once" && !current.runAt
+          ? new Date(Math.ceil(Date.now() / 3_600_000) * 3_600_000)
+          : null;
+      return {
+        ...current,
+        scheduleMode: mode,
+        // Keep the instant too, so an hour that repeats when clocks go back stays exact.
+        ...(suggested === null
+          ? {}
+          : {
+              runAt: toDateTimeLocalValue(suggested),
+              savedRunAt: suggested.toISOString(),
+            }),
+        // Each source has its own fields, so rows from another source can't carry over.
+        ...(mode !== current.scheduleMode && isTriggerFilterSource(mode)
+          ? { triggerFilters: [] }
+          : {}),
+        prompt: promptForScheduleMode(mode, current.prompt),
+      };
+    });
+
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{draft.editingId ? gt("Edit task") : gt("New task")}</DialogTitle>
+        <DialogTitle>{draft.editingId ? gt("Edit trigger") : gt("New trigger")}</DialogTitle>
         <DialogDescription>
-          Run a prompt on a schedule, when a webhook is called, when a linked Jira issue or GitLab
-          merge request changes, or on a Slack message. A manual task runs only when started.
+          Run a prompt when its source fires: a schedule, a webhook call, a change to a linked Jira
+          issue or GitLab merge request, or a Slack message. A manual trigger runs only when
+          started.
         </DialogDescription>
       </DialogHeader>
 
@@ -1716,7 +1747,7 @@ function ScheduledTaskEditorForm({
           ) : null}
           {editingTaskMissing ? (
             <p className="text-xs text-destructive" role="status">
-              <T>This scheduled task no longer exists.</T>
+              <T>This trigger no longer exists.</T>
             </p>
           ) : null}
           <Field label={gt("Name")} htmlFor="scheduled-task-title">
@@ -1728,159 +1759,6 @@ function ScheduledTaskEditorForm({
                 setDraft((current) => ({ ...current, title: event.target.value }))
               }
             />
-          </Field>
-
-          <ScheduledTaskDestination
-            environmentId={environmentId}
-            projectId={selectedProjectId}
-            threadId={draft.threadId ? (draft.threadId as ThreadId) : null}
-            threadMode={draft.threadMode}
-            disabled={saving || !connected}
-            onSelect={(thread) =>
-              setDraft((current) =>
-                thread === null
-                  ? { ...unbindDraftFromThread(current), threadMode: "new_thread" }
-                  : moveDraftToThread(current, thread),
-              )
-            }
-            onThreadModeChange={
-              offersThreadModes
-                ? (threadMode) =>
-                    setDraft((current) => ({
-                      ...(threadMode === "new_thread" ? unbindDraftFromThread(current) : current),
-                      threadMode,
-                    }))
-                : undefined
-            }
-          />
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label={gt("Project")} htmlFor="scheduled-task-project">
-              <Select
-                value={selectedProjectId}
-                onValueChange={(projectId) =>
-                  setDraft((current) => changeDraftProject(current, projectId ?? ""))
-                }
-              >
-                <SelectTrigger size="sm" id="scheduled-task-project">
-                  <SelectValue placeholder={gt("Select a project")}>
-                    {selectedProject?.title}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  {projects.map((project) => (
-                    <SelectItem key={project.id} value={project.id} label={project.title}>
-                      <span className="block truncate">{project.title}</span>
-                      {allProjects.some(
-                        (other) =>
-                          other.title === project.title &&
-                          (other.environmentId !== project.environmentId ||
-                            other.id !== project.id),
-                      ) ? (
-                        <span className="block max-w-72 truncate text-xs text-muted-foreground">
-                          {project.workspaceRoot}
-                        </span>
-                      ) : null}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            </Field>
-
-            <Field label={gt("Workspace")} htmlFor="scheduled-task-workspace">
-              <Select
-                value={draft.workspaceMode}
-                onValueChange={(value) =>
-                  setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
-                }
-              >
-                <SelectTrigger size="sm" id="scheduled-task-workspace">
-                  <SelectValue>{messages(WORKSPACE_MODE_LABELS[draft.workspaceMode])}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  <SelectItem value="worktree">
-                    <T>Create a new worktree</T>
-                  </SelectItem>
-                  <SelectItem value="root">
-                    <T>Use the project checkout</T>
-                  </SelectItem>
-                  <SelectItem value="existing_worktree">
-                    <T>Use a specific checkout</T>
-                  </SelectItem>
-                </SelectPopup>
-              </Select>
-            </Field>
-          </div>
-
-          {draft.workspaceMode === "worktree" ? (
-            <Field label={gt("Base branch")} htmlFor="scheduled-task-base-ref">
-              <WorktreeBaseBranchPicker
-                key={`${environmentId}:${selectedProjectId}`}
-                id="scheduled-task-base-ref"
-                environmentId={environmentId}
-                cwd={selectedProject?.workspaceRoot ?? null}
-                value={draft.baseRef}
-                onValueChange={(baseRef) => setDraft((current) => ({ ...current, baseRef }))}
-                startFromOrigin={draft.startFromOrigin}
-                onStartFromOriginChange={(startFromOrigin) =>
-                  setDraft((current) => ({ ...current, startFromOrigin }))
-                }
-                disabled={saving || !connected}
-              />
-            </Field>
-          ) : null}
-          {draft.workspaceMode === "existing_worktree" ? (
-            <Field label={gt("Checkout path")} htmlFor="scheduled-task-checkout">
-              <Input
-                id="scheduled-task-checkout"
-                value={draft.existingWorktreePath}
-                placeholder="/path/to/checkout"
-                onChange={(event) =>
-                  setDraft((current) => ({
-                    ...current,
-                    existingWorktreePath: resolvePastedPath(
-                      current.existingWorktreePath,
-                      event.target.value,
-                    ),
-                  }))
-                }
-              />
-            </Field>
-          ) : null}
-
-          <Field label={gt("Prompt")} htmlFor="scheduled-task-prompt">
-            <Textarea
-              id="scheduled-task-prompt"
-              className="max-h-64 overflow-y-auto"
-              placeholder={gt("What should the agent do each time this runs?")}
-              value={draft.prompt}
-              onChange={(event) =>
-                setDraft((current) => ({ ...current, prompt: event.target.value }))
-              }
-            />
-            {isTriggerFilterSource(draft.scheduleMode) ? (
-              <TriggerPromptHint source={draft.scheduleMode} />
-            ) : null}
-          </Field>
-
-          <Field label={gt("Model")}>
-            <div>
-              <ProviderModelPicker
-                environmentId={environmentId}
-                // The saved selection only seeds new threads; bound runs ignore it.
-                disabled={saving || !connected || draft.threadId !== ""}
-                activeInstanceId={shownInstanceId}
-                model={shownModel}
-                lockedProvider={null}
-                instanceEntries={instanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                isComposerOwned={false}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
-                }
-              />
-            </div>
           </Field>
 
           <div className="space-y-3">
@@ -1896,67 +1774,77 @@ function ScheduledTaskEditorForm({
             {/* Wraps the toggle below the label when both don't fit, as on phones. */}
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Label>
-                <T>Schedule</T>
+                <T>Source</T>
               </Label>
               <Select
-                value={draft.scheduleMode}
+                value={source}
                 onValueChange={(value) => {
-                  const mode = SCHEDULE_MODES.find((entry) => entry === value);
-                  if (mode === undefined) return;
-                  setDraft((current) => {
-                    const suggested =
-                      mode === "once" && !current.runAt
-                        ? new Date(Math.ceil(Date.now() / 3_600_000) * 3_600_000)
-                        : null;
-                    return {
-                      ...current,
-                      scheduleMode: mode,
-                      // Keep the instant too, so an hour that repeats when clocks go back stays exact.
-                      ...(suggested === null
-                        ? {}
-                        : {
-                            runAt: toDateTimeLocalValue(suggested),
-                            savedRunAt: suggested.toISOString(),
-                          }),
-                      // Each source has its own fields, so rows from another source can't carry over.
-                      ...(mode !== current.scheduleMode && isTriggerFilterSource(mode)
-                        ? { triggerFilters: [] }
-                        : {}),
-                      prompt: promptForScheduleMode(mode, current.prompt),
-                    };
-                  });
+                  const kind = TRIGGER_SOURCES.find((entry) => entry === value);
+                  if (kind === undefined) return;
+                  selectMode(
+                    kind !== "schedule"
+                      ? kind
+                      : source === "schedule"
+                        ? draft.scheduleMode
+                        : "fixed",
+                  );
                 }}
               >
                 <div className="grid w-48 grid-cols-1">
-                  <SelectTrigger size="sm" aria-label={gt("Schedule type")}>
-                    <SelectValue>{SCHEDULE_MODE_LABELS[draft.scheduleMode]}</SelectValue>
+                  <SelectTrigger size="sm" aria-label={gt("Source")}>
+                    <SelectValue>{TRIGGER_SOURCE_LABELS[source]}</SelectValue>
                   </SelectTrigger>
                 </div>
                 <SelectPopup>
-                  {SCHEDULE_MODES.filter(
-                    (mode) => mode !== "once" || offersOnce || draft.scheduleMode === "once",
-                  ).map((mode) => (
+                  {TRIGGER_SOURCES.map((kind) => (
                     <SelectItem
-                      key={mode}
-                      value={mode}
+                      key={kind}
+                      value={kind}
                       disabled={
-                        mode === "webhook" &&
+                        kind === "webhook" &&
                         webhookDenial !== undefined &&
                         draft.scheduleMode !== "webhook"
                       }
                     >
-                      {SCHEDULE_MODE_LABELS[mode]}
+                      {TRIGGER_SOURCE_LABELS[kind]}
                     </SelectItem>
                   ))}
                 </SelectPopup>
               </Select>
             </div>
+            {source === "schedule" ? (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label>Schedule</Label>
+                <Select
+                  value={draft.scheduleMode}
+                  onValueChange={(value) => {
+                    const mode = TIME_SCHEDULE_MODES.find((entry) => entry === value);
+                    if (mode !== undefined) selectMode(mode);
+                  }}
+                >
+                  <div className="grid w-48 grid-cols-1">
+                    <SelectTrigger size="sm" aria-label={gt("Schedule type")}>
+                      <SelectValue>{SCHEDULE_MODE_LABELS[draft.scheduleMode]}</SelectValue>
+                    </SelectTrigger>
+                  </div>
+                  <SelectPopup>
+                    {TIME_SCHEDULE_MODES.filter(
+                      (mode) => mode !== "once" || offersOnce || draft.scheduleMode === "once",
+                    ).map((mode) => (
+                      <SelectItem key={mode} value={mode}>
+                        {SCHEDULE_MODE_LABELS[mode]}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </div>
+            ) : null}
 
             {webhookDenial !== undefined ? (
               <ManagedNotice>
                 {draft.scheduleMode === "webhook"
                   ? gt(
-                      "{webhookDenial} Switch this task to a time or an interval, or turn it off, to save it.",
+                      "{webhookDenial} Switch this trigger to a schedule, or turn it off, to save it.",
                       { webhookDenial },
                     )
                   : webhookDenial}
@@ -2255,6 +2143,151 @@ function ScheduledTaskEditorForm({
             )}
           </div>
 
+          <Field label="Prompt" htmlFor="scheduled-task-prompt">
+            <Textarea
+              id="scheduled-task-prompt"
+              className="max-h-64 overflow-y-auto"
+              placeholder="What should the agent do each time this runs?"
+              value={draft.prompt}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, prompt: event.target.value }))
+              }
+            />
+            {isTriggerFilterSource(draft.scheduleMode) ? (
+              <TriggerPromptHint source={draft.scheduleMode} />
+            ) : null}
+          </Field>
+
+          <ScheduledTaskDestination
+            environmentId={environmentId}
+            projectId={selectedProjectId}
+            threadId={draft.threadId ? (draft.threadId as ThreadId) : null}
+            threadMode={draft.threadMode}
+            disabled={saving || !connected}
+            onSelect={(thread) =>
+              setDraft((current) =>
+                thread === null
+                  ? { ...unbindDraftFromThread(current), threadMode: "new_thread" }
+                  : moveDraftToThread(current, thread),
+              )
+            }
+            onThreadModeChange={
+              offersThreadModes
+                ? (threadMode) =>
+                    setDraft((current) => ({
+                      ...(threadMode === "new_thread" ? unbindDraftFromThread(current) : current),
+                      threadMode,
+                    }))
+                : undefined
+            }
+          />
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Project" htmlFor="scheduled-task-project">
+              <Select
+                value={selectedProjectId}
+                onValueChange={(projectId) =>
+                  setDraft((current) => changeDraftProject(current, projectId ?? ""))
+                }
+              >
+                <SelectTrigger size="sm" id="scheduled-task-project">
+                  <SelectValue placeholder="Select a project">{selectedProject?.title}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {projects.map((project) => (
+                    <SelectItem key={project.id} value={project.id} label={project.title}>
+                      <span className="block truncate">{project.title}</span>
+                      {allProjects.some(
+                        (other) =>
+                          other.title === project.title &&
+                          (other.environmentId !== project.environmentId ||
+                            other.id !== project.id),
+                      ) ? (
+                        <span className="block max-w-72 truncate text-xs text-muted-foreground">
+                          {project.workspaceRoot}
+                        </span>
+                      ) : null}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </Field>
+
+            <Field label="Workspace" htmlFor="scheduled-task-workspace">
+              <Select
+                value={draft.workspaceMode}
+                onValueChange={(value) =>
+                  setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
+                }
+              >
+                <SelectTrigger size="sm" id="scheduled-task-workspace">
+                  <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value="worktree">Create a new worktree</SelectItem>
+                  <SelectItem value="root">Use the project checkout</SelectItem>
+                  <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
+                </SelectPopup>
+              </Select>
+            </Field>
+          </div>
+
+          {draft.workspaceMode === "worktree" ? (
+            <Field label="Base branch" htmlFor="scheduled-task-base-ref">
+              <WorktreeBaseBranchPicker
+                key={`${environmentId}:${selectedProjectId}`}
+                id="scheduled-task-base-ref"
+                environmentId={environmentId}
+                cwd={selectedProject?.workspaceRoot ?? null}
+                value={draft.baseRef}
+                onValueChange={(baseRef) => setDraft((current) => ({ ...current, baseRef }))}
+                startFromOrigin={draft.startFromOrigin}
+                onStartFromOriginChange={(startFromOrigin) =>
+                  setDraft((current) => ({ ...current, startFromOrigin }))
+                }
+                disabled={saving || !connected}
+              />
+            </Field>
+          ) : null}
+          {draft.workspaceMode === "existing_worktree" ? (
+            <Field label="Checkout path" htmlFor="scheduled-task-checkout">
+              <Input
+                id="scheduled-task-checkout"
+                value={draft.existingWorktreePath}
+                placeholder="/path/to/checkout"
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    existingWorktreePath: resolvePastedPath(
+                      current.existingWorktreePath,
+                      event.target.value,
+                    ),
+                  }))
+                }
+              />
+            </Field>
+          ) : null}
+
+          <Field label="Model">
+            <div>
+              <ProviderModelPicker
+                environmentId={environmentId}
+                // The saved selection only seeds new threads; bound runs ignore it.
+                disabled={saving || !connected || draft.threadId !== ""}
+                activeInstanceId={shownInstanceId}
+                model={shownModel}
+                lockedProvider={null}
+                instanceEntries={instanceEntries}
+                modelOptionsByInstance={modelOptionsByInstance}
+                isComposerOwned={false}
+                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                onInstanceModelChange={(instanceId, model) =>
+                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
+                }
+              />
+            </div>
+          </Field>
+
           <TriageField
             triage={draft.triage}
             onChange={(triage) => setDraft((current) => ({ ...current, triage }))}
@@ -2266,7 +2299,7 @@ function ScheduledTaskEditorForm({
                 <T>Enabled</T>
               </Label>
               <p id="scheduled-task-enabled-description" className="text-sm text-muted-foreground">
-                <T>Disabled tasks stay saved but do not run.</T>
+                <T>Disabled triggers stay saved but do not run.</T>
               </p>
             </div>
             <Switch
@@ -2295,7 +2328,7 @@ function ScheduledTaskEditorForm({
           }
           onClick={() => void submit()}
         >
-          {draft.editingId ? gt("Save task") : gt("Create task")}
+          {draft.editingId ? gt("Save trigger") : gt("Create trigger")}
         </Button>
       </DialogFooter>
     </>
