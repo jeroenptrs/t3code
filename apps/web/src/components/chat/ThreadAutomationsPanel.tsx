@@ -140,7 +140,7 @@ export function ThreadAutomationsPanel(props: {
                 size="icon-xs"
                 variant="ghost"
                 part="icon"
-                aria-label="Manage scheduled tasks"
+                aria-label="Manage triggers"
                 onClick={() =>
                   void navigate({
                     to: "/settings/scheduled-tasks",
@@ -152,7 +152,7 @@ export function ThreadAutomationsPanel(props: {
               </ThreadDetailsControl>
             }
           />
-          <TooltipPopup>Manage scheduled tasks</TooltipPopup>
+          <TooltipPopup>Manage triggers</TooltipPopup>
         </Tooltip>
       }
     >

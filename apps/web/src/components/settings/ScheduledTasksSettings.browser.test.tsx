@@ -82,6 +82,7 @@ const state = vi.hoisted(() => ({
   connected: true,
   tasksLoaded: true,
   secondary: false,
+  listed: null as ReadonlyArray<ScheduledTask> | null,
   commands: [] as Array<{ label: string; target: unknown }>,
 }));
 const secondaryId = EnvironmentId.make("secondary");
@@ -93,6 +94,7 @@ function setup(templates: { read?: boolean; write?: boolean } = {}) {
   state.connected = true;
   state.tasksLoaded = true;
   state.secondary = false;
+  state.listed = null;
   state.commands = [];
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
@@ -191,7 +193,7 @@ vi.mock(import("../../state/query"), async (original) => ({
     data:
       request === null || request === threadFamilyRead || request === templatesRead
         ? request
-        : { tasks: state.tasksLoaded ? [task] : [] },
+        : { tasks: state.tasksLoaded ? (state.listed ?? [task]) : [] },
     error: null,
     isPending: false,
     refresh: vi.fn(),
@@ -223,7 +225,7 @@ describe("ScheduledTasksSettings", () => {
         <ScheduledTasksSettings />
       </RegistryContext.Provider>,
     );
-    const create = screen.getByRole("button", { name: "New task" });
+    const create = screen.getByRole("button", { name: "New trigger" });
     await expect.element(create).toBeEnabled();
     await act(() => registry.set(permissions.get(secondaryId)!, false));
     await expect.element(create).toBeDisabled();
@@ -237,7 +239,7 @@ describe("ScheduledTasksSettings", () => {
     setup();
     state.secondary = true;
     await using screen = await render(<ScheduledTasksSettings />);
-    await screen.getByRole("button", { name: "New task" }).click();
+    await screen.getByRole("button", { name: "New trigger" }).click();
     await expect.element(page.getByLabelText("Runs on")).toHaveTextContent("Laptop");
   });
 
@@ -245,7 +247,7 @@ describe("ScheduledTasksSettings", () => {
     setup();
     state.connected = false;
     await using screen = await render(<ScheduledTasksSettings />);
-    await expect.element(screen.getByRole("button", { name: "New task" })).toBeDisabled();
+    await expect.element(screen.getByRole("button", { name: "New trigger" })).toBeDisabled();
   });
 
   it("keeps a linked task's unsaved edits across a disconnect and reconnect", async () => {
@@ -270,7 +272,7 @@ describe("ScheduledTasksSettings", () => {
     setup();
     state.tasksLoaded = false;
     await using screen = await render(<ScheduledTasksSettings taskId={task.id} />);
-    await userEvent.click(page.getByRole("button", { name: "New task" }));
+    await userEvent.click(page.getByRole("button", { name: "New trigger" }));
     const dialog = page.getByRole("dialog");
     const name = dialog.getByRole("textbox", { name: "Name" });
     await userEvent.fill(name, "My draft");
@@ -278,18 +280,18 @@ describe("ScheduledTasksSettings", () => {
     state.tasksLoaded = true;
     await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
 
-    await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeInTheDocument();
+    await expect.element(dialog.getByRole("heading", { name: "New trigger" })).toBeInTheDocument();
     await expect.element(name).toHaveValue("My draft");
   });
 
-  it("saves a Jira task with the picked filter field", async () => {
+  it("saves a Jira trigger with the picked filter field", async () => {
     setup();
     await using screen = await render(<ScheduledTasksSettings />);
-    await screen.getByRole("button", { name: "New task" }).click();
+    await screen.getByRole("button", { name: "New trigger" }).click();
     const dialog = page.getByRole("dialog");
     await userEvent.fill(dialog.getByRole("textbox", { name: "Name" }), "Start in-progress issues");
-    await dialog.getByLabelText("Schedule type").click();
-    await page.getByRole("option", { name: "On Jira change" }).click();
+    await dialog.getByLabelText("Source").click();
+    await page.getByRole("option", { name: "Jira", exact: true }).click();
     await expect
       .element(dialog.getByRole("textbox", { name: "Prompt" }))
       .toHaveValue("Work on Jira issue {{event.key}}: {{event.summary}} ({{event.url}}).");
@@ -299,7 +301,7 @@ describe("ScheduledTasksSettings", () => {
     await userEvent.fill(dialog.getByLabelText("Filter 1 value"), "In Progress");
     await dialog.getByLabelText("When the item fits no instruction").click();
     await page.getByRole("option", { name: "Ask and wait" }).click();
-    await dialog.getByRole("button", { name: "Create task" }).click();
+    await dialog.getByRole("button", { name: "Create trigger" }).click();
 
     await vi.waitFor(() =>
       expect(state.commands).toContainEqual({
@@ -317,6 +319,30 @@ describe("ScheduledTasksSettings", () => {
     );
   });
 
+  it("shows a Jira trigger's source and filters on its row", async () => {
+    setup();
+    state.listed = [
+      {
+        ...task,
+        id: ScheduledTaskId.make("start-issues"),
+        title: "Start issues",
+        schedule: {
+          type: "jira",
+          filters: [
+            { path: "event.status", op: "equals", value: "In Progress" },
+            { path: "event.labels", op: "equals", value: "bug" },
+          ],
+        },
+      },
+    ];
+    await using screen = await render(<ScheduledTasksSettings />);
+    await expect
+      .element(
+        screen.getByText("Jira · Status equals In Progress, Labels has bug", { exact: false }),
+      )
+      .toBeVisible();
+  });
+
   it("hides templates without the read scope and blocks edits without the write scope", async () => {
     setup({ read: false, write: false });
     const registry = AtomRegistry.make();
@@ -326,7 +352,7 @@ describe("ScheduledTasksSettings", () => {
         <ScheduledTasksSettings />
       </RegistryContext.Provider>,
     );
-    await expect.element(screen.getByRole("button", { name: "New task" })).toBeEnabled();
+    await expect.element(screen.getByRole("button", { name: "New trigger" })).toBeEnabled();
     await expect.element(screen.getByText("Trigger templates")).not.toBeInTheDocument();
 
     await act(() => registry.set(templateReadPermissions.get(environmentId)!, true));
@@ -337,7 +363,7 @@ describe("ScheduledTasksSettings", () => {
       .toBeDisabled();
   });
 
-  it("fills a new task from a template", async () => {
+  it("fills a new trigger from a template", async () => {
     setup({ write: false });
     await using screen = await render(<ScheduledTasksSettings />);
     await screen.getByRole("button", { name: "Use Issue enters In Progress" }).click();
@@ -346,15 +372,13 @@ describe("ScheduledTasksSettings", () => {
       .element(values.getByRole("textbox", { name: "status" }))
       .toHaveValue("In Progress");
     await userEvent.fill(values.getByRole("textbox", { name: "status" }), "Review");
-    await values.getByRole("button", { name: "Create task" }).click();
+    await values.getByRole("button", { name: "Create trigger" }).click();
 
-    const editor = page.getByRole("dialog", { name: "New task" });
+    const editor = page.getByRole("dialog", { name: "New trigger" });
     await expect
       .element(editor.getByRole("textbox", { name: "Name" }))
       .toHaveValue("Issue enters In Progress");
-    await expect
-      .element(editor.getByLabelText("Schedule type"))
-      .toHaveTextContent("On Jira change");
+    await expect.element(editor.getByLabelText("Source")).toHaveTextContent("Jira");
     await expect.element(editor.getByLabelText("Filter 1 field")).toHaveTextContent("Status");
     await expect.element(editor.getByLabelText("Filter 1 value")).toHaveValue("Review");
     await expect
