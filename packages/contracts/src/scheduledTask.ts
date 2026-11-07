@@ -148,16 +148,16 @@ const WebhookFilterListValue = Schema.String.check(
 /** One filter's operator and value shapes, shared by webhook, trigger, and template filters. */
 export const makeFilterSchema = (path: typeof TrimmedNonEmptyString) =>
   Schema.Union([
-  Schema.Struct({
+    Schema.Struct({
       path,
-    op: Schema.Literals(["equals", "notEquals", "startsWith"]),
-    value: Schema.String,
-  }),
-  Schema.Struct({
+      op: Schema.Literals(["equals", "notEquals", "startsWith"]),
+      value: Schema.String,
+    }),
+    Schema.Struct({
       path,
-    op: Schema.Literal("in"),
-    value: Schema.Array(WebhookFilterListValue).check(Schema.isMinLength(1)),
-  }),
+      op: Schema.Literal("in"),
+      value: Schema.Array(WebhookFilterListValue).check(Schema.isMinLength(1)),
+    }),
     Schema.Struct({ path, op: Schema.Literal("exists") }),
   ]);
 
@@ -251,6 +251,13 @@ export const ScheduledTaskSlackSchedule = Schema.Struct({
 export const MIN_POLL_INTERVAL_MS = 5 * 60_000;
 export const DEFAULT_POLL_INTERVAL_MS = 15 * 60_000;
 
+/**
+ * What a polled trigger's first poll raises: nothing (`changes`), or the current set as entered
+ * issues or opened merge requests (`current`). Unset is `changes`.
+ */
+export const PollTriggerStart = Schema.Literals(["changes", "current"]);
+export type PollTriggerStart = typeof PollTriggerStart.Type;
+
 /** A Jira query names exactly one of a JQL string and a saved filter. */
 export const jiraQueryFields = {
   site: TrimmedNonEmptyString.annotate({ description: "Jira site, such as acme.atlassian.net." }),
@@ -261,6 +268,7 @@ export const jiraQueryFields = {
   everyMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(MIN_POLL_INTERVAL_MS)).annotate({
     description: "Poll interval. Min 300000.",
   }),
+  start: Schema.optional(PollTriggerStart),
 };
 
 export const isOneJiraQuery = Schema.makeFilter(
@@ -290,6 +298,7 @@ export const gitlabProjectsFields = {
     description: "Group path, such as acme. Its projects' merge requests are polled.",
   }),
   everyMs: jiraQueryFields.everyMs,
+  start: jiraQueryFields.start,
 };
 
 export const hasGitLabProjects = Schema.makeFilter(

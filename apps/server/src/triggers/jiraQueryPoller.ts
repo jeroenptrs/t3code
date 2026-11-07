@@ -71,6 +71,7 @@ export const make = Effect.gen(function* () {
       });
       yield* sources.observeJiraQuery({
         triggerId: task.id,
+        start: schedule.start ?? "changes",
         query,
         issues: issues.slice(0, MAX_ISSUES),
         watchedFields: jiraQueryWatchedFields(schedule.filters ?? []),

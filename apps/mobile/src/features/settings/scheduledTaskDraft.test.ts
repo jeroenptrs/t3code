@@ -13,8 +13,6 @@ import {
   parseTriageDraft,
 } from "@t3tools/client-runtime/scheduled-task-trigger";
 import {
-  createDraft,
-  editDraft,
   scheduledTaskDefaultModel,
   createDraft,
   DEFAULT_SCHEDULE,
@@ -258,16 +256,23 @@ describe("scheduleFromDraft", () => {
         host: "gitlab.acme.dev",
         projects: ["acme/app", "acme/api"],
         everyMs: 900_000,
+        start: "current",
       },
     });
-    expect(draft).toMatchObject({ mode: "gitlab_projects", gitlabProjects: "acme/app\nacme/api" });
+    expect(draft).toMatchObject({
+      mode: "gitlab_projects",
+      gitlabProjects: "acme/app\nacme/api",
+      pollStart: "current",
+    });
     expect(scheduleFromDraft({ ...draft, gitlabProjects: "", gitlabGroup: " acme " })).toEqual({
       type: "gitlab_projects",
       host: "gitlab.acme.dev",
       projects: [],
       group: "acme",
       everyMs: 900_000,
+      start: "current",
     });
+    expect(scheduleFromDraft({ ...draft, pollStart: "changes" })).not.toHaveProperty("start");
     expect(scheduleFromDraft({ ...draft, gitlabProjects: " \n" })).toBeNull();
     expect(scheduleFromDraft({ ...draft, gitlabPollMinutes: "4" })).toBeNull();
   });
