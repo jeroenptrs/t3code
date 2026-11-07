@@ -247,6 +247,38 @@ export const ScheduledTaskSlackSchedule = Schema.Struct({
   description: "Run on Slack messages. Prompt can use {{event.field}} and {{event}}.",
 });
 
+export const MIN_JIRA_QUERY_INTERVAL_MS = 5 * 60_000;
+export const DEFAULT_JIRA_QUERY_INTERVAL_MS = 15 * 60_000;
+
+/** A Jira query names exactly one of a JQL string and a saved filter. */
+export const jiraQueryFields = {
+  site: TrimmedNonEmptyString.annotate({ description: "Jira site, such as acme.atlassian.net." }),
+  jql: Schema.optional(TrimmedNonEmptyString),
+  filterId: Schema.optional(TrimmedNonEmptyString).annotate({
+    description: "Saved filter id, instead of jql.",
+  }),
+  everyMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(MIN_JIRA_QUERY_INTERVAL_MS)).annotate({
+    description: "Poll interval. Min 300000.",
+  }),
+};
+
+export const isOneJiraQuery = Schema.makeFilter(
+  (query: { readonly jql?: string | undefined; readonly filterId?: string | undefined }) =>
+    (query.jql === undefined) !== (query.filterId === undefined) || "Set either jql or filterId.",
+);
+
+export const ScheduledTaskJiraQuerySchedule = Schema.Struct({
+  type: Schema.Literal("jira_query"),
+  ...jiraQueryFields,
+  filters: Schema.optional(TriggerFilters),
+})
+  .check(isOneJiraQuery)
+  .annotate({
+    description:
+      "Poll a Jira query as the site's service identity. Prompt can use {{event.field}} and {{event}}.",
+  });
+export type ScheduledTaskJiraQuerySchedule = typeof ScheduledTaskJiraQuerySchedule.Type;
+
 export const ScheduledTaskManualSchedule = Schema.Struct({
   type: Schema.Literal("manual"),
 }).annotate({ description: "Run only when started by hand." });
@@ -269,6 +301,7 @@ export const ScheduledTaskSchedule = Schema.Union([
   ScheduledTaskGitLabSchedule,
   ScheduledTaskSlackSchedule,
   ScheduledTaskManualSchedule,
+  ScheduledTaskJiraQuerySchedule,
 ]);
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
@@ -299,6 +332,7 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
   ScheduledTaskGitLabSchedule,
   ScheduledTaskSlackSchedule,
   ScheduledTaskManualSchedule,
+  ScheduledTaskJiraQuerySchedule,
 ]);
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
 

@@ -225,6 +225,35 @@ describe("one-time scheduled tasks", () => {
   });
 });
 
+describe("Jira query triggers", () => {
+  it("round-trips a saved filter query and refuses intervals under five minutes", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: {
+        type: "jira_query",
+        site: "acme.atlassian.net",
+        filterId: "10042",
+        everyMs: 900_000,
+      },
+    });
+    expect(draft).toMatchObject({ jiraQueryKind: "filter", jiraPollMinutes: "15" });
+    expect(scheduleFromDraft(draft)).toEqual({
+      type: "jira_query",
+      site: "acme.atlassian.net",
+      filterId: "10042",
+      everyMs: 900_000,
+    });
+    expect(scheduleFromDraft({ ...draft, jiraQueryKind: "jql", jql: " labels = agent " })).toEqual({
+      type: "jira_query",
+      site: "acme.atlassian.net",
+      jql: "labels = agent",
+      everyMs: 900_000,
+    });
+    expect(scheduleFromDraft({ ...draft, jiraPollMinutes: "4" })).toBeNull();
+    expect(scheduleFromDraft({ ...draft, jiraSite: "" })).toBeNull();
+  });
+});
+
 describe("webhook scheduled tasks", () => {
   const signature = { header: "x-signature", encoding: "base64", prefix: "" } as const;
   const webhookTask: ScheduledTask = {
@@ -474,5 +503,11 @@ describe("trigger row summary", () => {
       }),
     ).toBe("Webhook · 2 filters");
     expect(triggerSummary({ source: { kind: "manual" }, filters: [] })).toBe("Manual");
+    expect(
+      triggerSummary({
+        source: { kind: "jira_query", site: "acme.atlassian.net", jql: "x", everyMs: 900_000 },
+        filters: [{ path: "event.type", op: "equals", value: "issue.entered" }],
+      }),
+    ).toBe("Jira query · every 15 minutes · Event type equals issue.entered");
   });
 });
