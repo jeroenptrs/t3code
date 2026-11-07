@@ -1,11 +1,17 @@
-import type { EnvironmentId, Factory, FactoryIssue, ScheduledTaskId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type Factory,
+  type FactoryIssue,
+  type ScheduledTaskId,
+  scheduledTaskTrigger,
+} from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { ChevronDownIcon } from "lucide-react";
 
 import { useProjects } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { scheduleLabel } from "../settings/ScheduledTasksSettings";
+import { triggerSummary } from "../settings/scheduledTasksSettings.logic";
 import { InlineButton } from "../ui/button";
 import { Label } from "../ui/label";
 import { Menu, MenuCheckboxItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -22,7 +28,7 @@ function toggled<T>(list: ReadonlyArray<T>, value: T, checked: boolean): Readonl
     : list.filter((entry) => entry !== value);
 }
 
-/** Which projects the factory may work in, and which scheduled tasks start its work. */
+/** Which projects the factory may work in, and which triggers start its work. */
 export function FactoryDefinitionSection(props: {
   readonly environmentId: EnvironmentId;
   readonly factory: Factory;
@@ -134,17 +140,15 @@ export function FactoryDefinitionSection(props: {
             <Menu>
               <MenuTrigger
                 render={<InlineButton tone="picker" disabled={props.disabled} />}
-                aria-label="Choose scheduled tasks"
+                aria-label="Choose triggers"
               >
-                {countLabel(props.triggers.length, "scheduled task")}
+                {countLabel(props.triggers.length, "trigger")}
                 <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
               </MenuTrigger>
               <MenuPopup align="end">
                 {taskChoices.length === 0 ? (
                   <p className="px-2 py-1.5 text-sm text-muted-foreground">
-                    {tasks === null
-                      ? "Loading scheduled tasks…"
-                      : "No scheduled tasks in this project"}
+                    {tasks === null ? "Loading triggers…" : "No triggers in this project"}
                   </p>
                 ) : null}
                 {taskChoices.map((taskId) => (
@@ -156,16 +160,14 @@ export function FactoryDefinitionSection(props: {
                       props.onTriggersChange(toggled(props.triggers, taskId, checked))
                     }
                   >
-                    {taskById.get(taskId)?.title ?? "Missing scheduled task"}
+                    {taskById.get(taskId)?.title ?? "Missing trigger"}
                   </MenuCheckboxItem>
                 ))}
               </MenuPopup>
             </Menu>
           ) : null}
         </div>
-        <p className="text-xs text-muted-foreground">
-          Scheduled tasks, webhooks included, that send work into the factory.
-        </p>
+        <p className="text-xs text-muted-foreground">Triggers that send work into the factory.</p>
         <ul className="flex flex-col gap-1 text-sm">
           {props.triggers.length === 0 ? <li className="text-muted-foreground">None</li> : null}
           {props.triggers.map((taskId) => {
@@ -174,7 +176,7 @@ export function FactoryDefinitionSection(props: {
               <li key={taskId} className="flex min-w-0 items-baseline gap-2">
                 {task === undefined ? (
                   <span className="truncate text-muted-foreground">
-                    {tasks === null ? "Loading…" : "Missing scheduled task"}
+                    {tasks === null ? "Loading…" : "Missing trigger"}
                   </span>
                 ) : (
                   <>
@@ -186,7 +188,7 @@ export function FactoryDefinitionSection(props: {
                       {task.title}
                     </Link>
                     <span className="shrink-0 text-xs text-muted-foreground">
-                      {scheduleLabel(task.schedule)}
+                      {triggerSummary(scheduledTaskTrigger(task))}
                     </span>
                   </>
                 )}
