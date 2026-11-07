@@ -2,7 +2,13 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { ScheduledTask } from "./scheduledTask.ts";
-import { fillTriggerTemplate, scheduledTaskTrigger, TriggerTemplate } from "./trigger.ts";
+import {
+  fillTriggerTemplate,
+  scheduledTaskTrigger,
+  triggerUpsertToScheduledTaskUpsert,
+  TriggerSaveInput,
+  TriggerTemplate,
+} from "./trigger.ts";
 
 const decodeTask = Schema.decodeUnknownSync(ScheduledTask);
 const decodeTemplate = Schema.decodeSync(TriggerTemplate);
@@ -32,37 +38,146 @@ const task = (schedule: unknown, threadId: string | null = null) =>
   });
 
 describe("scheduledTaskTrigger", () => {
-  it("maps each schedule to its source and keeps filters and the thread target", () => {
+  it("maps a stored interval task to a schedule source and back unchanged", () => {
     const interval = { type: "interval", everyMs: 60_000 };
-    expect(scheduledTaskTrigger(task(interval))).toEqual({
+    const stored = task(interval);
+    const trigger = scheduledTaskTrigger(stored);
+    expect(trigger).toEqual({
+      id: "task-1",
+      title: "Task",
+      prompt: "Do it",
+      enabled: true,
       source: { kind: "schedule", schedule: interval },
       filters: [],
       target: {
         type: "thread",
         projectId: "project-1",
         threadId: null,
+        threadMode: "new_thread",
         workspaceStrategy: { type: "root" },
         modelSelection: { instanceId: "codex", model: "gpt-5.4" },
         runtimeMode: "auto",
         interactionMode: "default",
       },
+      createdBy: "user",
+      creationSource: "web",
+      createdAt: "2026-11-05T00:00:00.000Z",
+      updatedAt: "2026-11-05T00:00:00.000Z",
+      nextRunAt: null,
+      lastRunAt: null,
+      lastRunStatus: "never",
+      lastRunError: null,
+      runCount: 0,
     });
+    expect(triggerUpsertToScheduledTaskUpsert(trigger)).toEqual({
+      id: "task-1",
+      title: "Task",
+      prompt: "Do it",
+      enabled: true,
+      schedule: interval,
+      projectId: "project-1",
+      threadId: null,
+      threadMode: "new_thread",
+      workspaceStrategy: { type: "root" },
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      runtimeMode: "auto",
+      interactionMode: "default",
+    });
+  });
 
+  it("keeps a webhook source's signature and dedupe, and its filters", () => {
+    const signature = { header: "x-hub-signature-256", encoding: "hex", prefix: "sha256=" };
+    const dedupe = { replayKey: "{{headers.x-delivery}}", coalesceWindowSeconds: 60 };
     const webhookFilter = { path: "body.action", op: "equals", value: "opened" };
     const webhook = scheduledTaskTrigger(
-      task({ type: "webhook", signature: null, filters: [webhookFilter] }, "thread-1"),
+      task(
+        {
+          type: "webhook",
+          signature,
+          maxDeliveryAgeMinutes: 30,
+          dedupe,
+          filters: [webhookFilter],
+        },
+        "thread-1",
+      ),
     );
-    expect(webhook.source).toEqual({ kind: "webhook" });
+    expect(webhook.source).toEqual({
+      kind: "webhook",
+      signature,
+      maxDeliveryAgeMinutes: 30,
+      dedupe,
+    });
     expect(webhook.filters).toEqual([webhookFilter]);
-    expect(webhook.target.threadId).toBe("thread-1");
+    expect(webhook.target).toMatchObject({ threadId: "thread-1", threadMode: "continue" });
+  });
 
+  it("keeps a Jira source's filters", () => {
     const jiraFilter = { path: "event.status", op: "in", value: ["In Progress"] };
     const jira = scheduledTaskTrigger(task({ type: "jira", filters: [jiraFilter] }));
     expect(jira.source).toEqual({ kind: "jira" });
     expect(jira.filters).toEqual([jiraFilter]);
-
     expect(scheduledTaskTrigger(task({ type: "gitlab" })).filters).toEqual([]);
     expect(scheduledTaskTrigger(task({ type: "manual" })).source).toEqual({ kind: "manual" });
+  });
+
+  it("round-trips every schedule kind through a save", () => {
+    const schedules = [
+      { type: "interval", everyMs: 900_000 },
+      { type: "fixed_time", timeOfDay: "09:30", timeZone: "Europe/Amsterdam", weekdays: [1, 5] },
+      { type: "once", runAt: "2026-11-09T09:00:00.000Z" },
+      {
+        type: "webhook",
+        signature: { header: "x-sig", encoding: "base64", prefix: "" },
+        maxDeliveryAgeMinutes: null,
+        dedupe: { coalesceKey: "{{body.id}}" },
+        filters: [{ path: "headers.x-event", op: "exists" }],
+      },
+      { type: "jira", filters: [{ path: "event.status", op: "equals", value: "In Progress" }] },
+      { type: "gitlab", filters: [{ path: "event.type", op: "equals", value: "pipeline.failed" }] },
+      { type: "slack", filters: [{ path: "event.prompt", op: "startsWith", value: "deploy" }] },
+      { type: "manual" },
+    ];
+    for (const schedule of schedules) {
+      const stored = task(schedule, "thread-1");
+      expect(triggerUpsertToScheduledTaskUpsert(scheduledTaskTrigger(stored)).schedule).toEqual(
+        stored.schedule,
+      );
+    }
+  });
+});
+
+describe("TriggerSaveInput", () => {
+  const decodeSave = Schema.decodeUnknownSync(TriggerSaveInput);
+  const save = (source: unknown, filters: unknown[]) => ({
+    title: "Pick up work",
+    prompt: "Work on {{event.key}}",
+    enabled: true,
+    source,
+    filters,
+    target: {
+      type: "thread",
+      projectId: "project-1",
+      threadId: null,
+      threadMode: "new_thread",
+      workspaceStrategy: { type: "root" },
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      runtimeMode: "auto",
+      interactionMode: "default",
+    },
+  });
+  const statusFilter = { path: "event.status", op: "equals", value: "In Progress" };
+
+  it("rejects filters the source cannot match", () => {
+    expect(decodeSave(save({ kind: "jira" }, [statusFilter])).filters).toEqual([statusFilter]);
+    expect(() => decodeSave(save({ kind: "webhook" }, [statusFilter]))).toThrow();
+    expect(() =>
+      decodeSave(save({ kind: "jira" }, [{ path: "body.action", op: "exists" }])),
+    ).toThrow();
+    expect(() =>
+      decodeSave(
+        save({ kind: "schedule", schedule: { type: "interval", everyMs: 60_000 } }, [statusFilter]),
+      ),
+    ).toThrow();
   });
 });
 

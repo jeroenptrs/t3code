@@ -1,10 +1,12 @@
 import * as Schema from "effect/Schema";
 
 import {
+  CommandId,
   ForwardCompatibleArray,
   IsoDateTime,
   NonNegativeInt,
   ProjectId,
+  ScheduledTaskId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -14,10 +16,17 @@ import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import {
   MAX_WEBHOOK_FILTERS,
   makeFilterSchema,
+  ScheduledTask,
+  ScheduledTaskThreadMode,
   ScheduledTaskTimeSchedule,
+  ScheduledTaskUpsertInput,
+  ScheduledTaskUpsertTimeSchedule,
+  ScheduledTaskUpsertWebhookSchedule,
   ScheduledTaskWebhookFilter,
+  ScheduledTaskWebhookSchedule,
+  scheduledTaskThreadMode,
   TriggerFilter,
-  type ScheduledTask,
+  type ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
 
 export const TriggerSourceKind = Schema.Literals([
@@ -265,7 +274,10 @@ export type TriggerEvent = typeof TriggerEvent.Type;
 export const TriggerThreadTarget = Schema.Struct({
   type: Schema.Literal("thread"),
   projectId: ProjectId,
-  threadId: Schema.NullOr(ThreadId),
+  threadId: Schema.NullOr(ThreadId).annotate({
+    description: "Thread runs go to. null starts a new thread on the first run.",
+  }),
+  threadMode: ScheduledTaskThreadMode,
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -277,41 +289,179 @@ export type TriggerThreadTarget = typeof TriggerThreadTarget.Type;
 export const TriggerTarget = Schema.Union([TriggerThreadTarget]);
 export type TriggerTarget = typeof TriggerTarget.Type;
 
+const {
+  type: _webhookType,
+  filters: _webhookFilters,
+  ...webhookSourceFields
+} = ScheduledTaskWebhookSchedule.fields;
+const {
+  type: _saveWebhookType,
+  filters: _saveWebhookFilters,
+  ...webhookSaveSourceFields
+} = ScheduledTaskUpsertWebhookSchedule.fields;
+
+const TriggerEventSourceKind = Schema.Literals(["jira", "gitlab", "slack", "manual"]);
+
 export const TriggerSource = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("schedule"), schedule: ScheduledTaskTimeSchedule }),
-  Schema.Struct({ kind: Schema.Literal("webhook") }),
-  Schema.Struct({ kind: Schema.Literals(["jira", "gitlab", "slack", "manual"]) }),
+  Schema.Struct({ kind: Schema.Literal("webhook"), ...webhookSourceFields }),
+  Schema.Struct({ kind: TriggerEventSourceKind }),
 ]);
 export type TriggerSource = typeof TriggerSource.Type;
 
+export const TriggerSaveSource = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("schedule"),
+    schedule: ScheduledTaskUpsertTimeSchedule,
+  }).annotate({ description: "Run on a clock." }),
+  Schema.Struct({ kind: Schema.Literal("webhook"), ...webhookSaveSourceFields }).annotate({
+    description: "Run per webhook request. Filters use body., headers., and query. paths.",
+  }),
+  Schema.Struct({ kind: TriggerEventSourceKind }).annotate({
+    description: "Run on Jira, GitLab, or Slack events, filtered on event. paths, or only by hand.",
+  }),
+]);
+export type TriggerSaveSource = typeof TriggerSaveSource.Type;
+
+// Webhook sources keep their body/headers/query filters.
+const TriggerFilterList = Schema.Array(Schema.Union([TriggerFilter, ScheduledTaskWebhookFilter]))
+  .check(Schema.isMaxLength(MAX_WEBHOOK_FILTERS))
+  .annotate({ description: "All must match. Max 16." });
+
 export const Trigger = Schema.Struct({
+  id: ScheduledTaskId,
+  title: ScheduledTask.fields.title,
+  prompt: ScheduledTask.fields.prompt,
+  enabled: Schema.Boolean,
   source: TriggerSource,
-  // Webhook sources keep their body/headers/query filters.
-  filters: Schema.Array(Schema.Union([TriggerFilter, ScheduledTaskWebhookFilter])).check(
-    Schema.isMaxLength(MAX_WEBHOOK_FILTERS),
-  ),
+  filters: TriggerFilterList,
   target: TriggerTarget,
+  triage: ScheduledTask.fields.triage,
+  nextRunAt: ScheduledTask.fields.nextRunAt,
+  lastRunAt: ScheduledTask.fields.lastRunAt,
+  lastRunStatus: ScheduledTask.fields.lastRunStatus,
+  lastRunError: ScheduledTask.fields.lastRunError,
+  runCount: ScheduledTask.fields.runCount,
+  webhook: ScheduledTask.fields.webhook,
+  blockedByPolicy: ScheduledTask.fields.blockedByPolicy,
+  createdBy: ScheduledTask.fields.createdBy,
+  creationSource: ScheduledTask.fields.creationSource,
+  createdAt: ScheduledTask.fields.createdAt,
+  updatedAt: ScheduledTask.fields.updatedAt,
 });
 export type Trigger = typeof Trigger.Type;
 
+const WEBHOOK_FILTER_PATH = /^(body|headers|query)(\.|$)/;
+const EVENT_FILTER_PATH = /^event\./;
+
+function filtersFitSource(input: {
+  readonly source: TriggerSaveSource;
+  readonly filters: ReadonlyArray<{ readonly path: string }>;
+}) {
+  const { kind } = input.source;
+  if (kind === "schedule" || kind === "manual") {
+    return input.filters.length === 0 || `A ${kind} trigger takes no filters.`;
+  }
+  const pattern = kind === "webhook" ? WEBHOOK_FILTER_PATH : EVENT_FILTER_PATH;
+  return (
+    input.filters.every((filter) => pattern.test(filter.path)) ||
+    (kind === "webhook"
+      ? "Webhook filters use body., headers., or query. paths."
+      : `${kind} filters use event. paths.`)
+  );
+}
+
+export const TriggerSaveInput = Schema.Struct({
+  id: Schema.optional(ScheduledTaskId).annotate({ description: "Omit to create a trigger." }),
+  requireExisting: ScheduledTaskUpsertInput.fields.requireExisting,
+  commandId: Schema.optional(CommandId),
+  title: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString.annotate({
+    description: "Event sources can use {{event.field}} and {{event}}; webhooks {{body.path}}.",
+  }),
+  enabled: Schema.Boolean,
+  source: TriggerSaveSource,
+  filters: TriggerFilterList,
+  target: TriggerTarget,
+  triage: ScheduledTaskUpsertInput.fields.triage,
+}).check(Schema.makeFilter(filtersFitSource));
+export type TriggerSaveInput = typeof TriggerSaveInput.Type;
+
+export const TriggerListInput = Schema.Struct({});
+export type TriggerListInput = typeof TriggerListInput.Type;
+
+export const TriggerListResult = Schema.Struct({ triggers: ForwardCompatibleArray(Trigger) });
+export type TriggerListResult = typeof TriggerListResult.Type;
+
+export const TriggerMutationResult = Schema.Struct({ trigger: Trigger });
+export type TriggerMutationResult = typeof TriggerMutationResult.Type;
+
+/** The one mapping from a stored scheduled task to the trigger clients and agents see. */
 export function scheduledTaskTrigger(task: ScheduledTask): Trigger {
-  const { schedule } = task;
-  const source: TriggerSource =
-    schedule.type === "interval" || schedule.type === "fixed_time" || schedule.type === "once"
-      ? { kind: "schedule", schedule }
-      : { kind: schedule.type };
+  const {
+    schedule,
+    projectId,
+    threadId,
+    threadMode: _threadMode,
+    workspaceStrategy,
+    modelSelection,
+    runtimeMode,
+    interactionMode,
+    ...fields
+  } = task;
+  let source: TriggerSource;
+  if (schedule.type === "interval" || schedule.type === "fixed_time" || schedule.type === "once") {
+    source = { kind: "schedule", schedule };
+  } else if (schedule.type === "webhook") {
+    const { type: _type, filters: _filters, ...webhook } = schedule;
+    source = { kind: "webhook", ...webhook };
+  } else {
+    source = { kind: schedule.type };
+  }
   return {
+    ...fields,
     source,
     filters: "filters" in schedule ? (schedule.filters ?? []) : [],
     target: {
       type: "thread",
-      projectId: task.projectId,
-      threadId: task.threadId,
-      workspaceStrategy: task.workspaceStrategy,
-      modelSelection: task.modelSelection,
-      runtimeMode: task.runtimeMode,
-      interactionMode: task.interactionMode,
+      projectId,
+      threadId,
+      threadMode: scheduledTaskThreadMode(task),
+      workspaceStrategy,
+      modelSelection,
+      runtimeMode,
+      interactionMode,
     },
+  };
+}
+
+/** The inverse of `scheduledTaskTrigger` for saves: the source holds the filters again. */
+export function triggerUpsertToScheduledTaskUpsert(
+  input: TriggerSaveInput,
+): ScheduledTaskUpsertInput {
+  const { source, filters } = input;
+  let schedule: ScheduledTaskUpsertSchedule;
+  if (source.kind === "schedule") {
+    schedule = source.schedule;
+  } else if (source.kind === "webhook") {
+    const { kind: _kind, ...webhook } = source;
+    schedule = { type: "webhook", ...webhook, filters };
+  } else if (source.kind === "manual") {
+    schedule = { type: "manual" };
+  } else {
+    schedule = { type: source.kind, filters };
+  }
+  const { type: _type, ...binding } = input.target;
+  return {
+    ...(input.id === undefined ? {} : { id: input.id }),
+    ...(input.requireExisting === undefined ? {} : { requireExisting: input.requireExisting }),
+    ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+    title: input.title,
+    prompt: input.prompt,
+    enabled: input.enabled,
+    schedule,
+    ...binding,
+    ...(input.triage === undefined ? {} : { triage: input.triage }),
   };
 }
 

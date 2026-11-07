@@ -58,6 +58,10 @@ import {
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
   scheduledTaskThreadMode,
+  scheduledTaskTrigger,
+  type Trigger,
+  type TriggerSaveInput,
+  triggerUpsertToScheduledTaskUpsert,
   type ServerProvider,
   type ServerProviderModel,
   type ServerSettings as ContractServerSettings,
@@ -206,6 +210,11 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpDeleteScheduledTaskInput,
   ) => Effect.Effect<OrchestratorMcpDeleteScheduledTaskResult, OrchestratorMcpFailure>;
+  /** Saves through the scheduled task table; the trigger is its stored task, mapped. */
+  readonly saveTrigger: (
+    scope: McpInvocationScope,
+    input: TriggerSaveInput,
+  ) => Effect.Effect<Trigger, OrchestratorMcpFailure>;
   /** Only status reaches the agent, never this value. */
   readonly requestSecret: (
     scope: McpInvocationScope,
@@ -2245,8 +2254,7 @@ const make = Effect.gen(function* () {
    * approved for read-only access, and a thread caller only with a live turn, at modes covering
    * every mode the task runs at.
    */
-  const summarizeScheduledTask = Effect.fn("OrchestratorMcpService.summarizeScheduledTask")(
-    function* (
+  const callerMayRunTask = Effect.fn("OrchestratorMcpService.callerMayRunTask")(function* (
       scope: McpInvocationScope,
       caller: {
         readonly parent: Pick<OrchestrationV2ThreadProjection, "thread" | "runs"> | undefined;
@@ -2263,12 +2271,18 @@ const make = Effect.gen(function* () {
           : // Runs once per listed task, so it never waits on a continuation.
             Exit.isSuccess(yield* Effect.exit(assertLiveCaller(scope, caller.parent, false)));
       const modes = yield* scheduledTaskRunModes(task).pipe(Effect.option);
-      return scheduledTaskSummary(
-        task,
-        live &&
-          Option.isSome(modes) &&
-          modes.value.every((mode) => withinLimits(caller.limits, mode)),
+    return (
+      live && Option.isSome(modes) && modes.value.every((mode) => withinLimits(caller.limits, mode))
       );
+  });
+
+  const summarizeScheduledTask = Effect.fn("OrchestratorMcpService.summarizeScheduledTask")(
+    function* (
+      scope: McpInvocationScope,
+      caller: Parameters<typeof callerMayRunTask>[1],
+      task: ScheduledTask,
+    ) {
+      return scheduledTaskSummary(task, yield* callerMayRunTask(scope, caller, task));
     },
   );
 
@@ -2473,6 +2487,56 @@ const make = Effect.gen(function* () {
         return { scheduledTaskId: existing.id, deleted: true };
       },
     ),
+    saveTrigger: Effect.fn("OrchestratorMcpService.saveTrigger")(function* (scope, input) {
+      const { parent, limits } = yield* loadCaller(scope);
+      const existing =
+        input.id === undefined ? undefined : yield* loadScheduledTask(input.id, limits);
+      const { target } = input;
+      if (existing !== undefined) {
+        yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
+      }
+      yield* assertLiveCallerForOtherProject(scope, parent, target.projectId);
+      // Like schedule_task: bind to this thread or start new ones, never to another thread.
+      const bindsCaller =
+        parent !== undefined &&
+        target.threadId === parent.thread.id &&
+        parent.thread.projectId === target.projectId;
+      if (target.threadId !== null && !bindsCaller && target.threadId !== existing?.threadId) {
+        return yield* failure(
+          "invalid_request",
+          "A trigger's target thread is null for new threads, or this thread in its own project.",
+        );
+      }
+      yield* resolveRuntimeMode(limits.runtimeMode, target.runtimeMode);
+      yield* resolveInteractionMode(limits.interactionMode, target.interactionMode);
+      yield* requireProject(target.projectId);
+      const { commandId, ...save } = input;
+      const { task } = yield* scheduledTasks
+        .upsert({
+          ...triggerUpsertToScheduledTaskUpsert(save),
+          createdBy: existing?.createdBy ?? "agent",
+          creationSource: existing?.creationSource ?? "mcp",
+          ...(commandId === undefined
+            ? {}
+            : {
+                commandId: stableCommandId({
+                  scope,
+                  requestKey: commandId,
+                  operation: "trigger-save",
+                }),
+              }),
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            failure("orchestration_error", `Could not save trigger: ${error.message}`),
+          ),
+        );
+      const { webhook, ...trigger } = scheduledTaskTrigger(task);
+      // Its webhook URL starts runs, so it is shown only to a caller that may run the task.
+      return webhook !== undefined && (yield* callerMayRunTask(scope, { parent, limits }, task))
+        ? { ...trigger, webhook }
+        : trigger;
+    }),
     requestSecret: Effect.fn("OrchestratorMcpService.requestSecret")(function* (scope, input) {
       const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "request_secret");
       const threadId = threadScope.thread.threadId;

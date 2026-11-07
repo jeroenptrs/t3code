@@ -930,6 +930,7 @@ const HANDOFF_TOOLS: ReadonlySet<string> = new Set([
   "t3_thread_send",
   "t3_thread_send_attachments",
   "schedule_task",
+  "t3_trigger_save",
   "run_scheduled_task_now",
 ]);
 

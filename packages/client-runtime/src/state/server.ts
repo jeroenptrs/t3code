@@ -1510,6 +1510,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:scheduled-tasks:live",
       tag: WS_METHODS.scheduledTasksSubscribe,
     }),
+    triggersLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:triggers:live",
+      tag: WS_METHODS.triggersSubscribe,
+    }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan. With
     // nothing to show yet, the server's last scan answers first, then a plain
@@ -1795,6 +1799,29 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.scheduledTasksRotateWebhookToken,
       scheduler: configScheduler,
       concurrency: configConcurrency,
+    }),
+    saveTrigger: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:trigger:save",
+      tag: WS_METHODS.triggersSave,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    setTriggerEnabled: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:trigger:set-enabled",
+      tag: WS_METHODS.triggersSetEnabled,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    deleteTrigger: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:trigger:delete",
+      tag: WS_METHODS.triggersDelete,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    // Off the config lane for the same reason as runScheduledTaskNow.
+    runTriggerNow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:trigger:run-now",
+      tag: WS_METHODS.triggersRunNow,
     }),
     /** `permissionAtom` says whether this session may list trigger templates. */
     triggerTemplates: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {

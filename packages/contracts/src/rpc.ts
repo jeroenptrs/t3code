@@ -474,6 +474,10 @@ import {
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
 import {
+  TriggerListInput,
+  TriggerListResult,
+  TriggerMutationResult,
+  TriggerSaveInput,
   TriggerRaiseInput,
   TriggerRaiseResult,
   TriggerTemplateDeleteInput,
@@ -673,6 +677,12 @@ export const WS_METHODS = {
   triggerTemplatesSave: "triggerTemplates.save",
   triggerTemplatesDelete: "triggerTemplates.delete",
   triggersRaise: "triggers.raise",
+  triggersList: "triggers.list",
+  triggersSubscribe: "triggers.subscribe",
+  triggersSave: "triggers.save",
+  triggersSetEnabled: "triggers.setEnabled",
+  triggersDelete: "triggers.delete",
+  triggersRunNow: "triggers.runNow",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2546,6 +2556,45 @@ const WsTriggersRaiseRpc = Rpc.make(WS_METHODS.triggersRaise, {
   error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
 });
 
+const TriggerRpcError = Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]);
+
+const WsTriggersListRpc = Rpc.make(WS_METHODS.triggersList, {
+  payload: TriggerListInput,
+  success: TriggerListResult,
+  error: TriggerRpcError,
+});
+
+const WsTriggersSubscribeRpc = Rpc.make(WS_METHODS.triggersSubscribe, {
+  payload: TriggerListInput,
+  success: TriggerListResult,
+  error: TriggerRpcError,
+  stream: true,
+});
+
+const WsTriggersSaveRpc = Rpc.make(WS_METHODS.triggersSave, {
+  payload: TriggerSaveInput,
+  success: TriggerMutationResult,
+  error: TriggerRpcError,
+});
+
+const WsTriggersSetEnabledRpc = Rpc.make(WS_METHODS.triggersSetEnabled, {
+  payload: ScheduledTaskSetEnabledInput,
+  success: TriggerMutationResult,
+  error: TriggerRpcError,
+});
+
+const WsTriggersDeleteRpc = Rpc.make(WS_METHODS.triggersDelete, {
+  payload: ScheduledTaskDeleteInput,
+  success: ScheduledTaskDeleteResult,
+  error: TriggerRpcError,
+});
+
+const WsTriggersRunNowRpc = Rpc.make(WS_METHODS.triggersRunNow, {
+  payload: ScheduledTaskRunNowInput,
+  success: TriggerMutationResult,
+  error: TriggerRpcError,
+});
+
 const WsGuestShareCreateRpc = Rpc.make(WS_METHODS.guestShareCreate, {
   payload: GuestShareCreateInput,
   success: GuestShareCreateResult,
@@ -2721,6 +2770,12 @@ export const WsCoreRpcGroup = RpcGroup.make(
   WsTriggerTemplatesSaveRpc,
   WsTriggerTemplatesDeleteRpc,
   WsTriggersRaiseRpc,
+  WsTriggersListRpc,
+  WsTriggersSubscribeRpc,
+  WsTriggersSaveRpc,
+  WsTriggersSetEnabledRpc,
+  WsTriggersDeleteRpc,
+  WsTriggersRunNowRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

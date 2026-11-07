@@ -38,12 +38,12 @@ const handlers = {
         return Option.some({ ...here, providers: remote.value.providers });
       }),
     McpToolAccess.reads((input) =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.capabilities(scope, input);
-    }),
-  ),
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.capabilities(scope, input);
+      }),
+    ),
   ),
   delegate_task: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
@@ -161,6 +161,27 @@ const handlers = {
       return yield* service.deleteScheduledTask(scope, input);
     }),
   ),
+  t3_trigger_save: McpToolAccess.either(
+    (input) => input.id === undefined,
+    McpToolAccess.startsThreads(
+      () => ({}),
+      (input) =>
+        Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          return yield* service.saveTrigger(scope, input);
+        }),
+      // A triggered run starts long after its caller, with nothing to carry the link.
+      { refused: "save triggers in this environment" },
+    ),
+    McpToolAccess.writes((input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.saveTrigger(scope, input);
+      }),
+    ),
+  ),
   request_secret: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
@@ -184,22 +205,22 @@ const handlers = {
   t3_thread_list: McpToolAccess.routesHome(
     (input) => routeHome(input.environmentId, "threads.list", input),
     McpToolAccess.reads((input) =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.listThreads(scope, input);
-    }),
-  ),
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.listThreads(scope, input);
+      }),
+    ),
   ),
   t3_thread_read: McpToolAccess.routesHome(
     (input) => routeHome(input.environmentId, "threads.read", input),
     McpToolAccess.reads((input) =>
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.readThread(scope, input);
-    }),
-  ),
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.readThread(scope, input);
+      }),
+    ),
   ),
   t3_thread_update: McpToolAccess.routesHome(
     // Home renames anywhere; its other actions stay in its own environment.
@@ -227,35 +248,35 @@ const handlers = {
         );
       }),
     McpToolAccess.writesThreads(
-    (input) => [input.threadId],
-    (input) =>
-      Effect.gen(function* () {
-        const scope = yield* McpInvocationContext.McpInvocationContext;
-        const service = yield* ThreadMetadataMcpService.ThreadMetadataMcpService;
-        return yield* service.update(scope, input);
-      }),
-  ),
-  ),
-  t3_thread_send: McpToolAccess.routesHome(
-    (input) => routeHome(input.environmentId, "threads.send", input),
-    McpToolAccess.afterForwarding(
-    McpToolAccess.writesThreads(
       (input) => [input.threadId],
       (input) =>
         Effect.gen(function* () {
           const scope = yield* McpInvocationContext.McpInvocationContext;
-          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-          return yield* service.sendToThread(scope, input);
+          const service = yield* ThreadMetadataMcpService.ThreadMetadataMcpService;
+          return yield* service.update(scope, input);
         }),
     ),
-    // There the thread's parent is here, so only this side can make a follow-up a task.
-    (input, environmentId, sent) =>
-      Effect.gen(function* () {
-        const scope = yield* McpInvocationContext.McpInvocationContext;
-        const remote = yield* RemoteDelegation.RemoteDelegation;
-        return yield* remote.followUp(scope, environmentId, input, sent);
-      }),
   ),
+  t3_thread_send: McpToolAccess.routesHome(
+    (input) => routeHome(input.environmentId, "threads.send", input),
+    McpToolAccess.afterForwarding(
+      McpToolAccess.writesThreads(
+        (input) => [input.threadId],
+        (input) =>
+          Effect.gen(function* () {
+            const scope = yield* McpInvocationContext.McpInvocationContext;
+            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            return yield* service.sendToThread(scope, input);
+          }),
+      ),
+      // There the thread's parent is here, so only this side can make a follow-up a task.
+      (input, environmentId, sent) =>
+        Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const remote = yield* RemoteDelegation.RemoteDelegation;
+          return yield* remote.followUp(scope, environmentId, input, sent);
+        }),
+    ),
   ),
   t3_thread_wait: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
@@ -297,14 +318,14 @@ const handlers = {
   t3_thread_interrupt: McpToolAccess.routesHome(
     (input) => routeHome(input.environmentId, "threads.interrupt", input),
     McpToolAccess.writesThreads(
-    (input) => [input.threadId],
-    (input) =>
-      Effect.gen(function* () {
-        const scope = yield* McpInvocationContext.McpInvocationContext;
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        return yield* service.interruptThread(scope, input);
-      }),
-  ),
+      (input) => [input.threadId],
+      (input) =>
+        Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          return yield* service.interruptThread(scope, input);
+        }),
+    ),
   ),
 } satisfies McpToolAccess.Handlers<typeof OrchestratorToolkit.tools>;
 
