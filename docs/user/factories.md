@@ -10,14 +10,14 @@ Operators and administrators see factories. Only administrators create and edit 
 
 When a connected environment has a factory, or you are an administrator there, the sidebar shows
 two tabs above the thread list: **Home** and **Factories**. Threads a factory owns, and the
-threads its scheduled tasks start, move from **Home** to **Factories**. The sidebar remembers the
+threads its triggers start, move from **Home** to **Factories**. The sidebar remembers the
 tab you last chose in this browser.
 
 Each tab shows how many of its threads need you: a thread whose latest run failed counts once,
 and a thread waiting on your answer counts once. **Factories** also counts each work item a gate
 holds for you, and each work item that failed without a person failing it.
 
-In **Factories**, the chevron beside a factory shows the threads and scheduled tasks it owns. A
+In **Factories**, the chevron beside a factory shows the threads and triggers it owns. A
 thread there opens and acts like any other thread. Click the factory's name to open its page.
 
 From the command palette, **Open Factories** switches the sidebar to the tab, and **Go to
@@ -39,8 +39,8 @@ The factory page lists any problems in its files, then the definition and the th
 
 - **Projects** are the other projects the factory may work in, by name. Its own project is always
   included.
-- **Triggers** are the project's scheduled tasks, webhooks included, that send it work. Click one
-  to open it in **Settings > Scheduled tasks**.
+- **Triggers** are the project's triggers that send it work. Click one to open it in
+  **Settings > Triggers**.
 - Each role shows its model, runtime mode, interaction mode, where it works, its skills, its tool
   allowlist, and its instructions. **Built-in** means the role has no file yet.
 
