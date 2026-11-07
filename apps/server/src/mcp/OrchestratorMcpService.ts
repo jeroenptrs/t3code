@@ -2835,7 +2835,7 @@ const make = Effect.gen(function* () {
       },
     ),
     saveTrigger: Effect.fn("OrchestratorMcpService.saveTrigger")(function* (scope, input) {
-      const { parent, limits } = yield* loadCaller(scope);
+      const { parent, limits } = yield* loadCaller(scope, ["runs"]);
       const existing =
         input.id === undefined ? undefined : yield* loadScheduledTask(input.id, limits);
       const { target } = input;
@@ -2843,6 +2843,8 @@ const make = Effect.gen(function* () {
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
       }
       yield* assertLiveCallerForOtherProject(scope, parent, target.projectId);
+      // A work item goes to the factory's Foreman, whose role decides the thread and modes.
+      if (target.type === "thread") {
       // Like schedule_task: bind to this thread or start new ones, never to another thread.
       const bindsCaller =
         parent !== undefined &&
@@ -2856,6 +2858,7 @@ const make = Effect.gen(function* () {
       }
       yield* resolveRuntimeMode(limits.runtimeMode, target.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, target.interactionMode);
+      }
       yield* requireProject(target.projectId);
       const { commandId, ...save } = input;
       const { task } = yield* scheduledTasks
