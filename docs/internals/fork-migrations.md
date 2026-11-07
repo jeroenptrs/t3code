@@ -30,6 +30,7 @@ Fork columns on upstream tables:
 - `scheduled_task_webhook_deliveries.dispatched_at` (004)
 - `scheduled_tasks.triage_json` (018)
 - `scheduled_tasks.fork_target_json` (022)
+- `scheduled_tasks.schedule_json` gets `start: "current"` on GitLab projects triggers (023)
 
 Fork-owned tables:
 

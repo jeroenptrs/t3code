@@ -90,17 +90,18 @@ block on it.
 - When upstream merges, the fork feature graduates: drop the pinned PR, rebase
   the adapter onto the merged version, and re-apply what the feature needs.
 
-Current experimental dependencies, as of 2026-11-07. Fresh sessions on send
+Current experimental dependencies, as of 2026-11-14. Fresh sessions on send
 (#30323) and one thread per scheduled task (#30326) merged upstream on
-2026-11-05 and are no longer experimental; the ledger lists them as graduated.
+2026-11-05, and follow-ups that wait for nested work (#34958 and #36411, which
+superseded the pulled #21877) merged on 2026-11-13. None of them is
+experimental any more; the ledger lists them as graduated.
 
-| Upstream PR                                                                              | What we build on it                                 |
-| ---------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| [#15975](https://github.com/pingdotgg/t3code/pull/15975) Home agent                      | Thread-management toolkit and wake reports          |
-| [#31129](https://github.com/pingdotgg/t3code/pull/31129) delivery modes on bound tasks   | Steer or restart on trigger delivery (M4)           |
-| [#26254](https://github.com/pingdotgg/t3code/pull/26254) multi-repo projects             | Factories spanning several repos                    |
-| [#15350](https://github.com/pingdotgg/t3code/pull/15350) Docker sandboxes                | Not pulled: a per-role `isolation: sandbox` binding |
-| [#21877](https://github.com/pingdotgg/t3code/pull/21877) follow-ups wait for nested work | Foreman's revision loop sees final results          |
+| Upstream PR                                                                            | What we build on it                                 |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| [#15975](https://github.com/pingdotgg/t3code/pull/15975) Home agent                    | Thread-management toolkit and wake reports          |
+| [#31129](https://github.com/pingdotgg/t3code/pull/31129) delivery modes on bound tasks | Steer or restart on trigger delivery (M4)           |
+| [#26254](https://github.com/pingdotgg/t3code/pull/26254) multi-repo projects           | Factories spanning several repos                    |
+| [#15350](https://github.com/pingdotgg/t3code/pull/15350) Docker sandboxes              | Not pulled: a per-role `isolation: sandbox` binding |
 
 The pinned head SHAs and the commits that carry them are in the
 [software factories ledger](software-factories-ledger.md).
@@ -356,9 +357,10 @@ one.
 
 - **A saved trigger polls at once.** The seed poll ran three seconds after the
   save, raised `merge_request.opened` for the one open merge request, and the
-  work item was in the Foreman's session two seconds later. The first events
-  from a Jira query come one interval after the seed instead, because that
-  source records its first result set silently.
+  work item was in the Foreman's session two seconds later. Both polled sources
+  now take `start`: a new trigger records its first set silently unless `start`
+  is `current`, and GitLab projects triggers from before it were migrated to
+  `current`.
 - **The event reached the Foreman framed.** The work item's text listed the
   event's fields one per line, each value inside `<trigger-data-…>` tags with
   the untrusted-data note, the same way a thread run gets its prompt. The

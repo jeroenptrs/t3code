@@ -242,6 +242,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [20, "FactoryWorkItemDispatch"],
       [21, "FactoryWorkItemQueued"],
       [22, "ScheduledTaskTarget"],
+      [23, "PollTriggerStart"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
@@ -321,6 +322,44 @@ it.effect("marks work items sent before the dispatch column as sent, and the res
     assert.deepStrictEqual(rows, [
       { id: "work-item:sent", stage: "new", dispatchedAt: "2026-10-01T00:00:00.000Z" },
       { id: "work-item:unsent", stage: "queued", dispatchedAt: null },
+    ]);
+  }).pipe(Effect.provide(memoryDatabase())),
+);
+
+it.effect("keeps GitLab projects triggers raising open merge requests on their first poll", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations();
+    yield* runForkMigrations({ toMigrationInclusive: 22 });
+    for (const [id, schedule] of [
+      [
+        "gitlab",
+        '{"type":"gitlab_projects","host":"gitlab.com","projects":["acme/app"],"everyMs":900000}',
+      ],
+      ["jira", '{"type":"jira_query","site":"acme.atlassian.net","jql":"x","everyMs":900000}'],
+    ] as const) {
+      yield* sql`
+        INSERT INTO scheduled_tasks (
+          task_id, title, prompt, enabled, schedule_json, project_id, thread_id,
+          workspace_strategy_json, model_selection_json, runtime_mode, interaction_mode,
+          created_by, creation_source, created_at, updated_at, next_run_at, last_run_at,
+          last_run_status, last_run_error, run_count, webhook_token, webhook_secret
+        ) VALUES (
+          ${id}, 'Trigger', 'Prompt', 1, ${schedule}, 'project-1', NULL, '{"type":"root"}',
+          '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default', 'user', 'web',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL, NULL, 'never', NULL, 0,
+          NULL, NULL
+        )
+      `;
+    }
+    yield* runForkMigrations();
+    const rows = yield* sql<{ readonly id: string; readonly start: string | null }>`
+      SELECT task_id AS "id", json_extract(schedule_json, '$.start') AS "start"
+      FROM scheduled_tasks ORDER BY task_id
+    `;
+    assert.deepStrictEqual(rows, [
+      { id: "gitlab", start: "current" },
+      { id: "jira", start: null },
     ]);
   }).pipe(Effect.provide(memoryDatabase())),
 );

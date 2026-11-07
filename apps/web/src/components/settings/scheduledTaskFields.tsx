@@ -1,5 +1,6 @@
 import {
   MAX_WEBHOOK_FILTERS,
+  type PollTriggerStart,
   TRIGGER_SOURCE_FIELDS,
   type TriggerFilterSourceKind,
 } from "@t3tools/contracts";
@@ -201,6 +202,42 @@ export function WebhookFiltersField({
 }
 
 /** Filters over one event source's fields, picked from the fields that source sends. */
+const POLL_START_LABELS = {
+  changes: "Only changes after it",
+  current: "Everything it finds",
+} as const satisfies Record<PollTriggerStart, string>;
+
+/** What a polled trigger's first check acts on; set when creating it. */
+export function PollStartField({
+  value,
+  onChange,
+}: {
+  value: PollTriggerStart;
+  onChange: (pollStart: PollTriggerStart) => void;
+}) {
+  return (
+    <Field label="First check acts on" htmlFor="scheduled-task-poll-start">
+      <Select
+        value={value}
+        onValueChange={(next) => {
+          if (next === "changes" || next === "current") onChange(next);
+        }}
+      >
+        <SelectTrigger id="scheduled-task-poll-start" size="sm">
+          <SelectValue>{POLL_START_LABELS[value]}</SelectValue>
+        </SelectTrigger>
+        <SelectPopup>
+          {(["changes", "current"] as const).map((start) => (
+            <SelectItem key={start} value={start}>
+              {POLL_START_LABELS[start]}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
+    </Field>
+  );
+}
+
 /** The event types a trigger acts on; saved as an `event.type` filter when not all are on. */
 export function EventTypesField({
   types,

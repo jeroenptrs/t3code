@@ -201,8 +201,8 @@ visible to that identity. A saved filter's current JQL applies on every check,
 so editing the filter in Jira changes what the trigger watches.
 
 When you save a trigger, turn it back on, or change its site or query, it
-checks at once and only records the issues it finds. Events come from the
-next check on. A check reads up to 500 issues. If a check fails, the trigger
+checks at once. Events come from the next check on, except as
+[First check](#first-check) describes. A check reads up to 500 issues. If a check fails, the trigger
 shows the error, and it tries again at the next interval.
 
 The event types are:
@@ -226,8 +226,7 @@ T3 Code checks as the `glab` login on the environment for that host. If
 `glab` has no login for the host, the trigger shows an error until you sign
 in.
 
-The first check raises `merge_request.opened` for each open merge request it
-finds and no pipeline events. Later checks raise:
+The first check raises no pipeline events. Later checks raise:
 
 - `merge_request.opened`, `merge_request.updated`, `merge_request.merged`, and
   `merge_request.closed`.
@@ -237,6 +236,18 @@ finds and no pipeline events. Later checks raise:
 Changing the projects or the group records the new set without raising
 events. If you can add a webhook to the GitLab project, a
 [webhook](#webhook) source reacts sooner than a check every few minutes.
+
+### First check
+
+When you create a Jira query or GitLab projects trigger, **First check acts on**
+sets what its first check does. **Only changes after it**, the default, records
+the issues or merge requests it finds and raises nothing for them. **Everything
+it finds** raises `issue.entered` for each issue in the query, or
+`merge_request.opened` for each open merge request, and those events go through
+the trigger's filters like any other. The choice applies to the first check
+only. Changing the query, the projects, or the group later records the new set
+without raising events either way. GitLab projects triggers created before this
+choice existed act on everything they find.
 
 ### Slack
 

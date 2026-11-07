@@ -401,6 +401,11 @@ function WebhookFilterRows(props: {
   );
 }
 
+const POLL_START_LABELS = {
+  changes: "Only changes after it",
+  current: "Everything it finds",
+} as const;
+
 /** The event types a trigger acts on; saved as an `event.type` filter when not all are on. */
 function EventTypesRow(props: {
   readonly source: TriggerFilterSourceKind;
@@ -1493,6 +1498,28 @@ function TaskForm({
                   onChange={(patch) =>
                     setDraft({ ...draft, schedule: { ...draft.schedule, ...patch } })
                   }
+                />
+              ) : null}
+              {draft.task === null &&
+              (draft.schedule.mode === "jira_query" ||
+                draft.schedule.mode === "gitlab_projects") ? (
+                <SelectRow
+                  label="First check acts on"
+                  value={POLL_START_LABELS[draft.schedule.pollStart]}
+                  borderTop
+                  actions={
+                    saving
+                      ? []
+                      : (["changes", "current"] as const).map((start) => ({
+                          id: start,
+                          title: POLL_START_LABELS[start],
+                          state: draft.schedule.pollStart === start ? ("on" as const) : undefined,
+                        }))
+                  }
+                  onSelect={(pollStart) => {
+                    if (pollStart !== "changes" && pollStart !== "current") return;
+                    setDraft({ ...draft, schedule: { ...draft.schedule, pollStart } });
+                  }}
                 />
               ) : null}
               <EventTypesRow
