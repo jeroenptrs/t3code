@@ -4,7 +4,7 @@ import { CalendarClockIcon } from "lucide-react";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { triggerSummary } from "../settings/scheduledTasksSettings.logic";
+import { factoryTriggerSummary } from "./factories.logic";
 
 /** A factory's triggers, each opening its editor in Settings. Mounted only while shown. */
 export function FactoryScheduledTaskLinks(props: {
@@ -32,7 +32,7 @@ export function FactoryScheduledTaskLinks(props: {
           <CalendarClockIcon aria-hidden className="size-4 shrink-0 text-(--sidebar-icon-color)" />
           <span className="min-w-0 flex-1 truncate">{task.title}</span>
           <span className="max-w-1/2 truncate text-xs text-sidebar-muted-foreground">
-            {triggerSummary(scheduledTaskTrigger(task))}
+            {factoryTriggerSummary(scheduledTaskTrigger(task))}
           </span>
         </Link>
       </li>,
