@@ -10,7 +10,6 @@ import {
   ProviderDriverKind,
   ProjectId,
   ProviderInstanceId,
-  ProjectId,
   IssueTrackerKind,
   SecretProviderId,
   ThreadId,
@@ -654,6 +653,7 @@ describe("Factories authorization", () => {
             [WS_METHODS.factoriesRead]: () => Effect.die("unused"),
             [WS_METHODS.factoriesSave]: () =>
               Effect.sync(() => handled.push("save")).pipe(Effect.as(factory)),
+            [WS_METHODS.factoriesDelete]: () => Effect.die("unused"),
             [WS_METHODS.factoriesSkillsList]: () =>
               Effect.sync(() => handled.push("skills.list")).pipe(Effect.as({ skills: [] })),
             [WS_METHODS.factoriesSkillsRead]: () => Effect.die("unused"),

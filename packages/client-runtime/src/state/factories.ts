@@ -75,6 +75,16 @@ export function createFactoriesEnvironmentAtoms<R, E>(
       },
       onSuccess: bumpEpoch,
     }),
+    /** Removes the factory's directory and work items; its threads return to Home. */
+    delete: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:factories:delete",
+      tag: WS_METHODS.factoriesDelete,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+      onSuccess: bumpEpoch,
+    }),
     /** Writes a home or factory skill's SKILL.md; every factory that sees it re-reads. */
     saveSkill: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:factories:save-skill",
