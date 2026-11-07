@@ -265,9 +265,9 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
   }
   if (schedule.type === "webhook") return SCHEDULE_MODE_LABELS.webhook;
   if (schedule.type === "manual") return SCHEDULE_MODE_LABELS.manual;
-    const count = schedule.filters?.length ?? 0;
-    const label = SCHEDULE_MODE_LABELS[schedule.type];
-    return count === 0 ? label : `${label} · ${count} filter${count === 1 ? "" : "s"}`;
+  const count = schedule.filters?.length ?? 0;
+  const label = SCHEDULE_MODE_LABELS[schedule.type];
+  return count === 0 ? label : `${label} · ${count} filter${count === 1 ? "" : "s"}`;
 }
 
 /** formatRelativeTime handles only the past; upcoming runs need future labels. */
@@ -705,10 +705,14 @@ function ScheduledTaskRow({
   const run = useAtomCommand(serverEnvironment.runScheduledTaskNow, {
     label: "scheduled task run now",
   });
+  const fire = useAtomCommand(serverEnvironment.fireTriggerCurrentSet, {
+    label: "trigger fire current set",
+  });
   const remove = useAtomCommand(serverEnvironment.deleteScheduledTask, {
     label: "scheduled task delete",
   });
-  const act = async (action: "toggle" | "run" | "delete") => {
+  const polled = task.schedule.type === "jira_query" || task.schedule.type === "gitlab_projects";
+  const act = async (action: "toggle" | "run" | "fire" | "delete") => {
     if (busy || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
     setBusy(true);
     const result =
@@ -716,7 +720,9 @@ function ScheduledTaskRow({
         ? await toggle({ environmentId, input: { id: task.id, enabled: !task.enabled } })
         : action === "run"
           ? await run({ environmentId, input: { id: task.id } })
-          : await remove({ environmentId, input: { id: task.id } });
+          : action === "fire"
+            ? await fire({ environmentId, input: { id: task.id } })
+            : await remove({ environmentId, input: { id: task.id } });
     setBusy(false);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       toastManager.add(
@@ -741,8 +747,7 @@ function ScheduledTaskRow({
               task.blockedByPolicy
             ) : !task.enabled ? (
               "Paused"
-            ) : (task.schedule.type === "jira_query" || task.schedule.type === "gitlab_projects") &&
-              task.nextRunAt ? (
+            ) : polled && task.nextRunAt ? (
               <>
                 Next check <ScheduledRelativeLabel value={task.nextRunAt} />
               </>
@@ -798,6 +803,13 @@ function ScheduledTaskRow({
                   <InboxIcon />
                   Deliveries
                 </MenuItem>
+              ) : polled ? (
+                task.enabled ? (
+                  <MenuItem onClick={() => void act("fire")}>
+                    <PlayIcon />
+                    Fire current set
+                  </MenuItem>
+                ) : null
               ) : runsOnEvent ? null : (
                 <MenuItem onClick={() => void act("run")}>
                   <PlayIcon />
@@ -1290,71 +1302,71 @@ function ScheduledTaskDestination({
         </>
       ) : (
         <>
-        {!onThreadModeChange || threadMode !== "new_thread" ? (
-          <Combobox
-            items={items}
-            filteredItems={items}
-            filter={null}
-            autoHighlight
-            open={open && !disabled}
-            onOpenChange={handleOpenChange}
-            value={threadId ?? (threadMode === "new_thread" ? NEW_THREAD_DESTINATION : null)}
-            onValueChange={(value) => {
-              if (value === NEW_THREAD_DESTINATION) {
-                onSelect(null);
+          {!onThreadModeChange || threadMode !== "new_thread" ? (
+            <Combobox
+              items={items}
+              filteredItems={items}
+              filter={null}
+              autoHighlight
+              open={open && !disabled}
+              onOpenChange={handleOpenChange}
+              value={threadId ?? (threadMode === "new_thread" ? NEW_THREAD_DESTINATION : null)}
+              onValueChange={(value) => {
+                if (value === NEW_THREAD_DESTINATION) {
+                  onSelect(null);
+                  handleOpenChange(false);
+                  return;
+                }
+                const picked = threads.find((row) => row.id === value);
+                if (picked) onSelect(picked);
                 handleOpenChange(false);
-                return;
-              }
-              const picked = threads.find((row) => row.id === value);
-              if (picked) onSelect(picked);
-              handleOpenChange(false);
-            }}
-          >
-            <ComboboxTrigger
-              id={
-                onThreadModeChange
-                  ? "scheduled-task-destination-thread"
-                  : "scheduled-task-destination"
-              }
-              aria-label={onThreadModeChange ? "Destination thread" : undefined}
-              disabled={disabled}
-              render={<Button variant="outline" size="sm" />}
-              className="w-full justify-between"
+              }}
             >
-              <MessageSquareIcon className="size-3.5 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate text-left">{currentLabel}</span>
-              <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
-            </ComboboxTrigger>
-            <ComboboxPopup align="start" side="bottom" className="w-80">
-              <ComboboxSearchInput
-                aria-label="Search threads"
-                placeholder="Search all threads..."
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-              <ComboboxEmpty>No threads found.</ComboboxEmpty>
-              <ComboboxList className="max-h-72">
-                {items.map((value, index) => (
-                  <ComboboxItem key={value} index={index} value={value}>
-                    <span className="block truncate">
-                      {value === NEW_THREAD_DESTINATION
-                        ? "New thread each run"
-                        : value === threadId
-                          ? currentLabel
-                          : threads.find((row) => row.id === value)?.title || "Untitled thread"}
-                    </span>
-                  </ComboboxItem>
-                ))}
-              </ComboboxList>
-            </ComboboxPopup>
-          </Combobox>
+              <ComboboxTrigger
+                id={
+                  onThreadModeChange
+                    ? "scheduled-task-destination-thread"
+                    : "scheduled-task-destination"
+                }
+                aria-label={onThreadModeChange ? "Destination thread" : undefined}
+                disabled={disabled}
+                render={<Button variant="outline" size="sm" />}
+                className="w-full justify-between"
+              >
+                <MessageSquareIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate text-left">{currentLabel}</span>
+                <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+              </ComboboxTrigger>
+              <ComboboxPopup align="start" side="bottom" className="w-80">
+                <ComboboxSearchInput
+                  aria-label="Search threads"
+                  placeholder="Search all threads..."
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+                <ComboboxEmpty>No threads found.</ComboboxEmpty>
+                <ComboboxList className="max-h-72">
+                  {items.map((value, index) => (
+                    <ComboboxItem key={value} index={index} value={value}>
+                      <span className="block truncate">
+                        {value === NEW_THREAD_DESTINATION
+                          ? "New thread each run"
+                          : value === threadId
+                            ? currentLabel
+                            : threads.find((row) => row.id === value)?.title || "Untitled thread"}
+                      </span>
+                    </ComboboxItem>
+                  ))}
+                </ComboboxList>
+              </ComboboxPopup>
+            </Combobox>
           ) : null}
-        <div className="space-y-1 text-sm">
-          <p className="text-muted-foreground">{detail}</p>
-          {threadMode !== "new_thread" ? (
-            <p className="text-muted-foreground">Deleting the thread also deletes this task.</p>
-          ) : null}
-        </div>
+          <div className="space-y-1 text-sm">
+            <p className="text-muted-foreground">{detail}</p>
+            {threadMode !== "new_thread" ? (
+              <p className="text-muted-foreground">Deleting the thread also deletes this task.</p>
+            ) : null}
+          </div>
         </>
       )}
     </Field>
@@ -1781,30 +1793,30 @@ function ScheduledTaskEditorForm({
             </div>
             {source === "schedule" ? (
               <div className="flex flex-wrap items-center justify-between gap-2">
-              <Label>Schedule</Label>
-              <Select
-                value={draft.scheduleMode}
-                onValueChange={(value) => {
+                <Label>Schedule</Label>
+                <Select
+                  value={draft.scheduleMode}
+                  onValueChange={(value) => {
                     const mode = TIME_SCHEDULE_MODES.find((entry) => entry === value);
                     if (mode !== undefined) selectMode(mode);
-                }}
-              >
-                <div className="grid w-48 grid-cols-1">
-                  <SelectTrigger size="sm" aria-label="Schedule type">
-                    <SelectValue>{SCHEDULE_MODE_LABELS[draft.scheduleMode]}</SelectValue>
-                  </SelectTrigger>
-                </div>
-                <SelectPopup>
+                  }}
+                >
+                  <div className="grid w-48 grid-cols-1">
+                    <SelectTrigger size="sm" aria-label="Schedule type">
+                      <SelectValue>{SCHEDULE_MODE_LABELS[draft.scheduleMode]}</SelectValue>
+                    </SelectTrigger>
+                  </div>
+                  <SelectPopup>
                     {TIME_SCHEDULE_MODES.filter(
-                    (mode) => mode !== "once" || offersOnce || draft.scheduleMode === "once",
-                  ).map((mode) => (
+                      (mode) => mode !== "once" || offersOnce || draft.scheduleMode === "once",
+                    ).map((mode) => (
                       <SelectItem key={mode} value={mode}>
-                      {SCHEDULE_MODE_LABELS[mode]}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            </div>
+                        {SCHEDULE_MODE_LABELS[mode]}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </div>
             ) : null}
 
             {webhookDenial !== undefined ? (
@@ -2188,23 +2200,23 @@ function ScheduledTaskEditorForm({
             </Field>
 
             {workItemTarget ? null : (
-            <Field label="Workspace" htmlFor="scheduled-task-workspace">
-              <Select
-                value={draft.workspaceMode}
-                onValueChange={(value) =>
-                  setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
-                }
-              >
-                <SelectTrigger size="sm" id="scheduled-task-workspace">
-                  <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  <SelectItem value="worktree">Create a new worktree</SelectItem>
-                  <SelectItem value="root">Use the project checkout</SelectItem>
-                  <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
-                </SelectPopup>
-              </Select>
-            </Field>
+              <Field label="Workspace" htmlFor="scheduled-task-workspace">
+                <Select
+                  value={draft.workspaceMode}
+                  onValueChange={(value) =>
+                    setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
+                  }
+                >
+                  <SelectTrigger size="sm" id="scheduled-task-workspace">
+                    <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value="worktree">Create a new worktree</SelectItem>
+                    <SelectItem value="root">Use the project checkout</SelectItem>
+                    <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
+                  </SelectPopup>
+                </Select>
+              </Field>
             )}
           </div>
 
@@ -2245,24 +2257,24 @@ function ScheduledTaskEditorForm({
           ) : null}
 
           {workItemTarget ? null : (
-          <Field label="Model">
-            <div>
-              <ProviderModelPicker
-                environmentId={environmentId}
-                disabled={saving || !connected}
-                activeInstanceId={activeInstanceId}
-                model={activeModel}
-                lockedProvider={null}
-                instanceEntries={instanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                isComposerOwned={false}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
-                }
-              />
-            </div>
-          </Field>
+            <Field label="Model">
+              <div>
+                <ProviderModelPicker
+                  environmentId={environmentId}
+                  disabled={saving || !connected}
+                  activeInstanceId={activeInstanceId}
+                  model={activeModel}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  isComposerOwned={false}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onInstanceModelChange={(instanceId, model) =>
+                    setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
+                  }
+                />
+              </div>
+            </Field>
           )}
 
           <TriageField
