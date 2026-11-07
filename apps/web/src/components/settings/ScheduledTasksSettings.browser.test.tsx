@@ -7,13 +7,11 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  ProviderDriverKind,
   type ServerProvider,
   type UnifiedSettings,
   ScheduledTaskId,
   ThreadId,
   type ScheduledTask,
-  type ServerProvider,
   type TriggerTemplate,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -84,11 +82,12 @@ const provider: ServerProvider = {
   checkedAt: "2026-10-21T00:00:00.000Z",
   models: [
     { slug: "gpt-5.4", name: "GPT-5.4", isDefault: true, isCustom: false, capabilities: null },
+    // The bound thread's model.
+    { slug: "gpt-5.5", name: "gpt-5.5", isDefault: false, isCustom: false, capabilities: null },
   ],
   slashCommands: [],
   skills: [],
 };
-const providersAtom = Atom.make<ReadonlyArray<ServerProvider>>([provider]).pipe(Atom.keepAlive);
 
 const state = vi.hoisted(() => ({
   connected: true,
@@ -113,7 +112,7 @@ function setup(templates: { read?: boolean; write?: boolean } = {}) {
   state.remove.mockReset().mockReturnValue(Effect.succeed({ id: task.id }));
   state.tasks = [task];
   state.secondary = false;
-  state.providers = Atom.make<ReadonlyArray<ServerProvider>>([]);
+  state.providers = Atom.make<ReadonlyArray<ServerProvider>>([provider]);
   state.settings = DEFAULT_UNIFIED_SETTINGS;
   state.upsert.mockReset().mockReturnValue(Effect.succeed({ id: task.id }));
   state.listed = null;
@@ -190,7 +189,6 @@ vi.mock(import("../../state/server"), async (original) => {
         run: state.upsert,
         permissionAtom: (id: string | null) => permissions.get(id ?? "")!,
       },
-      providersValueAtom: (() => providersAtom) as never,
       triggerTemplates: Object.assign(() => templatesRead, {
         permissionAtom: (id: string | null) => templateReadPermissions.get(id ?? "")!,
       }) as never,
@@ -203,8 +201,10 @@ vi.mock(import("../../state/server"), async (original) => {
 });
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
-  useAtomCommand: ((_command: unknown, options: { label: string }) => async (target: unknown) => {
+  useAtomCommand: ((command: unknown, options: { label: string }) => async (target: unknown) => {
     state.commands.push({ label: options.label, target });
+    if (options.label === "scheduled task delete") return state.remove(command, target);
+    if (options.label === "scheduled task upsert") state.upsert(command, target);
     return { _tag: "Success", value: undefined };
   }) as never,
 }));
@@ -336,7 +336,7 @@ describe("ScheduledTasksSettings", () => {
         <ScheduledTasksSettings {...(editing ? { taskId: task.id } : {})} />,
       );
       if (!editing) {
-        await screen.getByRole("button", { name: "New task" }).click();
+        await screen.getByRole("button", { name: "New trigger" }).click();
         await page.getByRole("combobox", { name: "Workspace" }).click();
         await page.getByRole("option", { name: "Use the project checkout" }).click();
       }
@@ -344,7 +344,7 @@ describe("ScheduledTasksSettings", () => {
       await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
       await page.getByRole("option", { name: /GPT-5.4/ }).click();
       await expect.element(page.getByRole("button", { name: "High", exact: true })).toBeVisible();
-      await page.getByRole("button", { name: editing ? "Save task" : "Create task" }).click();
+      await page.getByRole("button", { name: editing ? "Save trigger" : "Create trigger" }).click();
       await vi.waitFor(() =>
         expect(state.upsert).toHaveBeenLastCalledWith(expect.anything(), {
           environmentId,
@@ -361,7 +361,7 @@ describe("ScheduledTasksSettings", () => {
     await page.getByRole("button", { name: "High", exact: true }).click();
     await page.getByRole("menuitemradio", { name: /^Low/ }).click();
     await expect.element(page.getByRole("button", { name: "Low", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Save task" }).click();
+    await page.getByRole("button", { name: "Save trigger" }).click();
     await vi.waitFor(() =>
       expect(state.upsert).toHaveBeenLastCalledWith(expect.anything(), {
         environmentId,
@@ -379,7 +379,7 @@ describe("ScheduledTasksSettings", () => {
     await page.getByRole("button", { name: "GPT-5.4", exact: true }).click();
     await page.getByRole("option", { name: /Plain model/ }).click();
     expect(page.getByRole("button", { name: "High", exact: true }).query()).toBeNull();
-    await page.getByRole("button", { name: "Save task" }).click();
+    await page.getByRole("button", { name: "Save trigger" }).click();
     await vi.waitFor(() =>
       expect(state.upsert).toHaveBeenLastCalledWith(expect.anything(), {
         environmentId,
@@ -477,7 +477,7 @@ describe("ScheduledTasksSettings", () => {
   it("keeps a new task's draft when the user clicks outside the editor", async () => {
     setup();
     await using _screen = await render(<ScheduledTasksSettings />);
-    await userEvent.click(page.getByRole("button", { name: "New task" }));
+    await userEvent.click(page.getByRole("button", { name: "New trigger" }));
     const dialog = page.getByRole("dialog");
     const name = dialog.getByRole("textbox", { name: "Name" });
     await userEvent.fill(name, "My draft");
@@ -503,6 +503,9 @@ describe("ScheduledTasksSettings", () => {
     await dialog.getByLabelText("Filter 1 field").click();
     await page.getByRole("option", { name: "Status", exact: true }).click();
     await userEvent.fill(dialog.getByLabelText("Filter 1 value"), "In Progress");
+    const actOn = dialog.getByRole("group", { name: "Act on" });
+    await actOn.getByRole("button", { name: "issue.labels_changed" }).click();
+    await actOn.getByRole("button", { name: "issue.assignee_changed" }).click();
     await dialog.getByLabelText("When the item fits no instruction").click();
     await page.getByRole("option", { name: "Ask and wait" }).click();
     await dialog.getByRole("button", { name: "Create trigger" }).click();
@@ -514,7 +517,10 @@ describe("ScheduledTasksSettings", () => {
           input: expect.objectContaining({
             schedule: {
               type: "jira",
-              filters: [{ path: "event.status", op: "equals", value: "In Progress" }],
+              filters: [
+                { path: "event.type", op: "in", value: ["issue.status_changed"] },
+                { path: "event.status", op: "equals", value: "In Progress" },
+              ],
             },
             triage: { fallback: "ask" },
           }),
