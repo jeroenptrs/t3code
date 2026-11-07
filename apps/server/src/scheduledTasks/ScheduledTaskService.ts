@@ -30,8 +30,12 @@ import {
   type TriggerEvent,
   type TriggerFilter,
   type TriggerFilterSourceKind,
-  type TriggerSourceKind,
+  TriggerWorkItemTarget,
+  WORK_ITEM_TEXT_MAX_LENGTH,
+  WORK_ITEM_TITLE_MAX_LENGTH,
+  type WorkItemTriggerSource,
   managedPolicyDeniedMessage,
+  parseFactoryId,
   scheduledTaskThreadMode,
   managedRuntimeModeDenial,
 } from "@t3tools/contracts";
@@ -77,6 +81,7 @@ import {
   pollScopeKey,
 } from "./Schedule.ts";
 import * as ScheduledTaskPoller from "./ScheduledTaskPoller.ts";
+import * as WorkItemSink from "./WorkItemSink.ts";
 import {
   redactHeaders,
   redactQuery,
@@ -96,7 +101,12 @@ import { describeFailedWebhookFilter, findFailedWebhookFilter } from "./webhookF
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
 import { withLocalTracing } from "@t3tools/shared/relayTracing";
 import { renderTriageInstructions, type TriageOrigin } from "../triggers/triageInstructions.ts";
-import { renderTriggerPrompt, triggerEventId } from "../triggers/triggerPrompt.ts";
+import {
+  renderTriggerEventText,
+  renderTriggerPrompt,
+  triggerEventId,
+  triggerEventTitle,
+} from "../triggers/triggerPrompt.ts";
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
 
@@ -246,6 +256,7 @@ const decodeScheduleJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.schedule),
 );
 const decodeTriageJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ScheduledTaskTriage));
+const decodeTargetJson = Schema.decodeUnknownEffect(Schema.fromJsonString(TriggerWorkItemTarget));
 const decodeWorkspaceStrategyJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.workspaceStrategy),
 );
@@ -300,6 +311,7 @@ interface ScheduledTaskRow {
   readonly webhook_token_rotated_by_user_id: string | null;
   readonly webhook_token_rotated_at: string | null;
   readonly triage_json: string | null;
+  readonly fork_target_json: string | null;
   /** Resolved from auth_users by the list and get queries; absent elsewhere. */
   readonly created_by_user_name?: string | null;
   readonly webhook_token_rotated_by_user_name?: string | null;
@@ -521,6 +533,8 @@ const decodeRow = Effect.fnUntraced(
     const workspaceStrategy = yield* decodeWorkspaceStrategyJson(row.workspace_strategy_json);
     const modelSelection = yield* decodeModelSelectionJson(row.model_selection_json);
     const triage = row.triage_json === null ? null : yield* decodeTriageJson(row.triage_json);
+    const target =
+      row.fork_target_json === null ? null : yield* decodeTargetJson(row.fork_target_json);
     return yield* decodeTask({
       id: row.task_id,
       title: row.title,
@@ -545,6 +559,7 @@ const decodeRow = Effect.fnUntraced(
       runCount: row.run_count,
       ...(webhook === undefined ? {} : { webhook }),
       ...(triage === null ? {} : { triage }),
+      ...(target === null ? {} : { target }),
     });
   },
   (effect, row, _origin?) =>
@@ -608,6 +623,7 @@ export const layer = Layer.effect(
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
     const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
     const poller = yield* Effect.serviceOption(ScheduledTaskPoller.ScheduledTaskPoller);
+    const workItemSink = yield* Effect.serviceOption(WorkItemSink.WorkItemSink);
     const webhookPolicyOrganization = ManagedPolicy.deniedBy(managedPolicy, "webhookTasks");
     // Existing webhook tasks stay stored but report why they do not run.
     const webhookPolicyBlock =
@@ -682,6 +698,7 @@ export const layer = Layer.effect(
         webhook_token_rotated_by_user_id,
         webhook_token_rotated_at,
         triage_json,
+        fork_target_json,
         ${userName("created_by_user_id")} AS created_by_user_name,
         ${userName("webhook_token_rotated_by_user_id")} AS webhook_token_rotated_by_user_name
       FROM scheduled_tasks
@@ -730,6 +747,7 @@ export const layer = Layer.effect(
         webhook_token_rotated_by_user_id,
         webhook_token_rotated_at,
         triage_json,
+        fork_target_json,
         ${userName("created_by_user_id")} AS created_by_user_name,
         ${userName("webhook_token_rotated_by_user_id")} AS webhook_token_rotated_by_user_name
       FROM scheduled_tasks
@@ -814,7 +832,8 @@ export const layer = Layer.effect(
           webhook_token,
           webhook_secret,
           created_by_user_id,
-          triage_json
+          triage_json,
+          fork_target_json
         )
         SELECT
           ${task.id},
@@ -841,7 +860,8 @@ export const layer = Layer.effect(
           ${webhook.token},
           ${webhook.secret},
           ${createdByUserId},
-          ${task.triage === undefined ? null : JSON.stringify(task.triage)}
+          ${task.triage === undefined ? null : JSON.stringify(task.triage)},
+          ${task.target === undefined ? null : JSON.stringify(task.target)}
         WHERE ${requireExisting ? 0 : 1} = 1
            OR EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${task.id})
         ON CONFLICT (task_id)
@@ -865,6 +885,7 @@ export const layer = Layer.effect(
           interaction_mode = excluded.interaction_mode,
           creation_source = excluded.creation_source,
           triage_json = excluded.triage_json,
+          fork_target_json = excluded.fork_target_json,
           updated_at = excluded.updated_at,
           -- Keep a next_run_at that a finishing run moved during this save, unless
           -- another edit changed the schedule or enabled state meanwhile.
@@ -1125,6 +1146,37 @@ export const layer = Layer.effect(
       if (updated.length > 0) yield* notifyChanged;
     });
 
+    /** A work item trigger's run: the item, titled after the event, in place of a thread. */
+    const createWorkItem = Effect.fn("ScheduledTaskService.createWorkItem")(function* (
+      task: ScheduledTask,
+      target: TriggerWorkItemTarget,
+      run: {
+        readonly event: TriggerEvent;
+        readonly deliveryId?: string;
+        /** A webhook's filled-in prompt; otherwise the event's fields, or the prompt. */
+        readonly text?: string;
+      },
+    ) {
+      if (Option.isNone(workItemSink)) {
+        return yield* taskError("This server cannot create work items.", { taskId: task.id });
+      }
+      const text = run.text ?? (renderTriggerEventText(run.event) || task.prompt);
+      const source: WorkItemTriggerSource = {
+        kind: "trigger",
+        triggerId: task.id,
+        title: task.title,
+        event: run.event,
+        ...(run.deliveryId === undefined ? {} : { deliveryId: run.deliveryId }),
+        text: text.slice(0, WORK_ITEM_TEXT_MAX_LENGTH),
+      };
+      const title =
+        (triggerEventTitle(run.event) ?? task.title).slice(0, WORK_ITEM_TITLE_MAX_LENGTH).trim() ||
+        task.title.slice(0, WORK_ITEM_TITLE_MAX_LENGTH).trim();
+      yield* workItemSink.value
+        .create({ factoryId: target.factoryId, title, source })
+        .pipe(Effect.mapError((error) => taskError(error.message, { taskId: task.id })));
+    });
+
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
       trigger: "scheduled" | "manual" | "webhook" | "event",
@@ -1136,8 +1188,7 @@ export const layer = Layer.effect(
       event?: {
         readonly eventId: string;
         readonly prompt: string;
-        readonly source: TriggerSourceKind;
-        readonly type: string;
+        readonly event: TriggerEvent;
       },
     ) {
       // Read before reserving: nothing between the reservation and its release may fail.
@@ -1252,7 +1303,7 @@ export const layer = Layer.effect(
         const basePrompt = webhook?.prompt ?? event?.prompt ?? active.prompt;
         const triageOrigin: TriageOrigin =
           event !== undefined
-            ? { kind: "event", source: event.source, type: event.type }
+            ? { kind: "event", source: event.event.source, type: event.event.type }
             : webhook !== undefined
               ? { kind: "webhook" }
               : { kind: trigger === "scheduled" ? "schedule" : "manual" };
@@ -1304,8 +1355,23 @@ export const layer = Layer.effect(
             );
 
         // Capture defects and interrupts too so dispatch failures still reach markCompleted.
-        const result =
-          active.threadId === null
+        const result: Exit.Exit<ThreadId | null, unknown> =
+          active.target !== undefined
+            ? yield* Effect.exit(
+                createWorkItem(active, active.target, {
+                  // A webhook delivery or a run with no event creates the item for a manual event.
+                  event: event?.event ?? {
+                    source: "manual",
+                    type: "manual",
+                    occurredAt: startedAtIso,
+                    payload: { type: "manual" },
+                  },
+                  ...(webhook === undefined
+                    ? {}
+                    : { deliveryId: webhook.deliveryId, text: webhook.prompt }),
+                }).pipe(Effect.as(null)),
+              )
+            : active.threadId === null
             ? yield* Effect.exit(
                 threadLaunch
                   .launch({
@@ -1730,7 +1796,22 @@ export const layer = Layer.effect(
       // keep their run history, and so real load failures propagate instead
       // of silently resetting an existing row.
       const existingTask = yield* findTask(id);
-      const threadMode = resolveThreadMode(input, existingTask);
+      // Omitted keeps the stored target, so clients that predate it can re-save a task.
+      const target =
+        input.target === undefined ? existingTask?.target : (input.target ?? undefined);
+      if (
+        target !== undefined &&
+        (target.projectId !== input.projectId ||
+          parseFactoryId(target.factoryId)?.projectId !== input.projectId)
+      ) {
+        return yield* taskError("A work item trigger's factory must be in the trigger's project.", {
+          taskId: id,
+        });
+      }
+      // A work item trigger runs no thread, so its thread fields stay as stored.
+      const threadFields = target !== undefined && existingTask !== null ? existingTask : input;
+      const threadMode =
+        target === undefined ? resolveThreadMode(input, existingTask) : "new_thread";
       const keptThreadId =
         input.threadId ?? (input.unbindThread === true ? null : (existingTask?.threadId ?? null));
       // A bound thread belongs to its project, so moving the task leaves it for a new one.
@@ -1748,7 +1829,7 @@ export const layer = Layer.effect(
       // thread runs in that thread's mode, which the orchestrator checks instead. Checked before
       // the save consumes a webhook secret.
       const modeDenial =
-        input.enabled && threadId === null
+        input.enabled && threadId === null && target === undefined
           ? managedRuntimeModeDenial(managedPolicy.summary, input.runtimeMode)
           : undefined;
       if (modeDenial !== undefined) return yield* taskError(modeDenial, { taskId: id });
@@ -1842,11 +1923,11 @@ export const layer = Layer.effect(
           : { token: null, secret: null, secretChanged: true };
       // A folder that is not a Git repository, Scratch included, cannot hold a worktree.
       const workspaceStrategy: ScheduledTask["workspaceStrategy"] =
-        input.workspaceStrategy.type === "worktree" &&
+        threadFields.workspaceStrategy.type === "worktree" &&
         ((yield* managedFolders.isScratchProject(input.projectId)) ||
           (yield* threadLaunch.isNonGitProject(input.projectId)))
           ? { type: "root" }
-          : input.workspaceStrategy;
+          : threadFields.workspaceStrategy;
       const scheduleUnchanged =
         existingTask !== null &&
         existingTask.enabled === input.enabled &&
@@ -1865,9 +1946,9 @@ export const layer = Layer.effect(
         threadId,
         threadMode,
         workspaceStrategy,
-        modelSelection: input.modelSelection,
-        runtimeMode: input.runtimeMode,
-        interactionMode: input.interactionMode,
+        modelSelection: threadFields.modelSelection,
+        runtimeMode: threadFields.runtimeMode,
+        interactionMode: threadFields.interactionMode,
         createdBy: existingTask?.createdBy ?? input.createdBy ?? "user",
         creationSource: input.creationSource ?? "web",
         createdAt: existingTask?.createdAt ?? iso(now),
@@ -1882,6 +1963,7 @@ export const layer = Layer.effect(
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
         ...(triage == null ? {} : { triage }),
+        ...(target === undefined ? {} : { target }),
       };
       yield* saveTask(
         task,
@@ -1908,7 +1990,7 @@ export const layer = Layer.effect(
         return yield* taskError(webhookPolicyBlock, { taskId: input.id });
       }
       const modeDenial =
-        input.enabled && existing.threadId === null
+        input.enabled && existing.threadId === null && existing.target === undefined
           ? managedRuntimeModeDenial(managedPolicy.summary, existing.runtimeMode)
           : undefined;
       if (modeDenial !== undefined) {
@@ -3057,7 +3139,11 @@ export const layer = Layer.effect(
         Effect.mapError((cause) => taskError("Could not generate frame id.", { cause })),
       );
       const rendered = renderTriggerPrompt(task.prompt, event, frameId);
-      if (rendered.prompt.trim().length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
+      // A work item trigger sends the event, not its prompt.
+      if (
+        task.target === undefined &&
+        rendered.prompt.trim().length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS
+      ) {
         return yield* taskError(PROMPT_TOO_LONG, { taskId: task.id });
       }
       // Events for one task run one at a time, so a burst queues instead of failing as busy.
@@ -3065,8 +3151,7 @@ export const layer = Layer.effect(
       return yield* runTask(task, "event", undefined, {
         eventId: triggerEventId(event),
         prompt: rendered.prompt,
-        source: event.source,
-        type: event.type,
+        event,
       }).pipe(
         permit.withPermits(1),
         Effect.mapError((cause) =>

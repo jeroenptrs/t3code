@@ -1,7 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- a synchronous hash for a stable id.
 import * as NodeCrypto from "node:crypto";
 
-import type { TriggerEvent } from "@t3tools/contracts";
+import { TRIGGER_SOURCE_FIELDS, type TriggerEvent } from "@t3tools/contracts";
 
 import { type RenderedWebhookPrompt, renderTemplate } from "../scheduledTasks/webhookTemplate.ts";
 import { gitlabPipelineKey, gitlabTriggerKey } from "./gitlabTriggerSource.ts";
@@ -62,4 +62,32 @@ export function renderTriggerPrompt(
     frameId,
     "trigger",
   );
+}
+
+/** The event's fields one per line as `label: value`, for a work item; empty for a manual run. */
+export function renderTriggerEventText(event: TriggerEvent): string {
+  if (event.source === "manual") return "";
+  const field = triggerFieldResolver(event);
+  const lines: Array<string> = [];
+  for (const { path, label } of TRIGGER_SOURCE_FIELDS[event.source]) {
+    const value = field(path);
+    const text = Array.isArray(value) ? value.join(", ") : value;
+    if (typeof text === "string" && text !== "") lines.push(`${label}: ${text}`);
+  }
+  return lines.join("\n");
+}
+
+/** `<type> <key or number>: <summary or title>` for Jira and GitLab events; null for others. */
+export function triggerEventTitle(event: TriggerEvent): string | null {
+  switch (event.source) {
+    case "jira":
+    case "jira_query":
+      return `${event.type} ${event.payload.key}: ${event.payload.summary}`;
+    case "gitlab":
+    case "gitlab_projects":
+      return `${event.type} ${event.payload.number}: ${event.payload.title}`;
+    case "slack":
+    case "manual":
+      return null;
+  }
 }
