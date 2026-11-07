@@ -26,7 +26,7 @@ export const make = Effect.gen(function* () {
    * through the read cache. A saved filter's JQL is read on every poll, so edits to it apply.
    */
   const pollJiraQuery = Effect.fn("jiraQueryPoller.pollJiraQuery")(
-    function* (task: ScheduledTask) {
+    function* (task: ScheduledTask, options?: { readonly fireCurrent?: boolean }) {
       const { schedule } = task;
       if (schedule.type !== "jira_query") return;
       const identity = yield* identities.forSite(schedule.site);
@@ -72,13 +72,14 @@ export const make = Effect.gen(function* () {
       yield* sources.observeJiraQuery({
         triggerId: task.id,
         start: schedule.start ?? "changes",
+        fireCurrent: options?.fireCurrent === true,
         query,
         issues: issues.slice(0, MAX_ISSUES),
         watchedFields: jiraQueryWatchedFields(schedule.filters ?? []),
         complete,
       });
     },
-    (effect, task) =>
+    (effect, task, _options?: { readonly fireCurrent?: boolean }) =>
       effect.pipe(
         Effect.mapError((error) =>
           isScheduledTaskError(error)
