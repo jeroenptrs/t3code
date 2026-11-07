@@ -317,6 +317,9 @@ export const ScheduledTaskId = makeEntityId("ScheduledTaskId");
 export const SecretRef = makeEntityId("SecretRef");
 export type SecretRef = typeof SecretRef.Type;
 export type ScheduledTaskId = typeof ScheduledTaskId.Type;
+/** `factory:<projectId>:<name>`, so the id follows from where the definition lives. */
+export const FactoryId = TrimmedNonEmptyString.pipe(Schema.brand("FactoryId"));
+export type FactoryId = typeof FactoryId.Type;
 export const ApprovalRequestId = makeEntityId("ApprovalRequestId");
 export type ApprovalRequestId = typeof ApprovalRequestId.Type;
 export const CheckpointRef = makeEntityId("CheckpointRef");
