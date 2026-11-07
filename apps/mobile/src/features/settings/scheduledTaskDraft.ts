@@ -2,6 +2,7 @@ import { isWebhookDedupeTemplate, scheduledTaskThreadMode } from "@t3tools/contr
 import type {
   FactoryId,
   ModelSelection,
+  TriggerFilter,
   TriggerFilterSourceKind,
   ServerConfig,
   ProjectId,
@@ -30,11 +31,14 @@ import {
 import {
   DEFAULT_TRIGGER_PROMPT,
   parseTriggerFilterDrafts,
+  splitEventTypeFilter,
+  triggerEventTypes,
   triageDraft,
   triggerFilterDrafts,
   triggerFilterDraftsChanged,
   type TriageDraft,
   type TriggerFilterDraft,
+  withEventTypeDrafts,
 } from "@t3tools/client-runtime/scheduled-task-trigger";
 import {
   resolveProjectSettings,
@@ -106,6 +110,9 @@ export type ScheduleDraft = {
   readonly savedFilters: ReadonlyArray<WebhookFilterDraft>;
   /** `event.` filter rows for the Jira, GitLab, and Slack modes. */
   readonly triggerFilters: ReadonlyArray<TriggerFilterDraft>;
+  /** The "Act on" picker, saved as an `event.type in` filter in front of `triggerFilters`. */
+  readonly eventTypes: ReadonlyArray<string>;
+  /** The rows the form opened with, the picker's filter included. */
   readonly savedTriggerFilters: ReadonlyArray<TriggerFilterDraft>;
   /** Jira query mode. Mobile edits JQL; a saved filter set on web is kept as it is. */
   readonly jiraSite: string;
@@ -135,6 +142,7 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   filters: [],
   savedFilters: [],
   triggerFilters: [],
+  eventTypes: [],
   savedTriggerFilters: [],
   jiraSite: "",
   jql: "",
@@ -145,6 +153,19 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   gitlabGroup: "",
   gitlabPollMinutes: String(DEFAULT_POLL_INTERVAL_MS / 60_000),
 };
+
+function triggerFilterDraft(
+  source: TriggerFilterSourceKind,
+  stored: ReadonlyArray<TriggerFilter> | undefined,
+): Pick<ScheduleDraft, "triggerFilters" | "eventTypes" | "savedTriggerFilters"> {
+  const { eventTypes, filters } = splitEventTypeFilter(source, stored ?? []);
+  const triggerFilters = triggerFilterDrafts(filters);
+  return {
+    triggerFilters,
+    eventTypes,
+    savedTriggerFilters: withEventTypeDrafts(source, eventTypes, triggerFilters),
+  };
+}
 
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
   switch (task.schedule.type) {
@@ -189,8 +210,7 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
       return {
         ...DEFAULT_SCHEDULE,
         mode: task.schedule.type,
-        triggerFilters: triggerFilterDrafts(task.schedule.filters),
-        savedTriggerFilters: triggerFilterDrafts(task.schedule.filters),
+        ...triggerFilterDraft(task.schedule.type, task.schedule.filters),
       };
     case "manual":
       return { ...DEFAULT_SCHEDULE, mode: "manual" };
@@ -198,8 +218,7 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
       return {
         ...DEFAULT_SCHEDULE,
         mode: "jira_query",
-        triggerFilters: triggerFilterDrafts(task.schedule.filters),
-        savedTriggerFilters: triggerFilterDrafts(task.schedule.filters),
+        ...triggerFilterDraft(task.schedule.type, task.schedule.filters),
         jiraSite: task.schedule.site,
         jql: task.schedule.jql ?? "",
         jiraFilterId: task.schedule.filterId ?? "",
@@ -209,8 +228,7 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
       return {
         ...DEFAULT_SCHEDULE,
         mode: "gitlab_projects",
-        triggerFilters: triggerFilterDrafts(task.schedule.filters),
-        savedTriggerFilters: triggerFilterDrafts(task.schedule.filters),
+        ...triggerFilterDraft(task.schedule.type, task.schedule.filters),
         gitlabHost: task.schedule.host,
         gitlabProjects: task.schedule.projects.join("\n"),
         gitlabGroup: task.schedule.group ?? "",
@@ -232,8 +250,13 @@ export function parseIntervalMinutes(value: string): number {
 export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
   if (draft.mode === "manual") return { type: "manual" };
   if (isTriggerFilterMode(draft.mode)) {
-    const parsed = parseTriggerFilterDrafts(draft.triggerFilters, draft.mode);
+    if (triggerEventTypes(draft.mode) !== null && draft.eventTypes.length === 0) return null;
+    const rows = withEventTypeDrafts(draft.mode, draft.eventTypes, draft.triggerFilters);
+    const parsed = parseTriggerFilterDrafts(rows, draft.mode);
     if (!("filters" in parsed)) return null;
+    const filters = triggerFilterDraftsChanged(draft.savedTriggerFilters, rows)
+      ? { filters: parsed.filters }
+      : {};
     if (draft.mode === "gitlab_projects") {
       const everyMs = parseJiraPollMinutes(draft.gitlabPollMinutes) * 60_000;
       const host = draft.gitlabHost.trim();
@@ -251,9 +274,7 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
         projects,
         ...(group ? { group } : {}),
         everyMs,
-        ...(triggerFilterDraftsChanged(draft.savedTriggerFilters, draft.triggerFilters)
-          ? { filters: parsed.filters }
-          : {}),
+        ...filters,
       };
     }
     if (draft.mode === "jira_query") {
@@ -267,17 +288,13 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
         site,
         ...(filterId ? { filterId } : { jql }),
         everyMs,
-        ...(triggerFilterDraftsChanged(draft.savedTriggerFilters, draft.triggerFilters)
-          ? { filters: parsed.filters }
-          : {}),
+        ...filters,
       };
     }
     return {
       type: draft.mode,
       // Like webhooks: unedited filters are left out so the server keeps the stored ones.
-      ...(triggerFilterDraftsChanged(draft.savedTriggerFilters, draft.triggerFilters)
-        ? { filters: parsed.filters }
-        : {}),
+      ...filters,
     };
   }
   if (draft.mode === "webhook") {
@@ -397,6 +414,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.threadMode,
     draft.factoryId,
     draft.schedule.triggerFilters.map(({ path, op, value }) => [path, op, value]),
+    draft.schedule.eventTypes,
     draft.schedule.jiraSite,
     draft.schedule.jql,
     draft.schedule.jiraPollMinutes,
@@ -422,10 +440,10 @@ export function switchScheduleMode(
   now: number,
 ): ScheduledTaskDraft {
   // Filter rows belong to one source, so switching sources starts over, or back at the saved rows.
-  const triggerFilters =
+  const filters =
     isTriggerFilterMode(mode) && draft.task?.schedule.type === mode
-      ? scheduleDraftForTask(draft.task).triggerFilters
-      : [];
+      ? scheduleDraftForTask(draft.task)
+      : { triggerFilters: [], eventTypes: triggerEventTypes(mode) ?? [] };
   return {
     ...draft,
     prompt:
@@ -441,7 +459,17 @@ export function switchScheduleMode(
         mode === "once" && !draft.schedule.runAt
           ? new Date(Math.ceil(now / 3_600_000) * 3_600_000).toISOString()
           : draft.schedule.runAt,
-      ...(isTriggerFilterMode(mode) ? { triggerFilters, savedTriggerFilters: triggerFilters } : {}),
+      ...(isTriggerFilterMode(mode)
+        ? {
+            triggerFilters: filters.triggerFilters,
+            eventTypes: filters.eventTypes,
+            savedTriggerFilters: withEventTypeDrafts(
+              mode,
+              filters.eventTypes,
+              filters.triggerFilters,
+            ),
+          }
+        : {}),
     },
   };
 }

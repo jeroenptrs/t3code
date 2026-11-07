@@ -5,7 +5,10 @@ import {
   type TriggerTemplate,
 } from "@t3tools/contracts";
 import { webhookFilterDrafts } from "@t3tools/client-runtime/scheduled-task-webhook";
-import { triggerFilterDrafts } from "@t3tools/client-runtime/scheduled-task-trigger";
+import {
+  splitEventTypeFilter,
+  triggerFilterDrafts,
+} from "@t3tools/client-runtime/scheduled-task-trigger";
 
 import { createDraft, DEFAULT_SCHEDULE, type ScheduledTaskDraft } from "./scheduledTaskDraft";
 
@@ -29,10 +32,14 @@ export function scheduledTaskDraftFromTemplate(
         ? { ...DEFAULT_SCHEDULE, mode: source, filters: webhookFilterDrafts(filled.filters) }
         : source === "manual"
           ? { ...DEFAULT_SCHEDULE, mode: source }
-          : {
-              ...DEFAULT_SCHEDULE,
-              mode: source,
-              triggerFilters: triggerFilterDrafts(filled.filters),
-            };
+          : (() => {
+              const picked = splitEventTypeFilter(source, filled.filters);
+              return {
+                ...DEFAULT_SCHEDULE,
+                mode: source,
+                triggerFilters: triggerFilterDrafts(picked.filters),
+                eventTypes: picked.eventTypes,
+              };
+            })();
   return { draft: { ...base, title: template.title, prompt: filled.prompt, schedule } };
 }
