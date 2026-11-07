@@ -293,18 +293,18 @@ const SETTINGS_SCREENS = {
     screen: SettingsScheduledTasksRouteScreen,
     linking: "settings/scheduled-tasks",
     options: {
-      ...settingsPage("Scheduled tasks"),
+      ...settingsPage("Triggers"),
       headerTitleStyle: { fontSize: 16, fontWeight: "800" },
     },
   }),
   SettingsScheduledTaskNew: createNativeStackScreen({
     screen: SettingsScheduledTaskNewRouteScreen,
     linking: "settings/scheduled-tasks/new",
-    options: settingsPage("New scheduled task"),
+    options: settingsPage("New trigger"),
   }),
   SettingsScheduledTaskEdit: createNativeStackScreen({
     screen: SettingsScheduledTaskEditRouteScreen,
-    options: settingsPage("Edit scheduled task"),
+    options: settingsPage("Edit trigger"),
   }),
   SettingsScheduledTaskBranch: createNativeStackScreen({
     screen: ScheduledTaskBranchPickerRouteScreen,

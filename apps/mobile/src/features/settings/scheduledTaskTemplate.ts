@@ -7,14 +7,7 @@ import {
 import { webhookFilterDrafts } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { triggerFilterDrafts } from "@t3tools/client-runtime/scheduled-task-trigger";
 
-import { TRIGGER_SCHEDULE_LABELS } from "./scheduledTaskPresentation";
 import { createDraft, DEFAULT_SCHEDULE, type ScheduledTaskDraft } from "./scheduledTaskDraft";
-
-export const TRIGGER_TEMPLATE_SOURCE_LABELS = {
-  ...TRIGGER_SCHEDULE_LABELS,
-  schedule: "Schedule",
-  webhook: "On webhook",
-} as const satisfies Record<TriggerTemplate["source"], string>;
 
 /** A new-task draft from a template, or an error naming the placeholders still unfilled. */
 export function scheduledTaskDraftFromTemplate(

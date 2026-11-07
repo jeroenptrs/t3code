@@ -51,6 +51,7 @@ const SETTINGS_SEARCH_TERMS = {
     "bluetooth",
   ],
   SettingsScheduledTasks: [
+    "scheduled tasks",
     "automations",
     "schedule",
     "cron",

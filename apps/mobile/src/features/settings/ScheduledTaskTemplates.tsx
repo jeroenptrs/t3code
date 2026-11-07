@@ -23,10 +23,8 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { startScheduledTaskEditor } from "./scheduled-task-editor-state";
 import { scheduledTaskDefaultModel } from "./scheduledTaskDraft";
-import {
-  scheduledTaskDraftFromTemplate,
-  TRIGGER_TEMPLATE_SOURCE_LABELS,
-} from "./scheduledTaskTemplate";
+import { TRIGGER_SOURCE_LABELS } from "./scheduledTaskPresentation";
+import { scheduledTaskDraftFromTemplate } from "./scheduledTaskTemplate";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
 type TemplateRouteParams = {
@@ -190,8 +188,7 @@ function ProjectTemplates({
               {template.title}
             </Text>
             <Text className="text-sm text-foreground-muted" numberOfLines={1}>
-              {TRIGGER_TEMPLATE_SOURCE_LABELS[template.source]} ·{" "}
-              {filterCountLabel(template.filters.length)}
+              {TRIGGER_SOURCE_LABELS[template.source]} · {filterCountLabel(template.filters.length)}
             </Text>
           </Pressable>
         ))
@@ -265,7 +262,7 @@ function TemplateValuesForm({
     <>
       <SettingsSection
         title="Values"
-        footer={canCreate ? undefined : "This session can't create scheduled tasks."}
+        footer={canCreate ? undefined : "This session can't create triggers."}
       >
         {template.placeholders.map((placeholder, index) => (
           <View
