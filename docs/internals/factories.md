@@ -100,6 +100,11 @@ the item's log.
 - The Foreman is one thread per factory with a `factory-foreman:` id. Its
   `fork_factory_threads` row lands before the launch, so its first provider
   session gets the role. An archived or deleted one is replaced next time.
+- A work item a trigger creates has a `trigger` source with the trigger's
+  title and the event. The Foreman's message names the trigger and its source,
+  then the source text: the event's fields as `label: value` lines, each value
+  framed as untrusted data by `renderTriggerPrompt`, as a thread run's prompt
+  is. A webhook's text is its filled-in prompt, framed the same way.
 - Each item is a `freshContext` queue send, and that send's run is the item's
   `foreman_run_id`. A `delegate_task` child joins the item whose fresh run last
   preceded its parent's run.

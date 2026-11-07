@@ -76,40 +76,33 @@ to override its environment defaults. Worktree directories keep their original n
 If generation fails, or a custom name is invalid or already taken, the temporary
 branch name remains.
 
-## Scheduled tasks on mobile
+## Triggers
 
-Open **Settings → Scheduled tasks** to create scheduled tasks or manage existing
-ones across your connected environments. Use the settings filter to narrow the
-list by environment or project. Each task runs on the environment you choose,
-using its project, model, and workspace settings. A new fixed-time schedule uses
-your phone's time zone. To pick a different zone, edit the task in the web or
-desktop app. Tasks saved without a zone follow the environment's time zone.
-Choose **Once** to run a task a single time at a date and time in your own time
-zone. If the environment is offline then, the task runs when it is back.
+A trigger starts work when something happens. It has a source, optional
+filters, and a destination. Open **Settings → Triggers** to create triggers or
+manage existing ones across your connected environments. Use the settings
+filter to narrow the list by environment or project. Each trigger runs on the
+environment you choose, using its project, model, and workspace settings.
 
-Under **Destination**, choose where runs go. **New thread each run** keeps every
-run separate. The two one-thread choices start a thread on the first run and post
-later runs there: one continues the same conversation, the other starts each run
-in a fresh session that doesn't see earlier runs, so the thread stays readable
-without the agent's context growing. To move a one-thread task, pick another
-thread in its project under **Destination**. Moving such a task to another
-project starts a new thread there on its next run.
+You can edit, pause, resume, run immediately, or delete a trigger from the
+list. A trigger whose source is an event, such as a webhook or a Jira change,
+runs only when its event arrives, so it can't be run immediately. Leaving an
+edited form asks before discarding unsaved changes.
 
-Deleting a thread also deletes tasks that post into that thread. Tasks that start
-a new thread on each run survive deletion of their previous threads.
+### Schedule
 
-You can edit, pause, resume, run immediately, or delete a task from the list.
-Webhook tasks only run when their URL is called, so they can't be run
-immediately.
-Leaving an edited form asks before discarding unsaved changes.
+A schedule runs the trigger at a time of day, once, or every interval. Choose
+**Once** to run a trigger a single time at a date and time in your own time
+zone. If the environment is offline then, the trigger runs when it is back.
+Triggers saved without a zone follow the environment's time zone.
 
-## Webhook automations
+### Webhook
 
-In **Settings → Scheduled tasks**, choose **On webhook** as a task's schedule to run it whenever another service
+Choose **Webhook** as the source to run a trigger whenever another service
 calls its URL, such as GitHub on a new pull request or a CI job that failed.
-After you save the task, copy its URL from the editor. If the environment uses a
-[T3 Connect](remote-access.md) managed tunnel, the URL is public. Without one, a
-server deployed with a public URL (`T3CODE_PUBLIC_URL`, see
+After you save the trigger, copy its URL from the editor. If the environment
+uses a [T3 Connect](remote-access.md) managed tunnel, the URL is public. Without
+one, a server deployed with a public URL (`T3CODE_PUBLIC_URL`, see
 [the portal deployment](slack-conversation-portal-deployment.md)) builds the URL
 on that address. Otherwise it works anywhere the environment itself is
 reachable. **Rotate** replaces the URL and the old one stops working.
@@ -140,15 +133,15 @@ one on.
 
 To run only for some requests, add **Filters**. Each one tests a value named
 like a placeholder, without the braces, such as `headers.x-github-event` equals
-`pull_request` or `body.action` is one of `opened, reopened`. A task runs only
-when every filter matches; other requests are answered normally, logged as
+`pull_request` or `body.action` is one of `opened, reopened`. A trigger runs
+only when every filter matches; other requests are answered normally, logged as
 **Filtered** with the first filter that failed, and start nothing. Values
 compare as text, and a value that is an object or a list only passes
 **exists**. Separate **is one of** values with commas; a value can't contain
 a comma or start or end with a space.
 
 To suppress repeated deliveries, set a **Duplicate request key** template, such as
-`{{headers.delivery-id}}`. The same key is ignored for seven days per task.
+`{{headers.delivery-id}}`. The same key is ignored for seven days per trigger.
 To combine a burst, set a **Coalesce key**, such as `{{body.id}}`, and a window
 of 10–3600 seconds (120 by default). One run uses the latest body, headers,
 and query when the window from the first delivery closes; later requests
@@ -156,12 +149,12 @@ do not extend it. Pending windows survive a server restart. Keys must contain
 request placeholders; if any placeholder is missing, or the render is empty,
 that key's rule is skipped. Clear the templates to turn dedupe off.
 
-Duplicate and coalesced log entries share a limit of 10 per task per minute.
+Duplicate and coalesced log entries share a limit of 10 per trigger per minute.
 Additional deliveries are accepted without a log entry, and coalesced deliveries
 always replace the persisted payload. Coalesced updates count toward a separate
 60-per-minute validation limit; exceeding it receives HTTP 429.
 
-On desktop and web, pick **Deliveries** from a task's menu to see recent
+On desktop and web, pick **Deliveries** from a trigger's menu to see recent
 requests and the prompt each one produced.
 
 If the environment is offline, the sender gets an error and nothing runs;
@@ -171,38 +164,21 @@ offline** in **Settings → Sharing & access**. T3 Connect then stores requests 
 T3 Connect URL for up to 24 hours and delivers them when the environment
 returns. Leave it off if you don't want request bodies stored outside your
 machine. To skip requests that waited too long, set **Skip requests older
-than** on the task.
+than** on the trigger.
 
-## Event triggers
+### Jira change and GitLab change
 
-In **Settings → Scheduled tasks**, four more schedules start a task without a
-clock or a URL:
+**Jira** runs when a Jira issue changes status, labels, or assignee. **GitLab**
+runs when a GitLab merge request opens, changes, merges, or closes, or when its
+pipeline fails or passes.
 
-- **On Jira change** runs when a Jira issue changes status, labels, or assignee.
-- **On GitLab change** runs when a GitLab merge request opens, changes, merges,
-  or closes, or when its pipeline fails or passes.
-- **On Slack message** runs when the [Slack integration](integrations/slack.md)
-  passes a message to the environment.
-- **Manual** never runs on its own. It runs when you choose **Run now** or an
-  agent starts it.
-
-Jira and GitLab events come from the issues and merge requests T3 Code already
-keeps up to date for linked threads, so a change shows up within a few minutes.
-An issue or merge request that no thread links raises no events. For those, use
-a [webhook](#webhook-automations) instead. The first time T3 Code sees an issue,
-it only records it. A merge request that is already open the first time counts
-as opened. Like webhook tasks, event tasks run only when their event arrives,
-so **Run now** is not offered for them.
-
-To run only for some events, add **Filters**. Each filter picks a field the
-source sends, such as **Status** or **Labels**, a test, and a value. For
-example, **Event type** equals `issue.status_changed` and **Status** equals
-`In Progress` together run the task when an issue moves into In Progress. A task
-runs only when every filter matches. Values compare as text. A list field, such
-as **Labels** or **Added labels**, passes when any item matches. For a list,
-**does not equal** passes only when no item equals the value, and **exists**
-passes only when the list has an item. A field with no value, such as
-**Assignee** on an unassigned issue, fails every test, **exists** included. Separate **is one of** values with commas.
+These events come from the issues and merge requests T3 Code already keeps up
+to date for linked threads, so a change shows up within a few minutes. An issue
+or merge request that no thread links raises no events. For those, use a
+[Jira query](#jira-query), [GitLab projects](#gitlab-projects), or a
+[webhook](#webhook) source instead. The first time T3 Code sees an issue, it
+only records it. A merge request that is already open the first time counts as
+opened.
 
 The event types are:
 
@@ -211,13 +187,123 @@ The event types are:
 - GitLab: `merge_request.opened`, `merge_request.updated`,
   `merge_request.merged`, `merge_request.closed`, `pipeline.failed`, and
   `pipeline.passed`.
-- Slack: `message`.
+
+### Jira query
+
+**Jira query** watches the issues a JQL query or a saved Jira filter returns,
+whether or not a thread links them. Pick the site, enter the JQL or pick a
+saved filter, and set how often to check: every 15 minutes by default, and at
+most every 5 minutes.
+
+T3 Code checks the query as the Jira identity configured for T3 Code on that
+site, never as a person's own Jira account. The JQL or the saved filter must be
+visible to that identity. A saved filter's current JQL applies on every check,
+so editing the filter in Jira changes what the trigger watches.
+
+When you save a trigger, turn it back on, or change its site or query, it
+checks at once and only records the issues it finds. Events come from the
+next check on. A check reads up to 500 issues. If a check fails, the trigger
+shows the error, and it tries again at the next interval.
+
+The event types are:
+
+- `issue.entered` when an issue starts matching the query, and `issue.left`
+  when it stops matching.
+- `issue.status_changed`, `issue.labels_changed`, and `issue.assignee_changed`.
+- `issue.updated` when the priority, issue type, or summary changes, for each
+  of those that a filter names.
+
+Events carry the same fields as a Jira change, plus **Changed fields**, the
+watched fields that changed, and **Query**, the JQL or the saved filter's name.
+
+### GitLab projects
+
+**GitLab projects** watches the merge requests and pipelines of project paths,
+a group, or both on one GitLab host, whether or not a thread links them. Set
+the interval the same way as for a Jira query.
+
+T3 Code checks as the `glab` login on the environment for that host. If
+`glab` has no login for the host, the trigger shows an error until you sign
+in.
+
+The first check raises `merge_request.opened` for each open merge request it
+finds and no pipeline events. Later checks raise:
+
+- `merge_request.opened`, `merge_request.updated`, `merge_request.merged`, and
+  `merge_request.closed`.
+- `pipeline.finished` when a pipeline finishes, with **Pipeline status**,
+  **Pipeline URL**, and **Pipeline ref**.
+
+Changing the projects or the group records the new set without raising
+events. If you can add a webhook to the GitLab project, a
+[webhook](#webhook) source reacts sooner than a check every few minutes.
+
+### Slack
+
+**Slack** runs when the [Slack integration](integrations/slack.md) passes a
+message to the environment. Its event type is `message`.
+
+### Manual
+
+**Manual** never runs on its own. It runs when you choose **Run now** or an
+agent starts it.
+
+### Filters
+
+To run only for some events, add **Filters**. Each filter picks a field the
+source sends, such as **Status** or **Labels**, a test, and a value. For
+example, **Event type** equals `issue.status_changed` and **Status** equals
+`In Progress` together run the trigger when an issue moves into In Progress. A
+trigger runs only when every filter matches. Values compare as text. A list
+field, such as **Labels** or **Added labels**, passes when any item matches.
+For a list, **does not equal** passes only when no item equals the value, and
+**exists** passes only when the list has an item. A field with no value, such
+as **Assignee** on an unassigned issue, fails every test, **exists** included.
+Separate **is one of** values with commas. Webhook filters test request values
+instead, as described under [Webhook](#webhook).
 
 In the prompt, `{{event.<field>}}` inserts one field, such as `{{event.key}}`
 or `{{event.summary}}`, and `{{event}}` inserts every field. Choosing a source
-on a task with an empty prompt fills in a starting prompt for it. Event values
-reach the agent wrapped and marked as untrusted data, the same way as webhook
-values.
+on a trigger with an empty prompt fills in a starting prompt for it. Event
+values reach the agent wrapped and marked as untrusted data, the same way as
+webhook values.
+
+### Destination
+
+Under **Destination**, choose where runs go. **New thread each run** keeps every
+run separate. The two one-thread choices start a thread on the first run and post
+later runs there: one continues the same conversation, the other starts each run
+in a fresh session that doesn't see earlier runs, so the thread stays readable
+without the agent's context growing. To move a one-thread trigger, pick another
+thread in its project under **Destination**. Moving such a trigger to another
+project starts a new thread there on its next run.
+
+Deleting a thread also deletes triggers that post into that thread. Triggers
+that start a new thread on each run survive deletion of their previous threads.
+
+**Work item in factory** creates a work item in one of the project's
+[factories](factories.md) for each run instead of running the prompt. The
+factory's Foreman routes it like any other work item. A Jira, GitLab, or Slack
+event puts its fields on the work item. A webhook puts its filled-in prompt
+there, and a schedule or a manual run puts the trigger's prompt there. Event
+values reach the Foreman wrapped and marked as untrusted data, the same way as
+placeholders in a prompt.
+
+On a factory's page, **Add trigger** opens the trigger form with that factory
+as the destination and attaches the new trigger to the factory. Deleting a
+factory removes its definition and its work items, and keeps its triggers. A
+trigger that still targets the deleted factory shows an error on its next run.
+
+### Triggers on mobile
+
+Mobile edits the same triggers, with these differences:
+
+- A new fixed-time schedule uses your phone's time zone. To pick a different
+  zone, edit the trigger in the web or desktop app.
+- A webhook keeps an existing signature check, but you can't turn one on.
+- A Jira query takes JQL. A saved filter picked on web or desktop shows and is
+  kept, but you can't pick one.
+- **Destination** offers the same choices, **Work item in factory** included.
 
 ### Trigger templates
 
@@ -226,15 +312,15 @@ placeholders such as `{{status}}` that you fill in when you use it. Each
 template is a file in the project at `.t3/triggers/<name>.md`, so you can commit
 it and share it with everyone who works in the repository.
 
-Templates appear under **Trigger templates** below the task list. Pick a
+Templates appear under **Trigger templates** below the trigger list. Pick a
 project to see its templates. Operators can see and use templates. Only
 administrators can create, edit, or delete them.
 
 To use a template, choose **Use**. Fill in its values and choose **Create
-task**. A value with a default starts filled in, and a value without one is
-required. The task editor then opens with the template's schedule, filters,
-prompt, and project. Review the task and save it. Changing a template later
-doesn't change tasks made from it.
+trigger**. A value with a default starts filled in, and a value without one is
+required. The trigger editor then opens with the template's source, filters,
+prompt, and project. Review the trigger and save it. Changing a template later
+doesn't change triggers made from it.
 
 ## Defaults and inheritance
 
