@@ -173,7 +173,7 @@ const ScheduledTaskWebhookFilters = Schema.Array(ScheduledTaskWebhookFilter)
     description: "All must match. Max 16. Omitted: keep stored. [] clears.",
   });
 
-const ScheduledTaskWebhookSchedule = Schema.Struct({
+export const ScheduledTaskWebhookSchedule = Schema.Struct({
   type: Schema.Literal("webhook"),
   signature: Schema.NullOr(ScheduledTaskWebhookSignature),
   maxDeliveryAgeMinutes: Schema.optional(Schema.NullOr(WebhookMaxDeliveryAgeMinutes)),
@@ -183,7 +183,7 @@ const ScheduledTaskWebhookSchedule = Schema.Struct({
   description: "Run on each webhook request.",
 });
 
-const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
+export const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
   type: Schema.Literal("webhook"),
   signature: Schema.optional(
     Schema.NullOr(
@@ -272,8 +272,8 @@ export const ScheduledTaskSchedule = Schema.Union([
 ]);
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
-/** The kinds an agent sets over MCP. Event sources are set up in Settings, with their filters. */
-export const ScheduledTaskUpsertAgentSchedule = Schema.Union([
+/** The clock-driven schedules a save accepts: intervals of at least a minute. */
+export const ScheduledTaskUpsertTimeSchedule = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("interval"),
     everyMs: ScheduledTaskIntervalMs.check(
@@ -284,6 +284,11 @@ export const ScheduledTaskUpsertAgentSchedule = Schema.Union([
   }),
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskOnceSchedule,
+]);
+
+/** The kinds an agent sets over MCP. Event sources are set up in Settings, with their filters. */
+export const ScheduledTaskUpsertAgentSchedule = Schema.Union([
+  ...ScheduledTaskUpsertTimeSchedule.members,
   ScheduledTaskUpsertWebhookSchedule,
 ]);
 export type ScheduledTaskUpsertAgentSchedule = typeof ScheduledTaskUpsertAgentSchedule.Type;
