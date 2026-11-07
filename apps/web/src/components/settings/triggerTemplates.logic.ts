@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import {
   parseTriggerFilterDrafts,
+  splitEventTypeFilter,
   triggerFilterDrafts,
   type TriggerFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-trigger";
@@ -138,6 +139,11 @@ export function templateFromDraft(
   };
 }
 
+function triggerFilterPrefill(source: string, filters: ReadonlyArray<TriggerTemplateFilter>) {
+  const picked = splitEventTypeFilter(source, filters);
+  return { triggerFilters: triggerFilterDrafts(picked.filters), eventTypes: picked.eventTypes };
+}
+
 /** The new task fields a filled-in template sets. */
 export function taskPrefillFromTemplate(
   template: Pick<TriggerTemplate, "title" | "source">,
@@ -151,8 +157,6 @@ export function taskPrefillFromTemplate(
     projectId,
     scheduleMode: source === "schedule" ? "fixed" : source,
     ...(source === "webhook" ? { filters: webhookFilterDrafts(filled.filters) } : {}),
-    ...(isTriggerFilterSource(source)
-      ? { triggerFilters: triggerFilterDrafts(filled.filters) }
-      : {}),
+    ...(isTriggerFilterSource(source) ? triggerFilterPrefill(source, filled.filters) : {}),
   };
 }
