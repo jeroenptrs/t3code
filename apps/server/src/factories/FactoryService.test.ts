@@ -66,6 +66,7 @@ const provider: ServerProvider = {
 const project = (id: string, title: string, workspaceRoot: string): ProjectStore.ProjectRow => ({
   projectId: ProjectId.make(id),
   title,
+  hasCustomTitle: false,
   workspaceRoot,
   defaultModelSelection: null,
   defaultThreadEnvMode: null,
@@ -517,6 +518,12 @@ describe("FactoryService", () => {
                   },
                 }),
                 shell("t-mine", { status: "failed" }),
+                // Settled, so its failed run is done with and does not count.
+                shell("t-child", {
+                  status: "failed",
+                  settledOverride: "settled",
+                  settledAt: NOW,
+                }),
               ],
             }),
           ),
@@ -685,6 +692,7 @@ const layerRecordedLaunch = (recorded: Recorded) =>
             return { threadId, projection, resumed: false };
           }).pipe(Effect.orDie),
         checkWorktreeBase: () => Effect.die("unused"),
+        isNonGitProject: () => Effect.succeed(false),
         retryPreparation: () => Effect.die("unused"),
         prepareRun: () => Effect.die("unused"),
       });
