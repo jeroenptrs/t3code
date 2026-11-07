@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 
 import { AuthUserId } from "./authUser.ts";
 import {
+  FactoryId,
   IsoDateTime,
   NonNegativeInt,
   ProjectId,
@@ -17,6 +18,7 @@ import {
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
+import { TriggerEvent } from "./trigger.ts";
 
 const FACTORY_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const FACTORY_ID_PREFIX = "factory:";
@@ -27,10 +29,6 @@ export const FactoryName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(64),
 );
 export type FactoryName = typeof FactoryName.Type;
-
-/** `factory:<projectId>:<name>`, so the id follows from where the definition lives. */
-export const FactoryId = TrimmedNonEmptyString.pipe(Schema.brand("FactoryId"));
-export type FactoryId = typeof FactoryId.Type;
 
 export const makeFactoryId = (projectId: ProjectId, name: FactoryName): FactoryId =>
   FactoryId.make(`${FACTORY_ID_PREFIX}${projectId}:${name}`);
@@ -428,11 +426,16 @@ export type WorkItemGateDecision = typeof WorkItemGateDecision.Type;
 export const WorkItemOutcome = Schema.Literals(["done", "failed", "dropped", "active"]);
 export type WorkItemOutcome = typeof WorkItemOutcome.Type;
 
-const WorkItemText = Schema.String.check(Schema.isMaxLength(65_536));
+export const WORK_ITEM_TEXT_MAX_LENGTH = 65_536;
+const WorkItemText = Schema.String.check(Schema.isMaxLength(WORK_ITEM_TEXT_MAX_LENGTH));
 const WorkItemNote = Schema.String.check(Schema.isMaxLength(16_384));
-const WorkItemTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(200));
+export const WORK_ITEM_TITLE_MAX_LENGTH = 200;
+const WorkItemTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(WORK_ITEM_TITLE_MAX_LENGTH));
 
-/** `text` is the request. A scheduled task source is reserved for triggers and not created yet. */
+/**
+ * `text` is the request. A trigger source names the trigger, its title then, and the event; its
+ * text is the event's fields, or a webhook's filled-in prompt. `scheduled_task` is not created.
+ */
 export const WorkItemSource = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("manual"), text: WorkItemText }),
   Schema.Struct({
@@ -441,8 +444,18 @@ export const WorkItemSource = Schema.Union([
     deliveryId: Schema.NullOr(TrimmedNonEmptyString),
     text: WorkItemText,
   }),
+  Schema.Struct({
+    kind: Schema.Literal("trigger"),
+    triggerId: ScheduledTaskId,
+    title: TrimmedNonEmptyString,
+    event: TriggerEvent,
+    /** The webhook delivery that started it; its event is a manual one. */
+    deliveryId: Schema.optionalKey(TrimmedNonEmptyString),
+    text: WorkItemText,
+  }),
 ]);
 export type WorkItemSource = typeof WorkItemSource.Type;
+export type WorkItemTriggerSource = Extract<WorkItemSource, { readonly kind: "trigger" }>;
 
 export const WorkItemGate = Schema.Union([
   Schema.Struct({ state: Schema.Literal("none") }),
