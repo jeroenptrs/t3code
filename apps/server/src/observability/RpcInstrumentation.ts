@@ -132,6 +132,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.triggersSetEnabled]: "scheduledTasks",
   [WS_METHODS.triggersDelete]: "scheduledTasks",
   [WS_METHODS.triggersRunNow]: "scheduledTasks",
+  [WS_METHODS.triggersFireCurrent]: "scheduledTasks",
   [WS_METHODS.secretsAnswerRequest]: "secrets",
   [WS_METHODS.agentFeedbackAnswerRequest]: "agentFeedback",
   [WS_METHODS.guestShareCreate]: "guest-share",

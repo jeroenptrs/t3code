@@ -2583,6 +2583,11 @@ export const layerWsRpc = (
             Effect.andThen(scheduledTasks.runNow(input)),
             Effect.map(({ task }) => ({ trigger: scheduledTaskTrigger(task) })),
           ),
+        [WS_METHODS.triggersFireCurrent]: (input) =>
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(scheduledTasks.fireCurrent(input)),
+            Effect.map(({ task }) => ({ trigger: scheduledTaskTrigger(task) })),
+          ),
         [WS_METHODS.serverProbe]: (_input) =>
           Effect.map(DateTime.now, (now) => ({ serverTime: DateTime.formatIso(now) })),
         [WS_METHODS.serverGetConfig]: (_input) =>
