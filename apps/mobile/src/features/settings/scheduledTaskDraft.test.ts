@@ -211,6 +211,30 @@ describe("scheduleFromDraft", () => {
     });
   });
 
+  it("round-trips a Jira query, keeps a saved filter set on web, and refuses short intervals", () => {
+    const jql = scheduleDraftForTask({
+      schedule: { type: "jira_query", site: "acme.atlassian.net", jql: "x", everyMs: 900_000 },
+    });
+    expect(jql).toMatchObject({ mode: "jira_query", jiraPollMinutes: "15" });
+    expect(scheduleFromDraft({ ...jql, jql: " labels = agent " })).toEqual({
+      type: "jira_query",
+      site: "acme.atlassian.net",
+      jql: "labels = agent",
+      everyMs: 900_000,
+    });
+    expect(scheduleFromDraft({ ...jql, jiraPollMinutes: "4" })).toBeNull();
+    expect(scheduleFromDraft({ ...jql, jiraPollMinutes: "5.5" })).toBeNull();
+    const saved = scheduleDraftForTask({
+      schedule: { type: "jira_query", site: "acme.atlassian.net", filterId: "7", everyMs: 300_000 },
+    });
+    expect(scheduleFromDraft(saved)).toEqual({
+      type: "jira_query",
+      site: "acme.atlassian.net",
+      filterId: "7",
+      everyMs: 300_000,
+    });
+  });
+
   it.each(["0,5", "2,5,0", "Infinity", "150119987580", ""])(
     "rejects invalid interval minutes: %s",
     (intervalMinutes) => {
