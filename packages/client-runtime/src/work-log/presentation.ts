@@ -258,14 +258,14 @@ function resolveT3McpToolPresentation(
     jiraTarget !== null
       ? `${fallbackVerb} ${jiraTarget}`
       : sentence === undefined
-      ? `${fallbackVerb} ${pullRequestNumber === null ? detail : `${shortLabel} #${pullRequestNumber}`}`
-      : pullRequestNumber !== null && sentence.changeRequest !== undefined
-        ? resolve(sentence.changeRequest, {
-            status: statusKey,
-            changeRequest: shortLabel,
-            number: String(pullRequestNumber),
-          })
-        : resolve(sentence.detail, { status: statusKey });
+        ? `${fallbackVerb} ${pullRequestNumber === null ? detail : `${shortLabel} #${pullRequestNumber}`}`
+        : pullRequestNumber !== null && sentence.changeRequest !== undefined
+          ? resolve(sentence.changeRequest, {
+              status: statusKey,
+              changeRequest: shortLabel,
+              number: String(pullRequestNumber),
+            })
+          : resolve(sentence.detail, { status: statusKey });
   return {
     displayName,
     icon: definition.icon,
@@ -740,6 +740,7 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "project-delete":
     case "project-clone":
     case "factory-save":
+    case "factory-delete":
     case "work-item-create":
     case "work-item-advance":
     case "work-item-gate":
