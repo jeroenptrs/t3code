@@ -275,9 +275,14 @@ describe("Jira query triggers", () => {
         host: "gitlab.acme.dev",
         projects: ["acme/app", "acme/api"],
         everyMs: 900_000,
+        start: "current",
       },
     });
-    expect(draft).toMatchObject({ gitlabProjects: "acme/app\nacme/api", gitlabPollMinutes: "15" });
+    expect(draft).toMatchObject({
+      gitlabProjects: "acme/app\nacme/api",
+      gitlabPollMinutes: "15",
+      pollStart: "current",
+    });
     expect(
       scheduleFromDraft({ ...draft, gitlabProjects: " acme/app \n\n", gitlabGroup: "acme" }),
     ).toEqual({
@@ -286,7 +291,9 @@ describe("Jira query triggers", () => {
       projects: ["acme/app"],
       group: "acme",
       everyMs: 900_000,
+      start: "current",
     });
+    expect(scheduleFromDraft({ ...draft, pollStart: "changes" })).not.toHaveProperty("start");
     expect(scheduleFromDraft({ ...draft, gitlabProjects: "" })).toBeNull();
     expect(scheduleFromDraft({ ...draft, gitlabPollMinutes: "4" })).toBeNull();
   });
