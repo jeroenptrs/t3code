@@ -249,6 +249,9 @@ only. Changing the query, the projects, or the group later records the new set
 without raising events either way. GitLab projects triggers created before this
 choice existed act on everything they find.
 
+**Fire current set** in a trigger's menu checks at once and raises those events
+for everything the trigger matches now, including items it has already seen.
+
 ### Slack
 
 **Slack** runs when the [Slack integration](integrations/slack.md) passes a

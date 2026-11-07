@@ -588,44 +588,44 @@ const polledSchedules = [
 it.effect.each(polledSchedules)(
   "a saved $schedule.type trigger polls at the next tick, then instead of its prompt, one interval apart",
   ({ schedule, rescoped }) =>
-  Effect.gen(function* () {
-    yield* TestClock.setTime(Date.parse("2026-11-05T10:00:00.000Z"));
-    const polls = yield* Queue.unbounded<string>();
-    const launches = yield* Ref.make(0);
-    const failing = yield* Ref.make(true);
-    const layerDependencies = Layer.mergeAll(
-      NodeCrypto.layer,
-      Scheduler.layer,
-      ManagedPolicy.layerTest(),
-      Layer.succeed(ScheduledTaskPoller.ScheduledTaskPoller, {
-        poll: (task) =>
-          Queue.offer(polls, task.id).pipe(
-            Effect.andThen(Ref.get(failing)),
-            Effect.flatMap((fail) =>
-              fail
-                ? Effect.fail(
-                    new ScheduledTaskError({
-                      message: "Field 'sprintt' does not exist or you do not have permission.",
-                      taskId: task.id,
-                    }),
-                  )
-                : Effect.void,
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-11-05T10:00:00.000Z"));
+      const polls = yield* Queue.unbounded<string>();
+      const launches = yield* Ref.make(0);
+      const failing = yield* Ref.make(true);
+      const layerDependencies = Layer.mergeAll(
+        NodeCrypto.layer,
+        Scheduler.layer,
+        ManagedPolicy.layerTest(),
+        Layer.succeed(ScheduledTaskPoller.ScheduledTaskPoller, {
+          poll: (task) =>
+            Queue.offer(polls, task.id).pipe(
+              Effect.andThen(Ref.get(failing)),
+              Effect.flatMap((fail) =>
+                fail
+                  ? Effect.fail(
+                      new ScheduledTaskError({
+                        message: "Field 'sprintt' does not exist or you do not have permission.",
+                        taskId: task.id,
+                      }),
+                    )
+                  : Effect.void,
+              ),
             ),
-          ),
-      }),
-      Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-        launch: () =>
-          Ref.update(launches, (n) => n + 1).pipe(Effect.andThen(Effect.die("launched"))),
-      }),
-      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-        namedProjectsRoot: "/projects",
-        isScratchProject: () => Effect.succeed(false),
-      }),
-      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
-      Layer.mock(SecretRequests.SecretRequests)({}),
-    );
-    yield* Effect.gen(function* () {
-      const service = yield* ScheduledTaskService.ScheduledTaskService;
+        }),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+          launch: () =>
+            Ref.update(launches, (n) => n + 1).pipe(Effect.andThen(Effect.die("launched"))),
+        }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: () => Effect.succeed(false),
+        }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
         const input = yield* decodeUpsertInput({
           title: "Agent-labelled issues",
           prompt: "Pick up {{event.key}}",
@@ -642,25 +642,25 @@ it.effect.each(polledSchedules)(
         const created = yield* service.upsert(input);
         // A new query is due now, so the scheduler's next 5-second tick seeds it.
         expect(created.task.nextRunAt).toBe("2026-11-05T10:00:05.000Z");
-      const settled = (status: string) =>
-        service.subscribeList().pipe(
-          Stream.map((result) => result.tasks[0]),
-          Stream.filter((task) => task?.lastRunStatus === status),
-          Stream.runHead,
-          Effect.map(Option.getOrUndefined),
-          Effect.forkScoped({ startImmediately: true }),
-        );
+        const settled = (status: string) =>
+          service.subscribeList().pipe(
+            Stream.map((result) => result.tasks[0]),
+            Stream.filter((task) => task?.lastRunStatus === status),
+            Stream.runHead,
+            Effect.map(Option.getOrUndefined),
+            Effect.forkScoped({ startImmediately: true }),
+          );
 
-      const failed = yield* settled("failed");
+        const failed = yield* settled("failed");
         yield* TestClock.adjust("5 seconds");
-      expect(yield* Queue.take(polls)).toBe(created.task.id);
-      expect(yield* Fiber.join(failed)).toMatchObject({
-        lastRunStatus: "failed",
-        lastRunError: "Field 'sprintt' does not exist or you do not have permission.",
+        expect(yield* Queue.take(polls)).toBe(created.task.id);
+        expect(yield* Fiber.join(failed)).toMatchObject({
+          lastRunStatus: "failed",
+          lastRunError: "Field 'sprintt' does not exist or you do not have permission.",
           nextRunAt: "2026-11-05T10:15:10.000Z",
-        lastRunAt: null,
-        runCount: 0,
-      });
+          lastRunAt: null,
+          runCount: 0,
+        });
 
         // An edit that leaves the query alone keeps the next poll.
         const edited = yield* service.upsert({
@@ -670,17 +670,17 @@ it.effect.each(polledSchedules)(
         });
         expect(edited.task.nextRunAt).toBe("2026-11-05T10:15:10.000Z");
 
-      yield* Ref.set(failing, false);
-      const cleared = yield* settled("never");
-      yield* TestClock.adjust("15 minutes");
-      expect(yield* Queue.take(polls)).toBe(created.task.id);
-      expect(yield* Fiber.join(cleared)).toMatchObject({
-        lastRunError: null,
+        yield* Ref.set(failing, false);
+        const cleared = yield* settled("never");
+        yield* TestClock.adjust("15 minutes");
+        expect(yield* Queue.take(polls)).toBe(created.task.id);
+        expect(yield* Fiber.join(cleared)).toMatchObject({
+          lastRunError: null,
           nextRunAt: "2026-11-05T10:30:10.000Z",
-        runCount: 0,
-      });
-      expect(yield* Queue.size(polls)).toBe(0);
-      expect(yield* Ref.get(launches)).toBe(0);
+          runCount: 0,
+        });
+        expect(yield* Queue.size(polls)).toBe(0);
+        expect(yield* Ref.get(launches)).toBe(0);
 
         // Turning it back on, or changing the query, polls at the next tick again.
         yield* service.setEnabled({ id: created.task.id, enabled: false });
@@ -693,23 +693,100 @@ it.effect.each(polledSchedules)(
         });
         expect(requeried.task.nextRunAt).toBe("2026-11-05T10:15:10.000Z");
 
-      // Deleting the trigger drops its observations and no other trigger's.
-      const sql = yield* SqlClient.SqlClient;
-      for (const key of [
-        `${created.task.id}\u0000`,
-        `${created.task.id}\u0000acme\u0000PROJ-1`,
-        "other\u0000",
-      ]) {
-        yield* sql`INSERT INTO fork_trigger_observations (source, key, state_json, observed_at)
+        // Deleting the trigger drops its observations and no other trigger's.
+        const sql = yield* SqlClient.SqlClient;
+        for (const key of [
+          `${created.task.id}\u0000`,
+          `${created.task.id}\u0000acme\u0000PROJ-1`,
+          "other\u0000",
+        ]) {
+          yield* sql`INSERT INTO fork_trigger_observations (source, key, state_json, observed_at)
           VALUES (${schedule.type}, ${key}, '{}', '2026-11-05T10:00:00.000Z')`;
-      }
-      yield* service.delete({ id: created.task.id });
-      expect(yield* sql<{ key: string }>`SELECT key FROM fork_trigger_observations`).toEqual([
-        { key: "other\u0000" },
-      ]);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))),
-    );
-  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+        }
+        yield* service.delete({ id: created.task.id });
+        expect(yield* sql<{ key: string }>`SELECT key FROM fork_trigger_observations`).toEqual([
+          { key: "other\u0000" },
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))),
+      );
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "fires a polled trigger's current set as one poll, after the scheduled poll it overlaps",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-11-05T10:00:00.000Z"));
+      const calls = yield* Queue.unbounded<string>();
+      const gate = yield* Deferred.make<void>();
+      const layerDependencies = Layer.mergeAll(
+        NodeCrypto.layer,
+        Scheduler.layer,
+        ManagedPolicy.layerTest(),
+        Layer.succeed(ScheduledTaskPoller.ScheduledTaskPoller, {
+          poll: (_task, options) => {
+            const mode = options?.fireCurrent === true ? "fire" : "poll";
+            return Queue.offer(calls, `start:${mode}`).pipe(
+              Effect.andThen(mode === "poll" ? Deferred.await(gate) : Effect.void),
+              Effect.andThen(Queue.offer(calls, `end:${mode}`)),
+              Effect.asVoid,
+            );
+          },
+        }),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: () => Effect.succeed(false),
+        }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const input = yield* decodeUpsertInput({
+          title: "Agent-labelled issues",
+          prompt: "Pick up {{event.key}}",
+          enabled: true,
+          schedule: polledSchedules[0].schedule,
+          projectId: "project-jira-query",
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        });
+        yield* TestClock.adjust("5 seconds");
+        const created = yield* service.upsert(input);
+        yield* TestClock.adjust("5 seconds");
+        expect(yield* Queue.take(calls)).toBe("start:poll");
+        // The scheduled poll is still running, so the fire waits for the trigger's lock.
+        const fired = yield* service
+          .fireCurrent({ id: created.task.id })
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.succeed(gate, undefined);
+        const { task } = yield* Fiber.join(fired);
+        expect([
+          yield* Queue.take(calls),
+          yield* Queue.take(calls),
+          yield* Queue.take(calls),
+        ]).toEqual(["end:poll", "start:fire", "end:fire"]);
+        expect(task.nextRunAt).toBe("2026-11-05T10:15:10.000Z");
+
+        yield* service.setEnabled({ id: created.task.id, enabled: false });
+        const off = yield* service.fireCurrent({ id: created.task.id }).pipe(Effect.flip);
+        expect(off.message).toBe("Turn the trigger on to fire its current set.");
+        const manual = yield* service.upsert({
+          ...input,
+          schedule: { type: "manual" },
+        });
+        const notPolled = yield* service.fireCurrent({ id: manual.task.id }).pipe(Effect.flip);
+        expect(notPolled.message).toBe(
+          "Only Jira query and GitLab projects triggers have a current set.",
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))),
+      );
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

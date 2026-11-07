@@ -795,6 +795,7 @@ it.effect("search names the calling thread, so an agent can tell its own match a
       McpHttpServer.layerThreadToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(notHomeLayer),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(
           Layer.mock(ThreadSearch.ThreadSearch)({
@@ -1063,11 +1064,36 @@ it.effect.each([
     code: "invalid_request",
     message: "The scheduled task was not found.",
   },
-])("run_scheduled_task_now $scenario", ({ tasks, error, code, message }) =>
+  {
+    tool: "t3_trigger_fire_current",
+    scenario: "explains why a trigger has no current set",
+    tasks: [Schema.decodeSync(ScheduledTask)(scheduledTask("task-webhook", "full-access"))],
+    error: new ScheduledTaskError({
+      message: "Only Jira query and GitLab projects triggers have a current set.",
+      cause: new Error("private-fire-cause"),
+    }),
+    code: "orchestration_error",
+    message: "Only Jira query and GitLab projects triggers have a current set.",
+  },
+  {
+    tool: "t3_trigger_fire_current",
+    scenario: "reports a missing trigger before firing it",
+    tasks: [],
+    error: new ScheduledTaskError({ message: "must not fire a missing trigger" }),
+    code: "invalid_request",
+    message: "The trigger was not found.",
+  },
+])("$tool $scenario", ({ tool = "run_scheduled_task_now", tasks, error, code, message }) =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     const result = yield* server
-      .callTool({ name: "run_scheduled_task_now", arguments: { taskId: "task-webhook" } })
+      .callTool({
+        name: tool,
+        arguments:
+          tool === "run_scheduled_task_now"
+            ? { taskId: "task-webhook" }
+            : { triggerId: "task-webhook" },
+      })
       .pipe(
         Effect.provideService(
           McpInvocationContext.McpInvocationContext,
@@ -1094,6 +1120,7 @@ it.effect.each([
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({
             list: () => Effect.succeed({ tasks }),
             runNow: () => Effect.fail(error),
+            fireCurrent: () => Effect.fail(error),
           }),
         ),
       ),

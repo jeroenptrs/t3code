@@ -208,6 +208,7 @@ describe("command permissions", () => {
     WS_METHODS.triggersSetEnabled,
     WS_METHODS.triggersDelete,
     WS_METHODS.triggersRunNow,
+    WS_METHODS.triggersFireCurrent,
     ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
   ])("uses the target grant for both availability and execution of %s", (method) =>
     Effect.gen(function* () {

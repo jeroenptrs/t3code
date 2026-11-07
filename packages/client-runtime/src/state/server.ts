@@ -27,7 +27,6 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -1822,6 +1821,11 @@ export function createServerEnvironmentAtoms<R, E>(
     runTriggerNow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:trigger:run-now",
       tag: WS_METHODS.triggersRunNow,
+    }),
+    // Off the config lane too: a fire waits for the poll to read the whole set.
+    fireTriggerCurrentSet: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:trigger:fire-current",
+      tag: WS_METHODS.triggersFireCurrent,
     }),
     /** `permissionAtom` says whether this session may list trigger templates. */
     triggerTemplates: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {

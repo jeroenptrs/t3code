@@ -12,10 +12,10 @@ export const layer = Layer.effect(
     const jira = yield* JiraQueryPoller.make;
     const gitlab = yield* GitLabProjectsPoller.make;
     return ScheduledTaskPoller.ScheduledTaskPoller.of({
-      poll: Effect.fn("TriggerPoller.poll")(function* (task) {
+      poll: Effect.fn("TriggerPoller.poll")(function* (task, options) {
         return yield* task.schedule.type === "gitlab_projects"
-          ? gitlab.poll(task)
-          : jira.poll(task);
+          ? gitlab.poll(task, options)
+          : jira.poll(task, options);
       }),
     });
   }),
