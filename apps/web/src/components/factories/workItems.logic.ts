@@ -86,6 +86,7 @@ export function workItemStageBadgeVariant(
 }
 
 export function workItemSourceLabel(source: WorkItemSource): string {
+  if (source.kind === "trigger") return source.title;
   return source.kind === "manual" ? "Manual" : "Scheduled task";
 }
 

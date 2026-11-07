@@ -1,6 +1,7 @@
 import {
   isListedThreadLineage,
   isWebhookDedupeTemplate,
+  parseFactoryId,
   type ScheduledTaskTimeSchedule,
   type Trigger,
   type TriggerFilterSourceKind,
@@ -15,7 +16,9 @@ import {
   type ScheduledTask,
   type ScheduledTaskSchedule,
   type ScheduledTaskThreadMode,
+  type ScheduledTaskUpsertInput,
   type ScheduledTaskUpsertSchedule,
+  type FactoryId,
   scheduledTaskThreadMode,
   type ModelSelection,
   type RuntimeMode,
@@ -195,8 +198,22 @@ export function timeScheduleLabel(
     : resolve(msg("{days} at {time} {zone}", { days, time, zone }));
 }
 
-/** One line per trigger: its source, then what it filters on, such as "Jira · Status equals Done". */
+/**
+ * One line per trigger: its source, then what it filters on, such as "Jira · Status equals Done",
+ * and the factory a work item trigger feeds.
+ */
 export function triggerSummary(
+  trigger: Pick<Trigger, "source" | "filters"> & { readonly target?: Trigger["target"] },
+  timeZone?: string,
+  runAt?: string | null,
+): string {
+  const summary = triggerSourceSummary(trigger, timeZone, runAt);
+  const { target } = trigger;
+  if (target?.type !== "work_item") return summary;
+  return `${summary} → ${parseFactoryId(target.factoryId)?.name ?? target.factoryId}`;
+}
+
+function triggerSourceSummary(
   trigger: Pick<Trigger, "source" | "filters">,
   timestampFormat: TimestampFormat = "locale",
   timeZone?: string,
@@ -272,6 +289,8 @@ export interface DraftState {
   /** The thread the form opened with, so a save can tell a cleared destination from an unbound one. */
   readonly savedThreadId: string;
   readonly threadMode: ScheduledTaskThreadMode;
+  /** A factory the trigger creates work items in; empty for a thread target. */
+  readonly factoryId: string;
   readonly workspaceMode: WorkspaceMode;
   readonly baseRef: string;
   readonly startFromOrigin: boolean;
@@ -567,6 +586,21 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
   };
 }
 
+/**
+ * The save's target: a work item target for a chosen factory, null to turn a stored one back into
+ * a thread target, and nothing otherwise, so servers that predate targets accept the save.
+ */
+export function targetFromDraft(
+  draft: Pick<DraftState, "factoryId">,
+  projectId: ProjectId,
+  stored: Pick<ScheduledTask, "target"> | null,
+): Pick<ScheduledTaskUpsertInput, "target"> {
+  if (draft.factoryId) {
+    return { target: { type: "work_item", projectId, factoryId: draft.factoryId as FactoryId } };
+  }
+  return stored?.target === undefined ? {} : { target: null };
+}
+
 export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
   const filters = webhookFilterDrafts(schedule.type === "webhook" ? schedule.filters : undefined);
@@ -601,6 +635,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     threadId: task.threadId ?? "",
     savedThreadId: task.threadId ?? "",
     threadMode: scheduledTaskThreadMode(task),
+    factoryId: task.target?.factoryId ?? "",
     workspaceMode: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "",
     startFromOrigin:
