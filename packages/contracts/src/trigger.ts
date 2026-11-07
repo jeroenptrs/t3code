@@ -14,6 +14,8 @@ import { ModelSelection } from "./modelSelection.ts";
 import { OrchestrationV2ThreadLaunchWorkspaceStrategy } from "./orchestrationV2.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import {
+  isOneJiraQuery,
+  jiraQueryFields,
   MAX_WEBHOOK_FILTERS,
   makeFilterSchema,
   ScheduledTask,
@@ -36,11 +38,12 @@ export const TriggerSourceKind = Schema.Literals([
   "jira",
   "gitlab",
   "manual",
+  "jira_query",
 ]);
 export type TriggerSourceKind = typeof TriggerSourceKind.Type;
 
 /** Sources that raise events with fields a filter can select on. */
-export const TriggerFilterSourceKind = Schema.Literals(["jira", "gitlab", "slack"]);
+export const TriggerFilterSourceKind = Schema.Literals(["jira", "gitlab", "slack", "jira_query"]);
 export type TriggerFilterSourceKind = typeof TriggerFilterSourceKind.Type;
 
 const TRIGGER_EVENT_TYPES = {
@@ -55,6 +58,14 @@ const TRIGGER_EVENT_TYPES = {
   ],
   slack: ["message"],
   manual: ["manual"],
+  jira_query: [
+    "issue.entered",
+    "issue.left",
+    "issue.status_changed",
+    "issue.labels_changed",
+    "issue.assignee_changed",
+    "issue.updated",
+  ],
 } as const;
 
 export interface TriggerSourceField {
@@ -64,64 +75,77 @@ export interface TriggerSourceField {
   readonly array?: true;
 }
 
+const JIRA_SOURCE_FIELDS = [
+  { path: "event.type", label: "Event type", description: "What changed on the issue." },
+  {
+    path: "event.site",
+    label: "Site",
+    description: "Jira site host, such as acme.atlassian.net.",
+  },
+  { path: "event.key", label: "Issue key", description: "Issue key, such as PROJ-123." },
+  {
+    path: "event.projectKey",
+    label: "Project key",
+    description: "Jira project key, such as PROJ.",
+  },
+  { path: "event.url", label: "URL", description: "Link to the issue." },
+  { path: "event.summary", label: "Summary", description: "Issue summary." },
+  { path: "event.status", label: "Status", description: "Current status name." },
+  {
+    path: "event.statusCategory",
+    label: "Status category",
+    description: "todo, in-progress, or done.",
+  },
+  {
+    path: "event.previousStatus",
+    label: "Previous status",
+    description: "Status before this change. Empty the first time the issue is seen.",
+  },
+  {
+    path: "event.previousStatusCategory",
+    label: "Previous status category",
+    description: "Status category before this change.",
+  },
+  { path: "event.issueType", label: "Issue type", description: "Such as Bug or Story." },
+  { path: "event.priority", label: "Priority", description: "Priority name." },
+  { path: "event.assignee", label: "Assignee", description: "Assignee display name." },
+  {
+    path: "event.assigneeAccountId",
+    label: "Assignee account ID",
+    description: "Atlassian account ID of the assignee.",
+  },
+  {
+    path: "event.previousAssigneeAccountId",
+    label: "Previous assignee account ID",
+    description: "Atlassian account ID of the assignee before this change.",
+  },
+  { path: "event.labels", label: "Labels", description: "Labels on the issue.", array: true },
+  {
+    path: "event.addedLabels",
+    label: "Added labels",
+    description: "Labels this change added.",
+    array: true,
+  },
+  {
+    path: "event.removedLabels",
+    label: "Removed labels",
+    description: "Labels this change removed.",
+    array: true,
+  },
+] as const satisfies ReadonlyArray<TriggerSourceField>;
+
 export const TRIGGER_SOURCE_FIELDS = {
-  jira: [
-    { path: "event.type", label: "Event type", description: "What changed on the issue." },
+  jira: JIRA_SOURCE_FIELDS,
+  jira_query: [
+    ...JIRA_SOURCE_FIELDS,
     {
-      path: "event.site",
-      label: "Site",
-      description: "Jira site host, such as acme.atlassian.net.",
-    },
-    { path: "event.key", label: "Issue key", description: "Issue key, such as PROJ-123." },
-    {
-      path: "event.projectKey",
-      label: "Project key",
-      description: "Jira project key, such as PROJ.",
-    },
-    { path: "event.url", label: "URL", description: "Link to the issue." },
-    { path: "event.summary", label: "Summary", description: "Issue summary." },
-    { path: "event.status", label: "Status", description: "Current status name." },
-    {
-      path: "event.statusCategory",
-      label: "Status category",
-      description: "todo, in-progress, or done.",
-    },
-    {
-      path: "event.previousStatus",
-      label: "Previous status",
-      description: "Status before this change. Empty the first time the issue is seen.",
-    },
-    {
-      path: "event.previousStatusCategory",
-      label: "Previous status category",
-      description: "Status category before this change.",
-    },
-    { path: "event.issueType", label: "Issue type", description: "Such as Bug or Story." },
-    { path: "event.priority", label: "Priority", description: "Priority name." },
-    { path: "event.assignee", label: "Assignee", description: "Assignee display name." },
-    {
-      path: "event.assigneeAccountId",
-      label: "Assignee account ID",
-      description: "Atlassian account ID of the assignee.",
-    },
-    {
-      path: "event.previousAssigneeAccountId",
-      label: "Previous assignee account ID",
-      description: "Atlassian account ID of the assignee before this change.",
-    },
-    { path: "event.labels", label: "Labels", description: "Labels on the issue.", array: true },
-    {
-      path: "event.addedLabels",
-      label: "Added labels",
-      description: "Labels this change added.",
+      path: "event.changedFields",
+      label: "Changed fields",
+      description:
+        "Watched fields this poll saw change: status, labels, assignee, and the fields filters name.",
       array: true,
     },
-    {
-      path: "event.removedLabels",
-      label: "Removed labels",
-      description: "Labels this change removed.",
-      array: true,
-    },
+    { path: "event.query", label: "Query", description: "The JQL, or the saved filter's name." },
   ],
   gitlab: [
     { path: "event.type", label: "Event type", description: "What changed on the merge request." },
@@ -209,6 +233,17 @@ export const TriggerJiraEventPayload = Schema.Struct({
 });
 export type TriggerJiraEventPayload = typeof TriggerJiraEventPayload.Type;
 
+export const TriggerJiraQueryEventType = Schema.Literals(TRIGGER_EVENT_TYPES.jira_query);
+export type TriggerJiraQueryEventType = typeof TriggerJiraQueryEventType.Type;
+
+export const TriggerJiraQueryEventPayload = Schema.Struct({
+  ...TriggerJiraEventPayload.fields,
+  type: TriggerJiraQueryEventType,
+  changedFields: StringList,
+  query: Schema.String,
+});
+export type TriggerJiraQueryEventPayload = typeof TriggerJiraQueryEventPayload.Type;
+
 export const TriggerGitLabEventType = Schema.Literals(TRIGGER_EVENT_TYPES.gitlab);
 export type TriggerGitLabEventType = typeof TriggerGitLabEventType.Type;
 
@@ -243,28 +278,42 @@ export type TriggerSlackEventPayload = typeof TriggerSlackEventPayload.Type;
 export const TriggerManualEventPayload = Schema.Struct({ type: Schema.Literal("manual") });
 export type TriggerManualEventPayload = typeof TriggerManualEventPayload.Type;
 
+// Set on events only one trigger may run, such as a Jira query trigger's own poll results.
+const triggerId = Schema.optional(ScheduledTaskId);
+
 export const TriggerEvent = Schema.Union([
   Schema.Struct({
     source: Schema.Literal("jira"),
     type: TriggerJiraEventType,
+    triggerId,
     occurredAt: IsoDateTime,
     payload: TriggerJiraEventPayload,
   }),
   Schema.Struct({
+    source: Schema.Literal("jira_query"),
+    type: TriggerJiraQueryEventType,
+    triggerId,
+    occurredAt: IsoDateTime,
+    payload: TriggerJiraQueryEventPayload,
+  }),
+  Schema.Struct({
     source: Schema.Literal("gitlab"),
     type: TriggerGitLabEventType,
+    triggerId,
     occurredAt: IsoDateTime,
     payload: TriggerGitLabEventPayload,
   }),
   Schema.Struct({
     source: Schema.Literal("slack"),
     type: Schema.Literal("message"),
+    triggerId,
     occurredAt: IsoDateTime,
     payload: TriggerSlackEventPayload,
   }),
   Schema.Struct({
     source: Schema.Literal("manual"),
     type: Schema.Literal("manual"),
+    triggerId,
     occurredAt: IsoDateTime,
     payload: TriggerManualEventPayload,
   }),
@@ -302,10 +351,16 @@ const {
 
 const TriggerEventSourceKind = Schema.Literals(["jira", "gitlab", "slack", "manual"]);
 
+const TriggerJiraQuerySource = Schema.Struct({
+  kind: Schema.Literal("jira_query"),
+  ...jiraQueryFields,
+}).check(isOneJiraQuery);
+
 export const TriggerSource = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("schedule"), schedule: ScheduledTaskTimeSchedule }),
   Schema.Struct({ kind: Schema.Literal("webhook"), ...webhookSourceFields }),
   Schema.Struct({ kind: TriggerEventSourceKind }),
+  TriggerJiraQuerySource,
 ]);
 export type TriggerSource = typeof TriggerSource.Type;
 
@@ -319,6 +374,9 @@ export const TriggerSaveSource = Schema.Union([
   }),
   Schema.Struct({ kind: TriggerEventSourceKind }).annotate({
     description: "Run on Jira, GitLab, or Slack events, filtered on event. paths, or only by hand.",
+  }),
+  TriggerJiraQuerySource.annotate({
+    description: "Poll a JQL or saved filter as the site's service identity, per issue change.",
   }),
 ]);
 export type TriggerSaveSource = typeof TriggerSaveSource.Type;
@@ -415,6 +473,9 @@ export function scheduledTaskTrigger(task: ScheduledTask): Trigger {
   } else if (schedule.type === "webhook") {
     const { type: _type, filters: _filters, ...webhook } = schedule;
     source = { kind: "webhook", ...webhook };
+  } else if (schedule.type === "jira_query") {
+    const { type: _type, filters: _filters, ...query } = schedule;
+    source = { kind: "jira_query", ...query };
   } else {
     source = { kind: schedule.type };
   }
@@ -448,6 +509,9 @@ export function triggerUpsertToScheduledTaskUpsert(
     schedule = { type: "webhook", ...webhook, filters };
   } else if (source.kind === "manual") {
     schedule = { type: "manual" };
+  } else if (source.kind === "jira_query") {
+    const { kind: _kind, ...query } = source;
+    schedule = { type: "jira_query", ...query, filters };
   } else {
     schedule = { type: source.kind, filters };
   }
