@@ -141,6 +141,26 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       };
     }),
   ),
+  t3_trigger_fire_current: McpToolAccess.writesEnvironment((input) =>
+    Effect.gen(function* () {
+      const scheduler = yield* ScheduledTasks.ScheduledTaskService;
+      const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
+      if (!tasks.some((task) => task.id === input.triggerId))
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "The trigger was not found.",
+        });
+      const { task } = yield* scheduler
+        .fireCurrent({ id: input.triggerId })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+          ),
+        );
+      return { triggerId: task.id, lastRunStatus: task.lastRunStatus, nextRunAt: task.nextRunAt };
+    }),
+  ),
   t3_thread_search: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const { caller } = yield* readCaller();
@@ -275,48 +295,48 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         );
       }),
     McpToolAccess.either(
-    (input) => input.action !== "respond",
-    McpToolAccess.reads((input) =>
-      Effect.gen(function* () {
-        if (input.action === "list") {
-          const { projection } = yield* readThread(input.threadId, ["runtimeRequests"]);
-          return {
-            requestIds: projection.runtimeRequests
-              .filter((request) => request.kind === "user_input" && request.status === "pending")
-              .map((request) => request.id),
-          };
-        }
-        const requestId = yield* required(input.requestId, "requestId");
-        const { item } = yield* readQuestion({ threadId: input.threadId, requestId });
-        return { requestId, questions: item.questions };
-      }),
-    ),
-    writesThread((input) =>
-      Effect.gen(function* () {
+      (input) => input.action !== "respond",
+      McpToolAccess.reads((input) =>
+        Effect.gen(function* () {
+          if (input.action === "list") {
+            const { projection } = yield* readThread(input.threadId, ["runtimeRequests"]);
+            return {
+              requestIds: projection.runtimeRequests
+                .filter((request) => request.kind === "user_input" && request.status === "pending")
+                .map((request) => request.id),
+            };
+          }
+          const requestId = yield* required(input.requestId, "requestId");
+          const { item } = yield* readQuestion({ threadId: input.threadId, requestId });
+          return { requestId, questions: item.questions };
+        }),
+      ),
+      writesThread((input) =>
+        Effect.gen(function* () {
           if (input.decision !== undefined)
             return yield* new OrchestratorMcpFailure({
               code: "capability_denied",
               message: "Only Home can answer approval requests. Pass answers for a question.",
             });
-        const requestId = yield* required(input.requestId, "requestId");
-        const answers = yield* required(input.answers, "answers");
-        const { threads, projection } = yield* readQuestion({
-          threadId: input.threadId,
-          requestId,
-        });
-        const result = yield* threads
-          .dispatch({
-            type: "runtime-request.respond",
-            threadId: projection.thread.id,
-            commandId: yield* newCommandId(),
+          const requestId = yield* required(input.requestId, "requestId");
+          const answers = yield* required(input.answers, "answers");
+          const { threads, projection } = yield* readQuestion({
+            threadId: input.threadId,
             requestId,
-            answers,
-          })
-          .pipe(Effect.mapError(dispatchFailure));
-        return { sequence: result.sequence };
-      }),
+          });
+          const result = yield* threads
+            .dispatch({
+              type: "runtime-request.respond",
+              threadId: projection.thread.id,
+              commandId: yield* newCommandId(),
+              requestId,
+              answers,
+            })
+            .pipe(Effect.mapError(dispatchFailure));
+          return { sequence: result.sequence };
+        }),
+      ),
     ),
-  ),
   ),
   t3_queue: McpToolAccess.either(
     (input) => input.action === "list" || input.action === "read",
@@ -405,38 +425,38 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         );
       }),
     writesThread((input) =>
-    Effect.gen(function* () {
-      const { threads, projection, caller } = yield* readThread(input.threadId);
-      const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
-      if (input.action === "settle") {
-        return yield* threads
-          .settleThread({ ...common, byOwnAgent: caller?.id === projection.thread.id })
-          .pipe(Effect.mapError(dispatchFailure));
-      }
-      let command: OrchestrationV2Command;
-      switch (input.action) {
-        case "snooze":
-          if (input.snoozedUntil === undefined) {
-            return yield* new OrchestratorMcpFailure({
-              code: "invalid_request",
-              message: "snooze requires snoozedUntil.",
-            });
-          }
-          command = { ...common, type: "thread.snooze", snoozedUntil: input.snoozedUntil };
-          break;
-        case "unsnooze":
-        case "unsettle":
-          command = { ...common, type: `thread.${input.action}`, reason: "user" };
-          break;
-        case "mark_unread":
-          command = { ...common, type: "thread.mark-unread" };
-          break;
-        default:
-          command = { ...common, type: `thread.${input.action}` };
-      }
-      const result = yield* threads.dispatch(command).pipe(Effect.mapError(dispatchFailure));
-      return { sequence: result.sequence };
-    }),
-  ),
+      Effect.gen(function* () {
+        const { threads, projection, caller } = yield* readThread(input.threadId);
+        const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
+        if (input.action === "settle") {
+          return yield* threads
+            .settleThread({ ...common, byOwnAgent: caller?.id === projection.thread.id })
+            .pipe(Effect.mapError(dispatchFailure));
+        }
+        let command: OrchestrationV2Command;
+        switch (input.action) {
+          case "snooze":
+            if (input.snoozedUntil === undefined) {
+              return yield* new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: "snooze requires snoozedUntil.",
+              });
+            }
+            command = { ...common, type: "thread.snooze", snoozedUntil: input.snoozedUntil };
+            break;
+          case "unsnooze":
+          case "unsettle":
+            command = { ...common, type: `thread.${input.action}`, reason: "user" };
+            break;
+          case "mark_unread":
+            command = { ...common, type: "thread.mark-unread" };
+            break;
+          default:
+            command = { ...common, type: `thread.${input.action}` };
+        }
+        const result = yield* threads.dispatch(command).pipe(Effect.mapError(dispatchFailure));
+        return { sequence: result.sequence };
+      }),
+    ),
   ),
 });

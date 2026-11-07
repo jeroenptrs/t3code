@@ -5,9 +5,15 @@ import type * as Effect from "effect/Effect";
 /**
  * What a due polled trigger (a Jira query or GitLab projects) runs instead of its prompt. A
  * port, so the scheduled task runner polls without importing the Jira, GitLab, and trigger
- * modules that implement it. The error's message is shown on the trigger.
+ * modules that implement it. The error's message is shown on the trigger. `fireCurrent` also
+ * raises the current set: every issue in a Jira query, or every open merge request.
  */
 export class ScheduledTaskPoller extends Context.Service<
   ScheduledTaskPoller,
-  { readonly poll: (task: ScheduledTask) => Effect.Effect<void, ScheduledTaskError> }
+  {
+    readonly poll: (
+      task: ScheduledTask,
+      options?: { readonly fireCurrent?: boolean },
+    ) => Effect.Effect<void, ScheduledTaskError>;
+  }
 >()("t3/scheduledTasks/ScheduledTaskPoller") {}
