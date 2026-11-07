@@ -69,7 +69,13 @@ import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
 import { forkParked } from "../serverActivation.ts";
-import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
+import {
+  isMissedFixedTimeRun,
+  isPollSchedule,
+  isSameSchedule,
+  nextScheduledRunAt,
+  pollScopeKey,
+} from "./Schedule.ts";
 import * as ScheduledTaskPoller from "./ScheduledTaskPoller.ts";
 import {
   redactHeaders,
@@ -210,6 +216,7 @@ function storedTriggerFilters(
     case "gitlab":
     case "slack":
     case "jira_query":
+    case "gitlab_projects":
       return schedule.filters;
     default:
       return undefined;
@@ -422,24 +429,18 @@ function nextRunAfterRun(
 }
 
 /**
- * A Jira query that is new, newly on, or reads a different query is due now, so its seed poll
- * runs at the next scheduler tick and its first events come one interval later.
+ * A polled source that is new, newly on, or reads something different is due now, so its seed
+ * poll runs at the next scheduler tick and its first events come one interval later.
  */
-function seedsJiraQuery(
+function seedsPoll(
   task: Pick<ScheduledTask, "enabled" | "schedule">,
   previous: Pick<ScheduledTask, "enabled" | "schedule"> | null,
 ): boolean {
   const { schedule } = task;
-  if (!task.enabled || schedule.type !== "jira_query") return false;
-  if (previous === null || !previous.enabled || previous.schedule.type !== "jira_query") {
-    return true;
-  }
-  const before = previous.schedule;
-  return (
-    before.site !== schedule.site ||
-    before.jql !== schedule.jql ||
-    before.filterId !== schedule.filterId
-  );
+  if (!task.enabled || !isPollSchedule(schedule)) return false;
+  const before = previous?.schedule;
+  if (!previous?.enabled || before === undefined || !isPollSchedule(before)) return true;
+  return before.type !== schedule.type || pollScopeKey(before) !== pollScopeKey(schedule);
 }
 
 /** An enabled one-time task with a past time would never run, so saving it is an error. */
@@ -917,11 +918,12 @@ export const layer = Layer.effect(
           ),
         );
 
-    // A Jira query trigger's observation keys start with its id and a NUL (TriggerSources).
+    // A polled trigger's observation keys start with its id and a NUL (TriggerSources).
     const deleteQueryObservations = (id: ScheduledTaskId) =>
       sql`
         DELETE FROM fork_trigger_observations
-        WHERE source = 'jira_query' AND key >= ${`${id}\u0000`} AND key < ${`${id}\u0001`}
+        WHERE source IN ('jira_query', 'gitlab_projects')
+          AND key >= ${`${id}\u0000`} AND key < ${`${id}\u0001`}
       `;
 
     const markRunning = (id: ScheduledTaskId, startedAtIso: string, webhookDeliveryId?: string) =>
@@ -1352,7 +1354,7 @@ export const layer = Layer.effect(
             updatedAt: iso(completedAt),
             lastRunAt: startedAtIso,
             // A manual run that starts before a one-time run must not use it up, and an event
-            // run leaves a Jira query's next poll where the poll put it.
+            // run leaves a polled trigger's next poll where the poll put it.
             nextRunAt:
               trigger === "event"
                 ? scheduleSource.nextRunAt
@@ -1497,7 +1499,7 @@ export const layer = Layer.effect(
     const pollTask = Effect.fn("ScheduledTaskService.pollTask")(function* (task: ScheduledTask) {
       const result = yield* Option.match(poller, {
         onNone: () =>
-          Effect.fail(taskError("Jira query triggers are not available.", { taskId: task.id })),
+          Effect.fail(taskError("Polled triggers are not available.", { taskId: task.id })),
         onSome: (service) => service.poll(task),
       }).pipe(Effect.exit);
       const error = Exit.isSuccess(result) ? null : errorMessage(result.cause);
@@ -1523,7 +1525,7 @@ export const layer = Layer.effect(
         WHERE task_id = ${task.id} AND created_at = ${task.createdAt} AND enabled = 1
       `.pipe(
         Effect.mapError((cause) =>
-          taskError("Could not record the Jira query poll.", { taskId: task.id, cause }),
+          taskError("Could not record the trigger poll.", { taskId: task.id, cause }),
         ),
       );
       yield* notifyChanged;
@@ -1570,7 +1572,7 @@ export const layer = Layer.effect(
                   "missed",
                   "Missed a scheduled run because the server was not running at that time.",
                 )
-              : task.schedule.type === "jira_query"
+              : isPollSchedule(task.schedule)
                 ? pollTask(task)
               : runTask(task, "scheduled"),
           ).pipe(
@@ -1696,7 +1698,7 @@ export const layer = Layer.effect(
         input.schedule.type === "jira" ||
         input.schedule.type === "gitlab" ||
         input.schedule.type === "slack" ||
-        input.schedule.type === "jira_query"
+        isPollSchedule(input.schedule)
       ) {
         const unknown = unknownTriggerFilter(input.schedule.type, input.schedule.filters ?? []);
         if (unknown !== undefined) {
@@ -1788,12 +1790,12 @@ export const layer = Layer.effect(
                       storedTriggerFilters(existingTask?.schedule, input.schedule.type),
                   ),
                 }
-              : input.schedule.type === "jira_query"
+              : isPollSchedule(input.schedule)
                 ? {
                     ...input.schedule,
                     ...withFilters(
                       input.schedule.filters ??
-                        storedTriggerFilters(existingTask?.schedule, "jira_query"),
+                        storedTriggerFilters(existingTask?.schedule, input.schedule.type),
                     ),
                   }
             : input.schedule;
@@ -1865,7 +1867,7 @@ export const layer = Layer.effect(
         creationSource: input.creationSource ?? "web",
         createdAt: existingTask?.createdAt ?? iso(now),
         updatedAt: iso(now),
-        nextRunAt: seedsJiraQuery({ enabled: input.enabled, schedule }, existingTask)
+        nextRunAt: seedsPoll({ enabled: input.enabled, schedule }, existingTask)
           ? iso(now)
           : scheduleUnchanged
           ? existingTask.nextRunAt
@@ -1914,7 +1916,7 @@ export const layer = Layer.effect(
         input.id,
       );
       const enabled = { enabled: input.enabled, schedule: existing.schedule };
-      const next = seedsJiraQuery(enabled, existing) ? iso(now) : nextRunAt(enabled, now);
+      const next = seedsPoll(enabled, existing) ? iso(now) : nextRunAt(enabled, now);
       // RETURNING so a task deleted between the load and this UPDATE is a
       // visible not-found error, not a false success.
       const updated = yield* sql<{ task_id: string }>`
@@ -2040,7 +2042,7 @@ export const layer = Layer.effect(
         task.schedule.type === "jira" ||
         task.schedule.type === "gitlab" ||
         task.schedule.type === "slack" ||
-        task.schedule.type === "jira_query"
+        isPollSchedule(task.schedule)
       ) {
         return yield* taskError(
           "Event tasks run when a matching event arrives; their prompt needs one.",
