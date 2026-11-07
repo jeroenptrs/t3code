@@ -1,7 +1,7 @@
-import { EnvironmentId, FactoryId, ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, FactoryId, ProjectId, type Trigger } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { factoryNameError, showsFactoriesTab } from "./factories.logic";
+import { factoryNameError, factoryTriggerSummary, showsFactoriesTab } from "./factories.logic";
 
 const projectId = ProjectId.make("project-api");
 const existing = [{ projectId, name: "nightly-triage" }];
@@ -46,5 +46,22 @@ describe("showsFactoriesTab", () => {
     { label: "an operator with a factory", factories: [factory], canManage: false, expected: true },
   ])("is $expected for $label", ({ factories, canManage, expected }) => {
     expect(showsFactoriesTab([{ environmentId, factories, canManage }])).toBe(expected);
+  });
+});
+
+describe("factoryTriggerSummary", () => {
+  it("ends with where each run goes", () => {
+    const thread = { type: "thread" } as Trigger["target"];
+    expect(factoryTriggerSummary({ source: { kind: "manual" }, filters: [], target: thread })).toBe(
+      "Manual → thread",
+    );
+    const workItem = {
+      type: "work_item" as const,
+      projectId,
+      factoryId: FactoryId.make("factory:project-api:nightly-triage"),
+    };
+    expect(factoryTriggerSummary({ source: { kind: "jira" }, filters: [], target: workItem })).toBe(
+      "Jira → nightly-triage",
+    );
   });
 });

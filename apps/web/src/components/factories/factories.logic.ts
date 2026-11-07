@@ -1,7 +1,8 @@
-import { FactoryName, type FactorySummary } from "@t3tools/contracts";
+import { FactoryName, type FactorySummary, type Trigger } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import type { FactoryEnvironment } from "../../state/factories";
+import { triggerSummary } from "../settings/scheduledTasksSettings.logic";
 
 const isFactoryName = Schema.is(FactoryName);
 
@@ -42,4 +43,12 @@ export function factoryNameError(
     return "This project already has a factory with this name.";
   }
   return null;
+}
+
+/** A trigger's row under its factory: source and filters, then the factory or a thread. */
+export function factoryTriggerSummary(
+  trigger: Pick<Trigger, "source" | "filters" | "target">,
+): string {
+  const summary = triggerSummary(trigger);
+  return trigger.target.type === "work_item" ? summary : `${summary} → thread`;
 }
