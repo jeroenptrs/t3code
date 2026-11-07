@@ -27,6 +27,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { McpAttachmentInput } from "./attachment/input.ts";
 import { McpSchema, McpServer } from "effect/ai";
@@ -985,6 +986,22 @@ it.effect("a caller cannot rewrite a scheduled task or trigger that runs above i
     expect(
       declaredFailure(yield* trigger(undefined, { threadId: "someone-elses-thread" })),
     ).toMatchObject({ code: "invalid_request" });
+    // A work item target has no thread or modes to check.
+    const workItemTarget = {
+      type: "work_item",
+      projectId: "project-1",
+      factoryId: "factory:project-1:triage",
+    };
+    const workItem = yield* call("t3_trigger_save", {
+      title: "Pick up work",
+      prompt: "Work on {{event.key}}",
+      enabled: true,
+      source: { kind: "jira" },
+      filters: [],
+      target: workItemTarget,
+    });
+    expect(workItem.isError).toBe(false);
+    expect(workItem.structuredContent).toMatchObject({ target: workItemTarget });
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(
@@ -1009,7 +1026,11 @@ it.effect("a caller cannot rewrite a scheduled task or trigger that runs above i
               } as never),
           }),
         ),
-        Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+        Layer.provide(
+          Layer.mock(ProjectService.ProjectService)({
+            getById: (projectId) => Effect.succeed(Option.some({ id: projectId } as never)),
+          }),
+        ),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
