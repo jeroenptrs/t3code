@@ -104,12 +104,14 @@ function formatTriggerSource(
       if (source.group !== undefined) parts.push(`group ${source.group}`);
     }
     parts.push(`every ${Math.round(source.everyMs / MINUTE)} minutes`);
-    if (filters.length > 0) parts.push(triggerFiltersSummary(source.kind, filters));
-    return parts.join(" · ");
+    parts.push(triggerFiltersSummary(source.kind, filters));
+    return parts.filter((part) => part !== "").join(" · ");
   }
   if (source.kind === "manual" || filters.length === 0) return label;
   if (source.kind === "webhook") {
     return `${label} · ${filters.length} filter${filters.length === 1 ? "" : "s"}`;
   }
-  return `${label} · ${triggerFiltersSummary(source.kind, filters)}`;
+  return [label, triggerFiltersSummary(source.kind, filters)]
+    .filter((part) => part !== "")
+    .join(" · ");
 }

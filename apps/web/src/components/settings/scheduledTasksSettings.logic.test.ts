@@ -417,6 +417,30 @@ describe("event scheduled tasks", () => {
     ).toBeNull();
     expect(scheduleFromDraft({ ...draft, scheduleMode: "manual" })).toEqual({ type: "manual" });
   });
+
+  it("reads a type filter into the picker and saves a changed choice as a filter", () => {
+    const status = { path: "event.state", op: "equals", value: "open" } as const;
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: {
+        type: "gitlab",
+        filters: [status, { path: "event.type", op: "in", value: ["merge_request.merged"] }],
+      },
+    });
+    expect(draft.eventTypes).toEqual(["merge_request.merged"]);
+    expect(draft.triggerFilters.map(({ path }) => path)).toEqual(["event.state"]);
+    expect(scheduleFromDraft(draft)).toEqual({ type: "gitlab" });
+    expect(
+      scheduleFromDraft({ ...draft, eventTypes: ["merge_request.opened", "merge_request.merged"] }),
+    ).toEqual({
+      type: "gitlab",
+      filters: [
+        { path: "event.type", op: "in", value: ["merge_request.opened", "merge_request.merged"] },
+        status,
+      ],
+    });
+    expect(scheduleFromDraft({ ...draft, eventTypes: [] })).toBeNull();
+  });
 });
 
 describe("scheduled task triage", () => {
@@ -558,7 +582,7 @@ describe("trigger row summary", () => {
         ],
       }),
     ).toBe(
-      "GitLab · Event type is one of pipeline.failed, merge_request.merged, Draft is not true, +1 more",
+      "GitLab · Act on merge_request.merged, pipeline.failed · Draft is not true, Author is set",
     );
     expect(triggerSummary({ source: { kind: "slack" }, filters: [] })).toBe("Slack");
     expect(

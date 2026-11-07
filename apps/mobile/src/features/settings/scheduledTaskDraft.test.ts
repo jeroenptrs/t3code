@@ -142,7 +142,10 @@ describe("switchScheduleMode", () => {
   });
 
   it("starts filters over on a source switch and restores the saved ones", () => {
-    const filters = [{ path: "event.status", op: "equals", value: "In Progress" }] as const;
+    const filters = [
+      { path: "event.type", op: "in", value: ["issue.status_changed"] },
+      { path: "event.status", op: "equals", value: "In Progress" },
+    ] as const;
     const saved = editDraft({
       id: "task",
       title: "Task",
@@ -150,15 +153,24 @@ describe("switchScheduleMode", () => {
       schedule: { type: "jira", filters },
       workspaceStrategy: { type: "root" },
     } as unknown as Parameters<typeof editDraft>[0]);
+    expect(saved.schedule.eventTypes).toEqual(["issue.status_changed"]);
+    expect(saved.schedule.triggerFilters).toHaveLength(1);
     const gitlab = switchScheduleMode(saved, "gitlab", 0);
     expect(gitlab.prompt).toBe("Work");
     expect(gitlab.schedule.triggerFilters).toEqual([]);
+    expect(gitlab.schedule.eventTypes).toHaveLength(6);
     expect(scheduleFromDraft(gitlab.schedule)).toEqual({ type: "gitlab" });
+    expect(scheduleFromDraft({ ...gitlab.schedule, eventTypes: ["pipeline.failed"] })).toEqual({
+      type: "gitlab",
+      filters: [{ path: "event.type", op: "in", value: ["pipeline.failed"] }],
+    });
+    expect(scheduleFromDraft({ ...gitlab.schedule, eventTypes: [] })).toBeNull();
     const back = switchScheduleMode(gitlab, "jira", 0);
+    expect(back.schedule.eventTypes).toEqual(["issue.status_changed"]);
     expect(scheduleFromDraft(back.schedule)).toEqual({ type: "jira" });
     expect(scheduleFromDraft({ ...back.schedule, triggerFilters: [] })).toEqual({
       type: "jira",
-      filters: [],
+      filters: [filters[0]],
     });
   });
 });

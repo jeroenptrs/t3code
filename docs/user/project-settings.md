@@ -262,6 +262,11 @@ as **Assignee** on an unassigned issue, fails every test, **exists** included.
 Separate **is one of** values with commas. Webhook filters test request values
 instead, as described under [Webhook](#webhook).
 
+The Jira, GitLab, Jira query, and GitLab projects sources also have **Act on**,
+which picks the event types the trigger runs for. All types are on by default.
+Turning some off saves an **Event type** is one of filter, and an existing
+filter like that opens in **Act on**.
+
 In the prompt, `{{event.<field>}}` inserts one field, such as `{{event.key}}`
 or `{{event.summary}}`, and `{{event}}` inserts every field. Choosing a source
 on a trigger with an empty prompt fills in a starting prompt for it. Event

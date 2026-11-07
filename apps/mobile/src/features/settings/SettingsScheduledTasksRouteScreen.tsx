@@ -50,6 +50,8 @@ import {
   emptyTriggerFilterDraft,
   parseTriageDraft,
   parseTriggerFilterDrafts,
+  triggerEventTypes,
+  withEventTypeDrafts,
   signedInGitLabHosts,
   TRIAGE_FALLBACK_OPTIONS,
   type TriggerFilterDraft,
@@ -395,6 +397,43 @@ function WebhookFilterRows(props: {
       )}
       valuePlaceholders={{ one: "opened", list: "opened, reopened" }}
       footer="Runs only when every filter matches. Other requests are logged as filtered. Separate “is one of” values with commas; a value can't contain a comma."
+    />
+  );
+}
+
+/** The event types a trigger acts on; saved as an `event.type` filter when not all are on. */
+function EventTypesRow(props: {
+  readonly source: TriggerFilterSourceKind;
+  readonly value: ReadonlyArray<string>;
+  readonly disabled: boolean;
+  readonly onChange: (eventTypes: ReadonlyArray<string>) => void;
+}) {
+  const types = triggerEventTypes(props.source);
+  if (types === null) return null;
+  return (
+    <SelectRow
+      label="Act on"
+      value={
+        props.value.length === types.length
+          ? "All events"
+          : props.value.length === 0
+            ? "None"
+            : props.value.join(", ")
+      }
+      borderTop
+      actions={
+        props.disabled
+          ? []
+          : types.map((type) => ({
+              id: type,
+              title: type,
+              attributes: { keepsMenuPresented: true },
+              state: props.value.includes(type) ? ("on" as const) : undefined,
+            }))
+      }
+      onSelect={(type) =>
+        props.onChange(types.filter((entry) => (entry === type) !== props.value.includes(entry)))
+      }
     />
   );
 }
@@ -1021,8 +1060,19 @@ function TaskForm({
       return;
     }
     if (isTriggerFilterMode(draft.schedule.mode)) {
+      if (
+        triggerEventTypes(draft.schedule.mode) !== null &&
+        draft.schedule.eventTypes.length === 0
+      ) {
+        Dialog.alert("Event type is required", "Pick at least one event to act on.");
+        return;
+      }
       const parsedTriggerFilters = parseTriggerFilterDrafts(
+        withEventTypeDrafts(
+          draft.schedule.mode,
+          draft.schedule.eventTypes,
         draft.schedule.triggerFilters,
+        ),
         draft.schedule.mode,
       );
       if ("error" in parsedTriggerFilters) {
@@ -1445,6 +1495,14 @@ function TaskForm({
                   }
                 />
               ) : null}
+              <EventTypesRow
+                source={draft.schedule.mode}
+                value={draft.schedule.eventTypes}
+                disabled={saving}
+                onChange={(eventTypes) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, eventTypes } })
+                }
+              />
             <TriggerFilterRows
               source={draft.schedule.mode}
               filters={draft.schedule.triggerFilters}

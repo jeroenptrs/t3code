@@ -22,6 +22,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
 export function Field({
   label,
@@ -200,6 +201,38 @@ export function WebhookFiltersField({
 }
 
 /** Filters over one event source's fields, picked from the fields that source sends. */
+/** The event types a trigger acts on; saved as an `event.type` filter when not all are on. */
+export function EventTypesField({
+  types,
+  value,
+  onChange,
+}: {
+  types: ReadonlyArray<string>;
+  value: ReadonlyArray<string>;
+  onChange: (eventTypes: ReadonlyArray<string>) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label id="scheduled-task-event-types">Act on</Label>
+      <ToggleGroup
+        multiple
+        variant="outline"
+        size="sm"
+        aria-labelledby="scheduled-task-event-types"
+        className="flex-wrap"
+        value={[...value]}
+        onValueChange={(next) => onChange(types.filter((type) => next.includes(type)))}
+      >
+        {types.map((type) => (
+          <Toggle key={type} value={type}>
+            {type}
+          </Toggle>
+        ))}
+      </ToggleGroup>
+    </div>
+  );
+}
+
 export function TriggerFiltersField({
   source,
   filters,
