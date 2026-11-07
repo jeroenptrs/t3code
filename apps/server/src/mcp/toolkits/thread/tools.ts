@@ -218,8 +218,27 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const TriggerFireCurrentTool = Tool.make("t3_trigger_fire_current", {
+  ...commandTool,
+  description:
+    "Fire a Jira query or GitLab projects trigger on everything it matches now: one check that raises issue.entered or merge_request.opened per item, through its filters, to its target. Needs a full-access or default caller.",
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    triggerId: ScheduledTaskId,
+  }),
+  success: Schema.Struct({
+    triggerId: ScheduledTaskId,
+    lastRunStatus: ScheduledTask.fields.lastRunStatus,
+    nextRunAt: ScheduledTask.fields.nextRunAt,
+  }),
+  dependencies: [...commandTool.dependencies, ScheduledTaskService.ScheduledTaskService],
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
 export const ThreadToolkit = Toolkit.make(
   ScheduledTaskRunTool,
+  TriggerFireCurrentTool,
   ThreadSearchTool,
   ThreadConfigureTool,
   ThreadTransferTool,

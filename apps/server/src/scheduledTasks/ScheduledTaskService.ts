@@ -349,6 +349,13 @@ export class ScheduledTaskService extends Context.Service<
       ScheduledTaskRunNowResult & { readonly threadId: ThreadId | null },
       ScheduledTaskError
     >;
+    /**
+     * One poll of a Jira query or GitLab projects trigger that also raises its whole current set,
+     * after any scheduled poll of it in progress.
+     */
+    readonly fireCurrent: (
+      input: ScheduledTaskRunNowInput,
+    ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
     readonly rotateWebhookToken: (
       input: ScheduledTaskRotateWebhookTokenInput,
       actingUserId?: AuthUserId | null,
@@ -373,6 +380,20 @@ export class ScheduledTaskService extends Context.Service<
     ) => Effect.Effect<WebhookTriggerResult, ScheduledTaskError>;
   }
 >()("t3/scheduledTasks/ScheduledTaskService") {}
+
+/** The task's permit in `permits`, made on first use. */
+const taskPermit = Effect.fnUntraced(function* (
+  permits: Ref.Ref<ReadonlyMap<ScheduledTaskId, Semaphore.Semaphore>>,
+  id: ScheduledTaskId,
+) {
+  const existing = (yield* Ref.get(permits)).get(id);
+  if (existing !== undefined) return existing;
+  const created = yield* Semaphore.make(1);
+  return yield* Ref.modify(permits, (current) => {
+    const raced = current.get(id);
+    return raced === undefined ? [created, new Map(current).set(id, created)] : [raced, current];
+  });
+});
 
 function taskError(message: string, input?: { taskId?: ScheduledTaskId; cause?: unknown }) {
   return new ScheduledTaskError({
@@ -609,6 +630,10 @@ export const layer = Layer.effect(
         ? { ...task, blockedByPolicy: webhookPolicyBlock }
         : task;
     const webhookPermits = yield* Ref.make<ReadonlyMap<ScheduledTaskId, Semaphore.Semaphore>>(
+      new Map(),
+    );
+    // A trigger's scheduled poll and a fire of its current set never overlap.
+    const pollPermits = yield* Ref.make<ReadonlyMap<ScheduledTaskId, Semaphore.Semaphore>>(
       new Map(),
     );
     // Include creation time so late deliveries cannot decrement a recreated task's count.
@@ -1314,39 +1339,39 @@ export const layer = Layer.effect(
                 }).pipe(Effect.as(null)),
               )
             : active.threadId === null
-            ? yield* Effect.exit(
-                threadLaunch
-                  .launch({
-                    commandId,
-                    projectId: active.projectId,
-                    title: active.title,
-                    modelSelection: active.modelSelection,
-                    runtimeMode: active.runtimeMode,
-                    interactionMode: active.interactionMode,
-                    workspaceStrategy: active.workspaceStrategy,
-                    initialMessage: {
-                      messageId,
-                      scheduledTaskId: active.id,
-                      text: prompt,
-                      attachments: [],
-                    },
-                    createdBy: active.createdBy,
-                    creationSource: active.creationSource,
-                  })
-                  .pipe(
-                    Effect.map((launched) => launched.threadId),
-                    Effect.tap((threadId) =>
-                      threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
+              ? yield* Effect.exit(
+                  threadLaunch
+                    .launch({
+                      commandId,
+                      projectId: active.projectId,
+                      title: active.title,
+                      modelSelection: active.modelSelection,
+                      runtimeMode: active.runtimeMode,
+                      interactionMode: active.interactionMode,
+                      workspaceStrategy: active.workspaceStrategy,
+                      initialMessage: {
+                        messageId,
+                        scheduledTaskId: active.id,
+                        text: prompt,
+                        attachments: [],
+                      },
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    })
+                    .pipe(
+                      Effect.map((launched) => launched.threadId),
+                      Effect.tap((threadId) =>
+                        threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
+                      ),
                     ),
+                )
+              : yield* Effect.exit(
+                  // The stored selection only seeds fresh threads. A bound run
+                  // follows the thread's current provider, so it passes none.
+                  sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
+                    Effect.as(ThreadId.make(active.threadId)),
                   ),
-              )
-            : yield* Effect.exit(
-                // The stored selection only seeds fresh threads. A bound run
-                // follows the thread's current provider, so it passes none.
-                sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
-                  Effect.as(ThreadId.make(active.threadId)),
-                ),
-              );
+                );
 
         const runSucceeded = result._tag === "Success";
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
@@ -1372,9 +1397,9 @@ export const layer = Layer.effect(
               trigger === "event"
                 ? scheduleSource.nextRunAt
                 : nextRunAt(
-              scheduleSource,
-              scheduleSource.schedule.type === "once" ? startedAt : completedAt,
-            ),
+                    scheduleSource,
+                    scheduleSource.schedule.type === "once" ? startedAt : completedAt,
+                  ),
             lastRunStatus,
             lastRunError,
             runCount: scheduleSource.runCount + 1,
@@ -1500,11 +1525,23 @@ export const layer = Layer.effect(
     // A poll is not a run: run count and last run time stay with the prompt runs its events
     // cause. Its failure shows on the task until a poll succeeds, and the next poll is always
     // one interval away, so a failing query is never retried faster.
-    const pollTask = Effect.fn("ScheduledTaskService.pollTask")(function* (task: ScheduledTask) {
+    // Returns the poll's error message, or null.
+    const pollTask = Effect.fn("ScheduledTaskService.pollTask")(function* (
+      task: ScheduledTask,
+      options?: { readonly fireCurrent?: boolean },
+    ) {
+      const permit = yield* taskPermit(pollPermits, task.id);
+      return yield* recordPoll(task, options).pipe(permit.withPermits(1));
+    });
+
+    const recordPoll = Effect.fnUntraced(function* (
+      task: ScheduledTask,
+      options?: { readonly fireCurrent?: boolean },
+    ) {
       const result = yield* Option.match(poller, {
         onNone: () =>
           Effect.fail(taskError("Polled triggers are not available.", { taskId: task.id })),
-        onSome: (service) => service.poll(task),
+        onSome: (service) => service.poll(task, options),
       }).pipe(Effect.exit);
       const error = Exit.isSuccess(result) ? null : errorMessage(result.cause);
       const now = yield* localNow;
@@ -1533,6 +1570,7 @@ export const layer = Layer.effect(
         ),
       );
       yield* notifyChanged;
+      return error;
     });
 
     const runDueTasks = Effect.fn("ScheduledTaskService.runDueTasks")(function* () {
@@ -1578,7 +1616,7 @@ export const layer = Layer.effect(
                 )
               : isPollSchedule(task.schedule)
                 ? pollTask(task)
-              : runTask(task, "scheduled"),
+                : runTask(task, "scheduled"),
           ).pipe(
             Effect.catch((cause) =>
               Effect.logWarning("Scheduled task run failed", { taskId: task.id, cause }),
@@ -1816,7 +1854,7 @@ export const layer = Layer.effect(
                         storedTriggerFilters(existingTask?.schedule, input.schedule.type),
                     ),
                   }
-            : input.schedule;
+                : input.schedule;
       const webhook =
         input.schedule.type === "webhook"
           ? yield* Effect.gen(function* () {
@@ -1886,8 +1924,8 @@ export const layer = Layer.effect(
         nextRunAt: seedsPoll({ enabled: input.enabled, schedule }, existingTask)
           ? iso(now)
           : scheduleUnchanged
-          ? existingTask.nextRunAt
-          : nextRunAt({ enabled: input.enabled, schedule }, now),
+            ? existingTask.nextRunAt
+            : nextRunAt({ enabled: input.enabled, schedule }, now),
         lastRunAt: existingTask?.lastRunAt ?? null,
         lastRunStatus: existingTask?.lastRunStatus ?? "never",
         lastRunError: existingTask?.lastRunError ?? null,
@@ -2043,6 +2081,26 @@ export const layer = Layer.effect(
         ),
       );
       if (moved.length > 0) yield* notifyChanged;
+    });
+
+    const fireCurrent: ScheduledTaskService["Service"]["fireCurrent"] = Effect.fn(
+      "ScheduledTaskService.fireCurrent",
+    )(function* (input: ScheduledTaskRunNowInput) {
+      const task = yield* loadTask(input.id);
+      if (!isPollSchedule(task.schedule)) {
+        return yield* taskError(
+          "Only Jira query and GitLab projects triggers have a current set.",
+          { taskId: input.id },
+        );
+      }
+      if (!task.enabled) {
+        return yield* taskError("Turn the trigger on to fire its current set.", {
+          taskId: input.id,
+        });
+      }
+      const error = yield* pollTask(task, { fireCurrent: true });
+      if (error !== null) return yield* taskError(error, { taskId: input.id });
+      return { task: yield* loadTask(input.id) };
     });
 
     const runNow: ScheduledTaskService["Service"]["runNow"] = Effect.fn(
@@ -2365,15 +2423,7 @@ export const layer = Layer.effect(
     const webhookPermit = Effect.fn("ScheduledTaskService.webhookPermit")(function* (
       id: ScheduledTaskId,
     ) {
-      const existing = (yield* Ref.get(webhookPermits)).get(id);
-      if (existing !== undefined) return existing;
-      const created = yield* Semaphore.make(1);
-      return yield* Ref.modify(webhookPermits, (permits) => {
-        const raced = permits.get(id);
-        return raced === undefined
-          ? [created, new Map(permits).set(id, created)]
-          : [raced, permits];
-      });
+      return yield* taskPermit(webhookPermits, id);
     });
 
     const releaseFailedDelivery = Effect.fn("ScheduledTaskService.releaseFailedDelivery")(
@@ -2424,34 +2474,34 @@ export const layer = Layer.effect(
         Effect.catchCauseIf(
           (cause) => !Cause.hasInterruptsOnly(cause),
           (cause) =>
-          Effect.gen(function* () {
-            const started = yield* Ref.get(dispatched);
-            yield* Effect.logWarning("Webhook dispatch failed", { taskId: task.id, cause });
-            yield* runOutcome(started ? "started" : "failed");
-            yield* markDeliveryFailed(
-              deliveryId,
-              started
-                ? "The run started, but completion could not be recorded."
-                : "The run failed to start.",
-            );
-            if (!started) {
-              yield* sql
-                .withTransaction(
-                  Effect.gen(function* () {
-                    const counted =
-                      yield* sql`UPDATE scheduled_task_webhook_pending SET state = 'failed'
+            Effect.gen(function* () {
+              const started = yield* Ref.get(dispatched);
+              yield* Effect.logWarning("Webhook dispatch failed", { taskId: task.id, cause });
+              yield* runOutcome(started ? "started" : "failed");
+              yield* markDeliveryFailed(
+                deliveryId,
+                started
+                  ? "The run started, but completion could not be recorded."
+                  : "The run failed to start.",
+              );
+              if (!started) {
+                yield* sql
+                  .withTransaction(
+                    Effect.gen(function* () {
+                      const counted =
+                        yield* sql`UPDATE scheduled_task_webhook_pending SET state = 'failed'
                 WHERE delivery_id = ${deliveryId} AND state = 'running' RETURNING delivery_id`;
-                    if (counted.length > 0)
-                      yield* sql`UPDATE scheduled_tasks SET run_count = run_count + 1
+                      if (counted.length > 0)
+                        yield* sql`UPDATE scheduled_tasks SET run_count = run_count + 1
                 WHERE task_id = ${task.id} AND created_at = ${task.createdAt}`;
-                  }),
-                )
-                .pipe(Effect.mapError(dedupeError));
-              yield* releaseFailedDelivery(deliveryId);
-            }
-            // Pending windows retry the same command id to finish bookkeeping.
-            return !started;
-          }),
+                    }),
+                  )
+                  .pipe(Effect.mapError(dedupeError));
+                yield* releaseFailedDelivery(deliveryId);
+              }
+              // Pending windows retry the same command id to finish bookkeeping.
+              return !started;
+            }),
         ),
       );
     });
@@ -3098,6 +3148,7 @@ export const layer = Layer.effect(
       deleteForThread,
       moveThreadTasks,
       runNow,
+      fireCurrent,
       rotateWebhookToken,
       listWebhookDeliveries,
       getWebhookDelivery,
