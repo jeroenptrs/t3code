@@ -1,12 +1,12 @@
-import type { EnvironmentId, ScheduledTaskId } from "@t3tools/contracts";
+import { type EnvironmentId, type ScheduledTaskId, scheduledTaskTrigger } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { CalendarClockIcon } from "lucide-react";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { scheduleLabel } from "../settings/ScheduledTasksSettings";
+import { triggerSummary } from "../settings/scheduledTasksSettings.logic";
 
-/** A factory's scheduled tasks, each opening its editor in Settings. Mounted only while shown. */
+/** A factory's triggers, each opening its editor in Settings. Mounted only while shown. */
 export function FactoryScheduledTaskLinks(props: {
   readonly environmentId: EnvironmentId;
   /** The factory's tree row. */
@@ -32,7 +32,7 @@ export function FactoryScheduledTaskLinks(props: {
           <CalendarClockIcon aria-hidden className="size-4 shrink-0 text-(--sidebar-icon-color)" />
           <span className="min-w-0 flex-1 truncate">{task.title}</span>
           <span className="max-w-1/2 truncate text-xs text-sidebar-muted-foreground">
-            {scheduleLabel(task.schedule)}
+            {triggerSummary(scheduledTaskTrigger(task))}
           </span>
         </Link>
       </li>,
