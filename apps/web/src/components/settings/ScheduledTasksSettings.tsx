@@ -1192,15 +1192,18 @@ function WebhookDeliveryMode({ environmentId }: { readonly environmentId: Enviro
   );
 }
 
-function ScheduledTaskEditorDialog({
+/** Reads its settings scope, so outside Settings it needs a `SettingsScopeProvider` above it. */
+export function ScheduledTaskEditorDialog({
   initialEnvironmentId,
   task,
   prefill,
+  onSaved,
   onClose,
 }: {
   readonly initialEnvironmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
   readonly prefill?: Partial<DraftState> | undefined;
+  readonly onSaved?: ((task: ScheduledTask) => void) | undefined;
   readonly onClose: () => void;
 }) {
   const [saving, setSaving] = useState(false);
@@ -1219,6 +1222,7 @@ function ScheduledTaskEditorDialog({
           prefill={prefill}
           saving={saving}
           onSavingChange={setSaving}
+          onSaved={onSaved}
           onClose={onClose}
         />
       </DialogPopup>
@@ -1461,6 +1465,7 @@ function ScheduledTaskEditorForm({
   prefill,
   saving,
   onSavingChange: setSaving,
+  onSaved,
   onClose,
 }: {
   readonly initialEnvironmentId: EnvironmentId;
@@ -1468,6 +1473,7 @@ function ScheduledTaskEditorForm({
   readonly prefill?: Partial<DraftState> | undefined;
   readonly saving: boolean;
   readonly onSavingChange: (saving: boolean) => void;
+  readonly onSaved: ((task: ScheduledTask) => void) | undefined;
   readonly onClose: () => void;
 }) {
   const messages = useMessages();
@@ -1716,6 +1722,7 @@ function ScheduledTaskEditorForm({
       }
       return;
     }
+    onSaved?.(result.value.task);
     onClose();
   };
 
@@ -1774,6 +1781,8 @@ function ScheduledTaskEditorForm({
                 setDraft((current) => ({
                   ...unbindDraftFromThread(current),
                   projectId: defaultScheduledTaskProjectId(projectsOn(next.environmentId), scope),
+                  // A factory belongs to its project.
+                  factoryId: "",
                   modelKey: "",
                   baseModelSelection: null,
                   baseRef: "main",
