@@ -129,6 +129,25 @@ export function factoryDraftChanged(factory: Factory, draft: FactoryDraft): bool
   );
 }
 
+/**
+ * The definition once a trigger made from this page joins it. A page without edits saves it at
+ * once; unsaved edits take it along, so the person's next save keeps both.
+ */
+export function attachTrigger(
+  factory: Factory,
+  draft: FactoryDraft | null,
+  taskId: ScheduledTaskId,
+): { readonly draft: FactoryDraft; readonly saveNow: boolean } {
+  const saveNow = draft === null || !factoryDraftChanged(factory, draft);
+  const base = saveNow ? factoryDraft(factory) : draft;
+  return {
+    draft: base.triggers.includes(taskId)
+      ? base
+      : { ...base, triggers: [...base.triggers, taskId] },
+    saveNow,
+  };
+}
+
 /** The issues a refused save or a read reported for one field, to show beside it. */
 export function issuesFor(
   issues: ReadonlyArray<FactoryIssue>,
