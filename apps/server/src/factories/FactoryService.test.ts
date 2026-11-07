@@ -517,6 +517,12 @@ describe("FactoryService", () => {
                   },
                 }),
                 shell("t-mine", { status: "failed" }),
+                // Settled, so its failed run is done with and does not count.
+                shell("t-child", {
+                  status: "failed",
+                  settledOverride: "settled",
+                  settledAt: NOW,
+                }),
               ],
             }),
           ),
