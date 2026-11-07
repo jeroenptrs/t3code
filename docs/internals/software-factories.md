@@ -356,9 +356,10 @@ one.
 
 - **A saved trigger polls at once.** The seed poll ran three seconds after the
   save, raised `merge_request.opened` for the one open merge request, and the
-  work item was in the Foreman's session two seconds later. The first events
-  from a Jira query come one interval after the seed instead, because that
-  source records its first result set silently.
+  work item was in the Foreman's session two seconds later. Both polled sources
+  now take `start`: a new trigger records its first set silently unless `start`
+  is `current`, and GitLab projects triggers from before it were migrated to
+  `current`.
 - **The event reached the Foreman framed.** The work item's text listed the
   event's fields one per line, each value inside `<trigger-data-…>` tags with
   the untrusted-data note, the same way a thread run gets its prompt. The
