@@ -111,6 +111,26 @@ describe("scheduledTaskTrigger", () => {
     expect(webhook.target).toMatchObject({ threadId: "thread-1", threadMode: "continue" });
   });
 
+  it("maps a Jira query source with its query and interval, its filters apart", () => {
+    const filter = { path: "event.changedFields", op: "equals", value: "priority" };
+    const trigger = scheduledTaskTrigger(
+      task({
+        type: "jira_query",
+        site: "acme.atlassian.net",
+        filterId: "10042",
+        everyMs: 900_000,
+        filters: [filter],
+      }),
+    );
+    expect(trigger.source).toEqual({
+      kind: "jira_query",
+      site: "acme.atlassian.net",
+      filterId: "10042",
+      everyMs: 900_000,
+    });
+    expect(trigger.filters).toEqual([filter]);
+  });
+
   it("keeps a Jira source's filters", () => {
     const jiraFilter = { path: "event.status", op: "in", value: ["In Progress"] };
     const jira = scheduledTaskTrigger(task({ type: "jira", filters: [jiraFilter] }));
@@ -136,6 +156,20 @@ describe("scheduledTaskTrigger", () => {
       { type: "gitlab", filters: [{ path: "event.type", op: "equals", value: "pipeline.failed" }] },
       { type: "slack", filters: [{ path: "event.prompt", op: "startsWith", value: "deploy" }] },
       { type: "manual" },
+      {
+        type: "jira_query",
+        site: "acme.atlassian.net",
+        jql: "project = PROJ AND labels = agent",
+        everyMs: 900_000,
+        filters: [{ path: "event.type", op: "equals", value: "issue.entered" }],
+      },
+      {
+        type: "jira_query",
+        site: "acme.atlassian.net",
+        filterId: "10042",
+        everyMs: 300_000,
+        filters: [],
+      },
     ];
     for (const schedule of schedules) {
       const stored = task(schedule, "thread-1");
@@ -176,6 +210,23 @@ describe("TriggerSaveInput", () => {
     expect(() =>
       decodeSave(
         save({ kind: "schedule", schedule: { type: "interval", everyMs: 60_000 } }, [statusFilter]),
+      ),
+    ).toThrow();
+    const query = { kind: "jira_query", site: "acme.atlassian.net", everyMs: 900_000 };
+    expect(decodeSave(save({ ...query, jql: "project = PROJ" }, [statusFilter])).source).toEqual({
+      ...query,
+      jql: "project = PROJ",
+    });
+    expect(() => decodeSave(save(query, []))).toThrow();
+    expect(() =>
+      decodeSave(save({ ...query, jql: "project = PROJ", filterId: "1" }, [])),
+    ).toThrow();
+    expect(() =>
+      decodeSave(save({ ...query, jql: "project = PROJ", everyMs: 60_000 }, [])),
+    ).toThrow();
+    expect(() =>
+      decodeSave(
+        save({ ...query, jql: "project = PROJ" }, [{ path: "body.action", op: "exists" }]),
       ),
     ).toThrow();
   });

@@ -6,6 +6,7 @@ import {
   type OrchestrationV2Run,
   MessageId,
   RunId,
+  ScheduledTaskError,
   ScheduledTaskUpsertInput,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -13,6 +14,11 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
+import * as Queue from "effect/Queue";
+import * as Option from "effect/Option";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -21,6 +27,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ScheduledTaskPoller from "./ScheduledTaskPoller.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
@@ -555,4 +562,115 @@ it.effect(
       });
       expect(morning?.nextRunAt).toBe(DateTime.formatIso(DateTime.toUtc(at(8, 0, 2))));
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a due Jira query task polls instead of running its prompt, one interval apart", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-11-05T10:00:00.000Z"));
+    const polls = yield* Queue.unbounded<string>();
+    const launches = yield* Ref.make(0);
+    const failing = yield* Ref.make(true);
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Scheduler.layer,
+      ManagedPolicy.layerTest(),
+      Layer.succeed(ScheduledTaskPoller.ScheduledTaskPoller, {
+        poll: (task) =>
+          Queue.offer(polls, task.id).pipe(
+            Effect.andThen(Ref.get(failing)),
+            Effect.flatMap((fail) =>
+              fail
+                ? Effect.fail(
+                    new ScheduledTaskError({
+                      message: "Field 'sprintt' does not exist or you do not have permission.",
+                      taskId: task.id,
+                    }),
+                  )
+                : Effect.void,
+            ),
+          ),
+      }),
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        launch: () =>
+          Ref.update(launches, (n) => n + 1).pipe(Effect.andThen(Effect.die("launched"))),
+      }),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
+      }),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const created = yield* service.upsert(
+        yield* decodeUpsertInput({
+          title: "Agent-labelled issues",
+          prompt: "Pick up {{event.key}}",
+          enabled: true,
+          schedule: {
+            type: "jira_query",
+            site: "acme.atlassian.net",
+            jql: "labels = agent",
+            everyMs: 900_000,
+          },
+          projectId: "project-jira-query",
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        }),
+      );
+      expect(created.task.nextRunAt).toBe("2026-11-05T10:15:00.000Z");
+      const settled = (status: string) =>
+        service.subscribeList().pipe(
+          Stream.map((result) => result.tasks[0]),
+          Stream.filter((task) => task?.lastRunStatus === status),
+          Stream.runHead,
+          Effect.map(Option.getOrUndefined),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+
+      const failed = yield* settled("failed");
+      yield* TestClock.adjust("15 minutes");
+      expect(yield* Queue.take(polls)).toBe(created.task.id);
+      expect(yield* Fiber.join(failed)).toMatchObject({
+        lastRunStatus: "failed",
+        lastRunError: "Field 'sprintt' does not exist or you do not have permission.",
+        nextRunAt: "2026-11-05T10:30:00.000Z",
+        lastRunAt: null,
+        runCount: 0,
+      });
+
+      yield* Ref.set(failing, false);
+      const cleared = yield* settled("never");
+      yield* TestClock.adjust("15 minutes");
+      expect(yield* Queue.take(polls)).toBe(created.task.id);
+      expect(yield* Fiber.join(cleared)).toMatchObject({
+        lastRunError: null,
+        nextRunAt: "2026-11-05T10:45:00.000Z",
+        runCount: 0,
+      });
+      expect(yield* Queue.size(polls)).toBe(0);
+      expect(yield* Ref.get(launches)).toBe(0);
+
+      // Deleting the trigger drops its observations and no other trigger's.
+      const sql = yield* SqlClient.SqlClient;
+      for (const key of [
+        `${created.task.id}\u0000`,
+        `${created.task.id}\u0000acme\u0000PROJ-1`,
+        "other\u0000",
+      ]) {
+        yield* sql`INSERT INTO fork_trigger_observations (source, key, state_json, observed_at)
+          VALUES ('jira_query', ${key}, '{}', '2026-11-05T10:00:00.000Z')`;
+      }
+      yield* service.delete({ id: created.task.id });
+      expect(yield* sql<{ key: string }>`SELECT key FROM fork_trigger_observations`).toEqual([
+        { key: "other\u0000" },
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
