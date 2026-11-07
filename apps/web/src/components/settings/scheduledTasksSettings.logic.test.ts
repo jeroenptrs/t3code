@@ -20,6 +20,7 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  draftForFactoryTrigger,
   scheduledTaskDefaultModel,
   defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
@@ -446,6 +447,12 @@ describe("work item triggers", () => {
     expect(targetFromDraft(draft, projectId, { target })).toEqual({ target });
     expect(targetFromDraft({ factoryId: "" }, projectId, { target })).toEqual({ target: null });
     expect(targetFromDraft(taskToDraft(legacyTask), projectId, legacyTask)).toEqual({});
+  });
+
+  it("presets a factory's trigger to its project and its work items", () => {
+    const draft = draftForFactoryTrigger({ id: target.factoryId, projectId });
+    expect(draft.projectId).toBe(projectId);
+    expect(targetFromDraft(draft, projectId, null)).toEqual({ target });
   });
 
   it("ends the summary with the factory's name", () => {
