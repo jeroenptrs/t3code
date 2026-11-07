@@ -150,7 +150,11 @@ it.effect("seeds a Jira query's result set silently, then raises entered, left, 
     const poll = (
       sources: TriggerSources.TriggerSources["Service"],
       issues: ReadonlyArray<JiraIssueSummary>,
-      input: { readonly triggerId?: ScheduledTaskId; readonly complete?: boolean } = {},
+      input: {
+        readonly triggerId?: ScheduledTaskId;
+        readonly complete?: boolean;
+        readonly start?: "changes" | "current";
+      } = {},
     ) =>
       sources.observeJiraQuery({
         triggerId: input.triggerId ?? triggerId,
@@ -158,6 +162,7 @@ it.effect("seeds a Jira query's result set silently, then raises entered, left, 
         issues,
         watchedFields: new Set(["status", "labels", "assignee"]),
         complete: input.complete ?? true,
+        start: input.start ?? "changes",
       });
     const observed = (id: ScheduledTaskId) =>
       sql<{ key: string }>`
@@ -167,9 +172,11 @@ it.effect("seeds a Jira query's result set silently, then raises entered, left, 
 
     yield* withSources((sources) =>
       Effect.gen(function* () {
-        const events = yield* collect(sources, 3);
+        const events = yield* collect(sources, 4);
         yield* poll(sources, [issue(), issue({ key: "PROJ-2" })]);
-        yield* poll(sources, [issue({ key: "PROJ-9" })], { triggerId: other });
+        // A trigger that starts on the current set raises entered for it on its first poll.
+        yield* poll(sources, [issue({ key: "PROJ-9" })], { triggerId: other, start: "current" });
+        yield* poll(sources, [issue({ key: "PROJ-9" })], { triggerId: other, start: "current" });
         yield* poll(sources, [issue({ status: "In Progress" }), issue({ key: "PROJ-3" })]);
         const collected = yield* Fiber.join(events);
         assert.deepEqual(
@@ -179,6 +186,7 @@ it.effect("seeds a Jira query's result set silently, then raises entered, left, 
             event.triggerId,
           ]),
           [
+            ["issue.entered", "PROJ-9", other],
             ["issue.status_changed", "PROJ-1", triggerId],
             ["issue.entered", "PROJ-3", triggerId],
             ["issue.left", "PROJ-2", triggerId],
@@ -239,10 +247,13 @@ it.effect(
           readonly scope?: string;
           readonly mergeRequests?: ReadonlyArray<ReturnType<typeof mergeRequest>>;
           readonly pipelines?: ReadonlyArray<GitLabPipelineState>;
+          readonly triggerId?: ScheduledTaskId;
+          readonly start?: "changes" | "current";
         },
       ) =>
         sources.observeGitLabProjects({
-          triggerId,
+          triggerId: input.triggerId ?? triggerId,
+          start: input.start ?? "current",
           host,
           marker: {
             scope: input.scope ?? '["gitlab.acme.dev",["acme/app"],null]',
@@ -266,7 +277,8 @@ it.effect(
         Effect.gen(function* () {
           assert.isNull(yield* sources.gitLabProjectsMarker(triggerId));
           const events = yield* collect(sources, 4);
-          // The first poll raises opened for open merge requests and no pipeline events.
+          // Starting on the current set, the first poll raises opened for open merge requests and
+          // no pipeline events.
           yield* poll(sources, {
             mergeRequests: [
               mergeRequest(42),
@@ -348,5 +360,25 @@ it.effect(
         }),
       );
       assert.deepEqual(yield* observed(), ["", "acme/app 45", "acme/app 46"]);
+
+      // Starting on changes, the first poll records the open merge requests silently.
+      yield* withSources((sources) =>
+        Effect.gen(function* () {
+          const changes = ScheduledTaskId.make("task:changes");
+          const events = yield* collect(sources, 1);
+          yield* poll(sources, {
+            triggerId: changes,
+            start: "changes",
+            mergeRequests: [mergeRequest(50)],
+          });
+          yield* poll(sources, {
+            triggerId: changes,
+            start: "changes",
+            mergeRequests: [mergeRequest(51)],
+          });
+          const [opened] = yield* Fiber.join(events);
+          assert.deepEqual(described(opened!), ["merge_request.opened", "51", null]);
+        }),
+      );
     }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
 );
