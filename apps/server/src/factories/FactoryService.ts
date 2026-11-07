@@ -48,6 +48,7 @@ import {
   type WorkItemListResult,
   type WorkItemOutcome,
   WorkItemSource,
+  type WorkItemTriggerSource,
   WorkItemStage,
   type WorkItemSummary,
   type WorkItemThread,
@@ -135,6 +136,12 @@ export class FactoryService extends Context.Service<
     readonly createWorkItem: (
       input: WorkItemCreateInput,
     ) => Effect.Effect<WorkItem, FactoryError | WorkItemError>;
+    /** `createWorkItem` for a trigger's run, with the trigger and its event as the source. */
+    readonly createWorkItemFromTrigger: (input: {
+      readonly factoryId: FactoryId;
+      readonly title: string;
+      readonly source: WorkItemTriggerSource;
+    }) => Effect.Effect<WorkItem, FactoryError | WorkItemError>;
     /**
      * The item's Foreman moves it on and names the threads that worked on it. Ending the item
      * sends the factory's next queued one.
@@ -1283,12 +1290,25 @@ const make = Effect.gen(function* () {
     return yield* readWorkItem(input.workItemId);
   });
 
-  const createWorkItem = Effect.fn("FactoryService.createWorkItem")(function* (
-    input: WorkItemCreateInput,
-  ) {
+  const createWorkItem = (input: WorkItemCreateInput) =>
+    insertWorkItem({
+      factoryId: input.factoryId,
+      title: input.title,
+      source: { kind: "manual", text: input.text },
+    });
+
+  const createWorkItemFromTrigger: FactoryService["Service"]["createWorkItemFromTrigger"] = (
+    input,
+  ) => insertWorkItem(input);
+
+  const insertWorkItem = Effect.fn("FactoryService.createWorkItem")(function* (input: {
+    readonly factoryId: FactoryId;
+    readonly title: string;
+    readonly source: WorkItemSource;
+  }) {
     const factory = yield* read(input.factoryId);
     const workItemId = WorkItemId.make(`work-item:${yield* randomUuidV4}`);
-    const source: WorkItemSource = { kind: "manual", text: input.text };
+    const { source } = input;
     const createdAt = yield* nowIso;
     const sourceJson = yield* encodeSource(source).pipe(Effect.catch(ledgerUnavailable));
     const gateJson = yield* encodeGate({ state: "none" }).pipe(Effect.catch(ledgerUnavailable));
@@ -1558,6 +1578,7 @@ const make = Effect.gen(function* () {
     listWorkItems,
     readWorkItem,
     createWorkItem,
+    createWorkItemFromTrigger,
     advanceWorkItem,
     gateWorkItem,
     answerWorkItemGate,
