@@ -242,7 +242,15 @@ describe("factory threads leave Home", () => {
       latestRun: failedRun,
       archivedAt: "2026-03-09T10:00:00.000Z",
     });
-    const threads = [owned, sameIdElsewhere, failed, asking, archived];
+    const settled = makeThreadFixture({
+      id: ThreadId.make("thread-settled"),
+      environmentId,
+      latestRun: failedRun,
+      hasPendingUserInput: true,
+      settledOverride: "settled",
+      settledAt: "2026-03-09T10:00:00.000Z",
+    });
+    const threads = [owned, sameIdElsewhere, failed, asking, archived, settled];
 
     const none = partitionFactoryThreads(threads, factoryOwnedThreadKeys([]));
     expect(none.home).toBe(threads);
@@ -252,11 +260,12 @@ describe("factory threads leave Home", () => {
       { environmentId: otherEnvironmentId, factories: null },
     ]);
     const { home, owned: ownedByKey } = partitionFactoryThreads(threads, ownedKeys);
-    expect(home).toEqual([sameIdElsewhere, failed, asking, archived]);
+    expect(home).toEqual([sameIdElsewhere, failed, asking, archived, settled]);
     expect([...ownedByKey.keys()]).toEqual([
       scopedThreadKey(scopeThreadRef(environmentId, ownedId)),
     ]);
-    // A failed run and an open question each count, as the server counts them; archived never.
+    // A failed run and an open question each count, as the server counts them; archived and
+    // settled threads never.
     expect(countThreadAttention(home)).toBe(3);
     expect(countThreadAttention([...ownedByKey.values()])).toBe(1);
   });
