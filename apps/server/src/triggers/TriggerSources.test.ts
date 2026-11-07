@@ -10,8 +10,10 @@ import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import type { GitLabPipelineState } from "./gitlabTriggerSource.ts";
 import * as TriggerSources from "./TriggerSources.ts";
 
 const SITE = "acme.atlassian.net";
@@ -200,4 +202,151 @@ it.effect("seeds a Jira query's result set silently, then raises entered, left, 
       }),
     );
   }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "records a GitLab projects poll's marker, raises opened and finished pipelines, forgets ended work",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-11-05T10:00:00.000Z"));
+      const sql = yield* SqlClient.SqlClient;
+      const triggerId = ScheduledTaskId.make("task:projects");
+      const host = "gitlab.acme.dev";
+      const mergeRequest = (
+        number: number,
+        overrides: Partial<ThreadPullRequestSnapshot> = {},
+      ) => ({
+        key: {
+          host,
+          repository: "acme/app",
+          number,
+          url: `https://${host}/acme/app/-/merge_requests/${number}`,
+        },
+        snapshot: snapshot({ headBranch: `feature/${number}`, checksState: null, ...overrides }),
+      });
+      const pipeline = (id: string, overrides: Partial<GitLabPipelineState> = {}) => ({
+        id,
+        repository: "acme/app",
+        status: "running",
+        ref: "main",
+        url: `https://${host}/acme/app/-/pipelines/${id}`,
+        updatedAt: "2026-11-05T09:00:00.000Z",
+        ...overrides,
+      });
+      const poll = (
+        sources: TriggerSources.TriggerSources["Service"],
+        input: {
+          readonly scope?: string;
+          readonly mergeRequests?: ReadonlyArray<ReturnType<typeof mergeRequest>>;
+          readonly pipelines?: ReadonlyArray<GitLabPipelineState>;
+        },
+      ) =>
+        sources.observeGitLabProjects({
+          triggerId,
+          host,
+          marker: {
+            scope: input.scope ?? '["gitlab.acme.dev",["acme/app"],null]',
+            marks: { "merge_requests:acme/app": "2026-11-05T09:00:00.000Z" },
+          },
+          mergeRequests: input.mergeRequests ?? [],
+          pipelines: input.pipelines ?? [],
+        });
+      const observed = () =>
+        sql<{ key: string }>`
+          SELECT key FROM fork_trigger_observations
+          WHERE source = 'gitlab_projects' ORDER BY key
+        `.pipe(Effect.map((rows) => rows.map((row) => row.key.split("\u0000").slice(2).join(" "))));
+      const described = (event: { readonly type: string; readonly payload: object }) => [
+        event.type,
+        "number" in event.payload ? event.payload.number : null,
+        "pipelineId" in event.payload ? event.payload.pipelineId : null,
+      ];
+
+      yield* withSources((sources) =>
+        Effect.gen(function* () {
+          assert.isNull(yield* sources.gitLabProjectsMarker(triggerId));
+          const events = yield* collect(sources, 4);
+          // The first poll raises opened for open merge requests and no pipeline events.
+          yield* poll(sources, {
+            mergeRequests: [
+              mergeRequest(42),
+              mergeRequest(43, { state: "merged" }),
+              mergeRequest(44),
+            ],
+            pipelines: [pipeline("901", { status: "success" }), pipeline("902")],
+          });
+          yield* poll(sources, {
+            mergeRequests: [mergeRequest(42, { state: "merged" })],
+            pipelines: [
+              pipeline("901", { status: "success" }),
+              pipeline("903", { status: "failed", ref: "refs/merge-requests/44/head" }),
+            ],
+          });
+          const collected = yield* Fiber.join(events);
+          assert.deepEqual(collected.map(described), [
+            ["merge_request.opened", "42", null],
+            ["merge_request.opened", "44", null],
+            ["merge_request.merged", "42", null],
+            // A merge request pipeline names its merge request through its ref.
+            ["pipeline.finished", "44", "903"],
+          ]);
+        }),
+      );
+      yield* withSources((sources) =>
+        Effect.gen(function* () {
+          // A restart resumes from the stored marker.
+          assert.deepEqual((yield* sources.gitLabProjectsMarker(triggerId))?.marks, {
+            "merge_requests:acme/app": "2026-11-05T09:00:00.000Z",
+          });
+          const events = yield* collect(sources, 1);
+          yield* poll(sources, { pipelines: [pipeline("902", { status: "canceled" })] });
+          yield* poll(sources, { pipelines: [pipeline("902", { status: "canceled" })] });
+          const [finished] = yield* Fiber.join(events);
+          assert.deepEqual(described(finished!), ["pipeline.finished", "", "902"]);
+          assert.equal(finished?.triggerId, triggerId);
+        }),
+      );
+      // A branch pipeline names the open merge request from that branch.
+      yield* withSources((sources) =>
+        Effect.gen(function* () {
+          const events = yield* collect(sources, 1);
+          yield* poll(sources, {
+            pipelines: [pipeline("904", { status: "failed", ref: "feature/44" })],
+          });
+          const [finished] = yield* Fiber.join(events);
+          assert.deepInclude(finished?.payload, {
+            number: "44",
+            pipelineStatus: "failed",
+            pipelineRef: "feature/44",
+          });
+        }),
+      );
+      assert.deepEqual(yield* observed(), [
+        "",
+        "acme/app 42",
+        "acme/app 43",
+        "acme/app 44",
+        "acme/app pipeline 901",
+        "acme/app pipeline 902",
+        "acme/app pipeline 903",
+        "acme/app pipeline 904",
+      ]);
+
+      // Thirty days on, merged and closed merge requests and finished pipelines are forgotten.
+      yield* TestClock.adjust("31 days");
+      yield* withSources((sources) => poll(sources, {}));
+      assert.deepEqual(yield* observed(), ["", "acme/app 44"]);
+
+      // A changed scope re-seeds silently and drops what the old scope saw.
+      yield* withSources((sources) =>
+        Effect.gen(function* () {
+          const events = yield* collect(sources, 1);
+          yield* poll(sources, { scope: "group", mergeRequests: [mergeRequest(45)] });
+          yield* poll(sources, { scope: "group", mergeRequests: [mergeRequest(46)] });
+          const [opened] = yield* Fiber.join(events);
+          assert.deepEqual(described(opened!), ["merge_request.opened", "46", null]);
+        }),
+      );
+      assert.deepEqual(yield* observed(), ["", "acme/app 45", "acme/app 46"]);
+    }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
 );
