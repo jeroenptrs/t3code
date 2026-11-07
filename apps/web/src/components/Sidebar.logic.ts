@@ -1523,17 +1523,18 @@ export function partitionFactoryThreads<T extends FactoryPartitionThread>(
 }
 
 /**
- * What an attention badge counts, the way the server counts a factory's: unarchived threads whose
- * latest run failed, plus unarchived threads waiting on an answer from the user.
+ * What an attention badge counts, the way the server counts a factory's: open threads whose
+ * latest run failed, plus open threads waiting on an answer from the user. Archived and settled
+ * threads are done with, so they never count.
  */
 export function countThreadAttention(
   threads: ReadonlyArray<
-    Pick<SidebarThreadSummary, "archivedAt" | "hasPendingUserInput" | "latestRun">
+    Pick<SidebarThreadSummary, "archivedAt" | "settledOverride" | "hasPendingUserInput" | "latestRun">
   >,
 ): number {
   let count = 0;
   for (const thread of threads) {
-    if (thread.archivedAt !== null) continue;
+    if (thread.archivedAt !== null || thread.settledOverride === "settled") continue;
     if (thread.latestRun?.status === "failed") count += 1;
     if (thread.hasPendingUserInput) count += 1;
   }
