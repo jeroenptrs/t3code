@@ -1529,7 +1529,10 @@ export function partitionFactoryThreads<T extends FactoryPartitionThread>(
  */
 export function countThreadAttention(
   threads: ReadonlyArray<
-    Pick<SidebarThreadSummary, "archivedAt" | "settledOverride" | "hasPendingUserInput" | "latestRun">
+    Pick<
+      SidebarThreadSummary,
+      "archivedAt" | "settledOverride" | "hasPendingUserInput" | "latestRun"
+    >
   >,
 ): number {
   let count = 0;
