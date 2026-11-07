@@ -11,6 +11,7 @@ import {
   type Factory,
   type FactoryAttention,
   type FactoryDefinition,
+  type FactoryDeleteResult,
   FactoryError,
   FactoryId,
   type FactoryIssue,
@@ -110,6 +111,11 @@ export class FactoryService extends Context.Service<
     readonly read: (factoryId: FactoryId) => Effect.Effect<Factory, FactoryError>;
     /** Refuses invalid role bindings; names and role paths are already checked by the schema. */
     readonly save: (input: FactorySaveInput) => Effect.Effect<Factory, FactoryError>;
+    /**
+     * Removes the factory's directory and its work items, and returns its threads to Home. Its
+     * scheduled tasks stay.
+     */
+    readonly delete: (factoryId: FactoryId) => Effect.Effect<FactoryDeleteResult, FactoryError>;
     /** The factory's Foreman thread; null when it has none, or its thread is archived or gone. */
     readonly foremanThread: (factoryId: FactoryId) => Effect.Effect<ThreadId | null, FactoryError>;
     /** Launches a Foreman thread when the factory has no live one, and returns its thread. */
@@ -732,6 +738,52 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.catch(unavailable("written")));
 
     return yield* read(makeFactoryId(project.projectId, input.definition.name));
+  });
+
+  const deleteFactory = Effect.fn("FactoryService.delete")(function* (factoryId: FactoryId) {
+    const parsed = parseFactoryId(factoryId);
+    if (parsed === null) return yield* notFound(factoryId);
+    const { projects } = yield* loadCatalog;
+    const project = projects.find((candidate) => candidate.projectId === parsed.projectId);
+    if (project === undefined) return yield* notFound(factoryId);
+    const directory = factoryDirectory(project, parsed.name);
+    const definitionFile = path.join(directory, FACTORY_FILE_NAME);
+    return yield* ledgerLocks.withLock(
+      factoryId,
+      Effect.gen(function* () {
+        const exists = yield* fileSystem
+          .exists(definitionFile)
+          .pipe(Effect.catch(unavailable("read")));
+        if (!exists) return yield* notFound(factoryId);
+        yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                DELETE FROM fork_factory_work_item_threads WHERE work_item_id IN (
+                  SELECT work_item_id FROM fork_factory_work_items WHERE factory_id = ${factoryId}
+                )
+              `;
+              yield* sql`
+                DELETE FROM fork_factory_work_item_transitions WHERE work_item_id IN (
+                  SELECT work_item_id FROM fork_factory_work_items WHERE factory_id = ${factoryId}
+                )
+              `;
+              yield* sql`DELETE FROM fork_factory_work_items WHERE factory_id = ${factoryId}`;
+              yield* sql`DELETE FROM fork_factory_threads WHERE factory_id = ${factoryId}`;
+            }),
+          )
+          .pipe(Effect.catch(unavailable("written")));
+        // factory.json goes last, so a failed removal leaves a factory the person can delete again.
+        yield* Effect.gen(function* () {
+          for (const entry of yield* fileSystem.readDirectory(directory)) {
+            if (entry === FACTORY_FILE_NAME) continue;
+            yield* fileSystem.remove(path.join(directory, entry), { recursive: true });
+          }
+          yield* fileSystem.remove(directory, { recursive: true });
+        }).pipe(Effect.catch(unavailable("written")));
+        return { factoryId } satisfies FactoryDeleteResult;
+      }),
+    );
   });
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
@@ -1500,6 +1552,7 @@ const make = Effect.gen(function* () {
     list,
     read,
     save,
+    delete: deleteFactory,
     foremanThread,
     ensureForemanThread,
     listWorkItems,

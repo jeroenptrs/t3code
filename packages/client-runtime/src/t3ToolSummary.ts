@@ -360,6 +360,13 @@ export function summarizeT3ToolCalls(
     case "factory-save":
       label = phrase("Saved", "save", quantity(countEntities(factoryIds), "factory", "factories"));
       break;
+    case "factory-delete":
+      label = phrase(
+        "Deleted",
+        "delete",
+        quantity(countEntities(factoryIds), "factory", "factories"),
+      );
+      break;
     case "work-item-list":
       label = phrase("Listed", "list", `work items ${times}`);
       break;

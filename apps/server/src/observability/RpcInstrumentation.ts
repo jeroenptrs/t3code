@@ -168,6 +168,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.factoriesList]: "factories",
   [WS_METHODS.factoriesRead]: "factories",
   [WS_METHODS.factoriesSave]: "factories",
+  [WS_METHODS.factoriesDelete]: "factories",
   [WS_METHODS.factoriesSkillsList]: "factories",
   [WS_METHODS.factoriesSkillsRead]: "factories",
   [WS_METHODS.factoriesSkillsSave]: "factories",

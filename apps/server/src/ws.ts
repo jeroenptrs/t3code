@@ -3770,6 +3770,7 @@ const layerWsFactoriesRpc = (currentSession: EnvironmentAuth.AuthenticatedSessio
       [WS_METHODS.factoriesList]: (input) => factories.list(input.projectId),
       [WS_METHODS.factoriesRead]: (input) => factories.read(input.factoryId),
       [WS_METHODS.factoriesSave]: (input) => factories.save(input),
+        [WS_METHODS.factoriesDelete]: (input) => factories.delete(input.factoryId),
         [WS_METHODS.factoriesSkillsList]: (input) => skills.list(input),
         [WS_METHODS.factoriesSkillsRead]: (input) => skills.read(input),
         [WS_METHODS.factoriesSkillsSave]: (input) => skills.save(input),

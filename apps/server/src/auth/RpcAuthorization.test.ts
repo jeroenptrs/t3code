@@ -369,6 +369,7 @@ describe("Factories authorization", () => {
             [WS_METHODS.factoriesRead]: () => Effect.die("unused"),
             [WS_METHODS.factoriesSave]: () =>
               Effect.sync(() => handled.push("save")).pipe(Effect.as(factory)),
+            [WS_METHODS.factoriesDelete]: () => Effect.die("unused"),
             [WS_METHODS.factoriesSkillsList]: () =>
               Effect.sync(() => handled.push("skills.list")).pipe(Effect.as({ skills: [] })),
             [WS_METHODS.factoriesSkillsRead]: () => Effect.die("unused"),
@@ -464,12 +465,12 @@ describe("Factories authorization", () => {
   it.effect(
     "lets an administrator save a factory and its skills, create work items, and answer gates",
     () =>
-    Effect.gen(function* () {
-      const handled: Array<string> = [];
-      const client = yield* clientWith(AuthUserRoleScopes.administrator, handled);
-      yield* client[WS_METHODS.factoriesSave](save);
-      yield* client[WS_METHODS.factoriesWorkItemsCreate](create);
-      yield* client[WS_METHODS.factoriesWorkItemsAnswerGate](answer);
+      Effect.gen(function* () {
+        const handled: Array<string> = [];
+        const client = yield* clientWith(AuthUserRoleScopes.administrator, handled);
+        yield* client[WS_METHODS.factoriesSave](save);
+        yield* client[WS_METHODS.factoriesWorkItemsCreate](create);
+        yield* client[WS_METHODS.factoriesWorkItemsAnswerGate](answer);
         yield* client[WS_METHODS.factoriesSkillsSave](skillSave);
         yield* client[WS_METHODS.factoriesSkillsDelete](skillDelete);
         expect(handled).toEqual([
@@ -479,7 +480,7 @@ describe("Factories authorization", () => {
           "skills.save",
           "skills.delete",
         ]);
-    }).pipe(Effect.scoped),
+      }).pipe(Effect.scoped),
   );
 });
 

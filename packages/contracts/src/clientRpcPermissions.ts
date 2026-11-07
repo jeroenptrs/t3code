@@ -102,6 +102,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.insightsMergeContributors]: AuthInsightsWriteScope,
   // Saving rewrites a factory's files, which decide what its agents run.
   [WS_METHODS.factoriesSave]: AuthFactoriesManageScope,
+  // Deleting removes the factory's files and drops its work items.
+  [WS_METHODS.factoriesDelete]: AuthFactoriesManageScope,
   // A skill's text goes into every role that binds it, in every factory for a home skill.
   [WS_METHODS.factoriesSkillsSave]: AuthFactoriesManageScope,
   [WS_METHODS.factoriesSkillsDelete]: AuthFactoriesManageScope,

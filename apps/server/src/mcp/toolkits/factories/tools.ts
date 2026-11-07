@@ -1,5 +1,7 @@
 import {
   Factory,
+  FactoryDeleteInput,
+  FactoryDeleteResult,
   FactoryError,
   FactoryId,
   FactoryListInput,
@@ -81,6 +83,14 @@ const FactorySaveTool = Tool.make("t3_factory_save", {
     "Write a factory's `factory.json` and the role files you pass; creates it if new. A passed file replaces the whole role file, body included. Omitted roles keep their files; `file: null` deletes one so the built-in role applies. A binding the provider lacks fails with `issues`. Skills: t3_factory_skill_save.",
   parameters: FactorySaveInput,
   success: Factory,
+}).annotate(Tool.Destructive, true);
+
+const FactoryDeleteTool = Tool.make("t3_factory_delete", {
+  ...shared,
+  description:
+    "Delete a factory's directory and work items; its threads return to Home and its scheduled tasks stay.",
+  parameters: FactoryDeleteInput,
+  success: FactoryDeleteResult,
 }).annotate(Tool.Destructive, true);
 
 const FactorySkillListTool = Tool.make("t3_factory_skill_list", {
@@ -165,6 +175,7 @@ export const FactoriesToolkit = Toolkit.make(
   FactoryListTool,
   FactoryReadTool,
   FactorySaveTool,
+  FactoryDeleteTool,
   FactorySkillListTool,
   FactorySkillReadTool,
   FactorySkillSaveTool,

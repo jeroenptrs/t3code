@@ -567,6 +567,7 @@ it.effect.each([
 
 it.effect.each([
   WS_METHODS.factoriesSave,
+  WS_METHODS.factoriesDelete,
   WS_METHODS.factoriesSkillsSave,
   WS_METHODS.factoriesSkillsDelete,
   WS_METHODS.factoriesWorkItemsCreate,

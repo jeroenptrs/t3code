@@ -284,6 +284,16 @@ export const FactoryReadInput = Schema.Struct({
 });
 export type FactoryReadInput = typeof FactoryReadInput.Type;
 
+export const FactoryDeleteInput = Schema.Struct({
+  factoryId: FactoryId,
+});
+export type FactoryDeleteInput = typeof FactoryDeleteInput.Type;
+
+export const FactoryDeleteResult = Schema.Struct({
+  factoryId: FactoryId,
+});
+export type FactoryDeleteResult = typeof FactoryDeleteResult.Type;
+
 /**
  * - `not_found`: no factory with that id
  * - `project_not_found`: no project with that id
