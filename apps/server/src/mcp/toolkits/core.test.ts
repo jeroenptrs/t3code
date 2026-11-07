@@ -927,7 +927,7 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
   ),
 );
 
-it.effect("a caller cannot rewrite a scheduled task that runs above its own modes", () =>
+it.effect("a caller cannot rewrite a scheduled task or trigger that runs above its own modes", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     const call = (name: string, args: Record<string, unknown>) =>
@@ -956,6 +956,35 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
     expect(fresh.structuredContent).toMatchObject({ freshSession: true });
     const incomplete = yield* call("schedule_task", { prompt: "Run nightly" });
     expect(declaredFailure(incomplete)).toMatchObject({ code: "invalid_request" });
+    const trigger = (id: string | undefined, target: Record<string, unknown>) =>
+      call("t3_trigger_save", {
+        ...(id === undefined ? {} : { id }),
+        title: "Pick up work",
+        prompt: "Work on {{event.key}}",
+        enabled: true,
+        source: { kind: "jira" },
+        filters: [{ path: "event.status", op: "equals", value: "In Progress" }],
+        target: {
+          type: "thread",
+          projectId: "project-1",
+          threadId: null,
+          threadMode: "new_thread",
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "gpt-5" },
+          runtimeMode: "auto",
+          interactionMode: "default",
+          ...target,
+        },
+      });
+    expect(declaredFailure(yield* trigger("task-full-access", {}))).toMatchObject({
+      code: "runtime_mode_escalation_denied",
+    });
+    expect(
+      declaredFailure(yield* trigger(undefined, { runtimeMode: "full-access" })),
+    ).toMatchObject({ code: "runtime_mode_escalation_denied" });
+    expect(
+      declaredFailure(yield* trigger(undefined, { threadId: "someone-elses-thread" })),
+    ).toMatchObject({ code: "invalid_request" });
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(
