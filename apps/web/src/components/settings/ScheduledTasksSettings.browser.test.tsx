@@ -80,6 +80,8 @@ const provider: ServerProvider = {
   checkedAt: "2026-10-21T00:00:00.000Z",
   models: [
     { slug: "gpt-5.4", name: "GPT-5.4", isDefault: true, isCustom: false, capabilities: null },
+    // The bound thread's model.
+    { slug: "gpt-5.5", name: "gpt-5.5", isDefault: false, isCustom: false, capabilities: null },
   ],
   slashCommands: [],
   skills: [],
@@ -189,8 +191,9 @@ vi.mock(import("../../state/server"), async (original) => {
 });
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
-  useAtomCommand: ((_command: unknown, options: { label: string }) => async (target: unknown) => {
+  useAtomCommand: ((command: unknown, options: { label: string }) => async (target: unknown) => {
     state.commands.push({ label: options.label, target });
+    if (options.label === "scheduled task delete") return state.remove(command, target);
     return { _tag: "Success", value: undefined };
   }) as never,
 }));
@@ -373,6 +376,9 @@ describe("ScheduledTasksSettings", () => {
     await dialog.getByLabelText("Filter 1 field").click();
     await page.getByRole("option", { name: "Status", exact: true }).click();
     await userEvent.fill(dialog.getByLabelText("Filter 1 value"), "In Progress");
+    const actOn = dialog.getByRole("group", { name: "Act on" });
+    await actOn.getByRole("button", { name: "issue.labels_changed" }).click();
+    await actOn.getByRole("button", { name: "issue.assignee_changed" }).click();
     await dialog.getByLabelText("When the item fits no instruction").click();
     await page.getByRole("option", { name: "Ask and wait" }).click();
     await dialog.getByRole("button", { name: "Create trigger" }).click();
@@ -384,7 +390,10 @@ describe("ScheduledTasksSettings", () => {
           input: expect.objectContaining({
             schedule: {
               type: "jira",
-              filters: [{ path: "event.status", op: "equals", value: "In Progress" }],
+              filters: [
+                { path: "event.type", op: "in", value: ["issue.status_changed"] },
+                { path: "event.status", op: "equals", value: "In Progress" },
+              ],
             },
             triage: { fallback: "ask" },
           }),
