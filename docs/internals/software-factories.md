@@ -64,13 +64,16 @@ keeps that shape and binds it to what T3 Code already has.
 
 ## Trigger seam
 
-A trigger is a source, filters, and a target. In M4 the persisted trigger is
-the scheduled task: its schedule is the source and holds the filters, and its
+A trigger is a source, filters, and a target. The persisted trigger is the
+scheduled task: its schedule is the source and holds the filters, and its
 project and thread binding is the target. The `Trigger` contract in
-`packages/contracts/src/trigger.ts` is the library view of that, derived by
-`scheduledTaskTrigger`. Its `target` is a union with one member, `thread`. A
-factory target joins that union as the second member, so triggers start
-factory work items without a second trigger model.
+`packages/contracts/src/trigger.ts` is what the `triggers.*` RPCs and
+`t3_trigger_save` present. `scheduledTaskTrigger` is the one mapping from a
+stored task, and `triggerUpsertToScheduledTaskUpsert` the inverse for saves, so
+there is no second service or table. The `scheduledTasks.*` RPCs stay for older
+clients and for webhook tokens and deliveries. Its `target` is a union with one
+member, `thread`. A factory target joins that union as the second member, so
+triggers start factory work items without a second trigger model.
 
 ## Experimental dependencies
 

@@ -37,6 +37,8 @@ import {
   ThreadMetadataMcpUpdateInput,
   ThreadMetadataMcpUpdateResult,
   TrimmedNonEmptyString,
+  Trigger,
+  TriggerSaveInput,
 } from "@t3tools/contracts";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
@@ -197,6 +199,19 @@ const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
 })
   .annotate(Tool.Title, "Delete a scheduled task")
   .annotate(Tool.Destructive, true);
+
+const TriggerSaveTool = Tool.make("t3_trigger_save", {
+  description:
+    "Save a trigger that runs `prompt` in `target` when its `source` fires and every filter matches: a schedule, a webhook, or a Jira, GitLab, or Slack event. Pass `id` to replace a trigger.",
+  parameters: TriggerSaveInput,
+  success: Trigger,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Save a trigger")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
 
 const RequestSecretTool = Tool.make("request_secret", {
   description:
@@ -362,6 +377,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ScheduleTaskTool,
   ListScheduledTasksTool,
   DeleteScheduledTaskTool,
+  TriggerSaveTool,
   RequestSecretTool,
   CreateThreadsTool,
   ThreadListTool,
