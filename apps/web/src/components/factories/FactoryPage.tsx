@@ -43,6 +43,7 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { FactoryAttentionBadge } from "./FactoryAttentionBadge";
+import { DeleteFactoryDialog } from "./DeleteFactoryDialog";
 import { FactoryCanvas } from "./FactoryCanvas";
 import { FactoryDefinitionSection } from "./FactoryDefinitionSection";
 import { FactoryIssuesList } from "./FactoryIssues";
@@ -180,6 +181,8 @@ function FactoryView(props: {
 }) {
   const { environmentId } = props;
   const canSave = useAtomValue(factoriesEnvironment.save.permissionAtom(environmentId));
+  const canDelete =
+    useAtomValue(factoriesEnvironment.delete.permissionAtom(environmentId)) && props.canManage;
   const save = useAtomCommand(factoriesEnvironment.save, {
     label: "save a factory",
     reportFailure: false,
@@ -262,22 +265,33 @@ function FactoryView(props: {
             <FactoryAttentionBadge count={factory.attention.total} />
           </p>
         </div>
-        {editable ? (
+        {editable || canDelete ? (
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={draft === null || saving}
-              onClick={() => {
-                setDraft(null);
-                setRefusal(null);
-              }}
-            >
-              Discard
-            </Button>
-            <Button size="sm" disabled={!dirty || saving} onClick={() => void submit()}>
-              {saving ? "Saving…" : "Save"}
-            </Button>
+            {canDelete ? (
+              <DeleteFactoryDialog
+                environmentId={environmentId}
+                factory={factory}
+                disabled={saving}
+              />
+            ) : null}
+            {editable ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={draft === null || saving}
+                  onClick={() => {
+                    setDraft(null);
+                    setRefusal(null);
+                  }}
+                >
+                  Discard
+                </Button>
+                <Button size="sm" disabled={!dirty || saving} onClick={() => void submit()}>
+                  {saving ? "Saving…" : "Save"}
+                </Button>
+              </>
+            ) : null}
           </div>
         ) : null}
       </div>
