@@ -105,6 +105,7 @@ export const make = Effect.gen(function* () {
       });
       yield* sources.observeGitLabProjects({
         triggerId: task.id,
+        start: schedule.start ?? "changes",
         host,
         marker: { scope, marks: Object.fromEntries(marks) },
         mergeRequests,
