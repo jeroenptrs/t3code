@@ -40,6 +40,8 @@ import {
   type AuthUserId,
   type ScheduledTaskListResult,
   WorkflowRequestError,
+  scheduledTaskTrigger,
+  triggerUpsertToScheduledTaskUpsert,
   AuthSessionId,
   ClientConnectionMethod,
   ClientDeviceType,
@@ -840,6 +842,10 @@ const MAX_CLIENT_DEVICE_MODEL_LENGTH = 80;
  * along with who created the hook and rotated its token. Read-only sessions
  * still see the task itself.
  */
+const triggerList = ({ tasks }: ScheduledTaskListResult) => ({
+  triggers: tasks.map(scheduledTaskTrigger),
+});
+
 export function visibleScheduledTasks(
   result: ScheduledTaskListResult,
   scopes: ReadonlyArray<AuthEnvironmentScope>,
@@ -2531,6 +2537,30 @@ export const layerWsRpc = (
         [WS_METHODS.triggerTemplatesSave]: (input) => triggerTemplates.save(input),
         [WS_METHODS.triggerTemplatesDelete]: (input) => triggerTemplates.delete(input),
         [WS_METHODS.triggersRaise]: (input) => triggers.raise(input.event),
+        [WS_METHODS.triggersList]: (_input) =>
+          scheduledTasks.list().pipe(Effect.map(withVisibleWebhookUrls), Effect.map(triggerList)),
+        [WS_METHODS.triggersSubscribe]: (_input) =>
+          scheduledTasks
+            .subscribeList()
+            .pipe(Stream.map((result) => triggerList(withVisibleWebhookUrls(result)))),
+        [WS_METHODS.triggersSave]: (input) =>
+          scheduledTasks
+            .upsert(triggerUpsertToScheduledTaskUpsert(input), currentSession.userId ?? null)
+            .pipe(Effect.map(({ task }) => ({ trigger: scheduledTaskTrigger(task) }))),
+        [WS_METHODS.triggersSetEnabled]: (input) =>
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(scheduledTasks.setEnabled(input)),
+            Effect.map(({ task }) => ({ trigger: scheduledTaskTrigger(task) })),
+          ),
+        [WS_METHODS.triggersDelete]: (input) =>
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(scheduledTasks.delete(input)),
+          ),
+        [WS_METHODS.triggersRunNow]: (input) =>
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(scheduledTasks.runNow(input)),
+            Effect.map(({ task }) => ({ trigger: scheduledTaskTrigger(task) })),
+          ),
         [WS_METHODS.serverProbe]: (_input) =>
           Effect.map(DateTime.now, (now) => ({ serverTime: DateTime.formatIso(now) })),
         [WS_METHODS.serverGetConfig]: (_input) =>
@@ -4150,7 +4180,9 @@ export const layer = Layer.unwrap(
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
               Layer.provide(Layer.succeed(PeerThreadRelay.PeerThreadRelay, peerThreadRelay)),
-              Layer.provide(Layer.succeed(PeerClientPairing.PeerClientPairing, peerClientPairing)),
+                Layer.provide(
+                  Layer.succeed(PeerClientPairing.PeerClientPairing, peerClientPairing),
+                ),
               // Shared with MCP, so an agent's write reaches every subscribed client.
               Layer.provide(
                 Layer.succeed(DiffWalkthroughService.DiffWalkthroughService, diffWalkthroughs),
