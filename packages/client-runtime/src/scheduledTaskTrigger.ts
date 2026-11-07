@@ -1,5 +1,6 @@
 import {
   MAX_WEBHOOK_FILTERS,
+  TRIGGER_EVENT_TYPES,
   TRIGGER_SOURCE_FIELDS,
   TriggerFilter,
   type ScheduledTaskTriage,
@@ -155,6 +156,57 @@ export function parseTriageDraft(
   return unchanged ? {} : { triage };
 }
 
+const EVENT_TYPE_PATH = "event.type";
+
+/** The types the "Act on" picker offers; null for a source with one type. */
+export function triggerEventTypes(source: string): ReadonlyArray<string> | null {
+  return source === "jira" ||
+    source === "gitlab" ||
+    source === "jira_query" ||
+    source === "gitlab_projects"
+    ? TRIGGER_EVENT_TYPES[source]
+    : null;
+}
+
+/**
+ * Takes the first `event.type in` filter out for the picker when it names only types the source
+ * has; every type when there is none. Other filters, a type `equals` included, stay as they are.
+ */
+export function splitEventTypeFilter<
+  F extends { readonly path: string; readonly op: string; readonly value?: unknown },
+>(
+  source: string,
+  filters: ReadonlyArray<F>,
+): { readonly eventTypes: ReadonlyArray<string>; readonly filters: ReadonlyArray<F> } {
+  const types: ReadonlyArray<string> = triggerEventTypes(source) ?? [];
+  const pickedTypes = (filter: F) =>
+    filter.path === EVENT_TYPE_PATH &&
+    filter.op === "in" &&
+    Array.isArray(filter.value) &&
+    filter.value.every((value) => types.includes(value))
+      ? (filter.value as ReadonlyArray<string>)
+      : null;
+  const index = filters.findIndex((filter) => pickedTypes(filter) !== null);
+  const picked = index === -1 ? null : pickedTypes(filters[index]!);
+  if (picked === null) return { eventTypes: types, filters };
+  return {
+    eventTypes: types.filter((type) => picked.includes(type)),
+    filters: filters.filter((_, at) => at !== index),
+  };
+}
+
+/** The rows a save sends: a partial choice as an `event.type in` row first, every type as none. */
+export function withEventTypeDrafts(
+  source: string,
+  eventTypes: ReadonlyArray<string>,
+  drafts: ReadonlyArray<TriggerFilterDraft>,
+): ReadonlyArray<TriggerFilterDraft> {
+  const types = triggerEventTypes(source);
+  if (types === null || types.every((type) => eventTypes.includes(type))) return drafts;
+  const value = types.filter((type) => eventTypes.includes(type)).join(", ");
+  return [{ id: nextTriggerFilterDraftId(), path: EVENT_TYPE_PATH, op: "in", value }, ...drafts];
+}
+
 const FILTER_PHRASES = {
   equals: ["equals", "has"],
   notEquals: ["is not", "lacks"],
@@ -165,11 +217,21 @@ const FILTER_PHRASES = {
 
 const SUMMARIZED_FILTERS = 2;
 
-/** Filters as a row reads them, such as "Status equals In Progress, Labels has bug". */
+/**
+ * Filters as a row reads them, such as "Act on issue.entered · Status equals In Progress, Labels
+ * has bug".
+ */
 export function triggerFiltersSummary(
   source: TriggerFilterSourceKind,
-  filters: ReadonlyArray<TriggerFilter>,
+  allFilters: ReadonlyArray<TriggerFilter>,
 ): string {
+  const types = triggerEventTypes(source);
+  const split = splitEventTypeFilter(source, allFilters);
+  const filters = split.filters;
+  const actOn =
+    types !== null && split.eventTypes.length < types.length
+      ? `Act on ${split.eventTypes.join(", ")}`
+      : null;
   const fields: ReadonlyArray<{ path: string; label: string; array?: true }> =
     TRIGGER_SOURCE_FIELDS[source];
   const phrases = filters.slice(0, SUMMARIZED_FILTERS).map((filter) => {
@@ -180,5 +242,6 @@ export function triggerFiltersSummary(
     return `${label} ${verb} ${filter.op === "in" ? filter.value.join(", ") : filter.value}`;
   });
   const more = filters.length - SUMMARIZED_FILTERS;
-  return more > 0 ? `${phrases.join(", ")}, +${more} more` : phrases.join(", ");
+  const rest = more > 0 ? `${phrases.join(", ")}, +${more} more` : phrases.join(", ");
+  return [actOn, rest].filter((part) => part !== null && part !== "").join(" · ");
 }
