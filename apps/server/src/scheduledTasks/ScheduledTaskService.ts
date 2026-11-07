@@ -348,6 +348,13 @@ export class ScheduledTaskService extends Context.Service<
       ScheduledTaskRunNowResult & { readonly threadId: ThreadId | null },
       ScheduledTaskError
     >;
+    /**
+     * One poll of a Jira query or GitLab projects trigger that also raises its whole current set,
+     * after any scheduled poll of it in progress.
+     */
+    readonly fireCurrent: (
+      input: ScheduledTaskRunNowInput,
+    ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
     readonly rotateWebhookToken: (
       input: ScheduledTaskRotateWebhookTokenInput,
       actingUserId?: AuthUserId | null,
@@ -372,6 +379,20 @@ export class ScheduledTaskService extends Context.Service<
     ) => Effect.Effect<WebhookTriggerResult, ScheduledTaskError>;
   }
 >()("t3/scheduledTasks/ScheduledTaskService") {}
+
+/** The task's permit in `permits`, made on first use. */
+const taskPermit = Effect.fnUntraced(function* (
+  permits: Ref.Ref<ReadonlyMap<ScheduledTaskId, Semaphore.Semaphore>>,
+  id: ScheduledTaskId,
+) {
+  const existing = (yield* Ref.get(permits)).get(id);
+  if (existing !== undefined) return existing;
+  const created = yield* Semaphore.make(1);
+  return yield* Ref.modify(permits, (current) => {
+    const raced = current.get(id);
+    return raced === undefined ? [created, new Map(current).set(id, created)] : [raced, current];
+  });
+});
 
 function taskError(message: string, input?: { taskId?: ScheduledTaskId; cause?: unknown }) {
   return new ScheduledTaskError({
@@ -600,6 +621,10 @@ export const layer = Layer.effect(
         ? { ...task, blockedByPolicy: webhookPolicyBlock }
         : task;
     const webhookPermits = yield* Ref.make<ReadonlyMap<ScheduledTaskId, Semaphore.Semaphore>>(
+      new Map(),
+    );
+    // A trigger's scheduled poll and a fire of its current set never overlap.
+    const pollPermits = yield* Ref.make<ReadonlyMap<ScheduledTaskId, Semaphore.Semaphore>>(
       new Map(),
     );
     // Include creation time so late deliveries cannot decrement a recreated task's count.
@@ -1395,11 +1420,23 @@ export const layer = Layer.effect(
     // A poll is not a run: run count and last run time stay with the prompt runs its events
     // cause. Its failure shows on the task until a poll succeeds, and the next poll is always
     // one interval away, so a failing query is never retried faster.
-    const pollTask = Effect.fn("ScheduledTaskService.pollTask")(function* (task: ScheduledTask) {
+    // Returns the poll's error message, or null.
+    const pollTask = Effect.fn("ScheduledTaskService.pollTask")(function* (
+      task: ScheduledTask,
+      options?: { readonly fireCurrent?: boolean },
+    ) {
+      const permit = yield* taskPermit(pollPermits, task.id);
+      return yield* recordPoll(task, options).pipe(permit.withPermits(1));
+    });
+
+    const recordPoll = Effect.fnUntraced(function* (
+      task: ScheduledTask,
+      options?: { readonly fireCurrent?: boolean },
+    ) {
       const result = yield* Option.match(poller, {
         onNone: () =>
           Effect.fail(taskError("Polled triggers are not available.", { taskId: task.id })),
-        onSome: (service) => service.poll(task),
+        onSome: (service) => service.poll(task, options),
       }).pipe(Effect.exit);
       const error = Exit.isSuccess(result) ? null : errorMessage(result.cause);
       const now = yield* localNow;
@@ -1428,6 +1465,7 @@ export const layer = Layer.effect(
         ),
       );
       yield* notifyChanged;
+      return error;
     });
 
     const runDueTasks = Effect.fn("ScheduledTaskService.runDueTasks")(function* () {
@@ -1904,6 +1942,26 @@ export const layer = Layer.effect(
       if (moved.length > 0) yield* notifyChanged;
     });
 
+    const fireCurrent: ScheduledTaskService["Service"]["fireCurrent"] = Effect.fn(
+      "ScheduledTaskService.fireCurrent",
+    )(function* (input: ScheduledTaskRunNowInput) {
+      const task = yield* loadTask(input.id);
+      if (!isPollSchedule(task.schedule)) {
+        return yield* taskError(
+          "Only Jira query and GitLab projects triggers have a current set.",
+          { taskId: input.id },
+        );
+      }
+      if (!task.enabled) {
+        return yield* taskError("Turn the trigger on to fire its current set.", {
+          taskId: input.id,
+        });
+      }
+      const error = yield* pollTask(task, { fireCurrent: true });
+      if (error !== null) return yield* taskError(error, { taskId: input.id });
+      return { task: yield* loadTask(input.id) };
+    });
+
     const runNow: ScheduledTaskService["Service"]["runNow"] = Effect.fn(
       "ScheduledTaskService.runNow",
     )(function* (input: ScheduledTaskRunNowInput) {
@@ -2224,15 +2282,7 @@ export const layer = Layer.effect(
     const webhookPermit = Effect.fn("ScheduledTaskService.webhookPermit")(function* (
       id: ScheduledTaskId,
     ) {
-      const existing = (yield* Ref.get(webhookPermits)).get(id);
-      if (existing !== undefined) return existing;
-      const created = yield* Semaphore.make(1);
-      return yield* Ref.modify(webhookPermits, (permits) => {
-        const raced = permits.get(id);
-        return raced === undefined
-          ? [created, new Map(permits).set(id, created)]
-          : [raced, permits];
-      });
+      return yield* taskPermit(webhookPermits, id);
     });
 
     const serviceScope = yield* Effect.scope;
@@ -2959,6 +3009,7 @@ export const layer = Layer.effect(
       deleteForThread,
       moveThreadTasks,
       runNow,
+      fireCurrent,
       rotateWebhookToken,
       listWebhookDeliveries,
       getWebhookDelivery,

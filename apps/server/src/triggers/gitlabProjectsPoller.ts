@@ -23,7 +23,7 @@ export const make = Effect.gen(function* () {
   const sources = yield* TriggerSources.TriggerSources;
 
   const poll = Effect.fn("gitlabProjectsPoller.poll")(
-    function* (task: ScheduledTask) {
+    function* (task: ScheduledTask, options?: { readonly fireCurrent?: boolean }) {
       const { schedule } = task;
       if (schedule.type !== "gitlab_projects") return;
       const { host } = schedule;
@@ -97,6 +97,26 @@ export const make = Effect.gen(function* () {
         }
       }
 
+      // Firing the current set needs every open merge request, not only those changed since the
+      // marks; a seed's read already is that.
+      const fireCurrent = options?.fireCurrent === true;
+      if (fireCurrent && resume !== null) {
+        const read = new Set(mergeRequests.map((entry) => entry.key.url));
+        const open = [
+          ...(yield* Effect.forEach(schedule.projects, (path) =>
+            client.mergeRequests({ cwd, host, project: path, since: null }),
+          )).flat(),
+          ...(schedule.group === undefined
+            ? []
+            : yield* client.mergeRequests({ cwd, host, group: schedule.group, since: null })),
+        ];
+        for (const entry of open) {
+          if (read.has(entry.key.url)) continue;
+          read.add(entry.key.url);
+          mergeRequests.push(entry);
+        }
+      }
+
       yield* Effect.annotateCurrentSpan({
         "scheduled_task.id": task.id,
         "gitlab.host": host,
@@ -106,13 +126,14 @@ export const make = Effect.gen(function* () {
       yield* sources.observeGitLabProjects({
         triggerId: task.id,
         start: schedule.start ?? "changes",
+        fireCurrent,
         host,
         marker: { scope, marks: Object.fromEntries(marks) },
         mergeRequests,
         pipelines,
       });
     },
-    (effect, task) =>
+    (effect, task, _options?: { readonly fireCurrent?: boolean }) =>
       effect.pipe(
         Effect.mapError((error) =>
           error._tag === "ScheduledTaskError"

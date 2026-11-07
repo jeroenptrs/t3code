@@ -671,6 +671,7 @@ export const WS_METHODS = {
   triggersSetEnabled: "triggers.setEnabled",
   triggersDelete: "triggers.delete",
   triggersRunNow: "triggers.runNow",
+  triggersFireCurrent: "triggers.fireCurrent",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2492,6 +2493,12 @@ const WsTriggersRunNowRpc = Rpc.make(WS_METHODS.triggersRunNow, {
   error: TriggerRpcError,
 });
 
+const WsTriggersFireCurrentRpc = Rpc.make(WS_METHODS.triggersFireCurrent, {
+  payload: ScheduledTaskRunNowInput,
+  success: TriggerMutationResult,
+  error: TriggerRpcError,
+});
+
 const WsGuestShareCreateRpc = Rpc.make(WS_METHODS.guestShareCreate, {
   payload: GuestShareCreateInput,
   success: GuestShareCreateResult,
@@ -2669,6 +2676,7 @@ export const WsCoreRpcGroup = RpcGroup.make(
   WsTriggersSetEnabledRpc,
   WsTriggersDeleteRpc,
   WsTriggersRunNowRpc,
+  WsTriggersFireCurrentRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
