@@ -156,6 +156,27 @@ const handlers = {
       return yield* service.deleteScheduledTask(scope, input);
     }),
   ),
+  t3_trigger_save: McpToolAccess.either(
+    (input) => input.id === undefined,
+    McpToolAccess.startsThreads(
+      () => ({}),
+      (input) =>
+        Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          return yield* service.saveTrigger(scope, input);
+        }),
+      // A triggered run starts long after its caller, with nothing to carry the link.
+      { refused: "save triggers in this environment" },
+    ),
+    McpToolAccess.writes((input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.saveTrigger(scope, input);
+      }),
+    ),
+  ),
   request_secret: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
