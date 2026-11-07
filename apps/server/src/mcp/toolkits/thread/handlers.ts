@@ -141,6 +141,26 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       };
     }),
   ),
+  t3_trigger_fire_current: McpToolAccess.writesEnvironment((input) =>
+    Effect.gen(function* () {
+      const scheduler = yield* ScheduledTasks.ScheduledTaskService;
+      const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
+      if (!tasks.some((task) => task.id === input.triggerId))
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "The trigger was not found.",
+        });
+      const { task } = yield* scheduler
+        .fireCurrent({ id: input.triggerId })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+          ),
+        );
+      return { triggerId: task.id, lastRunStatus: task.lastRunStatus, nextRunAt: task.nextRunAt };
+    }),
+  ),
   t3_thread_search: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const { caller } = yield* readCaller();

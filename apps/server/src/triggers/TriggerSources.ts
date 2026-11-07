@@ -67,15 +67,14 @@ export class TriggerSources extends Context.Service<
       snapshot: ThreadPullRequestSnapshot,
     ) => Effect.Effect<void, TriggerObservationError>;
     /**
-     * One poll of a Jira query trigger: every issue in its result set. Its observations are its
-     * own, keyed by the trigger id, so two triggers over one issue each raise. The first poll
-     * raises `issue.entered` for the set when `start` is `current`, and otherwise records it
-     * silently, as does the first after the query changed. An incomplete set (capped) raises no
-     * `issue.left`.
+     * One poll of a Jira query trigger, its observations keyed by the trigger id. The first poll
+     * raises `issue.entered` for the set only with `start: "current"`; a query change re-seeds
+     * silently. A capped set raises no `issue.left`. `fireCurrent` raises entered for the set.
      */
     readonly observeJiraQuery: (input: {
       readonly triggerId: ScheduledTaskId;
       readonly start: PollTriggerStart;
+      readonly fireCurrent: boolean;
       readonly query: string;
       readonly issues: ReadonlyArray<JiraIssueSummary>;
       readonly watchedFields: ReadonlySet<JiraQueryWatchedField>;
@@ -86,14 +85,14 @@ export class TriggerSources extends Context.Service<
       triggerId: ScheduledTaskId,
     ) => Effect.Effect<GitLabProjectsMarker | null, TriggerObservationError>;
     /**
-     * One GitLab projects poll. The first raises no pipeline events, and `merge_request.opened`
-     * for open merge requests only when `start` is `current`; the first after a scope change
-     * raises nothing. Ended merge requests and finished pipelines are forgotten 30 days after
-     * last seen.
+     * One GitLab projects poll. The first raises `merge_request.opened` for open merge requests
+     * only with `start: "current"`, and no pipeline events; a scope change re-seeds silently.
+     * Ended work is forgotten after 30 days. `fireCurrent` raises opened for every open one.
      */
     readonly observeGitLabProjects: (input: {
       readonly triggerId: ScheduledTaskId;
       readonly start: PollTriggerStart;
+      readonly fireCurrent: boolean;
       readonly host: string;
       readonly marker: GitLabProjectsMarker;
       readonly mergeRequests: ReadonlyArray<{
@@ -131,6 +130,26 @@ const encodeMarkerState = Schema.encodeSync(MarkerState);
 const PipelineState = Schema.fromJsonString(GitLabPipelineState);
 const decodePipelineState = Schema.decodeUnknownOption(PipelineState);
 const encodePipelineState = Schema.encodeSync(PipelineState);
+
+const eventItemKey = (event: TriggerEvent) =>
+  `${event.type}\u0000${
+    "key" in event.payload
+      ? event.payload.key
+      : "repository" in event.payload
+        ? `${event.payload.repository}\u0000${event.payload.number}`
+        : ""
+  }`;
+
+/** The fired events a poll has not already raised for the same item and type. */
+const raiseOnce = (raised: ReadonlyArray<TriggerEvent>, fired: ReadonlyArray<TriggerEvent>) => {
+  const seen = new Set(raised.map(eventItemKey));
+  return fired.filter((event) => {
+    const key = eventItemKey(event);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
 
 const isGitLabLink = (url: string) =>
   sourceControlDefinitions.findByChangeRequestUrl(url)?.kind === "gitlab";
@@ -274,6 +293,16 @@ const make = Effect.gen(function* () {
           }
         }
       }
+      if (input.fireCurrent) {
+        events.push(
+          ...raiseOnce(
+            events,
+            input.issues.flatMap((issue) =>
+              diffJiraQueryIssue(null, issue, input.watchedFields, context),
+            ),
+          ),
+        );
+      }
       const inserts: ReadonlyArray<Record<string, string>> = writes.map(([key, stateJson]) => ({
         source: "jira_query",
         key,
@@ -406,6 +435,19 @@ const make = Effect.gen(function* () {
             ? openByBranch.get(`${pipeline.repository}\u0000${pipeline.ref}`)
             : mergeRequests.get(`${pipeline.repository}\u0000${number}`)) ?? null;
         events.push(...diffPipeline(previous, pipeline, mergeRequest, input.host, context));
+      }
+
+      if (input.fireCurrent) {
+        events.push(
+          ...raiseOnce(
+            events,
+            input.mergeRequests.flatMap((entry) =>
+              entry.snapshot.state === "open"
+                ? diffGitLabProjectsMergeRequest(null, entry.snapshot, entry.key, context)
+                : [],
+            ),
+          ),
+        );
       }
 
       // A re-seed drops what the old scope saw; otherwise ended work is forgotten after 30 days.

@@ -1619,6 +1619,11 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:trigger:run-now",
       tag: WS_METHODS.triggersRunNow,
     }),
+    // Off the config lane too: a fire waits for the poll to read the whole set.
+    fireTriggerCurrentSet: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:trigger:fire-current",
+      tag: WS_METHODS.triggersFireCurrent,
+    }),
     /** `permissionAtom` says whether this session may list trigger templates. */
     triggerTemplates: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:trigger-templates",
