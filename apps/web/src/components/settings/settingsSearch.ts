@@ -110,7 +110,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/threads": msg("Threads"),
   "/settings/browser": msg("Browser"),
   "/settings/devices": msg("Devices"),
-  "/settings/scheduled-tasks": msg("Scheduled tasks"),
+  "/settings/scheduled-tasks": msg("Triggers"),
   "/settings/source-control": msg("Source control"),
   "/settings/worktrees": msg("Worktrees"),
   "/settings/connections": msg("Environments"),
@@ -1034,8 +1034,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "scheduled-tasks",
-    title: "Scheduled tasks",
+    title: "Triggers",
     to: "/settings/scheduled-tasks",
+    searchTerms: ["scheduled tasks"],
   },
   {
     id: "agent-browser-access",
