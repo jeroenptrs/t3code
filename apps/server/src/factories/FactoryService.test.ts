@@ -15,6 +15,7 @@ import {
   ScheduledTaskId,
   type ServerProvider,
   ThreadId,
+  type WorkItemTriggerSource,
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
@@ -918,6 +919,67 @@ describe("FactoryService work items", () => {
           (yield* factories.readWorkItem(third.id)).transitions[0]!.note,
           "No item was active, so the server sent the oldest queued one to the Foreman.",
         );
+      }),
+    ),
+  );
+
+  it.effect("creates an item from a Jira query event, queued behind an active item", () =>
+    withWorkItems(({ factoryId, recorded }) =>
+      Effect.gen(function* () {
+        const factories = yield* FactoryService.FactoryService;
+        const source = (key: string): WorkItemTriggerSource => ({
+          kind: "trigger",
+          triggerId: ScheduledTaskId.make("task:jira-query"),
+          title: "Agent-labelled issues",
+          event: {
+            source: "jira_query",
+            type: "issue.entered",
+            triggerId: ScheduledTaskId.make("task:jira-query"),
+            occurredAt: "2026-11-07T09:00:00.000Z",
+            payload: {
+              type: "issue.entered",
+              site: "acme.atlassian.net",
+              key,
+              projectKey: "PROJ",
+              url: `https://acme.atlassian.net/browse/${key}`,
+              summary: "Fix login",
+              status: "To Do",
+              statusCategory: "todo",
+              previousStatus: null,
+              previousStatusCategory: null,
+              issueType: "Bug",
+              priority: null,
+              assignee: null,
+              assigneeAccountId: null,
+              previousAssigneeAccountId: null,
+              labels: ["agent"],
+              addedLabels: [],
+              removedLabels: [],
+              changedFields: [],
+              query: "labels = agent",
+            },
+          },
+          text: `Issue key: ${key}\nSummary: Fix login`,
+        });
+        const first = yield* factories.createWorkItemFromTrigger({
+          factoryId,
+          title: "issue.entered PROJ-7: Fix login",
+          source: source("PROJ-7"),
+        });
+        assert.strictEqual(first.stage, "new");
+        assert.deepStrictEqual(first.source, source("PROJ-7"));
+        const [send] = yield* Ref.get(recorded.sends);
+        assert.include(send!.text, "from trigger Agent-labelled issues (jira_query)");
+        assert.include(send!.text, "Issue key: PROJ-7");
+
+        const second = yield* factories.createWorkItemFromTrigger({
+          factoryId,
+          title: "issue.entered PROJ-8: Fix login",
+          source: source("PROJ-8"),
+        });
+        assert.strictEqual(second.stage, "queued");
+        assert.deepStrictEqual((yield* factories.readWorkItem(second.id)).source, source("PROJ-8"));
+        assert.lengthOf(yield* Ref.get(recorded.sends), 1);
       }),
     ),
   );
