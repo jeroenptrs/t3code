@@ -120,7 +120,6 @@ import {
   moveDraftToThread,
   JIRA_QUERY_DRAFT_DEFAULTS,
   GITLAB_PROJECTS_DRAFT_DEFAULTS,
-  WEEKDAY_LABELS,
   timeScheduleLabel,
   triggerSourceOfMode,
   triggerSummary,
@@ -729,7 +728,6 @@ function ScheduledTaskRow({
   readonly onEdit: () => void;
 }) {
   const messages = useMessages();
-  const locale = useLocale();
   const gt = useGT();
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
@@ -745,10 +743,14 @@ function ScheduledTaskRow({
   const run = useAtomCommand(serverEnvironment.runScheduledTaskNow, {
     label: "scheduled task run now",
   });
+  const fire = useAtomCommand(serverEnvironment.fireTriggerCurrentSet, {
+    label: "trigger fire current set",
+  });
   const remove = useAtomCommand(serverEnvironment.deleteScheduledTask, {
     label: "scheduled task delete",
   });
-  const act = async (action: "toggle" | "run" | "delete") => {
+  const polled = task.schedule.type === "jira_query" || task.schedule.type === "gitlab_projects";
+  const act = async (action: "toggle" | "run" | "fire" | "delete") => {
     if (busy || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
     if (action === "delete") {
       const message = `${gt('Delete "{title}"?', { title: task.title })}\n${gt("This cannot be undone.")}`;
@@ -763,7 +765,9 @@ function ScheduledTaskRow({
         ? await toggle({ environmentId, input: { id: task.id, enabled: !task.enabled } })
         : action === "run"
           ? await run({ environmentId, input: { id: task.id } })
-          : await remove({ environmentId, input: { id: task.id } });
+          : action === "fire"
+            ? await fire({ environmentId, input: { id: task.id } })
+            : await remove({ environmentId, input: { id: task.id } });
     setBusy(false);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       toastManager.add(
@@ -788,8 +792,7 @@ function ScheduledTaskRow({
               task.blockedByPolicy
             ) : !task.enabled ? (
               gt("Paused")
-            ) : (task.schedule.type === "jira_query" || task.schedule.type === "gitlab_projects") &&
-              task.nextRunAt ? (
+            ) : polled && task.nextRunAt ? (
               <>
                 Next check <ScheduledRelativeLabel value={task.nextRunAt} />
               </>
@@ -847,6 +850,13 @@ function ScheduledTaskRow({
                   <InboxIcon />
                   <T>Deliveries</T>
                 </MenuItem>
+              ) : polled ? (
+                task.enabled ? (
+                  <MenuItem onClick={() => void act("fire")}>
+                    <PlayIcon />
+                    Fire current set
+                  </MenuItem>
+                ) : null
               ) : runsOnEvent ? null : (
                 <MenuItem onClick={() => void act("run")}>
                   <PlayIcon />
