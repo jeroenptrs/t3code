@@ -23,6 +23,7 @@ import {
   matchesScheduledTaskScope,
   scheduleFromDraft,
   taskToDraft,
+  triggerSummary,
 } from "./scheduledTasksSettings.logic";
 
 const laptopId = EnvironmentId.make("laptop");
@@ -414,4 +415,47 @@ it("rejects dedupe templates without a request placeholder", () => {
   const draft = taskToDraft({ ...legacyTask, schedule: { type: "webhook", signature: null } });
   expect(scheduleFromDraft({ ...draft, replayKey: "literal" })).toBeNull();
   expect(scheduleFromDraft({ ...draft, coalesceKey: "{{body.bad" })).toBeNull();
+});
+
+describe("trigger row summary", () => {
+  it("names the source, then what it filters on", () => {
+    expect(
+      triggerSummary({
+        source: { kind: "jira" },
+        filters: [
+          { path: "event.status", op: "equals", value: "In Progress" },
+          { path: "event.labels", op: "equals", value: "bug" },
+        ],
+      }),
+    ).toBe("Jira · Status equals In Progress, Labels has bug");
+    expect(
+      triggerSummary({
+        source: { kind: "gitlab" },
+        filters: [
+          { path: "event.type", op: "in", value: ["pipeline.failed", "merge_request.merged"] },
+          { path: "event.isDraft", op: "notEquals", value: "true" },
+          { path: "event.author", op: "exists" },
+        ],
+      }),
+    ).toBe(
+      "GitLab · Event type is one of pipeline.failed, merge_request.merged, Draft is not true, +1 more",
+    );
+    expect(triggerSummary({ source: { kind: "slack" }, filters: [] })).toBe("Slack");
+    expect(
+      triggerSummary({
+        source: { kind: "schedule", schedule: { type: "interval", everyMs: 900_000 } },
+        filters: [],
+      }),
+    ).toBe("Every 15 minutes");
+    expect(
+      triggerSummary({
+        source: { kind: "webhook", signature: null },
+        filters: [
+          { path: "body.action", op: "equals", value: "opened" },
+          { path: "headers.x-event", op: "exists" },
+        ],
+      }),
+    ).toBe("Webhook · 2 filters");
+    expect(triggerSummary({ source: { kind: "manual" }, filters: [] })).toBe("Manual");
+  });
 });

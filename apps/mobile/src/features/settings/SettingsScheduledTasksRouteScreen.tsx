@@ -3,6 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
   clampManagedRuntimeMode,
+  scheduledTaskTrigger,
   managedCapabilityDenial,
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
@@ -12,7 +13,9 @@ import type {
   ProjectId,
   ScheduledTask,
   ScheduledTaskThreadMode,
+  ScheduledTaskTimeSchedule,
   ScheduledTaskUpsertInput,
+  TriggerSourceKind,
 } from "@t3tools/contracts";
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
@@ -102,8 +105,8 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import {
   formatNextScheduledTaskRun,
   formatScheduledTaskInterval,
-  formatTriggerSchedule,
-  TRIGGER_SCHEDULE_LABELS,
+  formatTriggerSummary,
+  TRIGGER_SOURCE_LABELS,
 } from "./scheduledTaskPresentation";
 
 type ScheduledTaskRoutes = {
@@ -129,16 +132,7 @@ const THREAD_MODE_LABELS: Record<ScheduledTaskThreadMode, string> = {
   fresh_session: "One thread, fresh session",
 };
 
-function describeSchedule(task: ScheduledTask): string {
-  const { schedule } = task;
-  if (
-    schedule.type === "jira" ||
-    schedule.type === "gitlab" ||
-    schedule.type === "slack" ||
-    schedule.type === "manual"
-  )
-    return formatTriggerSchedule(schedule);
-  if (schedule.type === "webhook") return "On webhook";
+function describeSchedule(schedule: ScheduledTaskTimeSchedule): string {
   if (schedule.type === "once") {
     const runAt = new Date(schedule.runAt);
     return `Once, ${formatRunAtDate(runAt)} at ${formatRunAtTime(runAt)}`;
@@ -427,19 +421,21 @@ function TriggerFilterRows(props: {
   );
 }
 
-const SCHEDULE_MODES: ReadonlyArray<{
+/** The clock-driven kinds the "Schedule" source offers. */
+const TIME_SCHEDULE_MODES: ReadonlyArray<{
   readonly mode: ScheduleDraft["mode"];
   readonly label: string;
 }> = [
   { mode: "fixed_time", label: "At a time" },
   { mode: "once", label: "Once" },
   { mode: "interval", label: "Interval" },
-  { mode: "webhook", label: "On webhook" },
-  { mode: "jira", label: TRIGGER_SCHEDULE_LABELS.jira },
-  { mode: "gitlab", label: TRIGGER_SCHEDULE_LABELS.gitlab },
-  { mode: "slack", label: TRIGGER_SCHEDULE_LABELS.slack },
-  { mode: "manual", label: TRIGGER_SCHEDULE_LABELS.manual },
 ];
+
+const TRIGGER_SOURCES = Object.keys(TRIGGER_SOURCE_LABELS) as ReadonlyArray<TriggerSourceKind>;
+
+function sourceOfMode(mode: ScheduleDraft["mode"]): TriggerSourceKind {
+  return mode === "fixed_time" || mode === "once" || mode === "interval" ? "schedule" : mode;
+}
 
 function PickerRow(props: {
   readonly label: string;
@@ -520,10 +516,10 @@ export function SettingsScheduledTasksRouteScreen() {
 
   return (
     <SettingsScreen
-      title="Scheduled tasks"
+      title="Triggers"
       actions={[
         {
-          accessibilityLabel: "New task",
+          accessibilityLabel: "New trigger",
           icon: "plus",
           disabled: visibleEnvironments.length === 0,
           onPress: newTask,
@@ -560,7 +556,7 @@ export function SettingsScheduledTasksRouteScreen() {
         ) : (
           <Text className="px-2 text-base text-foreground-muted">
             {availableTargets.length === 0
-              ? "Connect an environment to view and create scheduled tasks."
+              ? "Connect an environment to view and create triggers."
               : "No environments match these filters. Change the filter above."}
           </Text>
         )}
@@ -579,11 +575,11 @@ export function SettingsScheduledTasksRouteScreen() {
 // The "New task" action and takeScheduledTaskNewLink clear the editor before
 // this screen opens, so it starts from the default target.
 export function SettingsScheduledTaskNewRouteScreen() {
-  return <SettingsScheduledTaskEditorScreen title="New scheduled task" />;
+  return <SettingsScheduledTaskEditorScreen title="New trigger" />;
 }
 
 export function SettingsScheduledTaskEditRouteScreen() {
-  return <SettingsScheduledTaskEditorScreen title="Edit scheduled task" />;
+  return <SettingsScheduledTaskEditorScreen title="Edit trigger" />;
 }
 
 function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }) {
@@ -640,7 +636,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
       return;
     }
     if (saving) {
-      Dialog.alert("Saving task", "Wait for the task to finish saving before leaving.");
+      Dialog.alert("Saving trigger", "Wait for the trigger to finish saving before leaving.");
       return;
     }
     Dialog.alert("Discard changes?", "Your unsaved changes will be lost.", [
@@ -720,7 +716,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
         ) : (
           <Text className="px-2 text-base text-foreground-muted">
             {availableTargets.length === 0
-              ? "Connect an environment to create a scheduled task."
+              ? "Connect an environment to create a trigger."
               : "No environments match the current filters. Change the filters to create a task."}
           </Text>
         )}
@@ -800,6 +796,12 @@ function TaskForm({
     config?.environment.capabilities.oneTimeSchedules === true ||
     draft.task?.schedule.type === "once";
   const offersThreadModes = config?.environment.capabilities.scheduledTaskThreadModes === true;
+  const source = sourceOfMode(draft.schedule.mode);
+  const selectMode = (mode: ScheduleDraft["mode"]) => {
+    setTimePickerOpen(false);
+    setRunAtPicker(null);
+    setDraft(switchScheduleMode(draft, mode, Date.now()));
+  };
   const save = async () => {
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
@@ -865,7 +867,7 @@ function TaskForm({
       (draft.workspace === "existing_worktree" && !draft.checkoutPath.trim())
     ) {
       Dialog.alert(
-        "Incomplete task",
+        "Incomplete trigger",
         "Add a name, prompt, project, model, valid schedule, and checkout path if needed.",
       );
       return;
@@ -912,7 +914,7 @@ function TaskForm({
     setSaving(false);
     if (result._tag === "Failure") {
       submissionPending.current = false;
-      failure("Could not save task", result);
+      failure("Could not save trigger", result);
       return;
     }
     onSaved();
@@ -927,7 +929,9 @@ function TaskForm({
         importantForAccessibility={saving ? "no-hide-descendants" : "auto"}
       >
         {taskMissing ? (
-          <Text className="px-1 text-base text-danger-foreground">This task no longer exists.</Text>
+          <Text className="px-1 text-base text-danger-foreground">
+            This trigger no longer exists.
+          </Text>
         ) : null}
 
         {environmentUnavailable ? (
@@ -965,7 +969,7 @@ function TaskForm({
             }}
           />
         </SettingsSection>
-        <SettingsSection title="Task">
+        <SettingsSection title="Trigger">
           <FormField
             label="Name"
             disabled={saving}
@@ -973,6 +977,341 @@ function TaskForm({
             placeholder="Check for issues"
             onChange={(title) => setDraft({ ...draft, title })}
           />
+        </SettingsSection>
+
+        <SettingsSection title="Source">
+          <SelectRow
+            label="Source"
+            value={TRIGGER_SOURCE_LABELS[source]}
+            actions={
+              saving
+                ? []
+                : TRIGGER_SOURCES.filter(
+                    (kind) => kind === source || kind !== "webhook" || webhookDenial === undefined,
+                  ).map((kind) => ({
+                    id: kind,
+                    title: TRIGGER_SOURCE_LABELS[kind],
+                    state: kind === source ? ("on" as const) : undefined,
+                  }))
+            }
+            onSelect={(id) => {
+              const kind = TRIGGER_SOURCES.find((entry) => entry === id);
+              if (kind === undefined || kind === source) return;
+              selectMode(kind === "schedule" ? "fixed_time" : kind);
+            }}
+          />
+          {source === "schedule" ? (
+            <SelectRow
+              label="Schedule"
+              borderTop
+              value={
+                TIME_SCHEDULE_MODES.find((entry) => entry.mode === draft.schedule.mode)?.label ?? ""
+              }
+              actions={
+                saving
+                  ? []
+                  : TIME_SCHEDULE_MODES.filter(
+                      (entry) =>
+                        entry.mode === draft.schedule.mode ||
+                        // Older servers reject one-time schedules on save.
+                        entry.mode !== "once" ||
+                        offersOnce,
+                    ).map((entry) => ({
+                      id: entry.mode,
+                      title: entry.label,
+                      state: entry.mode === draft.schedule.mode ? ("on" as const) : undefined,
+                    }))
+              }
+              onSelect={(id) => {
+                const mode = TIME_SCHEDULE_MODES.find((entry) => entry.mode === id)?.mode;
+                if (mode !== undefined && mode !== draft.schedule.mode) selectMode(mode);
+              }}
+            />
+          ) : null}
+          {draft.schedule.mode === "fixed_time" ? (
+            <>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Time, ${formatTime(draft.schedule.timeOfDay)}`}
+                onPress={() => setTimePickerOpen((open) => !open)}
+                className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
+              >
+                <Text textRole="body" className="text-foreground">
+                  Time
+                </Text>
+                <Text
+                  textRole="footnote"
+                  className="min-w-0 flex-1 text-right text-foreground-muted"
+                >
+                  {formatTime(draft.schedule.timeOfDay)}
+                </Text>
+                <SymbolView
+                  name="chevron.right"
+                  size={14}
+                  tintColorClassName="accent-chevron"
+                  type="monochrome"
+                />
+              </Pressable>
+              {timePickerOpen ? (
+                <DateTimePicker
+                  value={timePickerValue(draft.schedule.timeOfDay)}
+                  mode="time"
+                  display={Platform.OS === "ios" ? "spinner" : "default"}
+                  onDismiss={() => setTimePickerOpen(false)}
+                  onValueChange={(_, selected) => {
+                    const timeOfDay = `${String(selected.getHours()).padStart(2, "0")}:${String(selected.getMinutes()).padStart(2, "0")}`;
+                    setDraft({ ...draft, schedule: { ...draft.schedule, timeOfDay } });
+                  }}
+                />
+              ) : null}
+              <SelectRow
+                label="Repeat"
+                value={repeatLabel(draft.schedule.weekdays)}
+                borderTop
+                actions={[
+                  {
+                    id: "every_day",
+                    title: "Every day",
+                    state: draft.schedule.weekdays.length === 7 ? "on" : undefined,
+                  },
+                  {
+                    id: "weekdays",
+                    title: "Weekdays",
+                    state: repeatLabel(draft.schedule.weekdays) === "Weekdays" ? "on" : undefined,
+                  },
+                  ...DAYS.map((day) => ({
+                    id: String(day.index),
+                    title: day.label,
+                    attributes: { keepsMenuPresented: true },
+                    state: draft.schedule.weekdays.includes(day.index)
+                      ? ("on" as const)
+                      : undefined,
+                  })),
+                ]}
+                onSelect={(id) => {
+                  const weekdays =
+                    id === "every_day"
+                      ? DAYS.map((day) => day.index)
+                      : id === "weekdays"
+                        ? [1, 2, 3, 4, 5]
+                        : (() => {
+                            const day = DAYS.find((item) => String(item.index) === id);
+                            if (!day) return draft.schedule.weekdays;
+                            return draft.schedule.weekdays.includes(day.index)
+                              ? draft.schedule.weekdays.filter((index) => index !== day.index)
+                              : [...draft.schedule.weekdays, day.index];
+                          })();
+                  setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } });
+                }}
+              />
+            </>
+          ) : draft.schedule.mode === "webhook" && webhookDenial !== undefined && draft.enabled ? (
+            <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
+              {`${webhookDenial} Switch the trigger to a schedule, or turn it off, to save it.`}
+            </Text>
+          ) : draft.schedule.mode === "once" ? (
+            (["date", "time"] as const).map((field) => {
+              const runAt = new Date(draft.schedule.runAt);
+              const label = field === "date" ? formatRunAtDate(runAt) : formatRunAtTime(runAt);
+              return (
+                <View key={field}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`${field === "date" ? "Date" : "Time"}, ${label}`}
+                    onPress={() => setRunAtPicker((open) => (open === field ? null : field))}
+                    className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
+                  >
+                    <Text textRole="body" className="text-foreground">
+                      {field === "date" ? "Date" : "Time"}
+                    </Text>
+                    <Text
+                      textRole="footnote"
+                      className="min-w-0 flex-1 text-right text-foreground-muted"
+                    >
+                      {label}
+                    </Text>
+                    <SymbolView
+                      name="chevron.right"
+                      size={14}
+                      tintColorClassName="accent-chevron"
+                      type="monochrome"
+                    />
+                  </Pressable>
+                  {runAtPicker === field ? (
+                    <DateTimePicker
+                      value={runAt}
+                      mode={field}
+                      display={Platform.OS === "ios" ? "spinner" : "default"}
+                      onDismiss={() => setRunAtPicker(null)}
+                      onValueChange={(_, selected) => {
+                        // Android shows a dialog that closes on pick; iOS stays inline.
+                        if (Platform.OS === "android") setRunAtPicker(null);
+                        setDraft({
+                          ...draft,
+                          schedule: { ...draft.schedule, runAt: selected.toISOString() },
+                        });
+                      }}
+                    />
+                  ) : null}
+                </View>
+              );
+            })
+          ) : draft.schedule.mode === "webhook" ? (
+            <>
+              <WebhookScheduleDetails
+                environmentId={environmentId}
+                // Use the live row for rotated URLs; hide the URL once a loaded list no longer contains the task.
+                task={
+                  tasks.data
+                    ? (tasks.data.tasks.find((task) => task.id === draft.task?.id) ?? null)
+                    : draft.task
+                }
+                signatureConfigured={draft.schedule.signature !== null}
+                disabled={!canOperate || saving || environmentUnavailable}
+              />
+              <FormField
+                label="Skip requests older than (minutes)"
+                value={draft.schedule.maxDeliveryAgeMinutes}
+                placeholder="Run every request"
+                keyboardType="number-pad"
+                disabled={saving}
+                borderTop
+                onChange={(maxDeliveryAgeMinutes) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, maxDeliveryAgeMinutes } })
+                }
+              />
+              <WebhookFilterRows
+                filters={draft.schedule.filters}
+                disabled={saving}
+                onChange={(filters) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, filters } })
+                }
+              />
+              <FormField
+                label="Duplicate request key"
+                value={draft.schedule.replayKey}
+                placeholder="{{headers.delivery-id}}"
+                disabled={saving}
+                borderTop
+                onChange={(replayKey) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, replayKey } })
+                }
+              />
+              <Text className="px-4 pb-3 text-sm text-foreground-muted">
+                Requests with the same key run only once within 7 days.
+              </Text>
+              <FormField
+                label="Coalesce key template"
+                value={draft.schedule.coalesceKey}
+                placeholder="{{body.id}}"
+                disabled={saving}
+                borderTop
+                onChange={(coalesceKey) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, coalesceKey } })
+                }
+              />
+              <FormField
+                label="Coalesce window (seconds, 10–3600)"
+                value={draft.schedule.coalesceWindowSeconds}
+                placeholder="120"
+                keyboardType="number-pad"
+                disabled={saving}
+                borderTop
+                onChange={(coalesceWindowSeconds) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, coalesceWindowSeconds } })
+                }
+              />
+              <Text className="px-4 pb-3 text-sm text-foreground-muted">
+                Coalescing runs the latest payload when the window from the first delivery closes.
+                Empty keys run normally.
+              </Text>
+            </>
+          ) : isTriggerFilterMode(draft.schedule.mode) ? (
+            <TriggerFilterRows
+              source={draft.schedule.mode}
+              filters={draft.schedule.triggerFilters}
+              disabled={saving}
+              onChange={(triggerFilters) =>
+                setDraft({ ...draft, schedule: { ...draft.schedule, triggerFilters } })
+              }
+            />
+          ) : draft.schedule.mode === "manual" ? (
+            <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
+              Runs only when you tap Run now or an agent starts it.
+            </Text>
+          ) : (
+            <>
+              <FormField
+                label="Minutes between runs"
+                value={draft.schedule.intervalMinutes}
+                keyboardType="decimal-pad"
+                disabled={saving}
+                borderTop
+                onChange={(intervalMinutes) =>
+                  setDraft({ ...draft, schedule: { ...draft.schedule, intervalMinutes } })
+                }
+              />
+              {!(parseIntervalMinutes(draft.schedule.intervalMinutes) >= 1) ? (
+                <Text className="px-4 pb-3 text-sm text-danger-foreground">
+                  Intervals must be at least 1 minute. Update this interval before saving.
+                </Text>
+              ) : draft.task?.schedule.type === "interval" &&
+                draft.task.schedule.everyMs < 60_000 ? (
+                <Text className="px-4 pb-3 text-sm text-foreground-muted">
+                  This trigger previously ran more than once per minute. Saving requires an interval
+                  of at least 1 minute.
+                </Text>
+              ) : null}
+            </>
+          )}
+          <SelectRow
+            label="Triage"
+            value={
+              TRIAGE_FALLBACK_OPTIONS.find((option) => option.value === draft.triage.fallback)
+                ?.label ?? ""
+            }
+            borderTop
+            actions={
+              saving
+                ? []
+                : TRIAGE_FALLBACK_OPTIONS.map((option) => ({
+                    id: option.value,
+                    title: option.label,
+                    state: option.value === draft.triage.fallback ? ("on" as const) : undefined,
+                  }))
+            }
+            onSelect={(id) => {
+              const option = TRIAGE_FALLBACK_OPTIONS.find((entry) => entry.value === id);
+              if (option)
+                setDraft({ ...draft, triage: { ...draft.triage, fallback: option.value } });
+            }}
+          />
+          <Text className="px-4 pb-3 text-sm text-foreground-muted">
+            What the agent does when the item fits no instruction. Off sends the prompt as written.
+          </Text>
+          {draft.triage.fallback === "label" ? (
+            <FormField
+              label="Label to add"
+              value={draft.triage.label}
+              placeholder="needs-triage"
+              disabled={saving}
+              borderTop
+              onChange={(label) => setDraft({ ...draft, triage: { ...draft.triage, label } })}
+            />
+          ) : null}
+          <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+            <Text textRole="body" className="min-w-0 flex-1 text-foreground">
+              Enabled
+            </Text>
+            <ThemedSwitch
+              accessibilityLabel="Trigger enabled"
+              value={draft.enabled}
+              onValueChange={(enabled) => setDraft({ ...draft, enabled })}
+            />
+          </View>
+        </SettingsSection>
+
+        <SettingsSection title="Prompt">
           {promptField}
           {isTriggerFilterMode(draft.schedule.mode) ? (
             <Text className="px-4 pb-3 text-sm text-foreground-muted">
@@ -1126,315 +1465,6 @@ function TaskForm({
           ) : null}
         </SettingsSection>
 
-        <SettingsSection title="Schedule">
-          <SelectRow
-            label="Trigger"
-            value={SCHEDULE_MODES.find((entry) => entry.mode === draft.schedule.mode)?.label ?? ""}
-            actions={
-              saving
-                ? []
-                : SCHEDULE_MODES.filter(
-                    (entry) =>
-                      entry.mode === draft.schedule.mode ||
-                // Older servers reject one-time schedules on save.
-                      ((entry.mode !== "once" || offersOnce) &&
-                        (entry.mode !== "webhook" || webhookDenial === undefined)),
-                  ).map((entry) => ({
-                    id: entry.mode,
-                    title: entry.label,
-                    state: entry.mode === draft.schedule.mode ? ("on" as const) : undefined,
-                  }))
-            }
-            onSelect={(id) => {
-              const mode = SCHEDULE_MODES.find((entry) => entry.mode === id)?.mode;
-              if (!mode || mode === draft.schedule.mode) return;
-                setTimePickerOpen(false);
-                setRunAtPicker(null);
-              setDraft(switchScheduleMode(draft, mode, Date.now()));
-              }}
-            />
-          {draft.schedule.mode === "fixed_time" ? (
-            <>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Time, ${formatTime(draft.schedule.timeOfDay)}`}
-                onPress={() => setTimePickerOpen((open) => !open)}
-                className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
-              >
-                <Text textRole="body" className="text-foreground">
-                  Time
-                </Text>
-                <Text
-                  textRole="footnote"
-                  className="min-w-0 flex-1 text-right text-foreground-muted"
-                >
-                  {formatTime(draft.schedule.timeOfDay)}
-                </Text>
-                <SymbolView
-                  name="chevron.right"
-                  size={14}
-                  tintColorClassName="accent-chevron"
-                  type="monochrome"
-                />
-              </Pressable>
-              {timePickerOpen ? (
-                <DateTimePicker
-                  value={timePickerValue(draft.schedule.timeOfDay)}
-                  mode="time"
-                  display={Platform.OS === "ios" ? "spinner" : "default"}
-                  onDismiss={() => setTimePickerOpen(false)}
-                  onValueChange={(_, selected) => {
-                    const timeOfDay = `${String(selected.getHours()).padStart(2, "0")}:${String(selected.getMinutes()).padStart(2, "0")}`;
-                    setDraft({ ...draft, schedule: { ...draft.schedule, timeOfDay } });
-                  }}
-                />
-              ) : null}
-              <SelectRow
-                label="Repeat"
-                value={repeatLabel(draft.schedule.weekdays)}
-                borderTop
-                actions={[
-                  {
-                    id: "every_day",
-                    title: "Every day",
-                    state: draft.schedule.weekdays.length === 7 ? "on" : undefined,
-                  },
-                  {
-                    id: "weekdays",
-                    title: "Weekdays",
-                    state: repeatLabel(draft.schedule.weekdays) === "Weekdays" ? "on" : undefined,
-                  },
-                  ...DAYS.map((day) => ({
-                    id: String(day.index),
-                    title: day.label,
-                    attributes: { keepsMenuPresented: true },
-                    state: draft.schedule.weekdays.includes(day.index)
-                      ? ("on" as const)
-                      : undefined,
-                  })),
-                ]}
-                onSelect={(id) => {
-                  const weekdays =
-                    id === "every_day"
-                      ? DAYS.map((day) => day.index)
-                      : id === "weekdays"
-                        ? [1, 2, 3, 4, 5]
-                        : (() => {
-                            const day = DAYS.find((item) => String(item.index) === id);
-                            if (!day) return draft.schedule.weekdays;
-                            return draft.schedule.weekdays.includes(day.index)
-                              ? draft.schedule.weekdays.filter((index) => index !== day.index)
-                              : [...draft.schedule.weekdays, day.index];
-                          })();
-                  setDraft({ ...draft, schedule: { ...draft.schedule, weekdays } });
-                }}
-              />
-            </>
-          ) : draft.schedule.mode === "webhook" && webhookDenial !== undefined && draft.enabled ? (
-            <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
-              {`${webhookDenial} Switch the task to a timer, or turn it off, to save it.`}
-            </Text>
-          ) : draft.schedule.mode === "once" ? (
-            (["date", "time"] as const).map((field) => {
-              const runAt = new Date(draft.schedule.runAt);
-              const label = field === "date" ? formatRunAtDate(runAt) : formatRunAtTime(runAt);
-              return (
-                <View key={field}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`${field === "date" ? "Date" : "Time"}, ${label}`}
-                    onPress={() => setRunAtPicker((open) => (open === field ? null : field))}
-                    className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
-                  >
-                    <Text textRole="body" className="text-foreground">
-                      {field === "date" ? "Date" : "Time"}
-                    </Text>
-                    <Text
-                      textRole="footnote"
-                      className="min-w-0 flex-1 text-right text-foreground-muted"
-                    >
-                      {label}
-                    </Text>
-                    <SymbolView
-                      name="chevron.right"
-                      size={14}
-                      tintColorClassName="accent-chevron"
-                      type="monochrome"
-                    />
-                  </Pressable>
-                  {runAtPicker === field ? (
-                    <DateTimePicker
-                      value={runAt}
-                      mode={field}
-                      display={Platform.OS === "ios" ? "spinner" : "default"}
-                      onDismiss={() => setRunAtPicker(null)}
-                      onValueChange={(_, selected) => {
-                        // Android shows a dialog that closes on pick; iOS stays inline.
-                        if (Platform.OS === "android") setRunAtPicker(null);
-                        setDraft({
-                          ...draft,
-                          schedule: { ...draft.schedule, runAt: selected.toISOString() },
-                        });
-                      }}
-                    />
-                  ) : null}
-                </View>
-              );
-            })
-          ) : draft.schedule.mode === "webhook" ? (
-            <>
-              <WebhookScheduleDetails
-                environmentId={environmentId}
-                // Use the live row for rotated URLs; hide the URL once a loaded list no longer contains the task.
-                task={
-                  tasks.data
-                    ? (tasks.data.tasks.find((task) => task.id === draft.task?.id) ?? null)
-                    : draft.task
-                }
-                signatureConfigured={draft.schedule.signature !== null}
-                disabled={!canOperate || saving || environmentUnavailable}
-              />
-              <FormField
-                label="Skip requests older than (minutes)"
-                value={draft.schedule.maxDeliveryAgeMinutes}
-                placeholder="Run every request"
-                keyboardType="number-pad"
-                disabled={saving}
-                borderTop
-                onChange={(maxDeliveryAgeMinutes) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, maxDeliveryAgeMinutes } })
-                }
-              />
-              <WebhookFilterRows
-                filters={draft.schedule.filters}
-                disabled={saving}
-                onChange={(filters) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, filters } })
-                }
-              />
-              <FormField
-                label="Duplicate request key"
-                value={draft.schedule.replayKey}
-                placeholder="{{headers.delivery-id}}"
-                disabled={saving}
-                borderTop
-                onChange={(replayKey) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, replayKey } })
-                }
-              />
-              <Text className="px-4 pb-3 text-sm text-foreground-muted">
-                Requests with the same key run only once within 7 days.
-              </Text>
-              <FormField
-                label="Coalesce key template"
-                value={draft.schedule.coalesceKey}
-                placeholder="{{body.id}}"
-                disabled={saving}
-                borderTop
-                onChange={(coalesceKey) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, coalesceKey } })
-                }
-              />
-              <FormField
-                label="Coalesce window (seconds, 10–3600)"
-                value={draft.schedule.coalesceWindowSeconds}
-                placeholder="120"
-                keyboardType="number-pad"
-                disabled={saving}
-                borderTop
-                onChange={(coalesceWindowSeconds) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, coalesceWindowSeconds } })
-                }
-              />
-              <Text className="px-4 pb-3 text-sm text-foreground-muted">
-                Coalescing runs the latest payload when the window from the first delivery closes.
-                Empty keys run normally.
-              </Text>
-            </>
-          ) : isTriggerFilterMode(draft.schedule.mode) ? (
-            <TriggerFilterRows
-              source={draft.schedule.mode}
-              filters={draft.schedule.triggerFilters}
-              disabled={saving}
-              onChange={(triggerFilters) =>
-                setDraft({ ...draft, schedule: { ...draft.schedule, triggerFilters } })
-              }
-            />
-          ) : draft.schedule.mode === "manual" ? (
-            <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
-              Runs only when you tap Run now or an agent starts it.
-            </Text>
-          ) : (
-            <>
-              <FormField
-                label="Minutes between runs"
-                value={draft.schedule.intervalMinutes}
-                keyboardType="decimal-pad"
-                disabled={saving}
-                borderTop
-                onChange={(intervalMinutes) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, intervalMinutes } })
-                }
-              />
-              {!(parseIntervalMinutes(draft.schedule.intervalMinutes) >= 1) ? (
-                <Text className="px-4 pb-3 text-sm text-danger-foreground">
-                  Intervals must be at least 1 minute. Update this interval before saving.
-                </Text>
-              ) : draft.task?.schedule.type === "interval" &&
-                draft.task.schedule.everyMs < 60_000 ? (
-                <Text className="px-4 pb-3 text-sm text-foreground-muted">
-                  This task previously ran more than once per minute. Saving requires an interval of
-                  at least 1 minute.
-                </Text>
-              ) : null}
-            </>
-          )}
-          <SelectRow
-            label="Triage"
-            value={
-              TRIAGE_FALLBACK_OPTIONS.find((option) => option.value === draft.triage.fallback)
-                ?.label ?? ""
-            }
-            borderTop
-            actions={
-              saving
-                ? []
-                : TRIAGE_FALLBACK_OPTIONS.map((option) => ({
-                    id: option.value,
-                    title: option.label,
-                    state: option.value === draft.triage.fallback ? ("on" as const) : undefined,
-                  }))
-            }
-            onSelect={(id) => {
-              const option = TRIAGE_FALLBACK_OPTIONS.find((entry) => entry.value === id);
-              if (option)
-                setDraft({ ...draft, triage: { ...draft.triage, fallback: option.value } });
-            }}
-          />
-          <Text className="px-4 pb-3 text-sm text-foreground-muted">
-            What the agent does when the item fits no instruction. Off sends the prompt as written.
-          </Text>
-          {draft.triage.fallback === "label" ? (
-            <FormField
-              label="Label to add"
-              value={draft.triage.label}
-              placeholder="needs-triage"
-              disabled={saving}
-              borderTop
-              onChange={(label) => setDraft({ ...draft, triage: { ...draft.triage, label } })}
-            />
-          ) : null}
-          <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
-            <Text textRole="body" className="min-w-0 flex-1 text-foreground">
-              Enabled
-            </Text>
-            <ThemedSwitch
-              accessibilityLabel="Task enabled"
-              value={draft.enabled}
-              onValueChange={(enabled) => setDraft({ ...draft, enabled })}
-            />
-          </View>
-        </SettingsSection>
         {draft.schedule.mode === "fixed_time" ? (
           <Text className="px-2 text-sm text-foreground-muted">
             Time uses the environment's time zone, which may differ from your phone's.
@@ -1454,7 +1484,7 @@ function TaskForm({
           (draft.enabled && draft.schedule.mode === "webhook" && webhookDenial !== undefined)
         }
         onPress={() => void save()}
-        label={saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
+        label={saving ? "Saving…" : draft.task ? "Save changes" : "Create trigger"}
       />
     </View>
   );
@@ -1491,7 +1521,9 @@ function WebhookScheduleDetails({
         }
       </Text>
       {task === null || resolved === null ? (
-        <Text className="text-sm text-foreground-muted">Save the task to get its webhook URL.</Text>
+        <Text className="text-sm text-foreground-muted">
+          Save the trigger to get its webhook URL.
+        </Text>
       ) : (
         <>
           <Pressable
@@ -1629,7 +1661,7 @@ function EnvironmentTasks({
         <Text className="p-4 text-base text-foreground-muted">Loading tasks…</Text>
       ) : visibleTasks?.length === 0 ? (
         <Text className="p-4 text-base text-foreground-muted">
-          {projectIds === null ? "No scheduled tasks yet." : "No tasks in this project."}
+          {projectIds === null ? "No triggers yet." : "No triggers in this project."}
         </Text>
       ) : (
         visibleTasks?.map((task, index) => (
@@ -1653,7 +1685,7 @@ function EnvironmentTasks({
                 {task.title}
               </Text>
               <Text className="text-sm text-foreground-muted" numberOfLines={2}>
-                {describeSchedule(task)}
+                {formatTriggerSummary(scheduledTaskTrigger(task), describeSchedule)}
                 {!task.enabled
                   ? " · Paused"
                   : task.nextRunAt
