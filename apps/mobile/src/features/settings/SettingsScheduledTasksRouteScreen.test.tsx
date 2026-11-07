@@ -132,6 +132,13 @@ vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({ data: { tasks: mocks.tasks, threads: [] } }),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.upsert }));
+// Fork: the trigger form also reads factories, Jira, source control, and templates.
+vi.mock("../../state/factories", () => ({ connectedFactoryListsAtom: Atom.make([]) }));
+vi.mock("../../state/jira", () => ({ jiraEnvironment: { capabilities: () => null } }));
+vi.mock("../../state/sourceControl", () => ({
+  sourceControlEnvironment: { discovery: () => null },
+}));
+vi.mock("./ScheduledTaskTemplates", () => ({ ScheduledTaskTemplates: () => null }));
 
 import { appAtomRegistry } from "../../state/atom-registry";
 import { editDraft } from "./scheduledTaskDraft";
@@ -204,7 +211,7 @@ function button(label: string) {
 describe("scheduled task batched edits", () => {
   it("submits the selected interval when saved before React commits", async () => {
     await act(async () => {
-      button("Interval").click();
+      button("Select Interval").click();
       button("Save changes").click();
     });
     expect(mocks.alert).not.toHaveBeenCalled();
@@ -219,7 +226,7 @@ describe("scheduled task batched edits", () => {
   });
   it("retains the interval when enabled changes before React commits", async () => {
     act(() => {
-      button("Interval").click();
+      button("Select Interval").click();
       button("Toggle enabled").click();
     });
     expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current?.draft.schedule.mode).toBe(
@@ -238,7 +245,7 @@ describe("scheduled task batched edits", () => {
     });
   });
   it("keeps every webhook filter added before React commits", () => {
-    act(() => button("On webhook").click());
+    act(() => button("Select Webhook").click());
     act(() => {
       button("Add filter").click();
       button("Add filter").click();
@@ -253,7 +260,7 @@ describe("scheduled task batched edits", () => {
     act(() => startScheduledTaskEditor({ ...editor, draft: { ...editor.draft, task: null } }));
     act(() => {
       button("Select Target").click();
-      button("Interval").click();
+      button("Select Interval").click();
       button("Select Project").click();
     });
     expect(appAtomRegistry.get(scheduledTaskEditorSessionAtom)?.current).toMatchObject({

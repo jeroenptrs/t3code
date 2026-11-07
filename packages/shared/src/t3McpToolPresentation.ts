@@ -362,6 +362,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Run", "Running", "Requested a run of", "a scheduled task"],
     "schedule-run",
   ),
+  t3_trigger_fire_current: tool(
+    ["Fire", "Firing", "Fired", "a trigger's current set"],
+    "schedule-run",
+  ),
   t3_queue: tool(["Manage", "Managing", "Managed", "queued messages"], "queue-edit"),
   t3_pending_request: tool(
     ["Handle", "Handling", "Handled", "pending questions"],
