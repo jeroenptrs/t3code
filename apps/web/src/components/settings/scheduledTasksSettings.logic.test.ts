@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  FactoryId,
   ProjectId,
   DEFAULT_SERVER_SETTINGS,
   type ServerConfig,
@@ -24,6 +25,7 @@ import {
   matchesScheduledTaskScope,
   scheduleFromDraft,
   scheduleLabel,
+  targetFromDraft,
   taskToDraft,
   unbindDraftFromThread,
   triggerSummary,
@@ -427,6 +429,27 @@ describe("scheduled task triage", () => {
     expect(parseTriageDraft({ ...draft.triage, fallback: "off" })).toEqual({ triage: null });
     expect(parseTriageDraft({ ...draft.triage, label: " " })).toHaveProperty("error");
     expect(parseTriageDraft(taskToDraft(legacyTask).triage)).toEqual({});
+  });
+});
+
+describe("work item triggers", () => {
+  const projectId = ProjectId.make("project");
+  const target = {
+    type: "work_item",
+    projectId,
+    factoryId: FactoryId.make("factory:project:triage"),
+  } as const;
+
+  it("saves the chosen factory, and clears a stored one only when it was set", () => {
+    const draft = taskToDraft({ ...legacyTask, target });
+    expect(draft.factoryId).toBe("factory:project:triage");
+    expect(targetFromDraft(draft, projectId, { target })).toEqual({ target });
+    expect(targetFromDraft({ factoryId: "" }, projectId, { target })).toEqual({ target: null });
+    expect(targetFromDraft(taskToDraft(legacyTask), projectId, legacyTask)).toEqual({});
+  });
+
+  it("ends the summary with the factory's name", () => {
+    expect(triggerSummary({ source: { kind: "jira" }, filters: [], target })).toBe("Jira → triage");
   });
 });
 

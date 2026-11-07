@@ -1,5 +1,6 @@
 import { isWebhookDedupeTemplate, scheduledTaskThreadMode } from "@t3tools/contracts";
 import type {
+  FactoryId,
   ModelSelection,
   TriggerFilterSourceKind,
   ServerConfig,
@@ -7,6 +8,7 @@ import type {
   RuntimeMode,
   ScheduledTask,
   ScheduledTaskThreadMode,
+  ScheduledTaskUpsertInput,
   ScheduledTaskUpsertSchedule,
   ScheduledTaskWebhookSignature,
   ThreadId,
@@ -359,6 +361,8 @@ export type ScheduledTaskDraft = {
   readonly modelSelectionIsExplicit: boolean;
   readonly schedule: ScheduleDraft;
   readonly threadMode: ScheduledTaskThreadMode;
+  /** A factory the trigger creates work items in; null for a thread target. */
+  readonly factoryId: FactoryId | null;
   readonly workspace: Workspace;
   readonly baseRef: string;
   readonly checkoutPath: string;
@@ -391,6 +395,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.schedule.coalesceWindowSeconds,
     draft.schedule.filters.map(({ path, op, value }) => [path, op, value]),
     draft.threadMode,
+    draft.factoryId,
     draft.schedule.triggerFilters.map(({ path, op, value }) => [path, op, value]),
     draft.schedule.jiraSite,
     draft.schedule.jql,
@@ -494,6 +499,7 @@ export function createDraft(
     modelSelectionIsExplicit: false,
     schedule: DEFAULT_SCHEDULE,
     threadMode: "new_thread",
+    factoryId: null,
     workspace: "worktree",
     baseRef: "main",
     checkoutPath: "",
@@ -515,6 +521,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     modelSelectionIsExplicit: true,
     schedule: scheduleDraftForTask(task),
     threadMode: scheduledTaskThreadMode(task),
+    factoryId: task.target?.factoryId ?? null,
     workspace: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
     checkoutPath:
@@ -529,4 +536,18 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     runtimeMode: task.runtimeMode,
     triage: triageDraft(task.triage),
   };
+}
+
+/**
+ * The save's target: a work item target for a chosen factory, null to turn a stored one back into
+ * a thread target, and nothing otherwise, so servers that predate targets accept the save.
+ */
+export function draftTarget(
+  draft: Pick<ScheduledTaskDraft, "task" | "factoryId">,
+  projectId: ProjectId,
+): Pick<ScheduledTaskUpsertInput, "target"> {
+  if (draft.factoryId !== null) {
+    return { target: { type: "work_item", projectId, factoryId: draft.factoryId } };
+  }
+  return draft.task?.target === undefined ? {} : { target: null };
 }

@@ -29,6 +29,7 @@ Fork columns on upstream tables:
   `webhook_token_rotated_at` (003)
 - `scheduled_task_webhook_deliveries.dispatched_at` (004)
 - `scheduled_tasks.triage_json` (018)
+- `scheduled_tasks.fork_target_json` (022)
 
 Fork-owned tables:
 

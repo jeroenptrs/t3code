@@ -47,6 +47,7 @@ const assertScheduledTaskAuditSchema = Effect.gen(function* () {
     "created_by_user_id",
     "webhook_token_rotated_by_user_id",
     "webhook_token_rotated_at",
+    "fork_target_json",
   ]) {
     assert.ok(names.has(column), column);
   }
@@ -240,6 +241,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [19, "FactoryWorkItems"],
       [20, "FactoryWorkItemDispatch"],
       [21, "FactoryWorkItemQueued"],
+      [22, "ScheduledTaskTarget"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
