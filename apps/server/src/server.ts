@@ -76,6 +76,7 @@ import * as JiraService from "./jira/JiraService.ts";
 import * as InsightsIngestor from "./insights/InsightsIngestor.ts";
 import * as InsightsService from "./insights/InsightsService.ts";
 import * as FactoryService from "./factories/FactoryService.ts";
+import * as FactoryWorkItemSink from "./factories/FactoryWorkItemSink.ts";
 import * as FactorySkills from "./factories/FactorySkills.ts";
 import * as FactorySkillStore from "./factories/FactorySkillStore.ts";
 import * as FactoryThreads from "./factories/FactoryThreads.ts";
@@ -677,6 +678,9 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
 
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   Layer.provide(layerScheduledTaskWebhookOrigin),
+  // Fork-only: work item triggers create their items through this sink, which reaches
+  // FactoryService once layerMakeRoutes registers it there, by layer memoization.
+  Layer.provide(FactoryWorkItemSink.layer),
   // Fork-only: the scheduled task runner polls Jira query and GitLab projects triggers through
   // this, and is built before layerTriggers, so it gets the poller here. TriggerSources and
   // JiraApi are the same instances layerTriggers and layerJiraService build, by layer memoization.
@@ -948,6 +952,8 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
   ),
+  // The work item sink the scheduled task runner was given reaches this FactoryService.
+  FactoryWorkItemSink.layerRegister.pipe(Layer.provide(FactoryWorkItemSink.layer)),
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
