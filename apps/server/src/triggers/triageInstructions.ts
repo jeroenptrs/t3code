@@ -15,6 +15,7 @@ const SOURCE_LABELS: Record<TriggerSourceKind, string> = {
   schedule: "schedule",
   manual: "manual",
   jira_query: "Jira query",
+  gitlab_projects: "GitLab projects",
 };
 
 /** The first paragraph, which names what started the run and where its item is. */

@@ -1,7 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
-import type { ThreadPullRequestSnapshot } from "@t3tools/contracts";
+import { ScheduledTaskId, type ThreadPullRequestSnapshot } from "@t3tools/contracts";
 
-import { diffPullRequest } from "./gitlabTriggerSource.ts";
+import {
+  diffGitLabProjectsMergeRequest,
+  diffPipeline,
+  diffPullRequest,
+  type GitLabPipelineState,
+} from "./gitlabTriggerSource.ts";
 
 const AT = "2026-11-05T10:00:00.000Z";
 const key = {
@@ -115,5 +120,86 @@ describe("diffPullRequest", () => {
       "merge_request.updated",
       "pipeline.failed",
     ]);
+  });
+});
+
+describe("GitLab projects source", () => {
+  const context = { triggerId: ScheduledTaskId.make("task:projects"), occurredAt: AT };
+  const pipeline = (overrides: Partial<GitLabPipelineState> = {}): GitLabPipelineState => ({
+    id: "901",
+    repository: "group/app",
+    status: "running",
+    ref: "refs/merge-requests/42/head",
+    url: "https://gitlab.acme.dev/group/app/-/pipelines/901",
+    updatedAt: "2026-11-05T09:00:00.000Z",
+    ...overrides,
+  });
+  const finished = (previous: GitLabPipelineState | null, current: GitLabPipelineState) =>
+    diffPipeline(previous, current, null, "gitlab.acme.dev", context).map((event) => event.type);
+
+  it("raises a polled merge request's first sight as opened only while open, for its trigger", () => {
+    const [opened, ...rest] = diffGitLabProjectsMergeRequest(null, snapshot(), key, context);
+    assert.deepEqual(rest, []);
+    assert.equal(opened?.source, "gitlab_projects");
+    assert.equal(opened?.type, "merge_request.opened");
+    assert.equal(opened?.triggerId, "task:projects");
+    assert.deepInclude(opened?.payload, { number: "42", pipelineId: null, pipelineStatus: null });
+    assert.deepEqual(
+      diffGitLabProjectsMergeRequest(null, snapshot({ state: "merged" }), key, context),
+      [],
+    );
+    // Pipelines raise their own events, so checks transitions do not.
+    assert.deepEqual(
+      diffGitLabProjectsMergeRequest(
+        snapshot(),
+        snapshot({ state: "merged", checksState: "failing" }),
+        key,
+        context,
+      ).map((event) => event.type),
+      ["merge_request.merged"],
+    );
+  });
+
+  it("raises pipeline.finished once, when a pipeline is first seen terminal", () => {
+    for (const status of ["success", "failed", "canceled", "skipped"]) {
+      assert.deepEqual(finished(pipeline(), pipeline({ status })), ["pipeline.finished"]);
+      assert.deepEqual(finished(null, pipeline({ status })), ["pipeline.finished"]);
+      assert.deepEqual(finished(pipeline({ status }), pipeline({ status: "failed" })), []);
+    }
+    assert.deepEqual(finished(null, pipeline()), []);
+    assert.deepEqual(finished(pipeline({ status: "pending" }), pipeline({ status: "manual" })), []);
+    // A retry runs it again, so its new end raises again.
+    assert.deepEqual(finished(pipeline({ status: "running" }), pipeline({ status: "success" })), [
+      "pipeline.finished",
+    ]);
+  });
+
+  it("describes a pipeline's merge request when the poll knows it", () => {
+    const [known] = diffPipeline(
+      pipeline(),
+      pipeline({ status: "failed" }),
+      { key, snapshot: snapshot() },
+      "gitlab.acme.dev",
+      context,
+    );
+    assert.deepInclude(known?.payload, {
+      type: "pipeline.finished",
+      number: "42",
+      title: "Add login",
+      checksState: "failing",
+      previousChecksState: "pending",
+      pipelineId: "901",
+      pipelineStatus: "failed",
+      pipelineRef: "refs/merge-requests/42/head",
+      pipelineUrl: "https://gitlab.acme.dev/group/app/-/pipelines/901",
+    });
+    const [branch] = diffPipeline(
+      null,
+      pipeline({ status: "success", ref: "main" }),
+      null,
+      "gitlab.acme.dev",
+      context,
+    );
+    assert.deepInclude(branch?.payload, { number: "", url: "", headBranch: "main" });
   });
 });
