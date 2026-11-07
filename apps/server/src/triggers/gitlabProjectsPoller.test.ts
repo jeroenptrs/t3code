@@ -1,5 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
-import { ScheduledTask, ScheduledTaskError, ScheduledTaskId } from "@t3tools/contracts";
+import {
+  ScheduledTask,
+  ScheduledTaskError,
+  ScheduledTaskId,
+  VcsProcessExitError,
+} from "@t3tools/contracts";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -154,21 +159,37 @@ const output = (stdout: string, stderr = "") => ({
 });
 
 it.effect(
-  "polls as the host's glab login: a seed, then merge requests and pipelines since it",
+  "polls as the host's glab login, checked once per host and again after an unauthorized read",
   () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse("2026-11-05T10:00:00.000Z"));
       const calls = yield* Ref.make<ReadonlyArray<string>>([]);
+      const revoked = yield* Ref.make(false);
+      const unauthorized = (cwd: string) =>
+        new GitLabCli.GitLabCliCommandError({
+          operation: "execute",
+          command: "glab",
+          cwd,
+          cause: new VcsProcessExitError({
+            operation: "GitLabCli.execute",
+            command: "glab",
+            cwd,
+            exitCode: 1,
+            detail: "glab: 401 Unauthorized (HTTP 401)",
+          }),
+        });
       const gitlab = Layer.mock(GitLabCli.GitLabCli)({
         execute: (input) =>
           Ref.update(calls, (all) => [...all, `${input.host} ${input.args.join(" ")}`]).pipe(
-            Effect.andThen(() => {
+            Effect.andThen(Ref.get(revoked)),
+            Effect.flatMap((isRevoked) => {
               const [command, path = ""] = input.args;
               if (command === "auth") {
-                return input.host === HOST
+                return input.host === HOST && !isRevoked
                   ? Effect.succeed(output("", `${HOST}\n  ✓ Logged in to ${HOST} as svc-bot`))
                   : Effect.succeed(output("", `${input.host}\n  x No token found`));
               }
+              if (isRevoked) return Effect.fail(unauthorized(input.cwd));
               if (path.includes("/pipelines")) return Effect.succeed(output(PIPELINES));
               return Effect.succeed(output(MERGE_REQUESTS));
             }),
@@ -188,9 +209,9 @@ it.effect(
           `${HOST} auth status --hostname ${HOST}`,
           `${HOST} api projects/acme%2Fapp/merge_requests?order_by=updated_at&sort=asc&state=opened&with_merge_status_recheck=false&per_page=100&page=1`,
         ]);
+        // The login was confirmed by the first poll, so the second reads straight away.
         yield* poller.poll(task({ projects: ["acme/app"] }));
         assert.deepEqual(yield* take, [
-          `${HOST} auth status --hostname ${HOST}`,
           `${HOST} api projects/acme%2Fapp/merge_requests?order_by=updated_at&sort=asc&updated_after=2026-11-05T10%3A00%3A00.000Z&with_merge_status_recheck=false&per_page=100&page=1`,
           `${HOST} api projects/acme%2Fapp/pipelines?order_by=updated_at&sort=asc&updated_after=2026-11-05T10%3A00%3A00.000Z&per_page=100&page=1`,
         ]);
@@ -206,9 +227,8 @@ it.effect(
         // A group reads its merge requests, then pipelines per project they name.
         yield* poller.poll(task({ projects: [], group: "acme" }));
         yield* poller.poll(task({ projects: [], group: "acme" }));
-        const group = (yield* take).slice(2).map((call) => call.split("?")[0]);
+        const group = (yield* take).slice(1).map((call) => call.split("?")[0]);
         assert.deepEqual(group, [
-          `${HOST} auth status --hostname ${HOST}`,
           `${HOST} api groups/acme/merge_requests`,
           `${HOST} api projects/acme%2Fapp/pipelines`,
           `${HOST} api projects/acme%2Fapi/pipelines`,
@@ -224,6 +244,20 @@ it.effect(
           "GitLab has no sign-in on this server for gitlab.other.dev. Run `glab auth login --hostname gitlab.other.dev` where T3 Code runs.",
         );
         assert.deepEqual(yield* take, ["gitlab.other.dev auth status --hostname gitlab.other.dev"]);
+
+        // A revoked login fails a read with 401; the next poll checks again and says so.
+        yield* Ref.set(revoked, true);
+        yield* poller.poll(task({ projects: ["acme/app"] })).pipe(Effect.flip);
+        assert.deepEqual(
+          (yield* take).map((call) => call.split("?")[0]),
+          [`${HOST} api projects/acme%2Fapp/merge_requests`],
+        );
+        const signedOut = yield* poller.poll(task({ projects: ["acme/app"] })).pipe(Effect.flip);
+        assert.equal(
+          signedOut.message,
+          `GitLab has no sign-in on this server for ${HOST}. Run \`glab auth login --hostname ${HOST}\` where T3 Code runs.`,
+        );
+        assert.deepEqual(yield* take, [`${HOST} auth status --hostname ${HOST}`]);
       }).pipe(Effect.provide(Layer.mergeAll(gitlab, projects, TriggerSources.layer)));
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
