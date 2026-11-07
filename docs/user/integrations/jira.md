@@ -308,14 +308,14 @@ Approval works as it does for any other [proposal](#agents-that-write-to-jira).
 
 ## Start a thread from Jira
 
-To start work when an issue reaches a status or gets a label, create a scheduled
-task with the **On Jira change** schedule. It reacts to issues that a thread
-already links, because those are the issues T3 Code keeps up to date. For an
-issue that no thread links, use a
+To start work when an issue reaches a status or gets a label, create a trigger
+with the **Jira** source. It reacts to issues that a thread already links,
+because those are the issues T3 Code keeps up to date. For an issue that no
+thread links, use a [Jira query](../project-settings.md#jira-query) trigger or a
 [Jira Automation rule](#start-a-thread-for-an-issue-no-thread-links) instead.
 
-1. In **Settings → Scheduled tasks**, create a task and choose **On Jira change**.
-   See [Event triggers](../project-settings.md#event-triggers).
+1. In **Settings → Triggers**, create a trigger and choose the **Jira** source.
+   See [Jira change and GitLab change](../project-settings.md#jira-change-and-gitlab-change).
 2. Add filters. To react to a status, use **Event type** equals
    `issue.status_changed` and **Status** equals `In Progress`. To react to a
    label, use **Added labels** equals `t3`.
@@ -327,18 +327,18 @@ issue that no thread links, use a
    start on it.
    ```
 
-Each matching change starts a new thread, unless the task posts into an existing thread.
+Each matching change starts a new thread, unless the trigger posts into an existing thread.
 
 ### Start a thread for an issue no thread links
 
 A Jira Automation rule can start a thread when someone adds a label such as `t3` to
-any issue. T3 Code receives the request through a webhook scheduled task, so Jira has
+any issue. T3 Code receives the request through a webhook trigger, so Jira has
 to reach your server. Atlassian's cloud can't see a private address, so use a public
 URL: a [T3 Connect](../remote-access.md) tunnel or a server deployed with
 `T3CODE_PUBLIC_URL`.
 
-1. In **Settings → Scheduled tasks**, create a task with the **On webhook** schedule
-   and copy its URL. See [Webhook automations](../project-settings.md#webhook-automations).
+1. In **Settings → Triggers**, create a trigger with the **Webhook** source
+   and copy its URL. See [Webhook](../project-settings.md#webhook).
    Anyone with the URL can start runs, so keep it private. Jira's "Send web request"
    action can't sign requests, so the signature check doesn't apply here.
 2. Write the prompt with placeholders for the request body:
