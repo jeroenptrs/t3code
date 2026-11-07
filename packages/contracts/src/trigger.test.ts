@@ -170,6 +170,21 @@ describe("scheduledTaskTrigger", () => {
         everyMs: 300_000,
         filters: [],
       },
+      {
+        type: "gitlab_projects",
+        host: "gitlab.acme.dev",
+        projects: ["acme/app", "acme/api"],
+        everyMs: 900_000,
+        filters: [{ path: "event.pipelineStatus", op: "equals", value: "failed" }],
+      },
+      {
+        type: "gitlab_projects",
+        host: "gitlab.com",
+        projects: [],
+        group: "acme",
+        everyMs: 300_000,
+        filters: [],
+      },
     ];
     for (const schedule of schedules) {
       const stored = task(schedule, "thread-1");
@@ -228,6 +243,20 @@ describe("TriggerSaveInput", () => {
       decodeSave(
         save({ ...query, jql: "project = PROJ" }, [{ path: "body.action", op: "exists" }]),
       ),
+    ).toThrow();
+    const projects = { kind: "gitlab_projects", host: "gitlab.com", everyMs: 900_000 };
+    const pipelineFilter = { path: "event.pipelineStatus", op: "equals", value: "failed" };
+    expect(
+      decodeSave(save({ ...projects, projects: ["acme/app"] }, [pipelineFilter])).source,
+    ).toEqual({ ...projects, projects: ["acme/app"] });
+    expect(decodeSave(save({ ...projects, projects: [], group: "acme" }, [])).source).toEqual({
+      ...projects,
+      projects: [],
+      group: "acme",
+    });
+    expect(() => decodeSave(save({ ...projects, projects: [] }, []))).toThrow();
+    expect(() =>
+      decodeSave(save({ ...projects, projects: ["acme/app"], everyMs: 60_000 }, [])),
     ).toThrow();
   });
 });

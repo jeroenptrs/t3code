@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import { isPollSchedule } from "../scheduledTasks/Schedule.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import { describeFailedWebhookFilter } from "../scheduledTasks/webhookFilter.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -32,13 +33,13 @@ const filtersOf = (schedule: ScheduledTask["schedule"]) =>
   schedule.type === "jira" ||
   schedule.type === "gitlab" ||
   schedule.type === "slack" ||
-  schedule.type === "jira_query"
+  isPollSchedule(schedule)
     ? (schedule.filters ?? [])
     : [];
 
-/** A Jira query trigger runs only its own poll's events; other triggers only unaddressed ones. */
+/** A polled trigger runs only its own poll's events; other triggers only unaddressed ones. */
 const isAddressedTo = (task: ScheduledTask, event: TriggerEvent) =>
-  task.schedule.type === "jira_query" ? event.triggerId === task.id : event.triggerId === undefined;
+  isPollSchedule(task.schedule) ? event.triggerId === task.id : event.triggerId === undefined;
 
 const make = Effect.gen(function* () {
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
