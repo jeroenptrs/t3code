@@ -6,7 +6,6 @@ import {
   AuthOrchestrationOperateScope,
   clampManagedRuntimeMode,
   scheduledTaskTrigger,
-  managedCapabilityDenial,
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
@@ -1189,7 +1188,7 @@ function TaskForm({
         withEventTypeDrafts(
           draft.schedule.mode,
           draft.schedule.eventTypes,
-        draft.schedule.triggerFilters,
+          draft.schedule.triggerFilters,
         ),
         draft.schedule.mode,
       );
@@ -1437,23 +1436,23 @@ function TaskForm({
                 />
               ) : null}
               <SelectRow
-                label="Repeat"
-                value={repeatLabel(draft.schedule.weekdays)}
+                label={gt("Repeat", { $context: "noun, which days a task repeats on" })}
+                value={repeatLabel(draft.schedule.weekdays, m, locale)}
                 borderTop
                 actions={[
                   {
                     id: "every_day",
-                    title: "Every day",
+                    title: gt("Every day"),
                     state: draft.schedule.weekdays.length === 7 ? "on" : undefined,
                   },
                   {
                     id: "weekdays",
-                    title: "Weekdays",
-                    state: repeatLabel(draft.schedule.weekdays) === "Weekdays" ? "on" : undefined,
+                    title: gt("Weekdays"),
+                    state: isWeekdays(draft.schedule.weekdays) ? "on" : undefined,
                   },
                   ...DAYS.map((day) => ({
                     id: String(day.index),
-                    title: day.label,
+                    title: weekdayLabel(day.index, locale),
                     attributes: { keepsMenuPresented: true },
                     state: draft.schedule.weekdays.includes(day.index)
                       ? ("on" as const)
@@ -1624,7 +1623,10 @@ function TaskForm({
                   schedule={draft.schedule}
                   disabled={saving}
                   onChange={(patch) =>
-                    setDraft({ ...draft, schedule: { ...draft.schedule, ...patch } })
+                    setDraft((current) => ({
+                      ...current,
+                      schedule: { ...current.schedule, ...patch },
+                    }))
                   }
                 />
               ) : null}
@@ -1634,7 +1636,10 @@ function TaskForm({
                   schedule={draft.schedule}
                   disabled={saving}
                   onChange={(patch) =>
-                    setDraft({ ...draft, schedule: { ...draft.schedule, ...patch } })
+                    setDraft((current) => ({
+                      ...current,
+                      schedule: { ...current.schedule, ...patch },
+                    }))
                   }
                 />
               ) : null}
@@ -1656,7 +1661,10 @@ function TaskForm({
                   }
                   onSelect={(pollStart) => {
                     if (pollStart !== "changes" && pollStart !== "current") return;
-                    setDraft({ ...draft, schedule: { ...draft.schedule, pollStart } });
+                    setDraft((current) => ({
+                      ...current,
+                      schedule: { ...current.schedule, pollStart },
+                    }));
                   }}
                 />
               ) : null}
@@ -1665,23 +1673,26 @@ function TaskForm({
                 value={draft.schedule.eventTypes}
                 disabled={saving}
                 onChange={(eventTypes) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, eventTypes } })
+                  setDraft((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, eventTypes },
+                  }))
                 }
               />
-            <TriggerFilterRows
-              source={draft.schedule.mode}
-              filters={draft.schedule.triggerFilters}
-              disabled={saving}
-              onChange={(update) =>
-                setDraft((current) => ({
-                  ...current,
-                  schedule: {
-                    ...current.schedule,
-                    triggerFilters: update(current.schedule.triggerFilters),
-                  },
-                }))
-              }
-            />
+              <TriggerFilterRows
+                source={draft.schedule.mode}
+                filters={draft.schedule.triggerFilters}
+                disabled={saving}
+                onChange={(update) =>
+                  setDraft((current) => ({
+                    ...current,
+                    schedule: {
+                      ...current.schedule,
+                      triggerFilters: update(current.schedule.triggerFilters),
+                    },
+                  }))
+                }
+              />
             </>
           ) : draft.schedule.mode === "manual" ? (
             <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
@@ -1816,24 +1827,24 @@ function TaskForm({
             }}
           />
           {workItemTarget ? null : (
-          <PickerRow
-            label={gt("Model")}
-            borderTop
-            value={
-              modelOptions.find(
-                (option) =>
-                  option.selection.instanceId === shownSelection?.instanceId &&
-                  option.selection.model === shownSelection?.model,
-              )?.label ??
-              shownSelection?.model ??
-              (modelOptions.length ? gt("Choose model") : gt("No models available"))
-            }
-            onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
-            // The saved selection only seeds new threads; bound runs ignore it.
-            disabled={
-              saving || dictationPending || environmentUnavailable || draft.threadId !== null
-            }
-          />
+            <PickerRow
+              label={gt("Model")}
+              borderTop
+              value={
+                modelOptions.find(
+                  (option) =>
+                    option.selection.instanceId === shownSelection?.instanceId &&
+                    option.selection.model === shownSelection?.model,
+                )?.label ??
+                shownSelection?.model ??
+                (modelOptions.length ? gt("Choose model") : gt("No models available"))
+              }
+              onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
+              // The saved selection only seeds new threads; bound runs ignore it.
+              disabled={
+                saving || dictationPending || environmentUnavailable || draft.threadId !== null
+              }
+            />
           )}
         </SettingsSection>
 
@@ -1845,20 +1856,20 @@ function TaskForm({
                   "Each run adds a work item to this factory. Its Foreman picks the thread, workspace, and model.",
                 )
               : draft.threadMode === "new_thread"
-              ? gt("Each run starts a new thread.")
-              : draft.threadMode === "continue"
-                ? draft.threadId === null
-                  ? gt(
-                      "Runs continue one conversation. The first run starts the thread. Deleting it also deletes this task.",
-                    )
-                  : gt("Runs continue one conversation. Deleting it also deletes this task.")
-                : draft.threadId === null
-                  ? gt(
-                      "Runs share one thread, each in a fresh session without earlier runs' context. The first run starts the thread. Deleting it also deletes this task.",
-                    )
-                  : gt(
-                      "Runs share one thread, each in a fresh session without earlier runs' context. Deleting it also deletes this task.",
-                    )
+                ? gt("Each run starts a new thread.")
+                : draft.threadMode === "continue"
+                  ? draft.threadId === null
+                    ? gt(
+                        "Runs continue one conversation. The first run starts the thread. Deleting it also deletes this task.",
+                      )
+                    : gt("Runs continue one conversation. Deleting it also deletes this task.")
+                  : draft.threadId === null
+                    ? gt(
+                        "Runs share one thread, each in a fresh session without earlier runs' context. The first run starts the thread. Deleting it also deletes this task.",
+                      )
+                    : gt(
+                        "Runs share one thread, each in a fresh session without earlier runs' context. Deleting it also deletes this task.",
+                      )
           }
         >
           {offersThreadModes ? (
@@ -1915,7 +1926,7 @@ function TaskForm({
               }))}
               onSelect={(id) => {
                 const factory = projectFactories.find((entry) => entry.id === id);
-                if (factory) setDraft({ ...draft, factoryId: factory.id });
+                if (factory) setDraft((current) => ({ ...current, factoryId: factory.id }));
               }}
             />
           ) : !offersThreadModes || draft.threadMode !== "new_thread" ? (
@@ -1934,69 +1945,69 @@ function TaskForm({
         </SettingsSection>
 
         {workItemTarget ? null : (
-        <SettingsSection title={gt("Workspace")}>
-          <SelectRow
-            label={gt("Run in")}
-            value={
-              draft.workspace === "worktree"
-                ? gt("New worktree")
-                : draft.workspace === "root"
-                  ? gt("Project checkout")
-                  : gt("Specific checkout")
-            }
-            actions={[
-              {
-                id: "worktree",
-                title: gt("New worktree"),
-                state: draft.workspace === "worktree" ? "on" : undefined,
-              },
-              {
-                id: "root",
-                title: gt("Project checkout"),
-                state: draft.workspace === "root" ? "on" : undefined,
-              },
-              {
-                id: "existing_worktree",
-                title: gt("Specific checkout"),
-                state: draft.workspace === "existing_worktree" ? "on" : undefined,
-              },
-            ]}
-            onSelect={(id) => {
-              if (id === "worktree" || id === "root" || id === "existing_worktree")
-                setDraft((current) => ({ ...current, workspace: id }));
-            }}
-          />
-          {draft.workspace === "worktree" ? (
-            <PickerRow
-              label={gt("Base branch")}
-              value={resolveNewTaskBranchLabel(
-                {
-                  branchName: automaticBaseRefLoading ? null : worktreeBaseRef,
-                  startFromOrigin: draft.startFromOrigin,
-                  workspaceMode: "worktree",
-                },
-                m,
-              )}
-              borderTop
-              disabled={!draft.projectId || saving || dictationPending || environmentUnavailable}
-              onPress={() => navigation.navigate("SettingsScheduledTaskBranch")}
-            />
-          ) : null}
-          {draft.workspace === "existing_worktree" ? (
-            <FormField
-              label={gt("Checkout path")}
-              disabled={saving}
-              value={draft.checkoutPath}
-              borderTop
-              onChange={(checkoutPath) =>
-                setEnvironmentDraft((current) => ({
-                  ...current,
-                  checkoutPath: resolvePastedPath(current.checkoutPath, checkoutPath),
-                }))
+          <SettingsSection title={gt("Workspace")}>
+            <SelectRow
+              label={gt("Run in")}
+              value={
+                draft.workspace === "worktree"
+                  ? gt("New worktree")
+                  : draft.workspace === "root"
+                    ? gt("Project checkout")
+                    : gt("Specific checkout")
               }
+              actions={[
+                {
+                  id: "worktree",
+                  title: gt("New worktree"),
+                  state: draft.workspace === "worktree" ? "on" : undefined,
+                },
+                {
+                  id: "root",
+                  title: gt("Project checkout"),
+                  state: draft.workspace === "root" ? "on" : undefined,
+                },
+                {
+                  id: "existing_worktree",
+                  title: gt("Specific checkout"),
+                  state: draft.workspace === "existing_worktree" ? "on" : undefined,
+                },
+              ]}
+              onSelect={(id) => {
+                if (id === "worktree" || id === "root" || id === "existing_worktree")
+                  setDraft((current) => ({ ...current, workspace: id }));
+              }}
             />
-          ) : null}
-        </SettingsSection>
+            {draft.workspace === "worktree" ? (
+              <PickerRow
+                label={gt("Base branch")}
+                value={resolveNewTaskBranchLabel(
+                  {
+                    branchName: automaticBaseRefLoading ? null : worktreeBaseRef,
+                    startFromOrigin: draft.startFromOrigin,
+                    workspaceMode: "worktree",
+                  },
+                  m,
+                )}
+                borderTop
+                disabled={!draft.projectId || saving || dictationPending || environmentUnavailable}
+                onPress={() => navigation.navigate("SettingsScheduledTaskBranch")}
+              />
+            ) : null}
+            {draft.workspace === "existing_worktree" ? (
+              <FormField
+                label={gt("Checkout path")}
+                disabled={saving}
+                value={draft.checkoutPath}
+                borderTop
+                onChange={(checkoutPath) =>
+                  setEnvironmentDraft((current) => ({
+                    ...current,
+                    checkoutPath: resolvePastedPath(current.checkoutPath, checkoutPath),
+                  }))
+                }
+              />
+            ) : null}
+          </SettingsSection>
         )}
 
         {draft.schedule.mode === "fixed_time" ? (
@@ -2169,6 +2180,10 @@ function EnvironmentTasks({
     label: "scheduled task run",
     reportFailure: false,
   });
+  const fireCurrent = useAtomCommand(serverEnvironment.fireTriggerCurrentSet, {
+    label: "trigger fire current set",
+    reportFailure: false,
+  });
   const remove = useAtomCommand(serverEnvironment.deleteScheduledTask, {
     label: "scheduled task delete",
     reportFailure: false,
@@ -2180,14 +2195,16 @@ function EnvironmentTasks({
     }
   };
 
-  const act = async (task: ScheduledTask, action: "run" | "toggle" | "delete") => {
+  const act = async (task: ScheduledTask, action: "run" | "fire" | "toggle" | "delete") => {
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
     const result =
       action === "run"
         ? await runNow({ environmentId, input: { id: task.id } })
-        : action === "toggle"
-          ? await setEnabled({ environmentId, input: { id: task.id, enabled: !task.enabled } })
-          : await remove({ environmentId, input: { id: task.id } });
+        : action === "fire"
+          ? await fireCurrent({ environmentId, input: { id: task.id } })
+          : action === "toggle"
+            ? await setEnabled({ environmentId, input: { id: task.id, enabled: !task.enabled } })
+            : await remove({ environmentId, input: { id: task.id } });
     failure(
       action === "run"
         ? gt("Could not run task")
@@ -2290,9 +2307,19 @@ function EnvironmentTasks({
                   title: task.enabled ? gt("Pause") : gt("Resume"),
                   attributes: { disabled: !canOperate },
                 },
-                ...(task.schedule.type === "webhook" || isTriggerFilterMode(task.schedule.type)
-                  ? []
-                  : [{ id: "run", title: gt("Run now"), attributes: { disabled: !canOperate } }]),
+                ...((task.schedule.type === "jira_query" ||
+                  task.schedule.type === "gitlab_projects") &&
+                task.enabled
+                  ? [
+                      {
+                        id: "fire",
+                        title: "Fire current set",
+                        attributes: { disabled: !canOperate },
+                      },
+                    ]
+                  : task.schedule.type === "webhook" || isTriggerFilterMode(task.schedule.type)
+                    ? []
+                    : [{ id: "run", title: gt("Run now"), attributes: { disabled: !canOperate } }]),
                 {
                   id: "delete",
                   title: gt("Delete"),
@@ -2320,7 +2347,7 @@ function EnvironmentTasks({
                       onPress: () => void act(task, "delete"),
                     },
                   ]);
-                } else if (action === "toggle" || action === "run") {
+                } else if (action === "toggle" || action === "run" || action === "fire") {
                   void act(task, action);
                 }
               }}
