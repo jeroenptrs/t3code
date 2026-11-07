@@ -74,6 +74,7 @@ const SETTINGS_SEARCH_TERMS = {
     msg("bluetooth", { $context: "settings search keyword" }),
   ],
   SettingsScheduledTasks: [
+    msg("scheduled tasks", { $context: "settings search keyword" }),
     msg("automations", { $context: "settings search keyword" }),
     msg("schedule", { $context: "settings search keyword" }),
     "cron",

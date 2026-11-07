@@ -33,9 +33,9 @@ import { moveDraftToThread, unbindDraftFromThread } from "./scheduledTaskDraft";
 function MissingTaskDraft() {
   const gt = useGT();
   return (
-    <SettingsScreen title={gt("Scheduled task")}>
+    <SettingsScreen title={gt("Trigger")}>
       <Text className="p-5 text-base text-foreground-muted">
-        <T>Open a scheduled task form first.</T>
+        <T>Open a trigger form first.</T>
       </Text>
     </SettingsScreen>
   );
