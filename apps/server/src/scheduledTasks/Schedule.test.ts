@@ -131,4 +131,24 @@ describe("scheduled task schedule calculation", () => {
     expect(isSameSchedule({ type: "jira" }, { type: "gitlab" })).toBe(false);
     expect(isSameSchedule({ type: "manual" }, { type: "manual" })).toBe(true);
   });
+
+  it("polls a Jira query one interval from now, never sooner than five minutes", () => {
+    const now = DateTime.makeUnsafe("2026-11-05T10:00:00.000Z");
+    const query = {
+      type: "jira_query",
+      site: "acme.atlassian.net",
+      jql: "project = PROJ",
+      everyMs: 900_000,
+    } as const;
+    const at = (schedule: Parameters<typeof nextScheduledRunAt>[0]) => {
+      const next = nextScheduledRunAt(schedule, now);
+      return next === null ? null : DateTime.formatIso(next);
+    };
+    expect(at(query)).toBe("2026-11-05T10:15:00.000Z");
+    expect(at({ ...query, everyMs: 1_000 })).toBe("2026-11-05T10:05:00.000Z");
+    expect(isMissedFixedTimeRun(query, now, DateTime.add(now, { days: 1 }))).toBe(false);
+    expect(isSameSchedule(query, { ...query })).toBe(true);
+    expect(isSameSchedule(query, { ...query, everyMs: 300_000 })).toBe(false);
+    expect(isSameSchedule(query, { ...query, jql: "project = OTHER" })).toBe(false);
+  });
 });

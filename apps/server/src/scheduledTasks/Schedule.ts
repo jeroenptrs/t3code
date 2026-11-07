@@ -1,4 +1,8 @@
-import { MIN_SCHEDULED_TASK_INTERVAL_MS, type ScheduledTaskSchedule } from "@t3tools/contracts";
+import {
+  MIN_JIRA_QUERY_INTERVAL_MS,
+  MIN_SCHEDULED_TASK_INTERVAL_MS,
+  type ScheduledTaskSchedule,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
@@ -12,7 +16,7 @@ function parseTimeOfDay(value: string): { hour: number; minute: number } | null 
 
 type ClockSchedule = Extract<ScheduledTaskSchedule, { type: "interval" | "fixed_time" | "once" }>;
 
-/** Webhook and event sources run when something raises them, never on the clock. */
+/** Webhook and event sources run when something raises them; a Jira query polls on the clock. */
 const isClockSchedule = (schedule: ScheduledTaskSchedule): schedule is ClockSchedule =>
   schedule.type === "interval" || schedule.type === "fixed_time" || schedule.type === "once";
 
@@ -23,6 +27,9 @@ export function nextScheduledRunAt(
   schedule: ScheduledTaskSchedule,
   from: DateTime.DateTime,
 ): DateTime.DateTime | null {
+  if (schedule.type === "jira_query") {
+    return DateTime.addDuration(from, Math.max(schedule.everyMs, MIN_JIRA_QUERY_INTERVAL_MS));
+  }
   if (!isClockSchedule(schedule)) return null;
   if (schedule.type === "once") {
     const runAt = DateTime.make(schedule.runAt);
@@ -71,6 +78,16 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
     return b.type === "interval" && a.everyMs === b.everyMs;
   }
   if (a.type === "webhook") return b.type === "webhook";
+  if (a.type === "jira_query") {
+    return (
+      b.type === "jira_query" &&
+      a.site === b.site &&
+      a.jql === b.jql &&
+      a.filterId === b.filterId &&
+      a.everyMs === b.everyMs &&
+      filtersKey(a) === filtersKey(b)
+    );
+  }
   if (!isClockSchedule(a)) return a.type === b.type && filtersKey(a) === filtersKey(b);
   if (a.type === "once") return b.type === "once" && Date.parse(a.runAt) === Date.parse(b.runAt);
   if (b.type !== "fixed_time") return false;

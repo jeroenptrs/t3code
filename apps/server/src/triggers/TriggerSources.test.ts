@@ -1,5 +1,9 @@
 import { assert, it } from "@effect/vitest";
-import type { JiraIssueSummary, ThreadPullRequestSnapshot } from "@t3tools/contracts";
+import {
+  type JiraIssueSummary,
+  ScheduledTaskId,
+  type ThreadPullRequestSnapshot,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -133,5 +137,67 @@ it.effect("raises opened for a new GitLab merge request and ignores other hosts"
       SELECT source, key FROM fork_trigger_observations ORDER BY key
     `;
     assert.deepEqual(rows, [{ source: "gitlab", key: "gitlab.acme.dev\u0000group/app\u000042" }]);
+  }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("seeds a Jira query's result set silently, then raises entered, left, and changes", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const triggerId = ScheduledTaskId.make("task:query");
+    const other = ScheduledTaskId.make("task:other-query");
+    const poll = (
+      sources: TriggerSources.TriggerSources["Service"],
+      issues: ReadonlyArray<JiraIssueSummary>,
+      input: { readonly triggerId?: ScheduledTaskId; readonly complete?: boolean } = {},
+    ) =>
+      sources.observeJiraQuery({
+        triggerId: input.triggerId ?? triggerId,
+        query: "project = PROJ",
+        issues,
+        watchedFields: new Set(["status", "labels", "assignee"]),
+        complete: input.complete ?? true,
+      });
+    const observed = (id: ScheduledTaskId) =>
+      sql<{ key: string }>`
+        SELECT key FROM fork_trigger_observations
+        WHERE source = 'jira_query' AND key LIKE ${`${id}%`} ORDER BY key
+      `.pipe(Effect.map((rows) => rows.map((row) => row.key.split("\u0000").at(-1))));
+
+    yield* withSources((sources) =>
+      Effect.gen(function* () {
+        const events = yield* collect(sources, 3);
+        yield* poll(sources, [issue(), issue({ key: "PROJ-2" })]);
+        yield* poll(sources, [issue({ key: "PROJ-9" })], { triggerId: other });
+        yield* poll(sources, [issue({ status: "In Progress" }), issue({ key: "PROJ-3" })]);
+        const collected = yield* Fiber.join(events);
+        assert.deepEqual(
+          collected.map((event) => [
+            event.type,
+            event.source === "jira_query" ? event.payload.key : null,
+            event.triggerId,
+          ]),
+          [
+            ["issue.status_changed", "PROJ-1", triggerId],
+            ["issue.entered", "PROJ-3", triggerId],
+            ["issue.left", "PROJ-2", triggerId],
+          ],
+        );
+        assert.deepEqual(yield* observed(triggerId), ["", "PROJ-1", "PROJ-3"]);
+        assert.deepEqual(yield* observed(other), ["", "PROJ-9"]);
+      }),
+    );
+    yield* withSources((sources) =>
+      Effect.gen(function* () {
+        const events = yield* collect(sources, 1);
+        // After a restart the same set raises nothing, and a truncated set raises no leaves.
+        yield* poll(sources, [issue({ status: "In Progress" }), issue({ key: "PROJ-3" })]);
+        yield* poll(sources, [issue({ status: "In Progress" })], { complete: false });
+        yield* poll(sources, [issue({ status: "Done" }), issue({ key: "PROJ-3" })]);
+        const [event] = yield* Fiber.join(events);
+        assert.equal(event?.type, "issue.status_changed");
+        assert.deepInclude(event?.payload, { key: "PROJ-1", previousStatus: "In Progress" });
+        assert.deepEqual(yield* observed(triggerId), ["", "PROJ-1", "PROJ-3"]);
+      }),
+    );
   }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
 );
