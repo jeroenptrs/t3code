@@ -136,7 +136,6 @@ import {
   scheduleFromDraft,
   targetFromDraft,
   scheduledTaskDefaultModel,
-  WEEKDAY_LABELS,
   taskToDraft,
   unbindDraftFromThread,
   type DraftState,
@@ -701,10 +700,14 @@ function ScheduledTaskRow({
   const run = useAtomCommand(serverEnvironment.runScheduledTaskNow, {
     label: "scheduled task run now",
   });
+  const fire = useAtomCommand(serverEnvironment.fireTriggerCurrentSet, {
+    label: "trigger fire current set",
+  });
   const remove = useAtomCommand(serverEnvironment.deleteScheduledTask, {
     label: "scheduled task delete",
   });
-  const act = async (action: "toggle" | "run" | "delete") => {
+  const polled = task.schedule.type === "jira_query" || task.schedule.type === "gitlab_projects";
+  const act = async (action: "toggle" | "run" | "fire" | "delete") => {
     if (busy || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
     if (action === "delete") {
       const message = `Delete "${task.title}"?\nThis cannot be undone.`;
@@ -719,7 +722,9 @@ function ScheduledTaskRow({
         ? await toggle({ environmentId, input: { id: task.id, enabled: !task.enabled } })
         : action === "run"
           ? await run({ environmentId, input: { id: task.id } })
-          : await remove({ environmentId, input: { id: task.id } });
+          : action === "fire"
+            ? await fire({ environmentId, input: { id: task.id } })
+            : await remove({ environmentId, input: { id: task.id } });
     setBusy(false);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       toastManager.add(
@@ -744,8 +749,7 @@ function ScheduledTaskRow({
               task.blockedByPolicy
             ) : !task.enabled ? (
               "Paused"
-            ) : (task.schedule.type === "jira_query" || task.schedule.type === "gitlab_projects") &&
-              task.nextRunAt ? (
+            ) : polled && task.nextRunAt ? (
               <>
                 Next check <ScheduledRelativeLabel value={task.nextRunAt} />
               </>
@@ -801,6 +805,13 @@ function ScheduledTaskRow({
                   <InboxIcon />
                   Deliveries
                 </MenuItem>
+              ) : polled ? (
+                task.enabled ? (
+                  <MenuItem onClick={() => void act("fire")}>
+                    <PlayIcon />
+                    Fire current set
+                  </MenuItem>
+                ) : null
               ) : runsOnEvent ? null : (
                 <MenuItem onClick={() => void act("run")}>
                   <PlayIcon />

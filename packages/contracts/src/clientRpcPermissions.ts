@@ -76,6 +76,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.triggersSetEnabled]: AuthOrchestrationOperateScope,
   [WS_METHODS.triggersDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.triggersRunNow]: AuthOrchestrationOperateScope,
+  [WS_METHODS.triggersFireCurrent]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   // Force stop kills agent processes, as Stop on a terminal does.
   [ORCHESTRATION_V2_WS_METHODS.forceStopThread]: AuthOrchestrationOperateScope,
