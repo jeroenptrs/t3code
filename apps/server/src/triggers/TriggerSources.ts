@@ -1,5 +1,6 @@
 import {
   JiraIssueSummary,
+  type PollTriggerStart,
   type ScheduledTaskId,
   ThreadPullRequestSnapshot,
   type TriggerEvent,
@@ -67,12 +68,14 @@ export class TriggerSources extends Context.Service<
     ) => Effect.Effect<void, TriggerObservationError>;
     /**
      * One poll of a Jira query trigger: every issue in its result set. Its observations are its
-     * own, keyed by the trigger id, so two triggers over one issue each raise. The first poll,
-     * and the first after the query changed, records the set and raises nothing. An incomplete
-     * set (capped) raises no `issue.left`.
+     * own, keyed by the trigger id, so two triggers over one issue each raise. The first poll
+     * raises `issue.entered` for the set when `start` is `current`, and otherwise records it
+     * silently, as does the first after the query changed. An incomplete set (capped) raises no
+     * `issue.left`.
      */
     readonly observeJiraQuery: (input: {
       readonly triggerId: ScheduledTaskId;
+      readonly start: PollTriggerStart;
       readonly query: string;
       readonly issues: ReadonlyArray<JiraIssueSummary>;
       readonly watchedFields: ReadonlySet<JiraQueryWatchedField>;
@@ -83,12 +86,14 @@ export class TriggerSources extends Context.Service<
       triggerId: ScheduledTaskId,
     ) => Effect.Effect<GitLabProjectsMarker | null, TriggerObservationError>;
     /**
-     * One GitLab projects poll. The first raises `merge_request.opened` for open merge requests
-     * and no pipeline events; the first after a scope change raises nothing. Ended merge
-     * requests and finished pipelines are forgotten 30 days after last seen.
+     * One GitLab projects poll. The first raises no pipeline events, and `merge_request.opened`
+     * for open merge requests only when `start` is `current`; the first after a scope change
+     * raises nothing. Ended merge requests and finished pipelines are forgotten 30 days after
+     * last seen.
      */
     readonly observeGitLabProjects: (input: {
       readonly triggerId: ScheduledTaskId;
+      readonly start: PollTriggerStart;
       readonly host: string;
       readonly marker: GitLabProjectsMarker;
       readonly mergeRequests: ReadonlyArray<{
@@ -235,10 +240,12 @@ const make = Effect.gen(function* () {
         WHERE source = 'jira_query' AND key >= ${marker} AND key < ${`${input.triggerId}\u0001`}
       `;
       const stored = new Map(rows.map((row) => [row.key, row.state_json]));
-      const seeding = stored.get(marker) !== input.query;
+      const storedQuery = stored.get(marker);
+      const seeding =
+        storedQuery === undefined ? input.start === "changes" : storedQuery !== input.query;
       const events: Array<TriggerEvent> = [];
       const writes: Array<readonly [string, string]> = [];
-      if (seeding) writes.push([marker, input.query]);
+      if (storedQuery !== input.query) writes.push([marker, input.query]);
       const context = { triggerId: input.triggerId, query: input.query, occurredAt };
       const current = new Set<string>();
       for (const issue of input.issues) {
@@ -332,9 +339,10 @@ const make = Effect.gen(function* () {
         storedMarker === undefined
           ? null
           : (Option.getOrNull(decodeMarkerState(storedMarker.state_json))?.scope ?? "");
-      // No marker: the first poll, which raises opened. A different scope re-seeds silently.
+      // No marker: the first poll, which raises opened only from the current set. A different
+      // scope re-seeds silently.
       const firstPoll = previousScope === null;
-      const seeding = !firstPoll && previousScope !== input.marker.scope;
+      const seeding = firstPoll ? input.start === "changes" : previousScope !== input.marker.scope;
       const events: Array<TriggerEvent> = [];
       const writes: Array<readonly [string, string]> = [[marker, encodeMarkerState(input.marker)]];
 

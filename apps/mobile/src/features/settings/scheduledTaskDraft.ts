@@ -2,6 +2,7 @@ import { isWebhookDedupeTemplate, scheduledTaskThreadMode } from "@t3tools/contr
 import type {
   FactoryId,
   ModelSelection,
+  PollTriggerStart,
   TriggerFilter,
   TriggerFilterSourceKind,
   ServerConfig,
@@ -124,6 +125,8 @@ export type ScheduleDraft = {
   readonly gitlabProjects: string;
   readonly gitlabGroup: string;
   readonly gitlabPollMinutes: string;
+  /** Jira query and GitLab projects: what the first poll raises. Chosen when creating. */
+  readonly pollStart: PollTriggerStart;
 };
 
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
@@ -152,6 +155,7 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   gitlabProjects: "",
   gitlabGroup: "",
   gitlabPollMinutes: String(DEFAULT_POLL_INTERVAL_MS / 60_000),
+  pollStart: "changes",
 };
 
 function triggerFilterDraft(
@@ -223,6 +227,7 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
         jql: task.schedule.jql ?? "",
         jiraFilterId: task.schedule.filterId ?? "",
         jiraPollMinutes: String(Math.round(task.schedule.everyMs / 60_000)),
+        pollStart: task.schedule.start ?? "changes",
       };
     case "gitlab_projects":
       return {
@@ -233,6 +238,7 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
         gitlabProjects: task.schedule.projects.join("\n"),
         gitlabGroup: task.schedule.group ?? "",
         gitlabPollMinutes: String(Math.round(task.schedule.everyMs / 60_000)),
+        pollStart: task.schedule.start ?? "changes",
       };
   }
 }
@@ -274,6 +280,7 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
         projects,
         ...(group ? { group } : {}),
         everyMs,
+        ...(draft.pollStart === "current" ? { start: "current" } : {}),
         ...filters,
       };
     }
@@ -288,6 +295,7 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
         site,
         ...(filterId ? { filterId } : { jql }),
         everyMs,
+        ...(draft.pollStart === "current" ? { start: "current" } : {}),
         ...filters,
       };
     }
@@ -415,6 +423,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.factoryId,
     draft.schedule.triggerFilters.map(({ path, op, value }) => [path, op, value]),
     draft.schedule.eventTypes,
+    draft.schedule.pollStart,
     draft.schedule.jiraSite,
     draft.schedule.jql,
     draft.schedule.jiraPollMinutes,
