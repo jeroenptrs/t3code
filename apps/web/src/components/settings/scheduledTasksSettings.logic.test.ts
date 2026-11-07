@@ -263,6 +263,30 @@ describe("Jira query triggers", () => {
     expect(scheduleFromDraft({ ...draft, jiraPollMinutes: "4" })).toBeNull();
     expect(scheduleFromDraft({ ...draft, jiraSite: "" })).toBeNull();
   });
+
+  it("round-trips GitLab projects, one path per line, and refuses an empty scope", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: {
+        type: "gitlab_projects",
+        host: "gitlab.acme.dev",
+        projects: ["acme/app", "acme/api"],
+        everyMs: 900_000,
+      },
+    });
+    expect(draft).toMatchObject({ gitlabProjects: "acme/app\nacme/api", gitlabPollMinutes: "15" });
+    expect(
+      scheduleFromDraft({ ...draft, gitlabProjects: " acme/app \n\n", gitlabGroup: "acme" }),
+    ).toEqual({
+      type: "gitlab_projects",
+      host: "gitlab.acme.dev",
+      projects: ["acme/app"],
+      group: "acme",
+      everyMs: 900_000,
+    });
+    expect(scheduleFromDraft({ ...draft, gitlabProjects: "" })).toBeNull();
+    expect(scheduleFromDraft({ ...draft, gitlabPollMinutes: "4" })).toBeNull();
+  });
 });
 
 describe("webhook scheduled tasks", () => {
@@ -529,5 +553,15 @@ describe("trigger row summary", () => {
         filters: [{ path: "event.type", op: "equals", value: "issue.entered" }],
       }),
     ).toBe("Jira query · every 15 minutes · Event type equals issue.entered");
+    const projects = { kind: "gitlab_projects", host: "gitlab.com", everyMs: 900_000 } as const;
+    expect(
+      triggerSummary({
+        source: { ...projects, projects: ["acme/a", "acme/b", "acme/c"] },
+        filters: [{ path: "event.type", op: "equals", value: "pipeline.finished" }],
+      }),
+    ).toBe("GitLab projects · 3 projects · every 15 minutes · Event type equals pipeline.finished");
+    expect(
+      triggerSummary({ source: { ...projects, projects: [], group: "acme" }, filters: [] }),
+    ).toBe("GitLab projects · group acme · every 15 minutes");
   });
 });

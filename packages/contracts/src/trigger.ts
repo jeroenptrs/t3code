@@ -14,6 +14,8 @@ import { ModelSelection } from "./modelSelection.ts";
 import { OrchestrationV2ThreadLaunchWorkspaceStrategy } from "./orchestrationV2.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import {
+  gitlabProjectsFields,
+  hasGitLabProjects,
   isOneJiraQuery,
   jiraQueryFields,
   MAX_WEBHOOK_FILTERS,
@@ -39,11 +41,18 @@ export const TriggerSourceKind = Schema.Literals([
   "gitlab",
   "manual",
   "jira_query",
+  "gitlab_projects",
 ]);
 export type TriggerSourceKind = typeof TriggerSourceKind.Type;
 
 /** Sources that raise events with fields a filter can select on. */
-export const TriggerFilterSourceKind = Schema.Literals(["jira", "gitlab", "slack", "jira_query"]);
+export const TriggerFilterSourceKind = Schema.Literals([
+  "jira",
+  "gitlab",
+  "slack",
+  "jira_query",
+  "gitlab_projects",
+]);
 export type TriggerFilterSourceKind = typeof TriggerFilterSourceKind.Type;
 
 const TRIGGER_EVENT_TYPES = {
@@ -65,6 +74,13 @@ const TRIGGER_EVENT_TYPES = {
     "issue.labels_changed",
     "issue.assignee_changed",
     "issue.updated",
+  ],
+  gitlab_projects: [
+    "merge_request.opened",
+    "merge_request.updated",
+    "merge_request.merged",
+    "merge_request.closed",
+    "pipeline.finished",
   ],
 } as const;
 
@@ -134,6 +150,52 @@ const JIRA_SOURCE_FIELDS = [
   },
 ] as const satisfies ReadonlyArray<TriggerSourceField>;
 
+const GITLAB_SOURCE_FIELDS = [
+  { path: "event.type", label: "Event type", description: "What changed on the merge request." },
+  { path: "event.host", label: "Host", description: "GitLab host, such as gitlab.com." },
+  {
+    path: "event.repository",
+    label: "Repository",
+    description: "Project path, such as group/app.",
+  },
+  { path: "event.number", label: "Number", description: "Merge request number." },
+  { path: "event.url", label: "URL", description: "Link to the merge request." },
+  { path: "event.title", label: "Title", description: "Merge request title." },
+  { path: "event.state", label: "State", description: "open, merged, or closed." },
+  {
+    path: "event.previousState",
+    label: "Previous state",
+    description: "State before this change.",
+  },
+  { path: "event.isDraft", label: "Draft", description: "true or false." },
+  {
+    path: "event.headBranch",
+    label: "Source branch",
+    description: "Branch the changes come from.",
+  },
+  {
+    path: "event.baseBranch",
+    label: "Target branch",
+    description: "Branch the changes merge into.",
+  },
+  {
+    path: "event.checksState",
+    label: "Pipeline",
+    description: "passing, failing, or pending.",
+  },
+  {
+    path: "event.previousChecksState",
+    label: "Previous pipeline",
+    description: "Pipeline state before this change.",
+  },
+  {
+    path: "event.reviewDecision",
+    label: "Review decision",
+    description: "Approval state of the merge request.",
+  },
+  { path: "event.author", label: "Author", description: "Author's username." },
+] as const satisfies ReadonlyArray<TriggerSourceField>;
+
 export const TRIGGER_SOURCE_FIELDS = {
   jira: JIRA_SOURCE_FIELDS,
   jira_query: [
@@ -147,50 +209,20 @@ export const TRIGGER_SOURCE_FIELDS = {
     },
     { path: "event.query", label: "Query", description: "The JQL, or the saved filter's name." },
   ],
-  gitlab: [
-    { path: "event.type", label: "Event type", description: "What changed on the merge request." },
-    { path: "event.host", label: "Host", description: "GitLab host, such as gitlab.com." },
+  gitlab: GITLAB_SOURCE_FIELDS,
+  gitlab_projects: [
+    ...GITLAB_SOURCE_FIELDS,
     {
-      path: "event.repository",
-      label: "Repository",
-      description: "Project path, such as group/app.",
+      path: "event.pipelineStatus",
+      label: "Pipeline status",
+      description: "success, failed, canceled, or skipped. Set on pipeline.finished.",
     },
-    { path: "event.number", label: "Number", description: "Merge request number." },
-    { path: "event.url", label: "URL", description: "Link to the merge request." },
-    { path: "event.title", label: "Title", description: "Merge request title." },
-    { path: "event.state", label: "State", description: "open, merged, or closed." },
+    { path: "event.pipelineUrl", label: "Pipeline URL", description: "Link to the pipeline." },
     {
-      path: "event.previousState",
-      label: "Previous state",
-      description: "State before this change.",
+      path: "event.pipelineRef",
+      label: "Pipeline ref",
+      description: "Branch or tag the pipeline ran for.",
     },
-    { path: "event.isDraft", label: "Draft", description: "true or false." },
-    {
-      path: "event.headBranch",
-      label: "Source branch",
-      description: "Branch the changes come from.",
-    },
-    {
-      path: "event.baseBranch",
-      label: "Target branch",
-      description: "Branch the changes merge into.",
-    },
-    {
-      path: "event.checksState",
-      label: "Pipeline",
-      description: "passing, failing, or pending.",
-    },
-    {
-      path: "event.previousChecksState",
-      label: "Previous pipeline",
-      description: "Pipeline state before this change.",
-    },
-    {
-      path: "event.reviewDecision",
-      label: "Review decision",
-      description: "Approval state of the merge request.",
-    },
-    { path: "event.author", label: "Author", description: "Author's username." },
   ],
   slack: [
     { path: "event.type", label: "Event type", description: "Always message." },
@@ -266,6 +298,20 @@ export const TriggerGitLabEventPayload = Schema.Struct({
 });
 export type TriggerGitLabEventPayload = typeof TriggerGitLabEventPayload.Type;
 
+export const TriggerGitLabProjectsEventType = Schema.Literals(TRIGGER_EVENT_TYPES.gitlab_projects);
+export type TriggerGitLabProjectsEventType = typeof TriggerGitLabProjectsEventType.Type;
+
+/** A pipeline event fills the merge request fields from the merge request it ran for, if known. */
+export const TriggerGitLabProjectsEventPayload = Schema.Struct({
+  ...TriggerGitLabEventPayload.fields,
+  type: TriggerGitLabProjectsEventType,
+  pipelineId: NullableString,
+  pipelineStatus: NullableString,
+  pipelineUrl: NullableString,
+  pipelineRef: NullableString,
+});
+export type TriggerGitLabProjectsEventPayload = typeof TriggerGitLabProjectsEventPayload.Type;
+
 export const TriggerSlackEventPayload = Schema.Struct({
   type: Schema.Literal("message"),
   tenantId: Schema.String,
@@ -302,6 +348,13 @@ export const TriggerEvent = Schema.Union([
     triggerId,
     occurredAt: IsoDateTime,
     payload: TriggerGitLabEventPayload,
+  }),
+  Schema.Struct({
+    source: Schema.Literal("gitlab_projects"),
+    type: TriggerGitLabProjectsEventType,
+    triggerId,
+    occurredAt: IsoDateTime,
+    payload: TriggerGitLabProjectsEventPayload,
   }),
   Schema.Struct({
     source: Schema.Literal("slack"),
@@ -356,11 +409,17 @@ const TriggerJiraQuerySource = Schema.Struct({
   ...jiraQueryFields,
 }).check(isOneJiraQuery);
 
+const TriggerGitLabProjectsSource = Schema.Struct({
+  kind: Schema.Literal("gitlab_projects"),
+  ...gitlabProjectsFields,
+}).check(hasGitLabProjects);
+
 export const TriggerSource = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("schedule"), schedule: ScheduledTaskTimeSchedule }),
   Schema.Struct({ kind: Schema.Literal("webhook"), ...webhookSourceFields }),
   Schema.Struct({ kind: TriggerEventSourceKind }),
   TriggerJiraQuerySource,
+  TriggerGitLabProjectsSource,
 ]);
 export type TriggerSource = typeof TriggerSource.Type;
 
@@ -377,6 +436,9 @@ export const TriggerSaveSource = Schema.Union([
   }),
   TriggerJiraQuerySource.annotate({
     description: "Poll a JQL or saved filter as the site's service identity, per issue change.",
+  }),
+  TriggerGitLabProjectsSource.annotate({
+    description: "Poll GitLab projects or a group for merge request and pipeline changes.",
   }),
 ]);
 export type TriggerSaveSource = typeof TriggerSaveSource.Type;
@@ -476,6 +538,9 @@ export function scheduledTaskTrigger(task: ScheduledTask): Trigger {
   } else if (schedule.type === "jira_query") {
     const { type: _type, filters: _filters, ...query } = schedule;
     source = { kind: "jira_query", ...query };
+  } else if (schedule.type === "gitlab_projects") {
+    const { type: _type, filters: _filters, ...projects } = schedule;
+    source = { kind: "gitlab_projects", ...projects };
   } else {
     source = { kind: schedule.type };
   }
@@ -512,6 +577,9 @@ export function triggerUpsertToScheduledTaskUpsert(
   } else if (source.kind === "jira_query") {
     const { kind: _kind, ...query } = source;
     schedule = { type: "jira_query", ...query, filters };
+  } else if (source.kind === "gitlab_projects") {
+    const { kind: _kind, ...projects } = source;
+    schedule = { type: "gitlab_projects", ...projects, filters };
   } else {
     schedule = { type: source.kind, filters };
   }
