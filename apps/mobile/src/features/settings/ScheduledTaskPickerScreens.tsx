@@ -30,8 +30,8 @@ import { moveDraftToThread, unbindDraftFromThread } from "./scheduledTaskDraft";
 
 function MissingTaskDraft() {
   return (
-    <SettingsScreen title="Scheduled task">
-      <Text className="p-5 text-base text-foreground-muted">Open a scheduled task form first.</Text>
+    <SettingsScreen title="Trigger">
+      <Text className="p-5 text-base text-foreground-muted">Open a trigger form first.</Text>
     </SettingsScreen>
   );
 }
