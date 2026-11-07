@@ -235,9 +235,9 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
   }
   if (schedule.type === "webhook") return SCHEDULE_MODE_LABELS.webhook;
   if (schedule.type === "manual") return SCHEDULE_MODE_LABELS.manual;
-    const count = schedule.filters?.length ?? 0;
-    const label = SCHEDULE_MODE_LABELS[schedule.type];
-    return count === 0 ? label : `${label} · ${count} filter${count === 1 ? "" : "s"}`;
+  const count = schedule.filters?.length ?? 0;
+  const label = SCHEDULE_MODE_LABELS[schedule.type];
+  return count === 0 ? label : `${label} · ${count} filter${count === 1 ? "" : "s"}`;
 }
 
 /** formatRelativeTime handles only the past; upcoming runs need future labels. */
@@ -1080,15 +1080,18 @@ function WebhookDeliveryMode({ environmentId }: { readonly environmentId: Enviro
   );
 }
 
-function ScheduledTaskEditorDialog({
+/** Reads its settings scope, so outside Settings it needs a `SettingsScopeProvider` above it. */
+export function ScheduledTaskEditorDialog({
   initialEnvironmentId,
   task,
   prefill,
+  onSaved,
   onClose,
 }: {
   readonly initialEnvironmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
   readonly prefill?: Partial<DraftState> | undefined;
+  readonly onSaved?: ((task: ScheduledTask) => void) | undefined;
   readonly onClose: () => void;
 }) {
   const [saving, setSaving] = useState(false);
@@ -1107,6 +1110,7 @@ function ScheduledTaskEditorDialog({
           prefill={prefill}
           saving={saving}
           onSavingChange={setSaving}
+          onSaved={onSaved}
           onClose={onClose}
         />
       </DialogPopup>
@@ -1220,15 +1224,15 @@ function ScheduledTaskDestination({
           </p>
         </>
       ) : (
-      <div className="space-y-1 text-sm">
-        {bound ? (
-          <p className="wrap-anywhere">{thread?.title.trim() || `Thread ${ref.threadId}`}</p>
-        ) : null}
-        <p className="text-muted-foreground">{detail}</p>
-        {threadMode !== "new_thread" ? (
-          <p className="text-muted-foreground">Deleting the thread also deletes this task.</p>
-        ) : null}
-      </div>
+        <div className="space-y-1 text-sm">
+          {bound ? (
+            <p className="wrap-anywhere">{thread?.title.trim() || `Thread ${ref.threadId}`}</p>
+          ) : null}
+          <p className="text-muted-foreground">{detail}</p>
+          {threadMode !== "new_thread" ? (
+            <p className="text-muted-foreground">Deleting the thread also deletes this task.</p>
+          ) : null}
+        </div>
       )}
     </Field>
   );
@@ -1240,6 +1244,7 @@ function ScheduledTaskEditorForm({
   prefill,
   saving,
   onSavingChange: setSaving,
+  onSaved,
   onClose,
 }: {
   readonly initialEnvironmentId: EnvironmentId;
@@ -1247,6 +1252,7 @@ function ScheduledTaskEditorForm({
   readonly prefill?: Partial<DraftState> | undefined;
   readonly saving: boolean;
   readonly onSavingChange: (saving: boolean) => void;
+  readonly onSaved: ((task: ScheduledTask) => void) | undefined;
   readonly onClose: () => void;
 }) {
   const { scope, connectedEnvironments } = useSettingsScope();
@@ -1470,6 +1476,7 @@ function ScheduledTaskEditorForm({
       }
       return;
     }
+    onSaved?.(result.value.task);
     onClose();
   };
 
@@ -1526,6 +1533,8 @@ function ScheduledTaskEditorForm({
                 setDraft((current) => ({
                   ...current,
                   projectId: defaultScheduledTaskProjectId(projectsOn(next.environmentId), scope),
+                  // A factory belongs to its project.
+                  factoryId: "",
                   modelKey: "",
                   baseModelSelection: null,
                   baseRef: "main",
@@ -1647,30 +1656,30 @@ function ScheduledTaskEditorForm({
             </div>
             {source === "schedule" ? (
               <div className="flex flex-wrap items-center justify-between gap-2">
-              <Label>Schedule</Label>
-              <Select
-                value={draft.scheduleMode}
-                onValueChange={(value) => {
+                <Label>Schedule</Label>
+                <Select
+                  value={draft.scheduleMode}
+                  onValueChange={(value) => {
                     const mode = TIME_SCHEDULE_MODES.find((entry) => entry === value);
                     if (mode !== undefined) selectMode(mode);
-                }}
-              >
-                <div className="grid w-48 grid-cols-1">
-                  <SelectTrigger size="sm" aria-label="Schedule type">
-                    <SelectValue>{SCHEDULE_MODE_LABELS[draft.scheduleMode]}</SelectValue>
-                  </SelectTrigger>
-                </div>
-                <SelectPopup>
+                  }}
+                >
+                  <div className="grid w-48 grid-cols-1">
+                    <SelectTrigger size="sm" aria-label="Schedule type">
+                      <SelectValue>{SCHEDULE_MODE_LABELS[draft.scheduleMode]}</SelectValue>
+                    </SelectTrigger>
+                  </div>
+                  <SelectPopup>
                     {TIME_SCHEDULE_MODES.filter(
-                    (mode) => mode !== "once" || offersOnce || draft.scheduleMode === "once",
-                  ).map((mode) => (
+                      (mode) => mode !== "once" || offersOnce || draft.scheduleMode === "once",
+                    ).map((mode) => (
                       <SelectItem key={mode} value={mode}>
-                      {SCHEDULE_MODE_LABELS[mode]}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            </div>
+                        {SCHEDULE_MODE_LABELS[mode]}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </div>
             ) : null}
 
             {webhookDenial !== undefined ? (
@@ -2023,23 +2032,23 @@ function ScheduledTaskEditorForm({
             </Field>
 
             {workItemTarget ? null : (
-            <Field label="Workspace" htmlFor="scheduled-task-workspace">
-              <Select
-                value={draft.workspaceMode}
-                onValueChange={(value) =>
-                  setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
-                }
-              >
-                <SelectTrigger size="sm" id="scheduled-task-workspace">
-                  <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  <SelectItem value="worktree">Create a new worktree</SelectItem>
-                  <SelectItem value="root">Use the project checkout</SelectItem>
-                  <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
-                </SelectPopup>
-              </Select>
-            </Field>
+              <Field label="Workspace" htmlFor="scheduled-task-workspace">
+                <Select
+                  value={draft.workspaceMode}
+                  onValueChange={(value) =>
+                    setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
+                  }
+                >
+                  <SelectTrigger size="sm" id="scheduled-task-workspace">
+                    <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value="worktree">Create a new worktree</SelectItem>
+                    <SelectItem value="root">Use the project checkout</SelectItem>
+                    <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
+                  </SelectPopup>
+                </Select>
+              </Field>
             )}
           </div>
 
@@ -2080,24 +2089,24 @@ function ScheduledTaskEditorForm({
           ) : null}
 
           {workItemTarget ? null : (
-          <Field label="Model">
-            <div>
-              <ProviderModelPicker
-                environmentId={environmentId}
-                disabled={saving || !connected}
-                activeInstanceId={activeInstanceId}
-                model={activeModel}
-                lockedProvider={null}
-                instanceEntries={instanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                isComposerOwned={false}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
-                }
-              />
-            </div>
-          </Field>
+            <Field label="Model">
+              <div>
+                <ProviderModelPicker
+                  environmentId={environmentId}
+                  disabled={saving || !connected}
+                  activeInstanceId={activeInstanceId}
+                  model={activeModel}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  isComposerOwned={false}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onInstanceModelChange={(instanceId, model) =>
+                    setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
+                  }
+                />
+              </div>
+            </Field>
           )}
 
           <TriageField
