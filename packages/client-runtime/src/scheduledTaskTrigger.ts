@@ -8,11 +8,7 @@ import {
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import {
-  WEBHOOK_FILTER_OPS,
-  webhookFilterDraftsChanged,
-  type WebhookFilterDraft,
-} from "./scheduledTaskWebhook.ts";
+import { webhookFilterDraftsChanged, type WebhookFilterDraft } from "./scheduledTaskWebhook.ts";
 
 export const DEFAULT_TRIGGER_PROMPT = {
   jira: "Work on Jira issue {{event.key}}: {{event.summary}} ({{event.url}}).",
@@ -134,4 +130,32 @@ export function parseTriageDraft(
   const unchanged =
     triage?.fallback === draft.saved?.fallback && triage?.label === draft.saved?.label;
   return unchanged ? {} : { triage };
+}
+
+const FILTER_PHRASES = {
+  equals: ["equals", "has"],
+  notEquals: ["is not", "lacks"],
+  startsWith: ["starts with", "has an item starting with"],
+  in: ["is one of", "has any of"],
+  exists: ["is set", "is not empty"],
+} as const satisfies Record<TriggerFilter["op"], readonly [string, string]>;
+
+const SUMMARIZED_FILTERS = 2;
+
+/** Filters as a row reads them, such as "Status equals In Progress, Labels has bug". */
+export function triggerFiltersSummary(
+  source: TriggerFilterSourceKind,
+  filters: ReadonlyArray<TriggerFilter>,
+): string {
+  const fields: ReadonlyArray<{ path: string; label: string; array?: true }> =
+    TRIGGER_SOURCE_FIELDS[source];
+  const phrases = filters.slice(0, SUMMARIZED_FILTERS).map((filter) => {
+    const field = fields.find((entry) => entry.path === filter.path);
+    const label = field?.label ?? filter.path.slice("event.".length);
+    const verb = FILTER_PHRASES[filter.op][field?.array ? 1 : 0];
+    if (filter.op === "exists") return `${label} ${verb}`;
+    return `${label} ${verb} ${filter.op === "in" ? filter.value.join(", ") : filter.value}`;
+  });
+  const more = filters.length - SUMMARIZED_FILTERS;
+  return more > 0 ? `${phrases.join(", ")}, +${more} more` : phrases.join(", ");
 }
