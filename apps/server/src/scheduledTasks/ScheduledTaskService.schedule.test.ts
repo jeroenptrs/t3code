@@ -391,3 +391,80 @@ it.effect.each(polledSchedules)(
       );
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect(
+  "fires a polled trigger's current set as one poll, after the scheduled poll it overlaps",
+  () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-11-05T10:00:00.000Z"));
+      const calls = yield* Queue.unbounded<string>();
+      const gate = yield* Deferred.make<void>();
+      const layerDependencies = Layer.mergeAll(
+        NodeCrypto.layer,
+        Scheduler.layer,
+        ManagedPolicy.layerTest(),
+        Layer.succeed(ScheduledTaskPoller.ScheduledTaskPoller, {
+          poll: (_task, options) => {
+            const mode = options?.fireCurrent === true ? "fire" : "poll";
+            return Queue.offer(calls, `start:${mode}`).pipe(
+              Effect.andThen(mode === "poll" ? Deferred.await(gate) : Effect.void),
+              Effect.andThen(Queue.offer(calls, `end:${mode}`)),
+              Effect.asVoid,
+            );
+          },
+        }),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          namedProjectsRoot: "/projects",
+          isScratchProject: () => Effect.succeed(false),
+        }),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const input = yield* decodeUpsertInput({
+          title: "Agent-labelled issues",
+          prompt: "Pick up {{event.key}}",
+          enabled: true,
+          schedule: polledSchedules[0].schedule,
+          projectId: "project-jira-query",
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        });
+        yield* TestClock.adjust("5 seconds");
+        const created = yield* service.upsert(input);
+        yield* TestClock.adjust("5 seconds");
+        expect(yield* Queue.take(calls)).toBe("start:poll");
+        // The scheduled poll is still running, so the fire waits for the trigger's lock.
+        const fired = yield* service
+          .fireCurrent({ id: created.task.id })
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.succeed(gate, undefined);
+        const { task } = yield* Fiber.join(fired);
+        expect([
+          yield* Queue.take(calls),
+          yield* Queue.take(calls),
+          yield* Queue.take(calls),
+        ]).toEqual(["end:poll", "start:fire", "end:fire"]);
+        expect(task.nextRunAt).toBe("2026-11-05T10:15:10.000Z");
+
+        yield* service.setEnabled({ id: created.task.id, enabled: false });
+        const off = yield* service.fireCurrent({ id: created.task.id }).pipe(Effect.flip);
+        expect(off.message).toBe("Turn the trigger on to fire its current set.");
+        const manual = yield* service.upsert({
+          ...input,
+          schedule: { type: "manual" },
+        });
+        const notPolled = yield* service.fireCurrent({ id: manual.task.id }).pipe(Effect.flip);
+        expect(notPolled.message).toBe(
+          "Only Jira query and GitLab projects triggers have a current set.",
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))),
+      );
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
