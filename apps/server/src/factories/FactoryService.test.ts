@@ -545,6 +545,86 @@ describe("FactoryService", () => {
         assert.deepStrictEqual(result.list.factories[0]?.attention, result.factory.attention);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("deletes a factory's directory and ledger and leaves its scheduled tasks", () =>
+    Effect.gen(function* () {
+      const nightly = task("scheduled-task:nightly");
+      const root = yield* checkout({
+        ".t3/factories/triage/factory.json": factoryJson({
+          name: "triage",
+          triggers: [{ kind: "scheduled_task", scheduledTaskId: nightly.id }],
+        }),
+        ".t3/factories/triage/roles/review.md": "---\n---\n\nReview it.\n",
+        ".t3/factories/other/factory.json": factoryJson({ name: "other" }),
+      });
+      const backend = project("project-backend", "backend", root);
+      const factoryId = makeFactoryId(backend.projectId, "triage");
+      const otherId = makeFactoryId(backend.projectId, "other");
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+
+      const result = yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const factories = yield* FactoryService.FactoryService;
+        for (const [owner, suffix] of [
+          [factoryId, "mine"],
+          [otherId, "theirs"],
+        ] as const) {
+          yield* sql`
+            INSERT INTO fork_factory_threads (factory_id, thread_id, role, created_at)
+            VALUES (${owner}, ${`t-${suffix}`}, 'foreman', '2026-11-01T00:00:00.000Z')
+          `;
+          yield* sql`
+            INSERT INTO fork_factory_work_items (
+              work_item_id, factory_id, title, source_json, stage, gate_json,
+              foreman_thread_id, foreman_run_id, created_at, updated_at
+            ) VALUES (
+              ${`work-item:${suffix}`}, ${owner}, 'Fix it', '{"kind":"manual","text":"Fix it."}',
+              'implement', '{"state":"none"}', ${`t-${suffix}`}, NULL,
+              '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'
+            )
+          `;
+          yield* sql`
+            INSERT INTO fork_factory_work_item_threads (work_item_id, thread_id, role, created_at)
+            VALUES (${`work-item:${suffix}`}, ${`t-child-${suffix}`}, 'implement',
+              '2026-11-01T00:00:00.000Z')
+          `;
+          yield* sql`
+            INSERT INTO fork_factory_work_item_transitions (
+              transition_id, work_item_id, from_stage, to_stage, actor_json, note, at
+            ) VALUES (${`x-${suffix}`}, ${`work-item:${suffix}`}, 'new', 'implement',
+              '{"kind":"user","userId":null}', NULL, '2026-11-01T00:00:00.000Z')
+          `;
+        }
+
+        // The mocked ScheduledTaskService has no delete, so a call to it fails this test.
+        const deleted = yield* factories.delete(factoryId);
+        const missing = yield* factories.delete(factoryId).pipe(Effect.flip);
+        const count = (table: string) =>
+          sql<{ readonly n: number }>`SELECT COUNT(*) AS n FROM ${sql(table)}`.pipe(
+            Effect.map((rows) => rows[0]?.n),
+          );
+        return {
+          deleted,
+          missing,
+          listed: (yield* factories.list()).factories.map((factory) => factory.id),
+          rows: {
+            threads: yield* count("fork_factory_threads"),
+            items: yield* count("fork_factory_work_items"),
+            itemThreads: yield* count("fork_factory_work_item_threads"),
+            transitions: yield* count("fork_factory_work_item_transitions"),
+          },
+        };
+      }).pipe(Effect.provide(layerFor({ projects: [backend], tasks: [nightly] })));
+
+      assert.deepStrictEqual(result.deleted, { factoryId });
+      assert.strictEqual(result.missing.code, "not_found");
+      assert.isFalse(yield* fileSystem.exists(path.join(root, ".t3/factories/triage")));
+      assert.deepStrictEqual(result.listed, [otherId]);
+      // Only the other factory's row is left in each table.
+      assert.deepStrictEqual(result.rows, { threads: 1, items: 1, itemThreads: 1, transitions: 1 });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
 
 const foremanAdapter = {
