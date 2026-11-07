@@ -49,6 +49,7 @@ export function Field({
 
 const PROMPT_EXAMPLES: Record<TriggerFilterSourceKind, readonly [string, string]> = {
   jira: ["{{event.key}}", "{{event.summary}}"],
+  jira_query: ["{{event.key}}", "{{event.changedFields}}"],
   gitlab: ["{{event.title}}", "{{event.url}}"],
   slack: ["{{event.prompt}}", "{{event.surface}}"],
 };

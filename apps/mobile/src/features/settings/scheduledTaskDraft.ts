@@ -12,7 +12,11 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import {
+  DEFAULT_JIRA_QUERY_INTERVAL_MS,
+  DEFAULT_SERVER_SETTINGS,
+  MIN_JIRA_QUERY_INTERVAL_MS,
+} from "@t3tools/contracts";
 import {
   DEFAULT_WEBHOOK_PROMPT,
   parseMaxDeliveryAge,
@@ -63,7 +67,12 @@ export function scheduledTaskDefaultModel(
   });
 }
 
-const TRIGGER_FILTER_MODES: ReadonlySet<string> = new Set(["jira", "gitlab", "slack"]);
+const TRIGGER_FILTER_MODES: ReadonlySet<string> = new Set([
+  "jira",
+  "gitlab",
+  "slack",
+  "jira_query",
+]);
 
 export function isTriggerFilterMode(mode: string): mode is TriggerFilterSourceKind {
   return TRIGGER_FILTER_MODES.has(mode);
@@ -95,6 +104,11 @@ export type ScheduleDraft = {
   /** `event.` filter rows for the Jira, GitLab, and Slack modes. */
   readonly triggerFilters: ReadonlyArray<TriggerFilterDraft>;
   readonly savedTriggerFilters: ReadonlyArray<TriggerFilterDraft>;
+  /** Jira query mode. Mobile edits JQL; a saved filter set on web is kept as it is. */
+  readonly jiraSite: string;
+  readonly jql: string;
+  readonly jiraFilterId: string;
+  readonly jiraPollMinutes: string;
 };
 
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
@@ -114,6 +128,10 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   savedFilters: [],
   triggerFilters: [],
   savedTriggerFilters: [],
+  jiraSite: "",
+  jql: "",
+  jiraFilterId: "",
+  jiraPollMinutes: String(DEFAULT_JIRA_QUERY_INTERVAL_MS / 60_000),
 };
 
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
@@ -164,7 +182,24 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
       };
     case "manual":
       return { ...DEFAULT_SCHEDULE, mode: "manual" };
+    case "jira_query":
+      return {
+        ...DEFAULT_SCHEDULE,
+        mode: "jira_query",
+        triggerFilters: triggerFilterDrafts(task.schedule.filters),
+        savedTriggerFilters: triggerFilterDrafts(task.schedule.filters),
+        jiraSite: task.schedule.site,
+        jql: task.schedule.jql ?? "",
+        jiraFilterId: task.schedule.filterId ?? "",
+        jiraPollMinutes: String(Math.round(task.schedule.everyMs / 60_000)),
+      };
   }
+}
+
+/** Whole minutes, or NaN. */
+export function parseJiraPollMinutes(value: string): number {
+  const minutes = Number(value.trim());
+  return Number.isInteger(minutes) ? minutes : Number.NaN;
 }
 
 export function parseIntervalMinutes(value: string): number {
@@ -176,6 +211,22 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
   if (isTriggerFilterMode(draft.mode)) {
     const parsed = parseTriggerFilterDrafts(draft.triggerFilters, draft.mode);
     if (!("filters" in parsed)) return null;
+    if (draft.mode === "jira_query") {
+      const everyMs = parseJiraPollMinutes(draft.jiraPollMinutes) * 60_000;
+      const site = draft.jiraSite.trim();
+      const jql = draft.jql.trim();
+      const filterId = draft.jiraFilterId.trim();
+      if (!site || (!jql && !filterId) || !(everyMs >= MIN_JIRA_QUERY_INTERVAL_MS)) return null;
+      return {
+        type: "jira_query",
+        site,
+        ...(filterId ? { filterId } : { jql }),
+        everyMs,
+        ...(triggerFilterDraftsChanged(draft.savedTriggerFilters, draft.triggerFilters)
+          ? { filters: parsed.filters }
+          : {}),
+      };
+    }
     return {
       type: draft.mode,
       // Like webhooks: unedited filters are left out so the server keeps the stored ones.
@@ -298,6 +349,9 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.schedule.filters.map(({ path, op, value }) => [path, op, value]),
     draft.threadMode,
     draft.schedule.triggerFilters.map(({ path, op, value }) => [path, op, value]),
+    draft.schedule.jiraSite,
+    draft.schedule.jql,
+    draft.schedule.jiraPollMinutes,
     draft.workspace,
     draft.baseRef,
     draft.checkoutPath,

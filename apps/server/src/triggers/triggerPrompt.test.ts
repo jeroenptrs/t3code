@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import type { TriggerEvent } from "@t3tools/contracts";
+import { ScheduledTaskId, type TriggerEvent } from "@t3tools/contracts";
 
 import { renderTriggerPrompt, triggerEventId } from "./triggerPrompt.ts";
 
@@ -86,11 +86,14 @@ describe("renderTriggerPrompt", () => {
 });
 
 describe("triggerEventId", () => {
-  it("is stable per source, key, type, and time", () => {
+  it("is stable per source, key, type, time, and the trigger an event is for", () => {
     const id = triggerEventId(event);
     assert.match(id, /^[0-9a-f]{64}$/);
     assert.equal(triggerEventId({ ...event }), id);
     assert.notEqual(triggerEventId({ ...event, occurredAt: "2026-11-05T10:00:01.000Z" }), id);
     assert.notEqual(triggerEventId({ ...event, payload: { ...event.payload, number: "43" } }), id);
+    const forA = triggerEventId({ ...event, triggerId: ScheduledTaskId.make("task:a") });
+    assert.notEqual(forA, id);
+    assert.notEqual(triggerEventId({ ...event, triggerId: ScheduledTaskId.make("task:b") }), forA);
   });
 });

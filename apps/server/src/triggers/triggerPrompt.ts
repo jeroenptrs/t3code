@@ -12,6 +12,7 @@ import { triggerFieldResolver } from "./triggerFilter.ts";
 function triggerEventKey(event: TriggerEvent): string {
   switch (event.source) {
     case "jira":
+    case "jira_query":
       return jiraTriggerKey(event.payload.site, event.payload.key);
     case "gitlab":
       return gitlabTriggerKey({
@@ -28,8 +29,11 @@ function triggerEventKey(event: TriggerEvent): string {
 
 /** Stable per event, so raising the same event twice runs a task once. */
 export function triggerEventId(event: TriggerEvent): string {
+  const forTrigger = event.triggerId === undefined ? "" : `|${event.triggerId}`;
   return NodeCrypto.createHash("sha256")
-    .update(`${event.source}|${triggerEventKey(event)}|${event.type}|${event.occurredAt}`)
+    .update(
+      `${event.source}|${triggerEventKey(event)}|${event.type}|${event.occurredAt}${forTrigger}`,
+    )
     .digest("hex");
 }
 

@@ -10,8 +10,11 @@ import * as Schema from "effect/Schema";
 
 import { webhookFilterDraftsChanged, type WebhookFilterDraft } from "./scheduledTaskWebhook.ts";
 
+const JIRA_TRIGGER_PROMPT = "Work on Jira issue {{event.key}}: {{event.summary}} ({{event.url}}).";
+
 export const DEFAULT_TRIGGER_PROMPT = {
-  jira: "Work on Jira issue {{event.key}}: {{event.summary}} ({{event.url}}).",
+  jira: JIRA_TRIGGER_PROMPT,
+  jira_query: JIRA_TRIGGER_PROMPT,
   gitlab:
     "Look at merge request !{{event.number}} in {{event.repository}}: {{event.title}} ({{event.url}}).",
   slack: "{{event.prompt}}",

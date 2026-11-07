@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, JiraFilterView } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   CircleDotIcon,
@@ -64,7 +64,7 @@ export function JiraViewPicker({
   environmentId: EnvironmentId;
   label: string;
   selectedFilterId: string | null;
-  onSelectFilter: (filterId: string) => void;
+  onSelectFilter: (filterId: string, filter: JiraFilterView | undefined) => void;
   onUseJql: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -109,7 +109,12 @@ export function JiraViewPicker({
           <MenuRadioGroup
             value={selectedFilterId ?? ""}
             onValueChange={(next) => {
-              if (typeof next === "string" && next.length > 0) onSelectFilter(next);
+              if (typeof next === "string" && next.length > 0) {
+                onSelectFilter(
+                  next,
+                  filters.find((filter) => filter.id === next),
+                );
+              }
             }}
           >
             {filters.map((filter) => (
