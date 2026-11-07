@@ -1,4 +1,4 @@
-import type { ThreadPullRequestSnapshot } from "@t3tools/contracts";
+import { type ThreadPullRequestSnapshot, VcsProcessExitError } from "@t3tools/contracts";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -118,6 +118,13 @@ export class GitLabProjectsReadError extends Schema.TaggedError<GitLabProjectsRe
 ) {}
 
 const LOGGED_IN = /Logged in to \S+ as/i;
+const UNAUTHORIZED = /\b40[13]\b|unauthorized|forbidden/i;
+const isExitError = Schema.is(VcsProcessExitError);
+
+/** glab reports an API 401 or 403 as a plain command failure, with the status in its detail. */
+const isUnauthorized = (error: GitLabCli.GitLabCliError) =>
+  error._tag === "GitLabCliAuthenticationError" ||
+  (isExitError(error.cause) && UNAUTHORIZED.test(error.cause.detail));
 
 /**
  * Reads GitLab through `glab api` as the host's glab login, the login the pull request features
@@ -126,6 +133,8 @@ const LOGGED_IN = /Logged in to \S+ as/i;
  */
 export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabCli.GitLabCli;
+  // Hosts whose login was confirmed; dropped when a read is refused, so the next poll rechecks.
+  const signedInHosts = new Set<string>();
 
   const failWith = (message: string) => (cause: unknown) =>
     new GitLabProjectsReadError({ message, cause });
@@ -135,6 +144,7 @@ export const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly host: string;
   }) {
+    if (signedInHosts.has(input.host)) return;
     const signedIn = yield* gitlab
       .execute({
         cwd: input.cwd,
@@ -150,6 +160,7 @@ export const make = Effect.gen(function* () {
         message: `GitLab has no sign-in on this server for ${input.host}. Run \`glab auth login --hostname ${input.host}\` where T3 Code runs.`,
       });
     }
+    signedInHosts.add(input.host);
   });
 
   const pages = Effect.fn("gitlabProjectsClient.pages")(function* <A>(input: {
@@ -173,7 +184,14 @@ export const make = Effect.gen(function* () {
           host: input.host,
           args: ["api", `${input.path}?${query.toString()}`],
         })
-        .pipe(Effect.mapError((error) => failWith(error.message)(error)));
+        .pipe(
+          Effect.tapError((error) =>
+            Effect.sync(() => {
+              if (isUnauthorized(error)) signedInHosts.delete(input.host);
+            }),
+          ),
+          Effect.mapError((error) => failWith(error.message)(error)),
+        );
       const parsed = input.parse(output.stdout);
       if (Result.isFailure(parsed)) {
         return yield* failWith(`GitLab returned an unreadable ${input.path} page.`)(parsed.failure);
