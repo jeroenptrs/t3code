@@ -21,6 +21,7 @@ import {
   type FactoryId,
   scheduledTaskThreadMode,
   type ModelSelection,
+  type PollTriggerStart,
   type RuntimeMode,
   type ProviderInteractionMode,
   type ServerSettings,
@@ -70,9 +71,9 @@ export function scheduleLabel(
   }
   if (schedule.type === "webhook") return SCHEDULE_MODE_LABELS.webhook;
   if (schedule.type === "manual") return SCHEDULE_MODE_LABELS.manual;
-    const count = schedule.filters?.length ?? 0;
-    const label = SCHEDULE_MODE_LABELS[schedule.type];
-    return count === 0 ? label : `${label} · ${count} filter${count === 1 ? "" : "s"}`;
+  const count = schedule.filters?.length ?? 0;
+  const label = SCHEDULE_MODE_LABELS[schedule.type];
+  return count === 0 ? label : `${label} · ${count} filter${count === 1 ? "" : "s"}`;
 }
 
 export function matchesScheduledTaskScope(
@@ -142,8 +143,6 @@ export const TIME_SCHEDULE_MODES = ["fixed", "once", "interval"] as const;
 export function triggerSourceOfMode(mode: ScheduleMode): Trigger["source"]["kind"] {
   return mode === "fixed" || mode === "once" || mode === "interval" ? "schedule" : mode;
 }
-
-export const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 const ONCE_FORMATTER = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -302,6 +301,8 @@ export interface DraftState {
   readonly gitlabProjects: string;
   readonly gitlabGroup: string;
   readonly gitlabPollMinutes: string;
+  /** Jira query and GitLab projects: what the first poll raises. Chosen when creating. */
+  readonly pollStart: PollTriggerStart;
   readonly triage: TriageDraft;
 }
 
@@ -518,6 +519,7 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
         projects,
         ...(group ? { group } : {}),
         everyMs,
+        ...(draft.pollStart === "current" ? { start: "current" } : {}),
         ...filters,
       };
     }
@@ -529,6 +531,7 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
           ? { jql: draft.jql.trim() }
           : { filterId: draft.jiraFilterId.trim() }),
         everyMs: Number(draft.jiraPollMinutes) * 60_000,
+        ...(draft.pollStart === "current" ? { start: "current" } : {}),
         ...filters,
       };
     }
@@ -659,6 +662,10 @@ export function taskToDraft(task: ScheduledTask): DraftState {
           gitlabPollMinutes: String(Math.round(schedule.everyMs / 60_000)),
         }
       : GITLAB_PROJECTS_DRAFT_DEFAULTS),
+    pollStart:
+      schedule.type === "jira_query" || schedule.type === "gitlab_projects"
+        ? (schedule.start ?? "changes")
+        : "changes",
     triage: triageDraft(task.triage),
   };
 }
