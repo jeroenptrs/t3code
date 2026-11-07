@@ -18,6 +18,7 @@ import {
 import { type ReactNode, useRef, useState } from "react";
 import type {
   EnvironmentId,
+  FactorySummary,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
   ScheduledTask,
@@ -39,6 +40,7 @@ import { scheduledTaskWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
+  parseFactoryId,
   scheduledTaskTrigger,
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
@@ -78,6 +80,7 @@ import { environmentAtomList, environmentIdsKey } from "../../state/environmentA
 import { usePaginatedBranches, useThreadSearch } from "../../state/queries";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
+import { useFactoryEnvironments } from "../../state/factories";
 import { threadFamilies } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
@@ -127,6 +130,7 @@ import {
   localTimeZone,
   matchesScheduledTaskScope,
   scheduleFromDraft,
+  targetFromDraft,
   scheduledTaskDefaultModel,
   weekdayShortLabel,
   taskToDraft,
@@ -236,6 +240,7 @@ const EMPTY_DRAFT: DraftState = {
   threadId: "",
   savedThreadId: "",
   threadMode: "new_thread",
+  factoryId: "",
   workspaceMode: "worktree",
   baseRef: "",
   startFromOrigin: true,
@@ -1268,6 +1273,8 @@ function useScheduledTaskThread(environmentId: EnvironmentId, threadId: ThreadId
   return shell ?? family.data?.threads.find((row) => row.id === threadId) ?? null;
 }
 
+const WORK_ITEM_DESTINATION = "work_item";
+
 function ScheduledTaskDestination({
   environmentId,
   projectId,
@@ -1276,6 +1283,9 @@ function ScheduledTaskDestination({
   disabled,
   onSelect,
   onThreadModeChange,
+  factories,
+  factoryId,
+  onFactoryChange,
 }: {
   readonly environmentId: EnvironmentId;
   readonly projectId: string;
@@ -1285,6 +1295,11 @@ function ScheduledTaskDestination({
   readonly onSelect: (thread: { id: ThreadId; projectId: ProjectId } | null) => void;
   /** Absent on servers that predate thread modes. */
   readonly onThreadModeChange: ((mode: ScheduledTaskThreadMode) => void) | undefined;
+  /** The chosen project's factories. */
+  readonly factories: ReadonlyArray<FactorySummary>;
+  /** Empty for a thread destination. */
+  readonly factoryId: string;
+  readonly onFactoryChange: (factoryId: string) => void;
 }) {
   const messages = useMessages();
   const gt = useGT();
@@ -1334,15 +1349,28 @@ function ScheduledTaskDestination({
         : threadMode === "continue"
           ? gt("Each run continues this conversation, in its workspace and with its current model.")
           : gt("Each run starts a fresh session in this thread, without earlier runs' context.");
+  const workItem = factoryId !== "";
+  const factory = factories.find((entry) => entry.id === factoryId);
+  const factoryName = factory?.name ?? parseFactoryId(factoryId)?.name ?? factoryId;
+  const firstFactory = factories[0];
   return (
     <Field label={gt("Destination")} htmlFor="scheduled-task-destination">
       {onThreadModeChange ? (
         <Select
-          value={threadMode}
-          onValueChange={(value) => onThreadModeChange(value as ScheduledTaskThreadMode)}
+          value={workItem ? WORK_ITEM_DESTINATION : threadMode}
+          onValueChange={(value) => {
+            if (value === WORK_ITEM_DESTINATION) {
+              if (firstFactory) onFactoryChange(firstFactory.id);
+              return;
+            }
+            onFactoryChange("");
+            onThreadModeChange(value as ScheduledTaskThreadMode);
+          }}
         >
           <SelectTrigger size="sm" id="scheduled-task-destination">
-            <SelectValue>{messages(THREAD_MODE_LABELS[threadMode])}</SelectValue>
+            <SelectValue>
+              {workItem ? gt("Work item in factory") : messages(THREAD_MODE_LABELS[threadMode])}
+            </SelectValue>
           </SelectTrigger>
           <SelectPopup>
             {(Object.keys(THREAD_MODE_LABELS) as ScheduledTaskThreadMode[]).map((mode) => (
@@ -1350,9 +1378,38 @@ function ScheduledTaskDestination({
                 {messages(THREAD_MODE_LABELS[mode])}
               </SelectItem>
             ))}
+            {firstFactory || workItem ? (
+              <SelectItem value={WORK_ITEM_DESTINATION}>Work item in factory</SelectItem>
+            ) : null}
           </SelectPopup>
         </Select>
       ) : null}
+      {workItem ? (
+        <>
+          <Select
+            value={factoryId}
+            onValueChange={(value) => {
+              if (value) onFactoryChange(value);
+            }}
+          >
+            <SelectTrigger size="sm" aria-label="Factory">
+              <SelectValue>{factoryName}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup>
+              {factories.map((entry) => (
+                <SelectItem key={entry.id} value={entry.id}>
+                  {entry.name}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+          <p className="text-sm text-muted-foreground">
+            Each run adds a work item to this factory. Its Foreman picks the thread, workspace, and
+            model.
+          </p>
+        </>
+      ) : (
+        <>
       {!onThreadModeChange || threadMode !== "new_thread" ? (
         <Combobox
           items={items}
@@ -1406,7 +1463,8 @@ function ScheduledTaskDestination({
                       ? gt("New thread each run")
                       : value === threadId
                         ? currentLabel
-                        : threads.find((row) => row.id === value)?.title || gt("Untitled thread")}
+                            : threads.find((row) => row.id === value)?.title ||
+                              gt("Untitled thread")}
                   </span>
                 </ComboboxItem>
               ))}
@@ -1422,6 +1480,8 @@ function ScheduledTaskDestination({
           </p>
         ) : null}
       </div>
+        </>
+      )}
     </Field>
   );
 }
@@ -1521,6 +1581,11 @@ function ScheduledTaskEditorForm({
     selectedProject !== undefined &&
     automaticBaseRefs.data === null &&
     automaticBaseRefs.error === null;
+  const projectFactories = (
+    useFactoryEnvironments().find((entry) => entry.environmentId === environmentId)?.factories ?? []
+  ).filter((factory) => factory.projectId === selectedProjectId);
+  // The Foreman's role binding decides a work item's thread, workspace, and model.
+  const workItemTarget = draft.factoryId !== "";
   const instanceEntries = providerInstanceEntriesFor(
     providers,
     settings,
@@ -1638,7 +1703,11 @@ function ScheduledTaskEditorForm({
       );
       return;
     }
-    if (draft.workspaceMode === "existing_worktree" && !draft.existingWorktreePath.trim()) {
+    if (
+      !workItemTarget &&
+      draft.workspaceMode === "existing_worktree" &&
+      !draft.existingWorktreePath.trim()
+    ) {
       reportFailure(
         gt("Checkout path is required"),
         gt("Enter the path of the checkout to run in."),
@@ -1674,6 +1743,7 @@ function ScheduledTaskEditorForm({
       interactionMode: draft.interactionMode,
       creationSource: "web",
       ...triage,
+      ...targetFromDraft(draft, selectedProjectId as ProjectId, task),
     };
     // Lock before React renders, and keep successful creates locked until the form closes.
     submissionPending.current = true;
@@ -2253,6 +2323,9 @@ function ScheduledTaskEditorForm({
                     }))
                 : undefined
             }
+            factories={projectFactories}
+            factoryId={draft.factoryId}
+            onFactoryChange={(factoryId) => setDraft((current) => ({ ...current, factoryId }))}
           />
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -2260,7 +2333,11 @@ function ScheduledTaskEditorForm({
               <Select
                 value={selectedProjectId}
                 onValueChange={(projectId) =>
-                  setDraft((current) => changeDraftProject(current, projectId ?? ""))
+                  // A factory belongs to its project.
+                  setDraft((current) => ({
+                    ...changeDraftProject(current, projectId ?? ""),
+                    factoryId: "",
+                  }))
                 }
               >
                 <SelectTrigger size="sm" id="scheduled-task-project">
@@ -2286,6 +2363,7 @@ function ScheduledTaskEditorForm({
               </Select>
             </Field>
 
+            {workItemTarget ? null : (
             <Field label="Workspace" htmlFor="scheduled-task-workspace">
               <Select
                 value={draft.workspaceMode}
@@ -2303,9 +2381,10 @@ function ScheduledTaskEditorForm({
                 </SelectPopup>
               </Select>
             </Field>
+            )}
           </div>
 
-          {draft.workspaceMode === "worktree" ? (
+          {!workItemTarget && draft.workspaceMode === "worktree" ? (
             <Field label="Base branch" htmlFor="scheduled-task-base-ref">
               <WorktreeBaseBranchPicker
                 key={`${environmentId}:${selectedProjectId}`}
@@ -2322,7 +2401,7 @@ function ScheduledTaskEditorForm({
               />
             </Field>
           ) : null}
-          {draft.workspaceMode === "existing_worktree" ? (
+          {!workItemTarget && draft.workspaceMode === "existing_worktree" ? (
             <Field label="Checkout path" htmlFor="scheduled-task-checkout">
               <Input
                 id="scheduled-task-checkout"
@@ -2341,6 +2420,7 @@ function ScheduledTaskEditorForm({
             </Field>
           ) : null}
 
+          {workItemTarget ? null : (
           <Field label={gt("Model")}>
             <div className="flex flex-wrap items-center gap-1.5">
               <ProviderModelPicker
@@ -2355,7 +2435,10 @@ function ScheduledTaskEditorForm({
                 isComposerOwned={false}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                 onInstanceModelChange={(instanceId, model) => {
-                  if (instanceId === activeSelection?.instanceId && model === activeSelection.model)
+                    if (
+                      instanceId === activeSelection?.instanceId &&
+                      model === activeSelection.model
+                    )
                     return;
                   setDraft((current) => ({
                     ...current,
@@ -2376,13 +2459,18 @@ function ScheduledTaskEditorForm({
                   onModelOptionsChange={(options) =>
                     setDraft((current) => ({
                       ...current,
-                      modelSelection: createModelSelection(activeInstanceId, activeModel, options),
+                        modelSelection: createModelSelection(
+                          activeInstanceId,
+                          activeModel,
+                          options,
+                        ),
                     }))
                   }
                 />
               ) : null}
             </div>
           </Field>
+          )}
 
           <TriageField
             triage={draft.triage}
