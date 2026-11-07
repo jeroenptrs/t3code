@@ -27,6 +27,9 @@ const make = Effect.gen(function* () {
     t3_factory_read: McpToolAccess.reads((input) => factories.read(input.factoryId)),
     // A factory's files decide what its agents run, so saving needs a full-access caller.
     t3_factory_save: McpToolAccess.writesEnvironment((input) => factories.save(input)),
+    t3_factory_delete: McpToolAccess.writesEnvironment((input) =>
+      factories.delete(input.factoryId),
+    ),
     t3_factory_skill_list: McpToolAccess.reads((input) => skills.list(input)),
     t3_factory_skill_read: McpToolAccess.reads((input) => skills.read(input)),
     // A skill goes into every role that binds it, so writing one needs a full-access caller.
