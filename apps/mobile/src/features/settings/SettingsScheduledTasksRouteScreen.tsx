@@ -6,7 +6,6 @@ import {
   AuthOrchestrationOperateScope,
   clampManagedRuntimeMode,
   scheduledTaskTrigger,
-  managedCapabilityDenial,
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
@@ -1441,23 +1440,23 @@ function TaskForm({
                 />
               ) : null}
               <SelectRow
-                label="Repeat"
-                value={repeatLabel(draft.schedule.weekdays)}
+                label={gt("Repeat", { $context: "noun, which days a task repeats on" })}
+                value={repeatLabel(draft.schedule.weekdays, m, locale)}
                 borderTop
                 actions={[
                   {
                     id: "every_day",
-                    title: "Every day",
+                    title: gt("Every day"),
                     state: draft.schedule.weekdays.length === 7 ? "on" : undefined,
                   },
                   {
                     id: "weekdays",
-                    title: "Weekdays",
-                    state: repeatLabel(draft.schedule.weekdays) === "Weekdays" ? "on" : undefined,
+                    title: gt("Weekdays"),
+                    state: isWeekdays(draft.schedule.weekdays) ? "on" : undefined,
                   },
                   ...DAYS.map((day) => ({
                     id: String(day.index),
-                    title: day.label,
+                    title: weekdayLabel(day.index, locale),
                     attributes: { keepsMenuPresented: true },
                     state: draft.schedule.weekdays.includes(day.index)
                       ? ("on" as const)
@@ -1628,7 +1627,10 @@ function TaskForm({
                   schedule={draft.schedule}
                   disabled={saving}
                   onChange={(patch) =>
-                    setDraft({ ...draft, schedule: { ...draft.schedule, ...patch } })
+                    setDraft((current) => ({
+                      ...current,
+                      schedule: { ...current.schedule, ...patch },
+                    }))
                   }
                 />
               ) : null}
@@ -1638,7 +1640,10 @@ function TaskForm({
                   schedule={draft.schedule}
                   disabled={saving}
                   onChange={(patch) =>
-                    setDraft({ ...draft, schedule: { ...draft.schedule, ...patch } })
+                    setDraft((current) => ({
+                      ...current,
+                      schedule: { ...current.schedule, ...patch },
+                    }))
                   }
                 />
               ) : null}
@@ -1660,7 +1665,10 @@ function TaskForm({
                   }
                   onSelect={(pollStart) => {
                     if (pollStart !== "changes" && pollStart !== "current") return;
-                    setDraft({ ...draft, schedule: { ...draft.schedule, pollStart } });
+                    setDraft((current) => ({
+                      ...current,
+                      schedule: { ...current.schedule, pollStart },
+                    }));
                   }}
                 />
               ) : null}
@@ -1669,7 +1677,10 @@ function TaskForm({
                 value={draft.schedule.eventTypes}
                 disabled={saving}
                 onChange={(eventTypes) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, eventTypes } })
+                  setDraft((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, eventTypes },
+                  }))
                 }
               />
             <TriggerFilterRows
@@ -1919,7 +1930,7 @@ function TaskForm({
               }))}
               onSelect={(id) => {
                 const factory = projectFactories.find((entry) => entry.id === id);
-                if (factory) setDraft({ ...draft, factoryId: factory.id });
+                if (factory) setDraft((current) => ({ ...current, factoryId: factory.id }));
               }}
             />
           ) : !offersThreadModes || draft.threadMode !== "new_thread" ? (
@@ -2173,6 +2184,10 @@ function EnvironmentTasks({
     label: "scheduled task run",
     reportFailure: false,
   });
+  const fireCurrent = useAtomCommand(serverEnvironment.fireTriggerCurrentSet, {
+    label: "trigger fire current set",
+    reportFailure: false,
+  });
   const remove = useAtomCommand(serverEnvironment.deleteScheduledTask, {
     label: "scheduled task delete",
     reportFailure: false,
@@ -2184,11 +2199,13 @@ function EnvironmentTasks({
     }
   };
 
-  const act = async (task: ScheduledTask, action: "run" | "toggle" | "delete") => {
+  const act = async (task: ScheduledTask, action: "run" | "fire" | "toggle" | "delete") => {
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
     const result =
       action === "run"
         ? await runNow({ environmentId, input: { id: task.id } })
+        : action === "fire"
+          ? await fireCurrent({ environmentId, input: { id: task.id } })
         : action === "toggle"
           ? await setEnabled({ environmentId, input: { id: task.id, enabled: !task.enabled } })
           : await remove({ environmentId, input: { id: task.id } });
@@ -2294,7 +2311,17 @@ function EnvironmentTasks({
                   title: task.enabled ? gt("Pause") : gt("Resume"),
                   attributes: { disabled: !canOperate },
                 },
-                ...(task.schedule.type === "webhook" || isTriggerFilterMode(task.schedule.type)
+                ...((task.schedule.type === "jira_query" ||
+                  task.schedule.type === "gitlab_projects") &&
+                task.enabled
+                  ? [
+                      {
+                        id: "fire",
+                        title: "Fire current set",
+                        attributes: { disabled: !canOperate },
+                      },
+                    ]
+                  : task.schedule.type === "webhook" || isTriggerFilterMode(task.schedule.type)
                   ? []
                   : [{ id: "run", title: gt("Run now"), attributes: { disabled: !canOperate } }]),
                 {
@@ -2324,7 +2351,7 @@ function EnvironmentTasks({
                       onPress: () => void act(task, "delete"),
                     },
                   ]);
-                } else if (action === "toggle" || action === "run") {
+                } else if (action === "toggle" || action === "run" || action === "fire") {
                   void act(task, action);
                 }
               }}
