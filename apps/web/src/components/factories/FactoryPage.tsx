@@ -48,6 +48,7 @@ import { FactoryCanvas } from "./FactoryCanvas";
 import { FactoryDefinitionSection } from "./FactoryDefinitionSection";
 import { FactoryIssuesList } from "./FactoryIssues";
 import {
+  attachTrigger,
   buildFactorySaveInput,
   factoryDraft,
   factoryDraftChanged,
@@ -227,13 +228,13 @@ function FactoryView(props: {
   const editRole = (role: FactoryRoleName, next: FactoryRoleDraft) =>
     edit((current) => ({ ...current, roles: { ...current.roles, [role]: next } }));
 
-  const submit = async () => {
-    if (draft === null || saving) return;
+  const submit = async (next: FactoryDraft | null = draft) => {
+    if (next === null || saving) return;
     setSaving(true);
     setRefusal(null);
     const result = await save({
       environmentId,
-      input: buildFactorySaveInput(factory, draft),
+      input: buildFactorySaveInput(factory, next),
     });
     setSaving(false);
     if (result._tag === "Failure") {
@@ -313,6 +314,20 @@ function FactoryView(props: {
         issues={issues}
         onProjectsChange={(projects) => edit((current) => ({ ...current, projects }))}
         onTriggersChange={(triggers) => edit((current) => ({ ...current, triggers }))}
+        onTriggerCreated={(taskId) => {
+          const next = attachTrigger(factory, draft, taskId);
+          // Held as the draft first, so a refused save leaves it there to retry.
+          setDraft(next.draft);
+          if (next.saveNow) {
+            void submit(next.draft);
+            return;
+          }
+          toastManager.add({
+            type: "info",
+            title: "Trigger created",
+            description: "Save the factory to attach it.",
+          });
+        }}
       />
       <FactoryWorkItems
         environmentId={environmentId}
