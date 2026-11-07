@@ -64,17 +64,19 @@ export function renderTriggerPrompt(
   );
 }
 
-/** The event's fields one per line as `label: value`, for a work item; empty for a manual run. */
-export function renderTriggerEventText(event: TriggerEvent): string {
+/**
+ * The event's non-empty fields one per line as `label: value` for a work item, each value framed
+ * as untrusted data like a thread run's prompt. Empty for a manual run.
+ */
+export function renderTriggerEventText(event: TriggerEvent, frameId: string): string {
   if (event.source === "manual") return "";
   const field = triggerFieldResolver(event);
-  const lines: Array<string> = [];
-  for (const { path, label } of TRIGGER_SOURCE_FIELDS[event.source]) {
+  const lines = TRIGGER_SOURCE_FIELDS[event.source].flatMap(({ path, label }) => {
     const value = field(path);
     const text = Array.isArray(value) ? value.join(", ") : value;
-    if (typeof text === "string" && text !== "") lines.push(`${label}: ${text}`);
-  }
-  return lines.join("\n");
+    return typeof text === "string" && text !== "" ? [`${label}: {{${path}}}`] : [];
+  });
+  return renderTriggerPrompt(lines.join("\n"), event, frameId).prompt;
 }
 
 /** `<type> <key or number>: <summary or title>` for Jira and GitLab events; null for others. */
