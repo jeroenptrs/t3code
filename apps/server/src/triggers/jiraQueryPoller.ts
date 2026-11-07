@@ -16,7 +16,7 @@ const MAX_ISSUES = 500;
 const NO_CUSTOM_FIELDS = { sprint: null, storyPoints: null };
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const api = yield* JiraApi.JiraApi;
   const identities = yield* JiraIdentities.JiraIdentities;
   const sources = yield* TriggerSources.TriggerSources;
