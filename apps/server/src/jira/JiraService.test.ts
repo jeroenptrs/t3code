@@ -227,6 +227,7 @@ it.effect("searches a saved filter's JQL with the site's custom fields, and cach
           "priority",
           "assignee",
           "updated",
+          "labels",
           "customfield_10020",
           "customfield_10016",
         ],
