@@ -24,13 +24,13 @@ are public identifiers and are the same ones in the official builds.
 
 ### Toolchain
 
-| Item                           | State                                                                                                          |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| Expo SDK                       | 58.0.23, React Native 0.88.1 (`apps/mobile/package.json`)                                                      |
-| `react-native-tvos`            | `0.88.1-0` is the `latest` and `0.88-stable` tag; the TV stays on `0.88.0-0`. Fabric and Hermes are supported. |
-| `@react-native-tvos/config-tv` | 0.1.7. Retargets the Podfile and Xcode project to tvOS when `EXPO_TV=1`.                                       |
-| Local Xcode                    | 27.0 with the tvOS 27.0 device and simulator SDKs installed.                                                   |
-| EAS                            | Logged in as `made-for-yall`. tvOS needs a hand-made provisioning profile; EAS creates only iOS profiles.      |
+| Item                           | State                                                                                                     |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| Expo SDK                       | 58.0.23, React Native 0.88.1 (`apps/mobile/package.json`)                                                 |
+| `react-native-tvos`            | `0.88.1-0`, the `latest` and `0.88-stable` tag. Fabric and Hermes are supported.                          |
+| `@react-native-tvos/config-tv` | 0.1.7. Retargets the Podfile and Xcode project to tvOS when `EXPO_TV=1`.                                  |
+| Local Xcode                    | 27.0 with the tvOS 27.0 device and simulator SDKs installed.                                              |
+| EAS                            | Logged in as `made-for-yall`. tvOS needs a hand-made provisioning profile; EAS creates only iOS profiles. |
 
 Expo's TV guide lists these packages as supported on TV, and the app already
 uses them: Application, Audio, Asset, BlurView, BuildProperties, Constants,
@@ -228,7 +228,7 @@ with the shared draft so that text typed on the TV also shows on the phone.
 
 ```
 apps/tv/
-  package.json        react-native: npm:react-native-tvos@0.88.0-0
+  package.json        react-native: npm:react-native-tvos@0.88.1-0
   app.config.ts       plugins: @react-native-tvos/config-tv, expo-secure-store, expo-sqlite, ...
   src/                connection glue copied from apps/mobile, TV screens
 ```
@@ -312,12 +312,17 @@ change upstream.
 The open questions from the first draft are answered, `apps/tv` exists on this
 branch, and upstream `main` at `7171fdd771` is merged in.
 
-- `react-native-tvos@0.88.0-0` coexists with the mobile app under pnpm. Metro
+- `react-native-tvos@0.88.1-0` coexists with the mobile app under pnpm. Metro
   needed a resolver pin in `apps/tv/metro.config.js`, because Expo's workspace
   autolinking walked up to the upstream `react-native` copy. Main's
   `strictPeerDependencies` also needs an allowance in `pnpm-workspace.yaml`:
   `@react-native-tvos/virtualized-lists` peers on the exact release, and the
-  alias installs as `0.88.0-0`.
+  alias installs as `0.88.1-0`.
+- Keep the fork on the same core version as `apps/mobile`. The fork's
+  `ReactNativeDependencies.podspec` reads its version from the `react-native`
+  package that Node resolves, and under pnpm that is mobile's hoisted copy. A
+  mismatch passes Debug and fails the Release build, which asks for a
+  dependency archive of the other version.
 - ClerkKit 1.3.3 compiles for tvOS, but every ClerkKitUI view is excluded
   there. It did not matter: `@clerk/expo` 4.14 runs headless on `clerk-js`
   with no native pod, so the TV signs in with a plain React Native email code

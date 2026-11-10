@@ -32,7 +32,7 @@
     "expo-sqlite": "~58.0.15",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "react-native": "npm:react-native-tvos@0.88.0-0",
+    "react-native": "npm:react-native-tvos@0.88.1-0",
     "remark-gfm": "catalog:",
     "remark-parse": "catalog:",
     "unified": "catalog:"
