@@ -26,7 +26,7 @@ type ConnectionLayerSource =
   | typeof ConnectionPlatform.layer;
 
 const layerConnection = layerSnapshotLoader.pipe(
-  Layer.provideMerge(Connection.layer),
+  Layer.provideMerge(Connection.layerWithOptions({ providerCatalogsOnDemand: true })),
   Layer.provideMerge(
     Layer.merge(Runtime.layer, ConnectionPlatform.layer.pipe(Layer.provide(Runtime.layer))),
   ),

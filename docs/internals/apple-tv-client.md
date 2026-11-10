@@ -2,7 +2,8 @@
 
 An assessment of what it takes to run T3 Code on Apple TV, with dictation as a
 primary input, and to ship a private build that talks to the production T3
-Connect deployment. Written 2026-10-27 against upstream `main` at `07242abff3`.
+Connect deployment. Written 2026-10-27 against upstream `main` at `07242abff3`;
+updated 2026-11-10 after merging upstream `main` at `7171fdd771`.
 
 ## Summary
 
@@ -23,13 +24,13 @@ are public identifiers and are the same ones in the official builds.
 
 ### Toolchain
 
-| Item                           | State                                                                                                     |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------- |
-| Expo SDK                       | 58.0.14, React Native 0.88.0 (`apps/mobile/package.json`)                                                 |
-| `react-native-tvos`            | `0.88.0-0` is the `latest` and `0.88-stable` tag. Fabric and Hermes are supported.                        |
-| `@react-native-tvos/config-tv` | 0.1.7. Retargets the Podfile and Xcode project to tvOS when `EXPO_TV=1`.                                  |
-| Local Xcode                    | 27.0 with the tvOS 27.0 device and simulator SDKs installed.                                              |
-| EAS                            | Logged in as `made-for-yall`. tvOS needs a hand-made provisioning profile; EAS creates only iOS profiles. |
+| Item                           | State                                                                                                          |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| Expo SDK                       | 58.0.23, React Native 0.88.1 (`apps/mobile/package.json`)                                                      |
+| `react-native-tvos`            | `0.88.1-0` is the `latest` and `0.88-stable` tag; the TV stays on `0.88.0-0`. Fabric and Hermes are supported. |
+| `@react-native-tvos/config-tv` | 0.1.7. Retargets the Podfile and Xcode project to tvOS when `EXPO_TV=1`.                                       |
+| Local Xcode                    | 27.0 with the tvOS 27.0 device and simulator SDKs installed.                                                   |
+| EAS                            | Logged in as `made-for-yall`. tvOS needs a hand-made provisioning profile; EAS creates only iOS profiles.      |
 
 Expo's TV guide lists these packages as supported on TV, and the app already
 uses them: Application, Audio, Asset, BlurView, BuildProperties, Constants,
@@ -212,12 +213,11 @@ and shows the transcript as it lands. The TV remote then confirms send, and
 the TV submits the message. Revision conflicts use the existing rule: a draft
 edited elsewhere since recording started drops the transcript.
 
-**Phase 3: environment-backed transcription.** `docs/internals/voice-input.md`
-names this as not implemented. The phone uploads the recording to the
-environment, which runs a transcriber (a provider, or a local model on the
-host) and writes the shared draft. This frees dictation from iOS 26 hardware
-and makes it available to Android, desktop, and web with the same draft
-mirroring. It is independent of the TV and is the larger piece of work.
+**Phase 3: environment-backed transcription.** This has landed upstream in
+`apps/server/src/speech`: the environment runs a transcriber over an uploaded
+recording — a cloud provider, or a local model on the host. This frees
+dictation from iOS 26 hardware and makes it available to Android, desktop, and
+web. It is independent of the TV.
 
 The TV's own fallback stays the system keyboard with Siri Remote dictation,
 with the shared draft so that text typed on the TV also shows on the phone.
@@ -307,14 +307,17 @@ For the TV, the device grant path would remove the Clerk UI and these
 identity constraints entirely, which is another reason to propose the relay
 change upstream.
 
-## Status as of 2026-10-27
+## Status as of 2026-11-10
 
-The open questions from the first draft are answered, and `apps/tv` exists on
-this branch.
+The open questions from the first draft are answered, `apps/tv` exists on this
+branch, and upstream `main` at `7171fdd771` is merged in.
 
 - `react-native-tvos@0.88.0-0` coexists with the mobile app under pnpm. Metro
   needed a resolver pin in `apps/tv/metro.config.js`, because Expo's workspace
-  autolinking walked up to the upstream `react-native` copy.
+  autolinking walked up to the upstream `react-native` copy. Main's
+  `strictPeerDependencies` also needs an allowance in `pnpm-workspace.yaml`:
+  `@react-native-tvos/virtualized-lists` peers on the exact release, and the
+  alias installs as `0.88.0-0`.
 - ClerkKit 1.3.3 compiles for tvOS, but every ClerkKitUI view is excluded
   there. It did not matter: `@clerk/expo` 4.14 runs headless on `clerk-js`
   with no native pod, so the TV signs in with a plain React Native email code

@@ -11,7 +11,7 @@
     "ios:device": "EXPO_TV=1 EXPO_NO_GIT_STATUS=1 expo prebuild --clean --platform ios && EXPO_TV=1 expo run:ios --device",
     "ios:device:release": "EXPO_TV=1 EXPO_NO_GIT_STATUS=1 expo prebuild --clean --platform ios && EXPO_TV=1 expo run:ios --device --configuration Release --no-bundler",
     "test": "vp test run --config ../../vite.config.ts --dir .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "effect-tsgo tsrs --noEmit"
   },
   "dependencies": {
     "@clerk/expo": "catalog:",
@@ -21,16 +21,15 @@
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "effect": "catalog:",
-    "expo": "58.0.14",
+    "expo": "58.0.23",
     "expo-application": "~58.1.2",
-    "expo-constants": "~58.0.12",
+    "expo-constants": "~58.0.15",
     "expo-crypto": "~58.0.7",
     "expo-device": "~58.0.5",
-    "expo-file-system": "~58.0.9",
-    "expo-image": "~58.0.15",
-    "expo-network": "~58.0.3",
+    "expo-image": "~58.0.18",
+    "expo-network": "~58.0.4",
     "expo-secure-store": "~58.0.2",
-    "expo-sqlite": "~58.0.13",
+    "expo-sqlite": "~58.0.15",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-native": "npm:react-native-tvos@0.88.0-0",
@@ -39,14 +38,12 @@
     "unified": "catalog:"
   },
   "devDependencies": {
-    "@babel/core": "^7.29.7",
     "@react-native-tvos/config-tv": "0.1.7",
     "@types/mdast": "^4.0.4",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
-    "babel-preset-expo": "~58.0.17",
+    "babel-preset-expo": "~58.0.24",
     "metro-resolver": "0.87.1",
-    "sharp": "0.35.4",
-    "typescript": "catalog:"
+    "sharp": "0.35.4"
   }
 }

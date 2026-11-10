@@ -64,6 +64,7 @@ export const environmentProjects = createEnvironmentProjectAtoms({
 export const environmentThreadShells = createEnvironmentThreadShellAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   snapshotAtom: environmentSnapshotAtom,
+  hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
 });
 
 const NO_ENVIRONMENT_IDS: ReadonlySet<EnvironmentId> = new Set();

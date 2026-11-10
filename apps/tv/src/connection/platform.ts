@@ -6,6 +6,7 @@ import {
   Wakeups,
 } from "@t3tools/client-runtime/connection";
 import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -108,8 +109,9 @@ const applicationActiveWakeups = Stream.callback<
   "application-active-probe" | "application-active-long"
 >((queue) =>
   Effect.acquireRelease(
-    Effect.sync(() => {
-      let backgroundedAtMs = AppState.currentState === "background" ? Date.now() : null;
+    Effect.gen(function* () {
+      const nowMs = yield* Clock.currentTimeMillis;
+      let backgroundedAtMs = AppState.currentState === "background" ? nowMs : null;
       return AppState.addEventListener("change", (state) => {
         if (state === "background") {
           backgroundedAtMs = Date.now();
@@ -191,7 +193,7 @@ const layerCapabilities = Layer.effectContext(
       Context.add(
         ClientCapabilities.PrimaryEnvironmentAuth,
         ClientCapabilities.PrimaryEnvironmentAuth.of({
-          bearerToken: Effect.succeed(Option.none()),
+          bearerToken: Effect.succeedNone,
         }),
       ),
       Context.add(ClientCapabilities.AnalyticsDevice, {
@@ -208,7 +210,7 @@ const layerCapabilities = Layer.effectContext(
                   detail: `Could not load the TV device identity: ${String(cause)}`,
                 }),
             ),
-            Effect.map(Option.some),
+            Effect.asSome,
           ),
         }),
       ),
@@ -221,9 +223,13 @@ const layerCapabilities = Layer.effectContext(
       Context.add(
         ClientCapabilities.SshEnvironmentGateway,
         ClientCapabilities.SshEnvironmentGateway.of({
-          provision: unsupportedSsh,
-          prepare: unsupportedSsh,
-          disconnect: () => Effect.void,
+          provision: Effect.fn("ClientCapabilities.SshEnvironmentGateway.provision")(
+            unsupportedSsh,
+          ),
+          prepare: Effect.fn("ClientCapabilities.SshEnvironmentGateway.prepare")(unsupportedSsh),
+          disconnect: Effect.fn("ClientCapabilities.SshEnvironmentGateway.disconnect")(
+            () => Effect.void,
+          ),
         }),
       ),
     );

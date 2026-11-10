@@ -224,7 +224,7 @@ describe("deriveThreadRows turn folds", () => {
     );
     expect(shape(rows).slice(0, 3)).toEqual([
       "user:first",
-      "fold:Worked for 8.0s",
+      "fold:Worked for 8s",
       "assistant:first-answer",
     ]);
   });

@@ -274,6 +274,8 @@ peerDependencyRules:
     - vite
   allowedVersions:
     vite: "*"
+    # react-native-tvos's virtualized lists peer on the exact release; the TV alias installs the 0.88.0-0 build.
+    "@react-native-tvos/virtualized-lists>react-native": "0.88.0-0"
     # Our react-native-screens fork is a 5.x prerelease, which ">= 4.0.0" excludes.
     "@react-navigation/native-stack>react-native-screens": "*"
     # ws 7 (React Native dev tooling) only calls isValidUTF8, unchanged in v6.
