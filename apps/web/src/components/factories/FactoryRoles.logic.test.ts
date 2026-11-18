@@ -10,11 +10,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   addRoleSaveInput,
-  factorySaveInput,
   removeRoleSaveInput,
   roleDraft,
   roleDraftChanged,
-  roleEnabledChange,
   roleFileChange,
   roleNameError,
   skillUsers,
@@ -117,34 +115,6 @@ describe("roleFileChange", () => {
 
   it("sees no change in a draft read straight from the role", () => {
     expect(roleDraftChanged(review, roleDraft(review))).toBe(false);
-  });
-});
-
-describe("roleEnabledChange", () => {
-  it.each([
-    [true, { model, skills: ["review-checklist"], tools: ["Read"] }],
-    [false, { model, skills: ["review-checklist"], tools: ["Read"], enabled: false }],
-  ] as const)("sets enabled %s and keeps the rest of the file", (enabled, binding) => {
-    expect(roleEnabledChange(review, enabled)).toEqual({
-      role: "review",
-      file: { binding, body: "Review against the task." },
-    });
-  });
-});
-
-describe("factorySaveInput", () => {
-  it("saves the definition as read, with its version and role order, plus one role change", () => {
-    const change = roleEnabledChange(review, true);
-    const input = factorySaveInput(factory, { roles: [change] });
-    expect(input).toEqual({ projectId, definition: factory.definition, roles: [change] });
-    expect(Object.keys(input.definition.roles)).toEqual(["review", "implement"]);
-  });
-
-  it("replaces only the definition fields a view owns", () => {
-    expect(factorySaveInput(factory, { definition: { projects: [] } })).toEqual({
-      projectId,
-      definition: { ...factory.definition, projects: [] },
-    });
   });
 });
 
