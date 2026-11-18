@@ -50,6 +50,7 @@ import {
 } from "./components/RenderErrorBoundary";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
 import { FactoriesScreen } from "./features/factories/FactoriesScreen";
+import { FactoryScreen } from "./features/factories/FactoryScreen";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
@@ -201,6 +202,7 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   SettingsScheduledTaskThread: msg("Destination"),
   SettingsScheduledTaskTemplate: msg("Use template"),
   SettingsFactories: msg("Factories"),
+  SettingsFactory: msg("Factory"),
   SettingsClientStorage: msg("Client Storage"),
   SettingsDiagnostics: msg("Diagnostics"),
   SettingsUsageAccount: msg("Account"),
@@ -432,6 +434,11 @@ const SETTINGS_SCREENS = {
   SettingsFactories: createNativeStackScreen({
     screen: FactoriesScreen,
     linking: "settings/factories",
+    options: settingsPage(),
+  }),
+  SettingsFactory: createNativeStackScreen({
+    screen: FactoryScreen,
+    linking: "settings/factories/:environmentId/:factoryId",
     options: settingsPage(),
   }),
   SettingsUsage: createNativeStackScreen({
