@@ -81,7 +81,7 @@ const FactoryReadTool = Tool.make("t3_factory_read", {
 const FactorySaveTool = Tool.make("t3_factory_save", {
   ...shared,
   description:
-    "Write a factory's `factory.json` and the role files you pass; creates it if new. A passed file replaces the whole role file, body included. Omitted roles keep their files; `file: null` deletes one so the built-in role applies. A binding the provider lacks fails with `issues`. Skills: t3_factory_skill_save.",
+    "Write a factory's `factory.json` and the role files you pass; creates it if new. `definition.roles` lists every role besides the Foreman (path, or null for none); leaving one out removes it. A passed file replaces the whole role file, body included; `file: null` deletes one so the role's defaults apply. Start a new role from `rolePresets` in t3_factory_read. Invalid input fails with `issues`. Skills: t3_factory_skill_save.",
   parameters: FactorySaveInput,
   success: Factory,
 }).annotate(Tool.Destructive, true);
@@ -159,7 +159,7 @@ const WorkItemCreateTool = Tool.make("t3_work_item_create", {
 const WorkItemAdvanceTool = Tool.make("t3_work_item_advance", {
   ...workItemShared,
   description:
-    "Foreman only. Move your work item to a stage, naming in `threads` each child that worked on it. The same stage only adds threads.",
+    "Foreman only. Move your work item to a role's stage, or to done, failed, or dropped. Advance to a role before you delegate to it, in a separate call: the stage sets the child's role. The same stage only adds `threads`.",
   parameters: WorkItemAdvanceInput,
   success: WorkItem,
 })
@@ -169,7 +169,7 @@ const WorkItemAdvanceTool = Tool.make("t3_work_item_advance", {
 const WorkItemGateTool = Tool.make("t3_work_item_gate", {
   ...workItemShared,
   description:
-    "Foreman only. Hold your work item for a person's decision, then end your turn. The answer arrives as your next message: approval resumes at `resumeStage`, rejection drops the item.",
+    "Foreman only. Hold your work item for a person's decision, then end your turn. The answer arrives as your next message: approval resumes at `resumeStage` (a role or done), rejection drops the item.",
   parameters: WorkItemGateInput,
   success: WorkItem,
 })

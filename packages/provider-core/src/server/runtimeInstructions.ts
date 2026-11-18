@@ -58,8 +58,12 @@ Your skills are in .agents/skills/<name>/SKILL.md under your working directory. 
 ${factoryRole.skills
   .map(({ name, description }) => `- ${name}${description ? `: ${toSingleLine(description)}` : ""}`)
   .join("\n")}`;
+  const delegates =
+    factoryRole.delegates === undefined
+      ? ""
+      : `\n\nRoles you can delegate to: ${factoryRole.delegates.length === 0 ? "none" : factoryRole.delegates.join(", ")}`;
   return `<factory_role factory="${factoryRole.factoryId}" role="${factoryRole.role}">
-${factoryRole.body.trim()}${skills}
+${factoryRole.body.trim()}${delegates}${skills}
 </factory_role>`;
 }
 
