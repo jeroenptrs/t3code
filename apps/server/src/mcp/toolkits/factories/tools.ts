@@ -20,6 +20,7 @@ import {
   WorkItem,
   WorkItemAdvanceInput,
   WorkItemCreateInput,
+  WorkItemDismissFailureInput,
   WorkItemError,
   WorkItemGateInput,
   WorkItemListResult,
@@ -150,7 +151,7 @@ const WorkItemReadTool = Tool.make("t3_work_item_read", {
 const WorkItemCreateTool = Tool.make("t3_work_item_create", {
   ...workItemShared,
   description:
-    "Send a request to a factory as a new work item. Its Foreman thread gets it in a fresh session.",
+    "Send a request to a factory as a new work item. It starts at once in a Foreman thread of its own.",
   parameters: WorkItemCreateInput,
   success: WorkItem,
 }).annotate(Tool.Destructive, false);
@@ -175,6 +176,14 @@ const WorkItemGateTool = Tool.make("t3_work_item_gate", {
   .annotate(Tool.Destructive, false)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
+const WorkItemDismissFailureTool = Tool.make("t3_work_item_dismiss_failure", {
+  ...workItemShared,
+  description:
+    "Dismiss a failed work item's failure so it stops asking for attention; `dismissed: false` restores it.",
+  parameters: WorkItemDismissFailureInput,
+  success: WorkItem,
+}).annotate(Tool.Destructive, false);
+
 export const FactoriesToolkit = Toolkit.make(
   FactoryListTool,
   FactoryReadTool,
@@ -188,4 +197,5 @@ export const FactoriesToolkit = Toolkit.make(
   WorkItemCreateTool,
   WorkItemAdvanceTool,
   WorkItemGateTool,
+  WorkItemDismissFailureTool,
 );

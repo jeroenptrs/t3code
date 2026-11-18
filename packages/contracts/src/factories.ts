@@ -391,19 +391,15 @@ export class FactorySkillError extends Schema.TaggedError<FactorySkillError>()(
   },
 ) {}
 
-/** The Foreman's thread id starts with this, so clients can tell it apart. */
+/** Every Foreman thread's id starts with this, so clients can tell it apart. */
 export const FACTORY_FOREMAN_THREAD_ID_PREFIX = "factory-foreman:";
 
 /** `work-item:<uuid>`. */
 export const WorkItemId = TrimmedNonEmptyString.pipe(Schema.brand("WorkItemId"));
 export type WorkItemId = typeof WorkItemId.Type;
 
-/**
- * `queued`: the item waits for the factory's active item to end, and only the server moves it on.
- * `waiting`: a gate holds the item for a person. `done`, `failed`, and `dropped` are terminal.
- */
+/** `waiting`: a gate holds the item for a person. `done`, `failed`, and `dropped` are terminal. */
 export const WorkItemStage = Schema.Literals([
-  "queued",
   "new",
   "implement",
   "review",
@@ -508,12 +504,14 @@ export const WorkItemSummary = Schema.Struct({
   source: WorkItemSource,
   stage: WorkItemStage,
   gate: WorkItemGate,
-  /** Null until the Foreman thread is known. */
+  /** The Foreman thread that runs this item and only this item; null until it is launched. */
   foremanThreadId: Schema.NullOr(ThreadId),
   /** The Foreman run the item was sent as; null until it was sent. */
   foremanRunId: Schema.NullOr(RunId),
-  /** When the server sent the item to its Foreman. Null while it is queued, or if never sent. */
+  /** When the server started the item's Foreman thread. Null until then, or if it never started. */
   dispatchedAt: Schema.NullOr(IsoDateTime),
+  /** When a person dismissed the item's failure, so it no longer asks for attention. */
+  failureDismissedAt: Schema.NullOr(IsoDateTime),
   threads: Schema.Array(WorkItemThread),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -537,7 +535,6 @@ export const isTerminalWorkItemStage = (stage: WorkItemStage): boolean =>
   TERMINAL_WORK_ITEM_STAGES.has(stage);
 
 const NEXT_WORK_ITEM_STAGES = {
-  queued: ["new"],
   new: ["implement", "waiting", "dropped", "failed"],
   implement: ["review", "waiting", "failed", "dropped"],
   review: ["implement", "done", "waiting", "failed"],
@@ -593,6 +590,13 @@ export const WorkItemAnswerGateInput = Schema.Struct({
 });
 export type WorkItemAnswerGateInput = typeof WorkItemAnswerGateInput.Type;
 
+/** `dismissed: false` restores a dismissed failure. Only a failed item takes it. */
+export const WorkItemDismissFailureInput = Schema.Struct({
+  workItemId: WorkItemId,
+  dismissed: Schema.Boolean,
+});
+export type WorkItemDismissFailureInput = typeof WorkItemDismissFailureInput.Type;
+
 /** Stages the Foreman moves an item to. `waiting` takes a gate instead. */
 export const WorkItemAdvanceStage = Schema.Literals([
   "implement",
@@ -620,14 +624,16 @@ export type WorkItemGateInput = typeof WorkItemGateInput.Type;
 
 /**
  * `not_foreman`: only the item's Foreman thread may do this. `gate_waiting`: only a person's
- * answer moves the item on. `no_gate`: no gate waits for an answer. `unavailable`: the database
- * or the Foreman thread could not be reached.
+ * answer moves the item on. `no_gate`: no gate waits for an answer. `not_failed`: only a failed
+ * item's failure can be dismissed. `unavailable`: the database or the Foreman thread could not be
+ * reached.
  */
 export const WorkItemErrorCode = Schema.Literals([
   "not_found",
   "not_foreman",
   "gate_waiting",
   "no_gate",
+  "not_failed",
   "unavailable",
 ]);
 export type WorkItemErrorCode = typeof WorkItemErrorCode.Type;

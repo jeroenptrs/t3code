@@ -91,6 +91,7 @@ const workItem: WorkItem = {
   foremanThreadId,
   foremanRunId: null,
   dispatchedAt: null,
+  failureDismissedAt: null,
   threads: [],
   createdAt: "2026-11-05T00:00:00.000Z",
   updatedAt: "2026-11-05T00:00:00.000Z",
@@ -135,6 +136,8 @@ const call = (
     createWorkItem: () => Effect.sync(() => calls.push("createWorkItem")).pipe(Effect.as(workItem)),
     advanceWorkItem: (threadId) => foremanOnly(threadId, "advanceWorkItem", calls),
     gateWorkItem: (threadId) => foremanOnly(threadId, "gateWorkItem", calls),
+    setWorkItemFailureDismissed: () =>
+      Effect.sync(() => calls.push("setWorkItemFailureDismissed")).pipe(Effect.as(workItem)),
   });
   const skillStore = Layer.mock(FactorySkillStore.FactorySkillStore)({
     list: () => Effect.sync(() => calls.push("skills.list")).pipe(Effect.as({ skills: [] })),
@@ -180,6 +183,7 @@ const skillDelete = { name: "run-checks", source: "home", file: null };
 const create = { factoryId: factory.id, title: "Fix the login bug", text: "SSO fails." };
 const advance = { workItemId: workItem.id, stage: "implement" };
 const gate = { workItemId: workItem.id, question: "Ship it?", resumeStage: "done" };
+const dismiss = { workItemId: workItem.id, dismissed: true };
 
 it.effect.each([
   ["t3_factory_list", threadCaller(supervisedThreadId), {}, ["ran", "list"]],
@@ -217,6 +221,13 @@ it.effect.each([
   ["t3_work_item_advance", threadCaller(foremanThreadId), advance, ["ran", "advanceWorkItem"]],
   ["t3_work_item_advance", threadCaller(supervisedThreadId), advance, ["capability_denied"]],
   ["t3_work_item_gate", threadCaller(supervisedThreadId), gate, ["capability_denied"]],
+  ["t3_work_item_dismiss_failure", readOnlyClient, dismiss, ["capability_denied"]],
+  [
+    "t3_work_item_dismiss_failure",
+    threadCaller(supervisedThreadId),
+    dismiss,
+    ["ran", "setWorkItemFailureDismissed"],
+  ],
 ] as const)("%s from %o: %o", ([tool, scope, args, expected]) =>
   call(tool, scope, args).pipe(Effect.map((outcome) => expect(outcome).toEqual(expected))),
 );

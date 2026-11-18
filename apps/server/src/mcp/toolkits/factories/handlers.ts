@@ -54,6 +54,10 @@ const make = Effect.gen(function* () {
         return yield* factories.createWorkItem(input);
       }),
     ),
+    // MCP calls carry no user, so the log records no one, as for the admin dev credential.
+    t3_work_item_dismiss_failure: McpToolAccess.writesWithCapability((input) =>
+      factories.setWorkItemFailureDismissed(null, input),
+    ),
     t3_work_item_advance: McpToolAccess.actsAsCaller((input) =>
       callerThreadId.pipe(
         Effect.flatMap((threadId) => factories.advanceWorkItem(threadId, input)),
