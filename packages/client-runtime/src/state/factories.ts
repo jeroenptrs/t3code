@@ -131,5 +131,15 @@ export function createFactoriesEnvironmentAtoms<R, E>(
       },
       onSuccess: bumpEpoch,
     }),
+    /** Drops an item that has not ended and tells its Foreman thread to stop. */
+    dropWorkItem: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:factories:drop-work-item",
+      tag: WS_METHODS.factoriesWorkItemsDrop,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.workItemId}`,
+      },
+      onSuccess: bumpEpoch,
+    }),
   };
 }
