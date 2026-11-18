@@ -1,5 +1,6 @@
 import type { EnvironmentId, FactorySummary } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
+import { useGT } from "gt-react";
 import { ChevronDownIcon, FactoryIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -13,7 +14,7 @@ export function sidebarFactoryRowId(environmentId: EnvironmentId, factoryId: str
 
 /**
  * A factory in the Factories tab. The row opens the factory page; the chevron shows what the
- * factory owns below it.
+ * factory owns below it, and `action` sits at the row's end.
  */
 export function SidebarFactoryRow(props: {
   readonly environmentId: EnvironmentId;
@@ -22,8 +23,10 @@ export function SidebarFactoryRow(props: {
   readonly active: boolean;
   readonly expanded: boolean;
   readonly onToggle: () => void;
+  readonly action: ReactNode;
   readonly children: ReactNode;
 }) {
+  const gt = useGT();
   const { factory } = props;
   return (
     <li className="list-none">
@@ -37,7 +40,9 @@ export function SidebarFactoryRow(props: {
           type="button"
           aria-expanded={props.expanded}
           aria-label={
-            props.expanded ? `Hide what ${factory.name} owns` : `Show what ${factory.name} owns`
+            props.expanded
+              ? gt("Hide what {factory} owns", { factory: factory.name })
+              : gt("Show what {factory} owns", { factory: factory.name })
           }
           onClick={props.onToggle}
           className="grid h-full w-6 shrink-0 cursor-pointer place-items-center rounded-(--control-radius) text-sidebar-muted-foreground outline-none hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
@@ -65,6 +70,7 @@ export function SidebarFactoryRow(props: {
           )}
         </Link>
         <FactoryAttentionBadge count={factory.attention.total} />
+        {props.action}
       </div>
       {props.expanded ? (
         <ul role="presentation" className="flex flex-col gap-px ps-3">
