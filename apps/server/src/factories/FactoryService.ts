@@ -44,6 +44,7 @@ import {
   type WorkItemAnswerGateInput,
   type WorkItemCreateInput,
   type WorkItemDismissFailureInput,
+  type WorkItemDropInput,
   WorkItemError,
   WorkItemGate,
   type WorkItemGateInput,
@@ -98,7 +99,12 @@ import {
 } from "./factoryFiles.ts";
 import * as FactorySkillStore from "./FactorySkillStore.ts";
 import { roleDefaults, rolePresets } from "./roles/index.ts";
-import { bindDelegation, renderGateAnswerMessage, renderWorkItemMessage } from "./workItems.ts";
+import {
+  bindDelegation,
+  renderDropMessage,
+  renderGateAnswerMessage,
+  renderWorkItemMessage,
+} from "./workItems.ts";
 
 const ROLE_PRESETS: ReadonlyArray<FactoryRolePreset> = Object.entries(rolePresets).map(
   ([name, preset]) => ({ name, binding: preset.binding, body: preset.body }),
@@ -165,6 +171,14 @@ export class FactoryService extends Context.Service<
       input: WorkItemDismissFailureInput,
     ) => Effect.Effect<WorkItem, WorkItemError>;
     /**
+     * A person drops an item that has not ended, then its Foreman thread is told to stop. The
+     * item's log records who dropped it.
+     */
+    readonly dropWorkItem: (
+      userId: AuthUserId | null,
+      input: WorkItemDropInput,
+    ) => Effect.Effect<WorkItem, WorkItemError | WorkItemTransitionError>;
+    /**
      * Starts every item at `new` that has no Foreman thread yet, such as one a restart left
      * between insert and launch. A repeat is harmless. The layer forks this when it starts.
      */
@@ -213,6 +227,7 @@ const WorkItemRow = Schema.Struct({
   foremanRunId: Schema.NullOr(RunId),
   dispatchedAt: Schema.NullOr(Schema.String),
   failureDismissedAt: Schema.NullOr(Schema.String),
+  failedByUser: Schema.Number,
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });
@@ -923,6 +938,14 @@ const make = Effect.gen(function* () {
         w.foreman_run_id AS "foremanRunId",
         w.dispatched_at AS "dispatchedAt",
         w.failure_dismissed_at AS "failureDismissedAt",
+        w.stage = 'failed' AND COALESCE((
+          SELECT json_extract(t.actor_json, '$.kind')
+          FROM fork_factory_work_item_transitions t
+          WHERE t.work_item_id = w.work_item_id
+            AND t.to_stage = 'failed' AND t.from_stage <> 'failed'
+          ORDER BY t.at DESC, t.rowid DESC
+          LIMIT 1
+        ), '') = 'user' AS "failedByUser",
         w.created_at AS "createdAt",
         w.updated_at AS "updatedAt"
       FROM fork_factory_work_items w
@@ -963,6 +986,7 @@ const make = Effect.gen(function* () {
           `.pipe(NodeSqliteClient.readOnly);
     return rows.map((row): WorkItemSummary => ({
       ...row,
+      failedByUser: row.failedByUser === 1,
       threads: threadRows
         .filter((thread) => thread.workItemId === row.id)
         .map((thread): WorkItemThread => ({
@@ -1433,6 +1457,50 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const dropWorkItem = Effect.fn("FactoryService.dropWorkItem")(function* (
+    userId: AuthUserId | null,
+    input: WorkItemDropInput,
+  ) {
+    yield* withLedgerItem(input.workItemId, (item) =>
+      Effect.gen(function* () {
+        if (!canTransitionWorkItem(item.stage, "dropped", item.gate)) {
+          return yield* new WorkItemTransitionError({
+            workItemId: item.id,
+            from: item.stage,
+            to: "dropped",
+          });
+        }
+        const transitionId = yield* moveWorkItem({
+          item,
+          to: "dropped",
+          actor: { kind: "user", userId },
+          note: null,
+        });
+        const projectId = parseFactoryId(item.factoryId)?.projectId;
+        // Steers the item's Foreman thread when it is running, as a rejected gate does.
+        const unsent =
+          item.foremanThreadId === null || projectId === undefined
+            ? null
+            : yield* sendToForeman({
+                projectId,
+                commandId: CommandId.make(`factory-drop:${transitionId}`),
+                threadId: item.foremanThreadId,
+                messageId: MessageId.make(`factory-drop:${transitionId}`),
+                text: renderDropMessage(item.id),
+                attachments: [],
+                mode: "auto",
+                createdBy: "agent",
+                creationSource: "server",
+              }).pipe(
+                Effect.as(null),
+                Effect.catch((cause) => Effect.succeed(cause)),
+              );
+        if (unsent !== null) return yield* unsent;
+      }),
+    );
+    return yield* readWorkItem(input.workItemId);
+  });
+
   /** The item `parentThreadId` is the Foreman thread of, while it is not done, failed, or dropped. */
   const foremanRunItem = Effect.fn("FactoryService.foremanRunItem")(function* (
     parentThreadId: ThreadId,
@@ -1605,6 +1673,7 @@ const make = Effect.gen(function* () {
     gateWorkItem,
     answerWorkItemGate,
     setWorkItemFailureDismissed,
+    dropWorkItem,
     dispatchPending,
     prepareDelegation,
     attachDelegatedChild,

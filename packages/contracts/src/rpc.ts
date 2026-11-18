@@ -172,6 +172,7 @@ import {
   WorkItem,
   WorkItemAnswerGateInput,
   WorkItemDismissFailureInput,
+  WorkItemDropInput,
   WorkItemCreateInput,
   WorkItemError,
   WorkItemListInput,
@@ -890,6 +891,7 @@ export const WS_METHODS = {
   factoriesWorkItemsCreate: "factories.workItems.create",
   factoriesWorkItemsAnswerGate: "factories.workItems.answerGate",
   factoriesWorkItemsDismissFailure: "factories.workItems.dismissFailure",
+  factoriesWorkItemsDrop: "factories.workItems.drop",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1984,6 +1986,12 @@ const WsFactoriesWorkItemsDismissFailureRpc = Rpc.make(
     error: WorkItemsRpcError,
   },
 );
+
+const WsFactoriesWorkItemsDropRpc = Rpc.make(WS_METHODS.factoriesWorkItemsDrop, {
+  payload: WorkItemDropInput,
+  success: WorkItem,
+  error: WorkItemsRpcError,
+});
 
 const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLookupRepository, {
   payload: SourceControlRepositoryLookupInput,
@@ -3084,6 +3092,7 @@ export const WsFactoriesRpcGroup = RpcGroup.make(
   WsFactoriesWorkItemsCreateRpc,
   WsFactoriesWorkItemsAnswerGateRpc,
   WsFactoriesWorkItemsDismissFailureRpc,
+  WsFactoriesWorkItemsDropRpc,
 ).middleware(RpcScopeAuthorization);
 
 /** Every RPC except those in the fork's Jira, Insights, and factories groups. */

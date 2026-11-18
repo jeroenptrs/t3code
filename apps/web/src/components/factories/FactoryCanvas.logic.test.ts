@@ -73,6 +73,7 @@ function item(
     foremanRunId: null,
     dispatchedAt: null,
     failureDismissedAt: null,
+    failedByUser: false,
     threads: [],
     createdAt: "2026-11-06T00:00:00.000Z",
     updatedAt: "2026-11-06T00:00:00.000Z",
