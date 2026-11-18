@@ -15,7 +15,7 @@ import {
   renderRoleFile,
   resolveProjects,
 } from "./factoryFiles.ts";
-import { builtinRoles } from "./roles/index.ts";
+import { rolePresets } from "./roles/index.ts";
 
 const codex = ProviderInstanceId.make("codex");
 const provider: ServerProvider = {
@@ -55,13 +55,15 @@ const provider: ServerProvider = {
 describe("parseFactoryJson", () => {
   it("reads a complete definition", () => {
     const text = JSON.stringify({
+      version: 2,
       name: "triage",
       projects: ["backend", "frontend"],
       triggers: [{ kind: "scheduled_task", scheduledTaskId: "scheduled-task:nightly" }],
-      roles: { foreman: "roles/foreman.md", review: "prompts/reviewer.md" },
+      roles: { foreman: "roles/foreman.md", review: "prompts/reviewer.md", analysis: null },
     });
     expect(parseFactoryJson("triage", text)).toEqual({
       definition: {
+        version: 2,
         name: "triage",
         projects: ["backend", "frontend"],
         triggers: [
@@ -70,17 +72,51 @@ describe("parseFactoryJson", () => {
             scheduledTaskId: ScheduledTaskId.make("scheduled-task:nightly"),
           },
         ],
-        roles: { foreman: "roles/foreman.md", review: "prompts/reviewer.md" },
+        roles: { foreman: "roles/foreman.md", review: "prompts/reviewer.md", analysis: null },
       },
       issues: [],
     });
   });
 
   it("reads missing lists as empty", () => {
-    expect(parseFactoryJson("triage", '{ "name": "triage" }')).toEqual({
-      definition: { name: "triage", projects: [], triggers: [], roles: {} },
+    expect(parseFactoryJson("triage", '{ "version": 2, "name": "triage" }')).toEqual({
+      definition: { version: 2, name: "triage", projects: [], triggers: [], roles: {} },
       issues: [],
     });
+  });
+
+  it("gives a file without a version implement and review, at their default files if they exist", () => {
+    const text = JSON.stringify({ name: "triage", roles: { review: "prompts/reviewer.md" } });
+    expect(parseFactoryJson("triage", text, (role) => role !== "implement").definition).toEqual({
+      version: 2,
+      name: "triage",
+      projects: [],
+      triggers: [],
+      roles: {
+        review: "prompts/reviewer.md",
+        foreman: "roles/foreman.md",
+        implement: null,
+      },
+    });
+    expect(parseFactoryJson("triage", '{ "name": "triage" }').definition.roles).toEqual({
+      implement: null,
+      review: null,
+    });
+  });
+
+  it("leaves out a role with a reserved or malformed name, or a bad path, and reports it", () => {
+    const text = JSON.stringify({
+      version: 2,
+      name: "triage",
+      roles: { waiting: null, "Bad Name": null, docs: "../docs.md", notes: null },
+    });
+    const parsed = parseFactoryJson("triage", text);
+    expect(parsed.definition.roles).toEqual({ notes: null });
+    expect(parsed.issues.map((issue) => [issue.code, issue.role, issue.field])).toEqual([
+      ["invalid_definition", null, "roles"],
+      ["invalid_definition", null, "roles"],
+      ["invalid_definition", "docs", "roles"],
+    ]);
   });
 
   it.each([
@@ -101,17 +137,18 @@ describe("parseFactoryJson", () => {
   ])("reports %s and keeps the directory's name", (_case, text, expected) => {
     const parsed = parseFactoryJson("triage", text);
     expect(parsed.definition.name).toBe("triage");
-    expect(parsed.definition.roles).toEqual({});
+    expect(Object.values(parsed.definition.roles)).not.toContainEqual(expect.any(String));
     expect(parsed.definition.triggers).toEqual([]);
     expect(parsed.issues.map((issue) => [issue.code, issue.field])).toEqual(expected);
   });
 
   it("writes what it reads", () => {
     const definition = {
+      version: 2 as const,
       name: "triage",
       projects: ["backend"],
       triggers: [{ kind: "scheduled_task" as const, scheduledTaskId: ScheduledTaskId.make("t-1") }],
-      roles: { implement: "roles/implement.md" },
+      roles: { implement: "roles/implement.md", docs: null },
     };
     expect(parseFactoryJson("triage", renderFactoryJson(definition))).toEqual({
       definition,
@@ -128,6 +165,7 @@ describe("parseRoleFile", () => {
       "  instanceId: codex",
       "  model: gpt-6",
       "runtimeMode: approval-required",
+      "enabled: false",
       "skills: [triage-jira]",
       "---",
       "",
@@ -138,6 +176,7 @@ describe("parseRoleFile", () => {
       binding: {
         model: { instanceId: codex, model: "gpt-6" },
         runtimeMode: "approval-required",
+        enabled: false,
         skills: ["triage-jira"],
       },
       body: "Route every issue to implement.",
@@ -193,14 +232,14 @@ describe("parseRoleFile", () => {
 
 describe("bindingIssues", () => {
   const withModel = (model: string, extra: object = {}) => ({
-    ...builtinRoles.implement.binding,
+    ...rolePresets.implement.binding,
     model: { instanceId: codex, model },
     ...extra,
   });
 
   it.each([
     ["a known model", withModel("gpt-6"), []],
-    ["the project's default model", builtinRoles.implement.binding, []],
+    ["the project's default model", rolePresets.implement.binding, []],
     [
       "an unknown provider instance",
       { ...withModel("gpt-6"), model: { instanceId: ProviderInstanceId.make("x"), model: "m" } },

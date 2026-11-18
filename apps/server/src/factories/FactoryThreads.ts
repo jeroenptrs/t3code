@@ -1,10 +1,16 @@
 /**
  * The role a factory thread runs as, with its instructions and skills as the factory's files say
- * now: the role it was started as, or for a child the Foreman delegated, the role its task asked
- * for. Apart from `FactoryService` because provider sessions read it, and that service launches
+ * now: the role it was started as, or for a child the Foreman delegated, the role its work item
+ * was at when it was delegated. Apart from `FactoryService` because provider sessions read it, and that service launches
  * threads through orchestration, so depending on it would make a layer cycle.
  */
-import { FactoryRoleName, parseFactoryId, type ThreadId } from "@t3tools/contracts";
+import {
+  FACTORY_FOREMAN_ROLE,
+  FactoryRoleName,
+  isWorkItemRoleStage,
+  parseFactoryId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import type { FactoryRoleInstructions } from "@t3tools/provider-core/server/mcpSession";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -15,21 +21,17 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { taskRoleOfPrompt } from "../mcp/delegatedTaskModes.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import {
-  defaultRolePath,
   effectiveBinding,
   FACTORIES_DIRECTORY,
-  FACTORY_FILE_NAME,
-  parseFactoryJson,
-  parseRoleFile,
+  readFactoryFiles,
   resolveRoleSkills,
+  roleEnabled,
 } from "./factoryFiles.ts";
 import * as FactorySkillStore from "./FactorySkillStore.ts";
-import { builtinRoles } from "./roles/index.ts";
-import { workItemRoleForTask } from "./workItems.ts";
+import { roleDefaults } from "./roles/index.ts";
 
 /** A skill a role binds: a built-in skill's SKILL.md, or a home or factory skill directory. */
 export type BoundSkill =
@@ -62,70 +64,48 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const skillStore = yield* FactorySkillStore.FactorySkillStore;
 
-  const readText = (filePath: string) =>
-    fileSystem.readFileString(filePath).pipe(
-      Effect.asSome,
-      Effect.catchTags({
-        PlatformError: (error) =>
-          error.reason._tag === "NotFound"
-            ? Effect.succeed(Option.none<string>())
-            : Effect.fail(error),
-      }),
-    );
-
-  /**
-   * The factory's directory, null when it has no `factory.json`, and the role's file, null when
-   * there is none. Built-in values fill in for whatever is null.
-   */
-  const roleFile = Effect.fn("FactoryThreads.roleFile")(function* (
-    factoryId: string,
-    role: FactoryRoleName,
-  ) {
+  /** The factory's directory and files; none when it has no `factory.json`. */
+  const factoryFiles = Effect.fn("FactoryThreads.factoryFiles")(function* (factoryId: string) {
     const parsed = parseFactoryId(factoryId);
-    if (parsed === null) return { directory: null, file: null };
+    if (parsed === null) return Option.none();
     const project = yield* projects.get(parsed.projectId);
-    if (Option.isNone(project)) return { directory: null, file: null };
+    if (Option.isNone(project)) return Option.none();
     const directory = path.join(project.value.workspaceRoot, ...FACTORIES_DIRECTORY, parsed.name);
-    const factoryText = yield* readText(path.join(directory, FACTORY_FILE_NAME));
-    if (Option.isNone(factoryText)) return { directory: null, file: null };
-    const { definition } = parseFactoryJson(parsed.name, factoryText.value);
-    const roleText = yield* readText(
-      path.join(directory, definition.roles[role] ?? defaultRolePath(role)),
-    );
-    return {
-      directory,
-      file: Option.isNone(roleText) ? null : parseRoleFile(role, roleText.value),
-    };
+    const files = yield* readFactoryFiles(fileSystem, path, directory, parsed.name);
+    return Option.map(files, (value) => ({ directory, ...value }));
   });
 
   /**
-   * A child the Foreman delegated has no row of its own, since writing one would race its first
-   * session. Its lineage names the Foreman and the task that spawned it.
+   * A child the Foreman delegated has the role its work item names it with. Its first session can
+   * start before that row is written, so until then its role is the stage of the item its parent
+   * Foreman runs, which is the stage the delegation was bound to.
    */
   const delegatedRole = Effect.fn("FactoryThreads.delegatedRole")(function* (threadId: ThreadId) {
+    const [named] = yield* sql<{ readonly factoryId: string; readonly role: string | null }>`
+      SELECT w.factory_id AS "factoryId", t.role
+      FROM fork_factory_work_item_threads t
+      JOIN fork_factory_work_items w ON w.work_item_id = t.work_item_id
+      WHERE t.thread_id = ${threadId}
+      ORDER BY t.created_at, t.rowid
+      LIMIT 1
+    `;
+    if (named !== undefined) {
+      return named.role !== null && isRoleName(named.role)
+        ? { factoryId: named.factoryId, role: named.role }
+        : null;
+    }
     const thread = yield* projections.getThread(threadId);
     const parentThreadId = thread.lineage.parentThreadId;
-    const forkedFrom = thread.forkedFrom;
-    if (
-      thread.lineage.relationshipToParent !== "subagent" ||
-      parentThreadId === null ||
-      forkedFrom?.type !== "node"
-    ) {
-      return null;
-    }
-    const [foreman] = yield* sql<{ readonly factoryId: string }>`
-      SELECT factory_id AS "factoryId" FROM fork_factory_threads
-      WHERE thread_id = ${parentThreadId} AND role = 'foreman'
+    if (thread.lineage.relationshipToParent !== "subagent" || parentThreadId === null) return null;
+    const [item] = yield* sql<{ readonly factoryId: string; readonly stage: string }>`
+      SELECT w.factory_id AS "factoryId", w.stage
+      FROM fork_factory_work_items w
+      JOIN fork_factory_threads f ON f.thread_id = w.foreman_thread_id AND f.role = 'foreman'
+      WHERE w.foreman_thread_id = ${parentThreadId}
     `;
-    if (foreman === undefined) return null;
-    const { subagents } = yield* projections.getThreadRecords(parentThreadId, ["subagents"], {
-      subagentIds: [forkedFrom.nodeId],
-    });
-    const task = subagents.find(
-      (candidate) => candidate.id === forkedFrom.nodeId && candidate.childThreadId === threadId,
-    );
-    const role = task === undefined ? null : workItemRoleForTask(taskRoleOfPrompt(task.prompt));
-    return role === null ? null : { factoryId: foreman.factoryId, role };
+    return item !== undefined && isWorkItemRoleStage(item.stage) && isRoleName(item.stage)
+      ? { factoryId: item.factoryId, role: item.stage }
+      : null;
   });
 
   const factoryRole = Effect.fn("FactoryThreads.factoryRole")(function* (threadId: ThreadId) {
@@ -137,16 +117,34 @@ const make = Effect.gen(function* () {
     return isRoleName(row.role) ? { factoryId: row.factoryId, role: row.role } : null;
   });
 
-  /** The role, its file, and the skills it binds that exist, in binding order. */
+  /**
+   * The role, its file, the skills it binds that exist in binding order, and for the Foreman the
+   * enabled roles it can delegate to. Defaults fill in for a missing file or factory.
+   */
   const boundRole = Effect.fn("FactoryThreads.boundRole")(function* (threadId: ThreadId) {
     const found = yield* factoryRole(threadId);
     if (found === null) return null;
-    const { directory, file } = yield* roleFile(found.factoryId, found.role);
-    const names = effectiveBinding(builtinRoles[found.role].binding, file?.binding ?? {}).skills;
-    const available = yield* skillStore.resolve(directory);
+    const files = yield* factoryFiles(found.factoryId);
+    const roles = Option.match(files, { onNone: () => [], onSome: (value) => value.roles });
+    const file = roles.find((entry) => entry.role === found.role)?.file ?? null;
+    const defaults = roleDefaults(found.role);
+    const names = effectiveBinding(defaults.binding, file?.binding ?? {}).skills;
+    const available = yield* skillStore.resolve(
+      Option.match(files, { onNone: () => null, onSome: (value) => value.directory }),
+    );
     // An unknown name is an issue on the factory's page; the session opens without it.
     const { skills } = resolveRoleSkills(found.role, names, available);
-    return { ...found, file, skills };
+    const delegates =
+      found.role === FACTORY_FOREMAN_ROLE
+        ? roles
+            .filter(
+              (entry) =>
+                entry.role !== FACTORY_FOREMAN_ROLE &&
+                roleEnabled(entry.role, entry.file?.binding ?? {}).enabled,
+            )
+            .map((entry) => entry.role)
+        : null;
+    return { ...found, body: file?.body ?? defaults.body, skills, delegates };
   });
 
   const roleOf: FactoryThreads["Service"]["roleOf"] = Effect.fn("FactoryThreads.roleOf")(
@@ -156,8 +154,9 @@ const make = Effect.gen(function* () {
       return {
         factoryId: bound.factoryId,
         role: bound.role,
-        body: bound.file?.body ?? builtinRoles[bound.role].body,
+        body: bound.body,
         skills: bound.skills.map(({ name, description }) => ({ name, description })),
+        ...(bound.delegates === null ? {} : { delegates: bound.delegates }),
       };
     },
     // Instructions are not part of the MCP credential, so a failed lookup only leaves them out.
