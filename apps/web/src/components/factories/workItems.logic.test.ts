@@ -16,15 +16,12 @@ describe("workItemListInput", () => {
   it.each([
     { raw: {}, expected: { factoryId } },
     {
-      raw: { stage: "waiting", role: "review", outcome: "active" },
-      expected: { factoryId, stage: "waiting", role: "review", outcome: "active" },
+      raw: { stage: "waiting", outcome: "active" },
+      expected: { factoryId, stage: "waiting", outcome: "active" },
     },
-    // Roles are open, so any role name is a role and a stage.
-    {
-      raw: { stage: "triage", role: "triage" },
-      expected: { factoryId, stage: "triage", role: "triage" },
-    },
-    { raw: { stage: "Shipped!", role: "Not A Role", outcome: 3 }, expected: { factoryId } },
+    // Roles are open, so any role name is a stage.
+    { raw: { stage: "triage", role: "triage" }, expected: { factoryId, stage: "triage" } },
+    { raw: { stage: "Shipped!", outcome: 3 }, expected: { factoryId } },
     { raw: { outcome: "done", stage: "" }, expected: { factoryId, outcome: "done" } },
   ])("reads $raw from the search params", ({ raw, expected }) => {
     expect(workItemListInput(factoryId, validateWorkItemSearch(raw))).toEqual(expected);

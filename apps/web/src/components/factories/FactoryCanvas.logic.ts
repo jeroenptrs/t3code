@@ -12,6 +12,9 @@ import {
   type WorkItemSummary,
 } from "@t3tools/contracts";
 
+import { msg } from "gt-react";
+
+import { m } from "../../i18n/messages";
 import { factoryRoleLabel } from "./workItems.logic";
 
 export const CANVAS_NODE_WIDTH = 148;
@@ -26,6 +29,8 @@ export interface CanvasNode {
   readonly id: string;
   readonly kind: CanvasNodeKind;
   readonly label: string;
+  /** The role a foreman or role node stands for, which its click opens. */
+  readonly role: FactoryRoleName | null;
   readonly layer: number;
   readonly x: number;
   readonly y: number;
@@ -77,20 +82,40 @@ export function factoryGraph(input: FactoryGraphInput): FactoryGraph {
       id: triggerNodeId(taskId),
       label: input.scheduledTasks?.find((task) => task.id === taskId)?.title ?? taskId,
     })),
-    { id: MANUAL_TRIGGER_NODE, label: "Manual" },
+    { id: MANUAL_TRIGGER_NODE, label: m(msg("Manual", { $context: "work started by hand" })) },
   ];
   const layers: ReadonlyArray<ReadonlyArray<Omit<CanvasNode, "layer" | "x" | "y">>> = [
-    triggers.map((trigger) => ({ ...trigger, kind: "trigger" as const })),
-    [{ id: "foreman", kind: "foreman", label: factoryRoleLabel(FACTORY_FOREMAN_ROLE) }],
+    triggers.map((trigger) => ({ ...trigger, kind: "trigger" as const, role: null })),
+    [
+      {
+        id: "foreman",
+        kind: "foreman",
+        label: factoryRoleLabel(FACTORY_FOREMAN_ROLE),
+        role: FACTORY_FOREMAN_ROLE,
+      },
+    ],
     [
       ...input.roles.map((role) => ({
         id: roleNodeId(role),
         kind: "role" as const,
         label: factoryRoleLabel(role),
+        role,
       })),
-      { id: "gate", kind: "gate", label: "Gate" },
+      {
+        id: "gate",
+        kind: "gate",
+        label: m(msg("Gate", { $context: "work item gate" })),
+        role: null,
+      },
     ],
-    [{ id: "output", kind: "output", label: "Output" }],
+    [
+      {
+        id: "output",
+        kind: "output",
+        label: m(msg("Output", { $context: "what a factory produces" })),
+        role: null,
+      },
+    ],
   ];
   const rows = Math.max(...layers.map((layer) => layer.length));
   const height = PADDING * 2 + rows * CANVAS_NODE_HEIGHT + (rows - 1) * ROW_GAP;
@@ -301,8 +326,8 @@ function buildState(
           threadId,
           detail:
             activity.outputPullRequest !== null
-              ? `PR #${activity.outputPullRequest}`
-              : (activity.outputBranch ?? "Branch or PR"),
+              ? m(msg("PR #{number}", { number: String(activity.outputPullRequest) }))
+              : (activity.outputBranch ?? m(msg("Branch or PR"))),
         });
         break;
       }
