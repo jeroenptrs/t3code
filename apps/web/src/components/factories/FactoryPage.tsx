@@ -50,6 +50,7 @@ import {
   buildFactorySaveInput,
   factoryDraft,
   factoryDraftChanged,
+  factoryRoleDraft,
   type FactoryDraft,
   type FactoryRoleDraft,
 } from "./FactoryPage.logic";
@@ -320,7 +321,7 @@ function FactoryView(props: {
             key={role.role}
             environmentId={environmentId}
             role={role}
-            draft={shown.roles[role.role]}
+            draft={shown.roles[role.role] ?? factoryRoleDraft(role)}
             editable={editable}
             disabled={saving}
             issues={issues}

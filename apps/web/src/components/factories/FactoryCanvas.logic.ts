@@ -1,15 +1,18 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
-import type {
-  EnvironmentId,
-  FactoryRoleName,
-  FactoryThread,
-  ScheduledTaskId,
-  ThreadId,
-  WorkItemSummary,
+import {
+  type EnvironmentId,
+  type Factory,
+  FACTORY_FOREMAN_ROLE,
+  type FactoryRoleName,
+  type FactoryThread,
+  isWorkItemRoleStage,
+  type ScheduledTaskId,
+  type ThreadId,
+  type WorkItemSummary,
 } from "@t3tools/contracts";
 
-import { FACTORY_ROLE_LABELS } from "./workItems.logic";
+import { factoryRoleLabel } from "./workItems.logic";
 
 export const CANVAS_NODE_WIDTH = 148;
 export const CANVAS_NODE_HEIGHT = 44;
@@ -17,7 +20,7 @@ const COLUMN_GAP = 112;
 const ROW_GAP = 16;
 const PADDING = 8;
 
-export type CanvasNodeKind = "trigger" | "foreman" | "implement" | "review" | "gate" | "output";
+export type CanvasNodeKind = "trigger" | "foreman" | "role" | "gate" | "output";
 
 export interface CanvasNode {
   readonly id: string;
@@ -46,6 +49,8 @@ export interface FactoryGraph {
 }
 
 export interface FactoryGraphInput {
+  /** The roles the Foreman can delegate to: enabled, in order, without the Foreman. */
+  readonly roles: ReadonlyArray<FactoryRoleName>;
   readonly scheduledTaskIds: ReadonlyArray<ScheduledTaskId>;
   /** Null until the scheduled task list answers; a trigger then shows its id. */
   readonly scheduledTasks: ReadonlyArray<{
@@ -56,8 +61,16 @@ export interface FactoryGraphInput {
 
 const MANUAL_TRIGGER_NODE = "trigger:manual";
 const triggerNodeId = (taskId: ScheduledTaskId) => `trigger:${taskId}`;
+const ROLE_NODE_PREFIX = "role:";
+const roleNodeId = (role: FactoryRoleName) => `${ROLE_NODE_PREFIX}${role}`;
 
-/** Layered left to right: triggers, the Foreman, the three things it spawns, the output. */
+/** A canvas draws the factory's enabled roles besides the Foreman. */
+export const canvasRoles = (factory: Factory): ReadonlyArray<FactoryRoleName> =>
+  factory.roles
+    .filter((role) => role.role !== FACTORY_FOREMAN_ROLE && role.enabled)
+    .map((role) => role.role);
+
+/** Layered left to right: triggers, the Foreman, its roles and the gate, the output. */
 export function factoryGraph(input: FactoryGraphInput): FactoryGraph {
   const triggers = [
     ...input.scheduledTaskIds.map((taskId) => ({
@@ -68,10 +81,13 @@ export function factoryGraph(input: FactoryGraphInput): FactoryGraph {
   ];
   const layers: ReadonlyArray<ReadonlyArray<Omit<CanvasNode, "layer" | "x" | "y">>> = [
     triggers.map((trigger) => ({ ...trigger, kind: "trigger" as const })),
-    [{ id: "foreman", kind: "foreman", label: FACTORY_ROLE_LABELS.foreman }],
+    [{ id: "foreman", kind: "foreman", label: factoryRoleLabel(FACTORY_FOREMAN_ROLE) }],
     [
-      { id: "implement", kind: "implement", label: FACTORY_ROLE_LABELS.implement },
-      { id: "review", kind: "review", label: FACTORY_ROLE_LABELS.review },
+      ...input.roles.map((role) => ({
+        id: roleNodeId(role),
+        kind: "role" as const,
+        label: factoryRoleLabel(role),
+      })),
       { id: "gate", kind: "gate", label: "Gate" },
     ],
     [{ id: "output", kind: "output", label: "Output" }],
@@ -109,8 +125,7 @@ export function factoryGraph(input: FactoryGraphInput): FactoryGraph {
   };
   const edges = [
     ...triggers.map((trigger) => edge(trigger.id, "foreman")),
-    edge("foreman", "implement"),
-    edge("foreman", "review"),
+    ...input.roles.map((role) => edge("foreman", roleNodeId(role))),
     edge("foreman", "gate"),
     edge("foreman", "output"),
   ];
@@ -153,17 +168,14 @@ export interface FactoryGraphStateInput {
 }
 
 interface OwnedActivity {
-  foreman: ThreadId | null;
-  implement: ThreadId | null;
-  review: ThreadId | null;
+  /** The first active thread of each role, the Foreman's included. */
+  readonly roles: Map<FactoryRoleName, ThreadId>;
   outputBranch: string | null;
   outputPullRequest: number | null;
 }
 
 const emptyActivity = (): OwnedActivity => ({
-  foreman: null,
-  implement: null,
-  review: null,
+  roles: new Map(),
   outputBranch: null,
   outputPullRequest: null,
 });
@@ -191,9 +203,7 @@ function scanActivity(
   outputThreadId: ThreadId | null,
   shells: ReadonlyArray<CanvasShell>,
 ) {
-  into.foreman = null;
-  into.implement = null;
-  into.review = null;
+  into.roles.clear();
   into.outputBranch = null;
   into.outputPullRequest = null;
   for (const shell of shells) {
@@ -203,20 +213,19 @@ function scanActivity(
       into.outputPullRequest = (shell.linkedPullRequest ?? shell.branchPullRequest)?.number ?? null;
     }
     const role = roles.get(shell.id);
-    if (role === undefined || into[role] !== null || !threadRuntimeIsActive(shell.runtime))
+    if (role === undefined || into.roles.has(role) || !threadRuntimeIsActive(shell.runtime))
       continue;
-    into[role] = shell.id;
+    into.roles.set(role, shell.id);
   }
 }
 
 const sameActivity = (a: OwnedActivity, b: OwnedActivity) =>
-  a.foreman === b.foreman &&
-  a.implement === b.implement &&
-  a.review === b.review &&
+  sameMap(a.roles, b.roles, (x, y) => x === y) &&
   a.outputBranch === b.outputBranch &&
   a.outputPullRequest === b.outputPullRequest;
 
 function edgeOfItem(item: WorkItemSummary): string | null {
+  if (isWorkItemRoleStage(item.stage)) return `foreman->${roleNodeId(item.stage)}`;
   switch (item.stage) {
     case "new":
       return `${
@@ -226,10 +235,6 @@ function edgeOfItem(item: WorkItemSummary): string | null {
             ? triggerNodeId(item.source.triggerId)
             : MANUAL_TRIGGER_NODE
       }->foreman`;
-    case "implement":
-      return "foreman->implement";
-    case "review":
-      return "foreman->review";
     case "waiting":
       return "foreman->gate";
     default:
@@ -238,7 +243,7 @@ function edgeOfItem(item: WorkItemSummary): string | null {
 }
 
 function itemThread(item: WorkItemSummary): ThreadId | null {
-  const role = item.stage === "implement" || item.stage === "review" ? item.stage : null;
+  const role = isWorkItemRoleStage(item.stage) ? item.stage : null;
   return (
     (role === null ? undefined : item.threads.find((thread) => thread.role === role)?.threadId) ??
     item.foremanThreadId
@@ -274,14 +279,14 @@ function buildState(
   for (const node of graph.nodes) {
     switch (node.kind) {
       case "foreman":
-      case "implement":
-      case "review":
-        nodes.set(node.id, {
-          lit: activity[node.kind] !== null,
-          threadId: activity[node.kind],
-          detail: null,
-        });
+      case "role": {
+        const threadId =
+          activity.roles.get(
+            node.kind === "foreman" ? FACTORY_FOREMAN_ROLE : node.id.slice(ROLE_NODE_PREFIX.length),
+          ) ?? null;
+        nodes.set(node.id, { lit: threadId !== null, threadId, detail: null });
         break;
+      }
       case "gate":
         nodes.set(node.id, {
           lit: waiting !== undefined,
@@ -368,6 +373,7 @@ export function createFactoryCanvasSelector() {
   return (input: FactoryCanvasInput): FactoryGraphState => {
     const definitionSame =
       previousInput !== null &&
+      previousInput.roles.join("\n") === input.roles.join("\n") &&
       previousInput.scheduledTaskIds === input.scheduledTaskIds &&
       previousInput.scheduledTasks === input.scheduledTasks;
     const workSame =

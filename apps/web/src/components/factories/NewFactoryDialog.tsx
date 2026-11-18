@@ -67,7 +67,13 @@ export function NewFactoryDialog(props: {
       environmentId: target.environmentId,
       input: {
         projectId: project.id,
-        definition: { name: name.trim(), projects: [], triggers: [], roles: {} },
+        definition: {
+          version: 2,
+          name: name.trim(),
+          projects: [],
+          triggers: [],
+          roles: { implement: null, review: null },
+        },
       },
     });
     setSaving(false);
