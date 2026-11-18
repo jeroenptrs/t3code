@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, WorkItemGateDecision, WorkItemId } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
 import { useId, useState } from "react";
 
 import { factoriesEnvironment } from "../../state/factories";
@@ -16,6 +17,8 @@ export function WorkItemGateAnswer(props: {
   readonly workItemId: WorkItemId;
   readonly question: string;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const id = useId();
   const canAnswer = useAtomValue(
     factoriesEnvironment.answerWorkItemGate.permissionAtom(props.environmentId),
@@ -30,7 +33,7 @@ export function WorkItemGateAnswer(props: {
 
   const submit = async (decision: WorkItemGateDecision) => {
     if (sending !== null) return;
-    const invalid = gateAnswerError(decision, note);
+    const invalid = gateAnswerError(decision, note, messages);
     setError(invalid);
     if (invalid !== null) return;
     setSending(decision);
@@ -41,26 +44,30 @@ export function WorkItemGateAnswer(props: {
     setSending(null);
     if (result._tag === "Failure") {
       setError(
-        workItemFailureMessage(squashAtomCommandFailure(result), "The answer could not be sent."),
+        workItemFailureMessage(
+          squashAtomCommandFailure(result),
+          gt("The answer could not be sent."),
+          messages,
+        ),
       );
     }
   };
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-col gap-1">
-        <p className="text-xs font-medium text-muted-foreground">The Foreman asks</p>
-        <p className="text-sm whitespace-pre-wrap">{props.question}</p>
-      </div>
+    <section className="flex flex-col gap-2 rounded-lg border p-3">
+      <h3 className="text-sm font-medium">
+        <T>The Foreman asks</T>
+      </h3>
+      <p className="text-sm whitespace-pre-wrap">{props.question}</p>
       {canAnswer ? (
         <>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor={`${id}-note`}>Note</Label>
+            <Label htmlFor={`${id}-note`}>{gt("Note", { $context: "gate answer note" })}</Label>
             <Textarea
               id={`${id}-note`}
               size="sm"
               value={note}
-              placeholder="Optional when you approve"
+              placeholder={gt("Optional when you approve")}
               disabled={sending !== null}
               aria-invalid={error !== null && note.trim() === ""}
               onChange={(event) => setNote(event.target.value)}
@@ -68,7 +75,7 @@ export function WorkItemGateAnswer(props: {
           </div>
           <div className="flex items-center gap-2">
             <Button size="xs" disabled={sending !== null} onClick={() => void submit("approved")}>
-              {sending === "approved" ? "Approving…" : "Approve"}
+              {sending === "approved" ? gt("Approving…") : gt("Approve")}
             </Button>
             <Button
               size="xs"
@@ -76,7 +83,7 @@ export function WorkItemGateAnswer(props: {
               disabled={sending !== null}
               onClick={() => void submit("rejected")}
             >
-              {sending === "rejected" ? "Rejecting…" : "Reject"}
+              {sending === "rejected" ? gt("Rejecting…") : gt("Reject")}
             </Button>
           </div>
           {error === null ? null : (
@@ -86,6 +93,6 @@ export function WorkItemGateAnswer(props: {
           )}
         </>
       ) : null}
-    </div>
+    </section>
   );
 }
