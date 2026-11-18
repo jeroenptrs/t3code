@@ -3874,6 +3874,8 @@ const layerWsFactoriesRpc = (currentSession: EnvironmentAuth.AuthenticatedSessio
         // Recorded as who answered; the admin dev credential has no user.
         [WS_METHODS.factoriesWorkItemsAnswerGate]: (input) =>
           factories.answerWorkItemGate(currentSession.userId ?? null, input),
+        [WS_METHODS.factoriesWorkItemsDismissFailure]: (input) =>
+          factories.setWorkItemFailureDismissed(currentSession.userId ?? null, input),
       });
     }),
   );
