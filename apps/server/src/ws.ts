@@ -4011,6 +4011,8 @@ const layerWsFactoriesRpc = (currentSession: EnvironmentAuth.AuthenticatedSessio
           factories.answerWorkItemGate(currentSession.userId ?? null, input),
         [WS_METHODS.factoriesWorkItemsDismissFailure]: (input) =>
           factories.setWorkItemFailureDismissed(currentSession.userId ?? null, input),
+        [WS_METHODS.factoriesWorkItemsDrop]: (input) =>
+          factories.dropWorkItem(currentSession.userId ?? null, input),
       });
     }),
   );

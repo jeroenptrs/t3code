@@ -145,6 +145,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.factoriesWorkItemsCreate]: AuthFactoriesManageScope,
   [WS_METHODS.factoriesWorkItemsAnswerGate]: AuthFactoriesManageScope,
   [WS_METHODS.factoriesWorkItemsDismissFailure]: AuthFactoriesManageScope,
+  [WS_METHODS.factoriesWorkItemsDrop]: AuthFactoriesManageScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
