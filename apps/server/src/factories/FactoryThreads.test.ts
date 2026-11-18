@@ -2,10 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   makeFactoryId,
-  NodeId,
   type OrchestrationV2AppThread,
-  type OrchestrationV2ThreadProjection,
-  type OrchestratorMcpTaskRole,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -17,39 +14,33 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
-import { taskPrompt } from "../mcp/delegatedTaskModes.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { builtinSkillEntries } from "./factoryFiles.ts";
 import * as FactorySkillStore from "./FactorySkillStore.ts";
 import * as FactoryThreads from "./FactoryThreads.ts";
-import { builtinRoles } from "./roles/index.ts";
+import { rolePresets } from "./roles/index.ts";
 
-const factoryJson = JSON.stringify({ name: "triage", roles: { review: "roles/strict-review.md" } });
+const factoryJson = JSON.stringify({
+  version: 2,
+  name: "triage",
+  roles: {
+    foreman: "roles/foreman.md",
+    implement: null,
+    review: "roles/strict-review.md",
+    docs: "roles/docs.md",
+  },
+});
 
-/** Children delegated from `parent`, each from its own task node, as the projection holds them. */
-const delegated = (
-  parent: string,
-  children: ReadonlyArray<readonly [child: string, role: OrchestratorMcpTaskRole]>,
-) =>
-  children.map(([child, role]) => ({
-    parent: ThreadId.make(parent),
-    child: ThreadId.make(child),
-    nodeId: NodeId.make(`node:${child}`),
-    prompt: taskPrompt({ task: "Fix the login bug.", role }),
-  }));
-
+/** Subagent children and the thread that delegated each; any other thread is not found. */
 const children = [
-  ...delegated("t-foreman", [
-    ["t-foreman-implementer", "implementation"],
-    ["t-foreman-reviewer", "review"],
-    ["t-foreman-helper", "general"],
-  ]),
-  ...delegated("t-other", [["t-other-implementer", "implementation"]]),
-];
+  ["t-foreman-implementer", "t-foreman"],
+  ["t-foreman-reviewer", "t-foreman"],
+  ["t-foreman-helper", "t-foreman"],
+  ["t-other-implementer", "t-other"],
+].map(([child, parent]) => ({ child: ThreadId.make(child!), parent: ThreadId.make(parent!) }));
 
-/** Lineage and subagent records for `children`; any other thread is not found. */
 const layerProjections = Layer.mock(ProjectionStore.ProjectionStoreV2)({
   getThread: (threadId) => {
     const found = children.find((entry) => entry.child === threadId);
@@ -61,15 +52,8 @@ const layerProjections = Layer.mock(ProjectionStore.ProjectionStoreV2)({
             relationshipToParent: "subagent",
             rootThreadId: found.parent,
           },
-          forkedFrom: { type: "node", nodeId: found.nodeId },
         } as unknown as OrchestrationV2AppThread);
   },
-  getThreadRecords: (threadId, _fields, filter) =>
-    Effect.succeed({
-      subagents: children
-        .filter((entry) => entry.parent === threadId && filter?.subagentIds?.includes(entry.nodeId))
-        .map((entry) => ({ id: entry.nodeId, childThreadId: entry.child, prompt: entry.prompt })),
-    } as unknown as OrchestrationV2ThreadProjection),
 });
 
 it.effect("gives a factory's threads and its Foreman's children their role body and skills", () =>
@@ -80,7 +64,7 @@ it.effect("gives a factory's threads and its Foreman's children their role body 
     const directory = path.join(root, ".t3", "factories", "triage");
     yield* fileSystem.makeDirectory(path.join(directory, "roles"), { recursive: true });
     yield* fileSystem.writeFileString(path.join(directory, "factory.json"), factoryJson);
-    // Foreman's file sits at the default path; review's at the path factory.json names.
+    // Review's file sits at the path factory.json names, and docs is disabled.
     yield* fileSystem.writeFileString(
       path.join(directory, "roles", "foreman.md"),
       "Route only bugs.\n",
@@ -88,6 +72,10 @@ it.effect("gives a factory's threads and its Foreman's children their role body 
     yield* fileSystem.writeFileString(
       path.join(directory, "roles", "strict-review.md"),
       "---\nisolation: shared\n---\n\nBlock on any failing check.\n",
+    );
+    yield* fileSystem.writeFileString(
+      path.join(directory, "roles", "docs.md"),
+      "---\nenabled: false\n---\n\nWrite the docs.\n",
     );
     // Implement keeps the built-in skill. T3 home's review skill replaces the built-in one, and
     // the factory's review skill replaces home's.
@@ -118,6 +106,27 @@ it.effect("gives a factory's threads and its Foreman's children their role body 
         yield* sql`
           INSERT INTO fork_factory_threads (factory_id, thread_id, role, created_at)
           VALUES (${factoryId}, ${threadId}, ${role}, '2026-11-05T00:00:00.000Z')
+        `;
+      }
+      // The Foreman's item is at review now. Its implementer was named when it was at implement,
+      // the helper with no role, and the reviewer's row is not written yet.
+      yield* sql`
+        INSERT INTO fork_factory_work_items (
+          work_item_id, factory_id, title, source_json, stage, gate_json,
+          foreman_thread_id, foreman_run_id, created_at, updated_at
+        ) VALUES (
+          'work-item:1', ${factoryId}, 'Fix', '{"kind":"manual","text":"Fix it."}', 'review',
+          '{"state":"none"}', 't-foreman', NULL, '2026-11-05T00:00:00.000Z',
+          '2026-11-05T00:00:00.000Z'
+        )
+      `;
+      for (const [threadId, role] of [
+        ["t-foreman-implementer", "implement"],
+        ["t-foreman-helper", null],
+      ]) {
+        yield* sql`
+          INSERT INTO fork_factory_work_item_threads (work_item_id, thread_id, role, created_at)
+          VALUES ('work-item:1', ${threadId}, ${role}, '2026-11-05T00:00:00.000Z')
         `;
       }
       const threads = yield* FactoryThreads.FactoryThreads;
@@ -158,7 +167,7 @@ it.effect("gives a factory's threads and its Foreman's children their role body 
     const implementRole = {
       factoryId,
       role: "implement",
-      body: builtinRoles.implement.body,
+      body: rolePresets.implement.body,
       skills: [{ name: "implement", description: builtinImplement.description }],
     };
     const reviewRole = {
@@ -168,11 +177,18 @@ it.effect("gives a factory's threads and its Foreman's children their role body 
       skills: [{ name: "review", description: "Triage review." }],
     };
     assert.deepStrictEqual(roles, [
-      { factoryId, role: "foreman", body: "Route only bugs.", skills: [] },
+      // The Foreman is told which roles it can delegate to: not docs, which is disabled.
+      {
+        factoryId,
+        role: "foreman",
+        body: "Route only bugs.",
+        skills: [],
+        delegates: ["implement", "review"],
+      },
       implementRole,
       reviewRole,
       null,
-      // A Foreman's children take the role their task asked for, from the same role files.
+      // A Foreman's child takes the role its row names, else the stage its item is at.
       implementRole,
       reviewRole,
       null,

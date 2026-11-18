@@ -17,7 +17,7 @@ import { McpSchema, McpServer } from "effect/ai";
 
 import * as FactoryService from "../../../factories/FactoryService.ts";
 import * as FactorySkillStore from "../../../factories/FactorySkillStore.ts";
-import { builtinRoles } from "../../../factories/roles/index.ts";
+import { rolePresets } from "../../../factories/roles/index.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -58,7 +58,7 @@ const factory: Factory = {
   id: FactoryId.make("factory:project-1:triage"),
   projectId: ProjectId.make("project-1"),
   name: "triage",
-  definition: { name: "triage", projects: [], triggers: [], roles: {} },
+  definition: { version: 2, name: "triage", projects: [], triggers: [], roles: {} },
   projects: [],
   roles: [
     {
@@ -66,12 +66,14 @@ const factory: Factory = {
       path: null,
       source: "builtin",
       fileBinding: {},
-      binding: builtinRoles.foreman.binding,
-      body: builtinRoles.foreman.body,
+      binding: rolePresets.foreman.binding,
+      enabled: true,
+      body: rolePresets.foreman.body,
       bodySource: "builtin",
       skills: [],
     },
   ],
+  rolePresets: [],
   skills: [],
   issues: [],
   scheduledTaskIds: [],

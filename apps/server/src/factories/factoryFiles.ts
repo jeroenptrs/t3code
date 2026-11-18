@@ -4,6 +4,7 @@
  * apart from reading one level's skill directories; the services do the rest of the I/O.
  */
 import {
+  FACTORY_FOREMAN_ROLE,
   FactoryDefinition,
   type FactoryEffectiveBinding,
   FactoryIsolation,
@@ -11,11 +12,13 @@ import {
   FactoryName,
   type FactoryProject,
   FactoryRoleBinding,
-  type FactoryRoleName,
+  FactoryRoleName,
+  FactoryRolePath,
   type FactorySkill,
   FactorySkillName,
   type FactorySkillSource,
   FactoryTrigger,
+  isReservedFactoryRoleName,
   ModelSelection,
   type ProjectId,
   ProviderInteractionMode,
@@ -57,26 +60,50 @@ const decodeName = Schema.decodeUnknownOption(FactoryName);
 const isSkillName = Schema.is(FactorySkillName);
 const decodeNames = Schema.decodeUnknownOption(Schema.Array(TrimmedNonEmptyString));
 const decodeTriggers = Schema.decodeUnknownOption(Schema.Array(FactoryTrigger));
-const decodeRoles = Schema.decodeUnknownOption(FactoryDefinition.fields.roles);
+const isRoleName = Schema.is(FactoryRoleName);
+const decodeRolePath = Schema.decodeUnknownOption(FactoryRolePath);
+
+/** Roles a `factory.json` without a version has, whether it lists them or not. */
+const LEGACY_ROLES = [FACTORY_FOREMAN_ROLE, "implement", "review"] as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const emptyDefinition = (name: string): FactoryDefinition => ({
+  version: 2,
   name,
   projects: [],
   triggers: [],
   roles: {},
 });
 
+/** Why `name` cannot name a role, or null when it can. */
+export function roleNameProblem(name: string): string | null {
+  if (!isRoleName(name)) {
+    return `"${name}" is not a role name: use lowercase letters, digits, and single hyphens, at most 64 characters.`;
+  }
+  if (isReservedFactoryRoleName(name)) {
+    return `"${name}" cannot name a role, since a work item stage has that name.`;
+  }
+  return null;
+}
+
+/** The factory's roles in order: the Foreman, then the definition's. */
+export const factoryRoleNames = (definition: FactoryDefinition): ReadonlyArray<FactoryRoleName> => [
+  FACTORY_FOREMAN_ROLE,
+  ...Object.keys(definition.roles).filter((role) => role !== FACTORY_FOREMAN_ROLE),
+];
+
 /**
- * `factory.json` in the directory `directoryName`. The directory names the factory, so a file that
- * names another one, or none, is reported and read under the directory's name. Missing lists are
- * empty; a field with the wrong shape is reported and read as empty.
+ * `factory.json` in the directory `directoryName`, whose name wins over the file's. A field with
+ * the wrong shape is reported and read as empty, and a bad role is reported and left out. A file
+ * without `version` has implement and review too, and each legacy role it does not list takes
+ * `roles/<role>.md` when `hasDefaultRoleFile` says it exists.
  */
 export function parseFactoryJson(
   directoryName: string,
   text: string,
+  hasDefaultRoleFile: (role: string) => boolean = () => false,
 ): { readonly definition: FactoryDefinition; readonly issues: ReadonlyArray<FactoryIssue> } {
   let raw: unknown;
   try {
@@ -116,8 +143,57 @@ export function parseFactoryJson(
       return empty;
     });
   };
+  const legacy = raw.version === undefined;
+  if (!legacy && raw.version !== 2) {
+    issues.push(issue("invalid_definition", null, "version", `"version" must be 2.`));
+  }
+  const roles: Record<string, FactoryRolePath | null> = {};
+  if (raw.roles !== undefined && !isRecord(raw.roles)) {
+    issues.push(
+      issue(
+        "invalid_definition",
+        null,
+        "roles",
+        `"roles" must be an object mapping each role name to a relative .md path, or to null.`,
+      ),
+    );
+  }
+  for (const [role, value] of Object.entries(isRecord(raw.roles) ? raw.roles : {})) {
+    const problem = roleNameProblem(role);
+    if (problem !== null) {
+      issues.push(issue("invalid_definition", null, "roles", problem));
+      continue;
+    }
+    if (value === null && !legacy) {
+      roles[role] = null;
+      continue;
+    }
+    const rolePath = decodeRolePath(value);
+    if (Option.isNone(rolePath)) {
+      issues.push(
+        issue(
+          "invalid_definition",
+          role,
+          "roles",
+          `The path for ${role} must be a relative .md path inside the factory directory${legacy ? "" : ", or null"}.`,
+        ),
+      );
+      continue;
+    }
+    roles[role] = rolePath.value;
+  }
+  if (legacy) {
+    for (const role of LEGACY_ROLES) {
+      if (roles[role] !== undefined) continue;
+      const hasFile = hasDefaultRoleFile(role);
+      // The Foreman is a role without being listed.
+      if (role === FACTORY_FOREMAN_ROLE && !hasFile) continue;
+      roles[role] = hasFile ? defaultRolePath(role) : null;
+    }
+  }
   return {
     definition: {
+      version: 2,
       name: directoryName,
       projects: field("projects", decodeNames, [], "a list of project names"),
       triggers: field(
@@ -126,12 +202,7 @@ export function parseFactoryJson(
         [],
         'a list of { "kind": "scheduled_task", "scheduledTaskId": "..." }',
       ),
-      roles: field(
-        "roles",
-        decodeRoles,
-        {},
-        "an object mapping foreman, implement, or review to a relative .md path",
-      ),
+      roles,
     },
     issues,
   };
@@ -150,6 +221,7 @@ const bindingFields: Record<
   keyof FactoryRoleBinding,
   { readonly decode: (value: unknown) => Option.Option<unknown>; readonly expected: string }
 > = {
+  enabled: { decode: Schema.decodeUnknownOption(Schema.Boolean), expected: "true or false" },
   model: { decode: Schema.decodeUnknownOption(ModelSelection), expected: "{ instanceId, model }" },
   runtimeMode: {
     decode: Schema.decodeUnknownOption(RuntimeMode),
@@ -172,8 +244,8 @@ const isBindingField = (key: string): key is keyof typeof bindingFields =>
 
 /**
  * A role file: YAML frontmatter with the bindings, then the instructions. Each binding with the
- * wrong shape, and each unknown key, is reported and left out, so the built-in default applies.
- * A blank body is null, which keeps the built-in instructions.
+ * wrong shape, and each unknown key, is reported and left out, so the role's default applies.
+ * A blank body is null, which keeps the default instructions.
  */
 export function parseRoleFile(
   role: FactoryRoleName,
@@ -231,6 +303,29 @@ export function renderRoleFile(binding: FactoryRoleBinding, body: string | null)
   const frontmatter = Object.keys(encoded).length === 0 ? "" : stringifyYaml(encoded);
   const instructions = body?.trim() ?? "";
   return `---\n${frontmatter}---\n${instructions.length === 0 ? "" : `\n${instructions}\n`}`;
+}
+
+/**
+ * Whether a role with this file binding is enabled, and the issue when the file tries to disable
+ * the Foreman, which it cannot.
+ */
+export function roleEnabled(
+  role: FactoryRoleName,
+  file: FactoryRoleBinding,
+): { readonly enabled: boolean; readonly issue: FactoryIssue | null } {
+  if (role !== FACTORY_FOREMAN_ROLE) return { enabled: file.enabled !== false, issue: null };
+  return {
+    enabled: true,
+    issue:
+      file.enabled === false
+        ? issue(
+            "invalid_binding",
+            role,
+            "enabled",
+            "The Foreman cannot be disabled, so its enabled: false is ignored.",
+          )
+        : null,
+  };
 }
 
 export const effectiveBinding = (
@@ -299,6 +394,53 @@ export const builtinSkillEntries: ReadonlyArray<SkillEntry> = Object.entries(bui
   }),
 );
 
+const ifExists = <A>(effect: Effect.Effect<A, PlatformError.PlatformError>) =>
+  effect.pipe(
+    Effect.asSome,
+    Effect.catchTags({
+      PlatformError: (error) =>
+        error.reason._tag === "NotFound" ? Effect.succeed(Option.none<A>()) : Effect.fail(error),
+    }),
+  );
+
+/** A role and its file, null when `factory.json` names none or the named file does not exist. */
+export interface RoleFileEntry {
+  readonly role: FactoryRoleName;
+  readonly path: string | null;
+  readonly file: ReturnType<typeof parseRoleFile> | null;
+}
+
+/** `factory.json` in `directory` and the file of each role it has; none without `factory.json`. */
+export const readFactoryFiles = Effect.fn("factoryFiles.readFactoryFiles")(function* (
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  directory: string,
+  name: string,
+) {
+  const text = yield* ifExists(fileSystem.readFileString(path.join(directory, FACTORY_FILE_NAME)));
+  if (Option.isNone(text)) return Option.none();
+  const defaultFiles = Option.getOrElse(
+    yield* ifExists(fileSystem.readDirectory(path.join(directory, "roles"))),
+    (): ReadonlyArray<string> => [],
+  );
+  const { definition, issues } = parseFactoryJson(name, text.value, (role) =>
+    defaultFiles.includes(`${role}.md`),
+  );
+  const roles = yield* Effect.forEach(factoryRoleNames(definition), (role) =>
+    Effect.gen(function* () {
+      const rolePath = definition.roles[role] ?? null;
+      if (rolePath === null) return { role, path: null, file: null } satisfies RoleFileEntry;
+      const roleText = yield* ifExists(fileSystem.readFileString(path.join(directory, rolePath)));
+      return {
+        role,
+        path: rolePath,
+        file: Option.isNone(roleText) ? null : parseRoleFile(role, roleText.value),
+      } satisfies RoleFileEntry;
+    }),
+  );
+  return Option.some({ definition, issues, roles });
+});
+
 /** The skill directories under `skillsDirectory` that hold a SKILL.md, sorted. */
 export const readSkillLevel = Effect.fn("factoryFiles.readSkillLevel")(function* (
   fileSystem: FileSystem.FileSystem,
@@ -306,14 +448,6 @@ export const readSkillLevel = Effect.fn("factoryFiles.readSkillLevel")(function*
   skillsDirectory: string,
   source: Exclude<FactorySkillSource, "builtin">,
 ) {
-  const ifExists = <A>(effect: Effect.Effect<A, PlatformError.PlatformError>) =>
-    effect.pipe(
-      Effect.asSome,
-      Effect.catchTags({
-        PlatformError: (error) =>
-          error.reason._tag === "NotFound" ? Effect.succeed(Option.none<A>()) : Effect.fail(error),
-      }),
-    );
   const entries = Option.getOrElse(
     yield* ifExists(fileSystem.readDirectoryEntries(skillsDirectory)),
     () => [],
