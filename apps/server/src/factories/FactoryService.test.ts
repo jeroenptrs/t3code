@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
-  CommandId,
+  AuthUserId,
   type FactoryRoleFile,
   type FactorySaveInput,
   makeFactoryId,
@@ -9,12 +9,12 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  RunId,
   RuntimeRequestId,
   type ScheduledTask,
   ScheduledTaskId,
   type ServerProvider,
   ThreadId,
+  WorkItemId,
   type WorkItemTriggerSource,
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -183,8 +183,11 @@ const layerFor = (fixture: Fixture) =>
             Effect.succeed({
               schemaVersion: 1,
               snapshotSequence: 0,
-              threads: (fixture.shells ?? []).filter((candidate) =>
-                options?.threadIds?.includes(candidate.id),
+              threads: (fixture.shells ?? []).filter(
+                (candidate) =>
+                  options?.threadIds?.includes(candidate.id) &&
+                  (options.location !== "active" ||
+                    (candidate.archivedAt === null && candidate.deletedAt === null)),
               ),
               archivedThreads: [],
             }),
@@ -468,14 +471,19 @@ describe("FactoryService", () => {
         `;
           // A gate holds one item, the Foreman failed one, and a person failed the third.
           yield* thread("t-child");
-          const item = (id: string, stage: string) => sql`
+          const item = (
+            id: string,
+            stage: string,
+            foreman = "t-foreman",
+            dismissedAt: string | null = null,
+          ) => sql`
           INSERT INTO fork_factory_work_items (
             work_item_id, factory_id, title, source_json, stage, gate_json,
-            foreman_thread_id, foreman_run_id, created_at, updated_at
+            foreman_thread_id, foreman_run_id, created_at, updated_at, failure_dismissed_at
           ) VALUES (
             ${id}, ${factoryId}, ${id}, '{"kind":"manual","text":"Fix it."}', ${stage},
-            '{"state":"none"}', 't-foreman', NULL,
-            '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'
+            '{"state":"none"}', ${foreman}, NULL,
+            '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z', ${dismissedAt}
           )
         `;
           const transition = (id: string, itemId: string, to: string, actor: string) => sql`
@@ -494,6 +502,25 @@ describe("FactoryService", () => {
             '{"kind":"foreman","threadId":"t-foreman"}',
           );
           yield* transition("x-3", "work-item:rejected", "failed", '{"kind":"user","userId":null}');
+          // Failed by the server, but its run thread is settled, archived, or deleted, or a
+          // person dismissed the failure: none of them asks for attention any more.
+          yield* thread("t-run-settled");
+          yield* thread("t-run-archived");
+          yield* item("work-item:settled-run", "failed", "t-run-settled");
+          yield* item("work-item:archived-run", "failed", "t-run-archived");
+          yield* item("work-item:deleted-run", "failed", "t-run-deleted");
+          yield* item("work-item:dismissed", "failed", "t-foreman", "2026-11-02T00:00:00.000Z");
+          // A person restored a dismissed failure, which is a note, not a person failing it.
+          yield* item("work-item:restored", "failed");
+          yield* transition("x-4", "work-item:restored", "failed", '{"kind":"server"}');
+          yield* sql`
+          INSERT INTO fork_factory_work_item_transitions (
+            transition_id, work_item_id, from_stage, to_stage, actor_json, note, at
+          ) VALUES (
+            'x-5', 'work-item:restored', 'failed', 'failed', '{"kind":"user","userId":null}',
+            'Restored the failure.', '2026-11-03T00:00:00.000Z'
+          )
+        `;
           yield* sql`
           INSERT INTO fork_factory_work_item_threads (work_item_id, thread_id, role, created_at)
           VALUES ('work-item:gated', 't-child', 'implement', '2026-11-01T00:00:00.000Z')
@@ -518,6 +545,8 @@ describe("FactoryService", () => {
                   },
                 }),
                 shell("t-mine", { status: "failed" }),
+                shell("t-run-settled", { settledOverride: "settled", settledAt: NOW }),
+                shell("t-run-archived", { archivedAt: NOW }),
                 // Settled, so its failed run is done with and does not count.
                 shell("t-child", {
                   status: "failed",
@@ -537,9 +566,9 @@ describe("FactoryService", () => {
         ]);
         assert.deepStrictEqual(result.factory.attention, {
           gatesWaiting: 1,
-          failedRuns: 2,
+          failedRuns: 3,
           questions: 1,
-          total: 4,
+          total: 5,
         });
         assert.deepStrictEqual(
           result.factory.issues.map((issue) => issue.code),
@@ -827,165 +856,155 @@ const withWorkItems = <A, E>(
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 describe("FactoryService work items", () => {
-  it.effect("creates an item, launches the Foreman listed first, and sends the item fresh", () =>
-    withWorkItems(({ factoryId, recorded }) =>
-      Effect.gen(function* () {
-        const factories = yield* FactoryService.FactoryService;
-        const item = yield* factories.createWorkItem({
-          factoryId,
-          title: "Fix the login bug",
-          text: "Users cannot sign in with SSO.",
-        });
-
-        const [launch] = yield* Ref.get(recorded.launches);
-        const foremanThreadId = launch!.input.threadId!;
-        assert.isTrue(foremanThreadId.startsWith("factory-foreman:"));
-        assert.strictEqual(launch!.listedAs, "foreman");
-        assert.strictEqual(launch!.input.title, "Foreman: triage");
-        assert.deepStrictEqual(launch!.input.workspaceStrategy, { type: "root" });
-        assert.deepStrictEqual(launch!.input.modelSelection, { instanceId: codex, model: "gpt-6" });
-        assert.strictEqual(launch!.input.initialMessage, undefined);
-        assert.strictEqual(launch!.input.createdBy, "agent");
-        assert.strictEqual(launch!.input.creationSource, "server");
-
-        const [send] = yield* Ref.get(recorded.sends);
-        assert.strictEqual(send!.threadId, foremanThreadId);
-        assert.strictEqual(send!.mode, "queue");
-        assert.include(send!.text, item.id);
-        assert.include(send!.text, "Users cannot sign in with SSO.");
-        assert.include(send!.text, "t3_work_item_advance");
-        const [run] = yield* runs(foremanThreadId);
-        assert.strictEqual(run!.freshContext, true);
-        assert.strictEqual(item.foremanRunId, run!.id);
-        assert.strictEqual(item.foremanThreadId, foremanThreadId);
-        assert.isNotNull(item.dispatchedAt);
-        assert.strictEqual(item.stage, "new");
-        assert.deepStrictEqual(item.source, {
-          kind: "manual",
-          text: "Users cannot sign in with SSO.",
-        });
-        assert.strictEqual(yield* factories.foremanThread(factoryId), foremanThreadId);
-      }),
-    ),
-  );
-
   it.effect(
-    "starts a Foreman bound to a worktree on its first item once the worktree is ready",
+    "creates an item and launches its own Foreman thread with the item as its message",
     () =>
-      withWorkItems(
-        ({ factoryId, recorded }) =>
-          Effect.gen(function* () {
-            const factories = yield* FactoryService.FactoryService;
-            const item = yield* factories.createWorkItem({
-              factoryId,
-              title: "Fix the login bug",
-              text: "Users cannot sign in with SSO.",
-            });
-            const foreman = item.foremanThreadId!;
+      withWorkItems(({ factoryId, recorded }) =>
+        Effect.gen(function* () {
+          const factories = yield* FactoryService.FactoryService;
+          const item = yield* factories.createWorkItem({
+            factoryId,
+            title: "Fix the login bug",
+            text: "Users cannot sign in with SSO.",
+          });
 
-            // A send right after the launch would start the turn in the project checkout, and
-            // binding the worktree a moment later would interrupt it.
-            const [run] = yield* runs(foreman);
-            assert.strictEqual(item.foremanRunId, run!.id);
-            assert.strictEqual(run!.status, "preparing");
-            assert.deepStrictEqual(run!.workspacePreparation, {
-              type: "worktree",
-              baseRef: "c0ffee",
-              startFromOrigin: false,
-            });
-            assert.lengthOf(yield* Ref.get(recorded.sends), 0);
-            const [launch] = yield* Ref.get(recorded.launches);
-            assert.include(launch!.input.initialMessage?.text, item.id);
+          const [launch] = yield* Ref.get(recorded.launches);
+          const foremanThreadId = launch!.input.threadId!;
+          assert.strictEqual(foremanThreadId, `factory-foreman:${item.id}`);
+          assert.strictEqual(launch!.input.commandId, `factory-foreman-launch:${item.id}`);
+          assert.strictEqual(launch!.listedAs, "foreman");
+          assert.strictEqual(launch!.input.title, "Fix the login bug");
+          assert.deepStrictEqual(launch!.input.workspaceStrategy, { type: "root" });
+          assert.deepStrictEqual(launch!.input.modelSelection, {
+            instanceId: codex,
+            model: "gpt-6",
+          });
+          assert.strictEqual(launch!.input.createdBy, "agent");
+          assert.strictEqual(launch!.input.creationSource, "server");
+          const text = launch!.input.initialMessage?.text ?? "";
+          assert.include(text, item.id);
+          assert.include(text, "Users cannot sign in with SSO.");
+          assert.include(text, "t3_work_item_advance");
+          assert.lengthOf(yield* Ref.get(recorded.sends), 0);
 
-            // The first run starts the item's session, so its delegated child is named on it.
-            const implementer = ThreadId.make("thread-implementer");
-            yield* factories.attachDelegatedChild({
-              parentThreadId: foreman,
-              parentRunId: run!.id,
-              childThreadId: implementer,
-              taskRole: "implementation",
-            });
-            assert.deepStrictEqual((yield* factories.readWorkItem(item.id)).threads, [
-              { threadId: implementer, role: "implement" },
-            ]);
-          }),
-        { files: { "roles/foreman.md": "---\nisolation: worktree\n---\n" } },
+          const [run] = yield* runs(foremanThreadId);
+          assert.strictEqual(item.foremanRunId, run!.id);
+          assert.strictEqual(item.foremanThreadId, foremanThreadId);
+          assert.isNotNull(item.dispatchedAt);
+          assert.isNull(item.failureDismissedAt);
+          assert.strictEqual(item.stage, "new");
+          assert.deepStrictEqual(item.source, {
+            kind: "manual",
+            text: "Users cannot sign in with SSO.",
+          });
+        }),
       ),
   );
 
-  it.effect("sends one item at a time and the next once the Foreman ends the active one", () =>
+  it.effect("starts a Foreman bound to a worktree on its item once the worktree is ready", () =>
+    withWorkItems(
+      ({ factoryId, recorded }) =>
+        Effect.gen(function* () {
+          const factories = yield* FactoryService.FactoryService;
+          const item = yield* factories.createWorkItem({
+            factoryId,
+            title: "Fix the login bug",
+            text: "Users cannot sign in with SSO.",
+          });
+          const foreman = item.foremanThreadId!;
+
+          // A send right after the launch would start the turn in the project checkout, and
+          // binding the worktree a moment later would interrupt it.
+          const [run] = yield* runs(foreman);
+          assert.strictEqual(item.foremanRunId, run!.id);
+          assert.strictEqual(run!.status, "preparing");
+          assert.deepStrictEqual(run!.workspacePreparation, {
+            type: "worktree",
+            baseRef: "c0ffee",
+            startFromOrigin: false,
+          });
+          assert.lengthOf(yield* Ref.get(recorded.sends), 0);
+          const [launch] = yield* Ref.get(recorded.launches);
+          assert.include(launch!.input.initialMessage?.text, item.id);
+
+          const implementer = ThreadId.make("thread-implementer");
+          yield* factories.attachDelegatedChild({
+            parentThreadId: foreman,
+            childThreadId: implementer,
+            taskRole: "implementation",
+          });
+          assert.deepStrictEqual((yield* factories.readWorkItem(item.id)).threads, [
+            { threadId: implementer, role: "implement" },
+          ]);
+        }),
+      { files: { "roles/foreman.md": "---\nisolation: worktree\n---\n" } },
+    ),
+  );
+
+  it.effect("runs items created together at once, each in its own Foreman thread", () =>
     withWorkItems(({ factoryId, recorded }) =>
       Effect.gen(function* () {
         const factories = yield* FactoryService.FactoryService;
-        const first = yield* factories.createWorkItem({ factoryId, title: "One", text: "One." });
-        const second = yield* factories.createWorkItem({ factoryId, title: "Two", text: "Two." });
-        const foreman = first.foremanThreadId!;
-
-        assert.lengthOf(yield* Ref.get(recorded.sends), 1);
-        assert.deepStrictEqual(
-          (yield* runs(foreman)).map((run) => run.id),
-          [first.foremanRunId],
-        );
-        assert.deepStrictEqual(
-          [second.stage, second.foremanThreadId, second.foremanRunId, second.dispatchedAt],
-          ["queued", null, null, null],
-        );
-        assert.deepStrictEqual(
-          (yield* factories.listWorkItems({ factoryId, stage: "queued" })).workItems.map(
-            (item) => item.id,
-          ),
-          [second.id],
-        );
-
-        yield* factories.advanceWorkItem(foreman, { workItemId: first.id, stage: "implement" });
-        yield* factories.advanceWorkItem(foreman, { workItemId: first.id, stage: "review" });
-        assert.lengthOf(yield* Ref.get(recorded.sends), 1);
-        yield* factories.advanceWorkItem(foreman, { workItemId: first.id, stage: "done" });
-
-        const sent = yield* factories.readWorkItem(second.id);
-        const [, send] = yield* Ref.get(recorded.sends);
-        assert.strictEqual(send!.messageId, `factory-work-item:${second.id}`);
-        assert.strictEqual(sent.foremanThreadId, foreman);
-        assert.isNotNull(sent.dispatchedAt);
-        assert.strictEqual(sent.stage, "new");
-        assert.deepStrictEqual(
-          sent.transitions.map(({ from, to, actor }) => ({ from, to, actor })),
-          [{ from: "queued", to: "new", actor: { kind: "server" } }],
-        );
-        const run = (yield* runs(foreman)).find((candidate) => candidate.id === sent.foremanRunId);
-        assert.strictEqual(run?.freshContext, true);
-        assert.lengthOf(yield* Ref.get(recorded.launches), 1);
-
-        // Two items queue behind the second. It then ends with nothing sent after it, as after a
-        // restart or a failed send, so the factory has queued items and no active one.
-        const third = yield* factories.createWorkItem({ factoryId, title: "Three", text: "3." });
-        const fourth = yield* factories.createWorkItem({ factoryId, title: "Four", text: "4." });
-        const sql = yield* SqlClient.SqlClient;
-        yield* sql`UPDATE fork_factory_work_items SET stage = 'done' WHERE work_item_id = ${second.id}`;
-
-        // A new item queues behind both, and the oldest queued one is sent.
-        const fifth = yield* factories.createWorkItem({ factoryId, title: "Five", text: "5." });
-        assert.deepStrictEqual(
+        const [first, second] = yield* Effect.all(
           [
-            (yield* factories.readWorkItem(third.id)).stage,
-            (yield* factories.readWorkItem(fourth.id)).stage,
-            fifth.stage,
+            factories.createWorkItem({ factoryId, title: "One", text: "One." }),
+            factories.createWorkItem({ factoryId, title: "Two", text: "Two." }),
           ],
-          ["new", "queued", "queued"],
+          { concurrency: "unbounded" },
         );
-        assert.strictEqual(
-          (yield* Ref.get(recorded.sends)).at(-1)!.messageId,
-          `factory-work-item:${third.id}`,
+
+        assert.deepStrictEqual([first!.stage, second!.stage], ["new", "new"]);
+        assert.notStrictEqual(first!.foremanThreadId, second!.foremanThreadId);
+        assert.deepStrictEqual(
+          (yield* Ref.get(recorded.launches))
+            .map((launch) => launch.input.threadId ?? null)
+            .toSorted(),
+          [first!.foremanThreadId, second!.foremanThreadId].toSorted(),
         );
-        assert.strictEqual(
-          (yield* factories.readWorkItem(third.id)).transitions[0]!.note,
-          "No item was active, so the server sent the oldest queued one to the Foreman.",
+        for (const item of [first!, second!]) {
+          assert.isNotNull(item.dispatchedAt);
+          assert.deepStrictEqual(
+            (yield* runs(item.foremanThreadId!)).map((run) => run.id),
+            [item.foremanRunId],
+          );
+        }
+      }),
+    ),
+  );
+
+  it.effect("starts items left at new without a run, once, when pending items are dispatched", () =>
+    withWorkItems(({ factoryId, recorded }) =>
+      Effect.gen(function* () {
+        const factories = yield* FactoryService.FactoryService;
+        const sql = yield* SqlClient.SqlClient;
+        const started = yield* factories.createWorkItem({ factoryId, title: "On", text: "On." });
+        // As fork migration 024 leaves a queued item, or a crash between insert and launch.
+        yield* sql`
+          INSERT INTO fork_factory_work_items (
+            work_item_id, factory_id, title, source_json, stage, gate_json,
+            foreman_thread_id, foreman_run_id, dispatched_at, created_at, updated_at
+          ) VALUES (
+            'work-item:left', ${factoryId}, 'Left', '{"kind":"manual","text":"Left."}', 'new',
+            '{"state":"none"}', NULL, NULL, NULL, '2026-11-01T00:00:00.000Z',
+            '2026-11-01T00:00:00.000Z'
+          )
+        `;
+
+        yield* factories.dispatchPending;
+        yield* factories.dispatchPending;
+
+        const left = yield* factories.readWorkItem(WorkItemId.make("work-item:left"));
+        assert.strictEqual(left.foremanThreadId, "factory-foreman:work-item:left");
+        assert.isNotNull(left.dispatchedAt);
+        assert.deepStrictEqual(
+          (yield* Ref.get(recorded.launches)).map((launch) => launch.input.threadId ?? null),
+          [started.foremanThreadId, left.foremanThreadId],
         );
       }),
     ),
   );
 
-  it.effect("creates an item from a Jira query event, queued behind an active item", () =>
+  it.effect("creates items from Jira query events, each started at once", () =>
     withWorkItems(({ factoryId, recorded }) =>
       Effect.gen(function* () {
         const factories = yield* FactoryService.FactoryService;
@@ -1030,64 +1049,22 @@ describe("FactoryService work items", () => {
         });
         assert.strictEqual(first.stage, "new");
         assert.deepStrictEqual(first.source, source("PROJ-7"));
-        const [send] = yield* Ref.get(recorded.sends);
-        assert.include(send!.text, "from trigger Agent-labelled issues (jira_query)");
-        assert.include(send!.text, "Issue key: PROJ-7");
+        const [launch] = yield* Ref.get(recorded.launches);
+        assert.include(
+          launch!.input.initialMessage?.text,
+          "from trigger Agent-labelled issues (jira_query)",
+        );
+        assert.include(launch!.input.initialMessage?.text, "Issue key: PROJ-7");
 
         const second = yield* factories.createWorkItemFromTrigger({
           factoryId,
           title: "issue.entered PROJ-8: Fix login",
           source: source("PROJ-8"),
         });
-        assert.strictEqual(second.stage, "queued");
+        assert.strictEqual(second.stage, "new");
+        assert.isNotNull(second.dispatchedAt);
         assert.deepStrictEqual((yield* factories.readWorkItem(second.id)).source, source("PROJ-8"));
-        assert.lengthOf(yield* Ref.get(recorded.sends), 1);
-      }),
-    ),
-  );
-
-  it.effect("keeps the next item queued while a gate holds the active one, until it drops", () =>
-    withWorkItems(({ factoryId, recorded }) =>
-      Effect.gen(function* () {
-        const factories = yield* FactoryService.FactoryService;
-        const first = yield* factories.createWorkItem({ factoryId, title: "One", text: "One." });
-        const second = yield* factories.createWorkItem({ factoryId, title: "Two", text: "Two." });
-        const foreman = first.foremanThreadId!;
-        const gate = { workItemId: first.id, question: "Proceed?" };
-
-        // An approved gate continues the first item's session, so the second still waits.
-        yield* factories.gateWorkItem(foreman, { ...gate, resumeStage: "implement" });
-        yield* factories.answerWorkItemGate(null, {
-          workItemId: first.id,
-          decision: "approved",
-          note: "",
-        });
-        assert.isNull((yield* factories.readWorkItem(second.id)).dispatchedAt);
-
-        yield* factories.gateWorkItem(foreman, { ...gate, resumeStage: "review" });
-        yield* factories.answerWorkItemGate(null, {
-          workItemId: first.id,
-          decision: "rejected",
-          note: "",
-        });
-
-        // The rejection reaches the first item's session before the second item's fresh one.
-        assert.deepStrictEqual(
-          (yield* Ref.get(recorded.sends)).map((send) => [send.mode, send.freshContext === true]),
-          [
-            ["queue", true],
-            ["auto", false],
-            ["auto", false],
-            ["queue", true],
-          ],
-        );
-        const sent = yield* factories.readWorkItem(second.id);
-        assert.strictEqual(
-          (yield* Ref.get(recorded.sends)).at(-1)!.messageId,
-          `factory-work-item:${second.id}`,
-        );
-        const run = (yield* runs(foreman)).find((candidate) => candidate.id === sent.foremanRunId);
-        assert.strictEqual(run?.freshContext, true);
+        assert.lengthOf(yield* Ref.get(recorded.launches), 2);
       }),
     ),
   );
@@ -1111,31 +1088,69 @@ describe("FactoryService work items", () => {
             [{ from: "new", to: "failed", actor: { kind: "server" } }],
           );
           assert.include(item.transitions[0]!.note, "has no default model");
+          // A failed item is not pending, so dispatching pending items leaves it failed.
+          yield* factories.dispatchPending;
+          assert.lengthOf(yield* Ref.get(recorded.launches), 0);
         }),
       { defaultModel: false },
     ),
   );
 
-  it.effect("replaces an archived Foreman thread with a new one", () =>
-    withWorkItems(({ factoryId, recorded }) =>
+  it.effect("lets a person dismiss a failed item's failure and restore it", () =>
+    withWorkItems(({ factoryId }) =>
       Effect.gen(function* () {
         const factories = yield* FactoryService.FactoryService;
-        const sql = yield* SqlClient.SqlClient;
-        const first = yield* factories.ensureForemanThread(factoryId);
-        yield* (yield* Orchestrator.OrchestratorV2).dispatch({
-          type: "thread.archive",
-          commandId: CommandId.make("archive-foreman"),
-          threadId: first,
-        });
-        assert.isNull(yield* factories.foremanThread(factoryId));
+        const item = yield* factories.createWorkItem({ factoryId, title: "Fix", text: "Fix it." });
+        const userId = AuthUserId.make("user-ada");
+        const notFailed = yield* factories
+          .setWorkItemFailureDismissed(userId, { workItemId: item.id, dismissed: true })
+          .pipe(Effect.flip);
+        assert.strictEqual(notFailed._tag === "WorkItemError" && notFailed.code, "not_failed");
 
-        const second = yield* factories.ensureForemanThread(factoryId);
-        assert.notStrictEqual(second, first);
-        assert.lengthOf(yield* Ref.get(recorded.launches), 2);
-        const rows = yield* sql<{ readonly threadId: string }>`
-          SELECT thread_id AS "threadId" FROM fork_factory_threads WHERE factory_id = ${factoryId}
-        `;
-        assert.deepStrictEqual(rows, [{ threadId: second }]);
+        yield* factories.advanceWorkItem(item.foremanThreadId!, {
+          workItemId: item.id,
+          stage: "failed",
+        });
+        assert.strictEqual((yield* factories.read(factoryId)).attention.failedRuns, 1);
+        const dismissed = yield* factories.setWorkItemFailureDismissed(userId, {
+          workItemId: item.id,
+          dismissed: true,
+        });
+        assert.strictEqual(dismissed.stage, "failed");
+        assert.isNotNull(dismissed.failureDismissedAt);
+        assert.strictEqual((yield* factories.read(factoryId)).attention.failedRuns, 0);
+        assert.deepStrictEqual(
+          (yield* factories.listWorkItems({ factoryId, outcome: "failed" })).workItems.map(
+            (listed) => listed.id,
+          ),
+          [item.id],
+        );
+
+        const restored = yield* factories.setWorkItemFailureDismissed(userId, {
+          workItemId: item.id,
+          dismissed: false,
+        });
+        assert.isNull(restored.failureDismissedAt);
+        assert.strictEqual((yield* factories.read(factoryId)).attention.failedRuns, 1);
+        assert.deepStrictEqual(
+          restored.transitions
+            .slice(-2)
+            .map(({ from, to, actor, note }) => ({ from, to, actor, note })),
+          [
+            {
+              from: "failed",
+              to: "failed",
+              actor: { kind: "user", userId },
+              note: "Dismissed the failure.",
+            },
+            {
+              from: "failed",
+              to: "failed",
+              actor: { kind: "user", userId },
+              note: "Restored the failure.",
+            },
+          ],
+        );
       }),
     ),
   );
@@ -1269,48 +1284,38 @@ describe("FactoryService work items", () => {
     ),
   );
 
-  it.effect("names a delegated child on the item whose fresh session its parent run is in", () =>
+  it.effect("names a delegated child on the item its Foreman thread runs", () =>
     withWorkItems(({ factoryId }) =>
       Effect.gen(function* () {
         const factories = yield* FactoryService.FactoryService;
         const first = yield* factories.createWorkItem({ factoryId, title: "One", text: "One." });
         const second = yield* factories.createWorkItem({ factoryId, title: "Two", text: "Two." });
-        const foreman = first.foremanThreadId!;
-        // A gate answer adds a run to the first item's session, without fresh context.
-        yield* factories.gateWorkItem(foreman, {
-          workItemId: first.id,
-          question: "Proceed?",
-          resumeStage: "review",
-        });
-        yield* factories.answerWorkItemGate(null, {
-          workItemId: first.id,
-          decision: "approved",
-          note: "",
-        });
-        const [, continued] = (yield* runs(foreman)).toSorted((a, b) => a.ordinal - b.ordinal);
-        assert.notStrictEqual(continued!.freshContext, true);
-
         const implementer = ThreadId.make("thread-implementer");
         const reviewer = ThreadId.make("thread-reviewer");
         yield* factories.attachDelegatedChild({
-          parentThreadId: foreman,
-          parentRunId: continued!.id,
+          parentThreadId: first.foremanThreadId!,
           childThreadId: implementer,
           taskRole: "implementation",
         });
-        yield* factories.advanceWorkItem(foreman, { workItemId: first.id, stage: "done" });
-        const secondRunId = (yield* factories.readWorkItem(second.id)).foremanRunId!;
         yield* factories.attachDelegatedChild({
-          parentThreadId: foreman,
-          parentRunId: secondRunId,
+          parentThreadId: second.foremanThreadId!,
           childThreadId: reviewer,
           taskRole: "review",
         });
         yield* factories.attachDelegatedChild({
           parentThreadId: otherThread,
-          parentRunId: secondRunId,
           childThreadId: ThreadId.make("thread-unrelated"),
           taskRole: "implementation",
+        });
+        // Once its item ends, the Foreman thread's children belong to no item.
+        yield* factories.advanceWorkItem(first.foremanThreadId!, {
+          workItemId: first.id,
+          stage: "dropped",
+        });
+        yield* factories.attachDelegatedChild({
+          parentThreadId: first.foremanThreadId!,
+          childThreadId: ThreadId.make("thread-late"),
+          taskRole: "review",
         });
 
         assert.deepStrictEqual((yield* factories.readWorkItem(first.id)).threads, [
@@ -1333,11 +1338,10 @@ describe("FactoryService work items", () => {
             text: "Fix it.",
           });
           const foreman = item.foremanThreadId!;
-          const parentRunId = item.foremanRunId!;
           const prepare = (
             parentThreadId: ThreadId,
             delegation: FactoryService.FactoryDelegation,
-          ) => factories.prepareDelegation({ parentThreadId, parentRunId, delegation });
+          ) => factories.prepareDelegation({ parentThreadId, delegation });
 
           // The trial: the Foreman passes no isolation, and the implement role binds a worktree.
           const implement = yield* prepare(foreman, { task: "Fix it.", role: "implementation" });
@@ -1402,14 +1406,12 @@ describe("FactoryService work items", () => {
         const factories = yield* FactoryService.FactoryService;
         yield* Ref.set(recorded.gitIdentity, false);
         const item = yield* factories.createWorkItem({ factoryId, title: "Fix", text: "Fix it." });
-        const delegate = (parentRunId: RunId) =>
-          factories.prepareDelegation({
-            parentThreadId: item.foremanThreadId!,
-            parentRunId,
-            delegation: { task: "Fix it.", role: "implementation" },
-          });
+        const delegate = factories.prepareDelegation({
+          parentThreadId: item.foremanThreadId!,
+          delegation: { task: "Fix it.", role: "implementation" },
+        });
 
-        const held = yield* delegate(item.foremanRunId!).pipe(Effect.flip);
+        const held = yield* delegate.pipe(Effect.flip);
         assert.strictEqual(held._tag === "WorkItemError" && held.code, "gate_waiting");
         const gated = yield* factories.readWorkItem(item.id);
         assert.strictEqual(gated.stage, "waiting");
@@ -1430,11 +1432,7 @@ describe("FactoryService work items", () => {
           note: "Set it.",
         });
         assert.strictEqual(answered.stage, "implement");
-        // The Foreman delegates again from the run the gate answer started.
-        const [, resumed] = (yield* runs(item.foremanThreadId!)).toSorted(
-          (a, b) => a.ordinal - b.ordinal,
-        );
-        const bound = yield* delegate(resumed!.id);
+        const bound = yield* delegate;
         assert.strictEqual(bound.isolation, "worktree");
       }),
     ),

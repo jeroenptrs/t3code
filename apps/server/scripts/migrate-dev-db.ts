@@ -560,6 +560,15 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
       for (const table of CLEARED_TABLES) {
         yield* sql`DELETE FROM ${sql(table)}`;
       }
+      // The server starts every open work item's Foreman thread, which would run the developer's
+      // agents. Ended items stay as history.
+      const openItems = sql`SELECT work_item_id FROM fork_factory_work_items
+        WHERE stage NOT IN ('done', 'failed', 'dropped')`;
+      yield* sql`DELETE FROM fork_factory_work_item_threads WHERE work_item_id IN (${openItems})`;
+      yield* sql`DELETE FROM fork_factory_work_item_transitions
+        WHERE work_item_id IN (${openItems})`;
+      yield* sql`DELETE FROM fork_factory_work_items
+        WHERE stage NOT IN ('done', 'failed', 'dropped')`;
     }),
   );
 

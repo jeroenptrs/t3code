@@ -121,5 +121,15 @@ export function createFactoriesEnvironmentAtoms<R, E>(
       },
       onSuccess: bumpEpoch,
     }),
+    /** Dismisses a failed item's failure, or restores it. */
+    dismissWorkItemFailure: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:factories:dismiss-work-item-failure",
+      tag: WS_METHODS.factoriesWorkItemsDismissFailure,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.workItemId}`,
+      },
+      onSuccess: bumpEpoch,
+    }),
   };
 }
