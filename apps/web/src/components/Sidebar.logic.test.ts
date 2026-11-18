@@ -44,6 +44,7 @@ import {
   countThreadAttention,
   factoryOwnedThreadKeys,
   partitionFactoryThreads,
+  sectionSidebarThreads,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -257,24 +258,91 @@ describe("factory threads leave Home", () => {
       settledOverride: "settled",
       settledAt: "2026-03-09T10:00:00.000Z",
     });
-    const threads = [owned, sameIdElsewhere, failed, asking, archived, settled];
+    // A run's subagent has no sidebar row, but its question still counts for the factory.
+    const subagentId = ThreadId.make("thread-owned-subagent");
+    const subagent = makeThreadFixture({
+      id: subagentId,
+      environmentId,
+      hasPendingUserInput: true,
+      lineage: { rootThreadId: ownedId, parentThreadId: ownedId, relationshipToParent: "subagent" },
+    });
+    const threads = [owned, sameIdElsewhere, failed, asking, archived, settled, subagent];
 
     const none = partitionFactoryThreads(threads, factoryOwnedThreadKeys([]));
     expect(none.home).toBe(threads);
 
     const ownedKeys = factoryOwnedThreadKeys([
-      { environmentId, factories: [{ threadIds: [ownedId] }] },
+      { environmentId, factories: [{ threadIds: [ownedId, subagentId] }] },
       { environmentId: otherEnvironmentId, factories: null },
     ]);
     const { home, owned: ownedByKey } = partitionFactoryThreads(threads, ownedKeys);
     expect(home).toEqual([sameIdElsewhere, failed, asking, archived, settled]);
     expect([...ownedByKey.keys()]).toEqual([
       scopedThreadKey(scopeThreadRef(environmentId, ownedId)),
+      scopedThreadKey(scopeThreadRef(environmentId, subagentId)),
     ]);
     // A failed run and an open question each count, as the server counts them; archived and
     // settled threads never.
     expect(countThreadAttention(home)).toBe(3);
-    expect(countThreadAttention([...ownedByKey.values()])).toBe(1);
+    expect(countThreadAttention([...ownedByKey.values()])).toBe(2);
+  });
+});
+
+describe("sectionSidebarThreads", () => {
+  const now = "2026-03-09T12:00:00.000Z";
+  const thread = (id: string, overrides: ThreadFixtureOverrides = {}) =>
+    makeThreadFixture({ id: ThreadId.make(id), ...overrides });
+  const pinned = { ...thread("pinned"), pinnedAt: "2026-03-09T09:00:00.000Z" };
+  const working = thread("working", {
+    runtime: { status: "running", activeRunId: RunId.make("run-working") } as Thread["runtime"],
+  });
+  const asking = thread("asking", { hasPendingUserInput: true });
+  const done = thread("done", {
+    latestRun: makeLatestRun(),
+    runtime: { status: "completed", activeRunId: null } as Thread["runtime"],
+  });
+  const snoozed = {
+    ...thread("snoozed"),
+    snoozedAt: "2026-03-09T10:00:00.000Z",
+    snoozedUntil: "2026-03-10T10:00:00.000Z",
+  };
+  const settled = thread("settled", {
+    settledOverride: "settled",
+    settledAt: "2026-03-09T10:00:00.000Z",
+  });
+  const threads = [settled, snoozed, done, asking, working, pinned];
+  const ids = (list: readonly Thread[]) => list.map((entry) => entry.id);
+
+  it("puts each thread in the section Home gives it", () => {
+    const sections = sectionSidebarThreads(threads, {
+      configLoaded: () => true,
+      now,
+      isWorking: isSidebarThreadWorking,
+      sortActive: sortActiveThreadsByOrderKey,
+    });
+    expect(ids(sections.pinned)).toEqual(["pinned"]);
+    expect(ids(sections.active).toSorted()).toEqual(["asking", "done"]);
+    expect(ids(sections.working)).toEqual(["working"]);
+    expect(ids(sections.snoozed)).toEqual(["snoozed"]);
+    expect(ids(sections.settled)).toEqual(["settled"]);
+  });
+
+  it("keeps snoozed and settled threads active until the environment's config loads", () => {
+    const sections = sectionSidebarThreads(threads, {
+      configLoaded: () => false,
+      now,
+      isWorking: () => false,
+      sortActive: sortActiveThreadsByOrderKey,
+    });
+    expect(ids(sections.active).toSorted()).toEqual([
+      "asking",
+      "done",
+      "settled",
+      "snoozed",
+      "working",
+    ]);
+    expect(sections.snoozed).toEqual([]);
+    expect(sections.settled).toEqual([]);
   });
 });
 

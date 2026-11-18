@@ -12819,7 +12819,11 @@
   "a6caa48b22f6f702": "¿Eliminar {name}?",
   "7c5aa604a24cad22": [
     "Esto elimina .t3/factories/",
-    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
     "/ con sus roles y skills, y descarta sus elementos de trabajo. Sus hilos vuelven a Inicio. No se puede deshacer."
   ],
   "fd268008419cee5d": "Sus disparadores se conservan. Elimínalos en Ajustes si ya no los necesitas.",
@@ -13008,5 +13012,22 @@
   "8df6d63976456e38": "Persona",
   "716d7803b27b2204": "Servidor",
   "a055b9e321fca88f": "Añade una nota para rechazar.",
-  "6592d50bfdf6b692": "El elemento no puede pasar de {from} a {to}."
+  "6592d50bfdf6b692": "El elemento no puede pasar de {from} a {to}.",
+  "efbeb45b1a8af207": "Aún no hay fábricas. Crea una para procesar los elementos de trabajo de un proyecto con sus propios roles.",
+  "49d1858c7666b5a4": "Aún no hay fábricas",
+  "f8c2c599678e2e60": "Nuevo elemento de trabajo en {factory}",
+  "4bae6f80acb530ed": "Nueva fábrica",
+  "99b071f396bd6c0f": "Aún no hay ejecuciones ni disparadores",
+  "5f2da42a7a2abe64": [
+    "Nuevo elemento de trabajo en ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "92c01f25b469c00c": "Ocultar lo que pertenece a {factory}",
+  "1492a6f4ede26c44": "Mostrar lo que pertenece a {factory}",
+  "fea5b119aed850fa": "Usa letras minúsculas, dígitos y guiones simples, como nightly-triage.",
+  "b1b794caabbb77aa": "Este proyecto ya tiene una fábrica con este nombre."
 }

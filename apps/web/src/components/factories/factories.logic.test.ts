@@ -1,7 +1,14 @@
-import { EnvironmentId, FactoryId, ProjectId, type Trigger } from "@t3tools/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, FactoryId, ProjectId, ThreadId, type Trigger } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { factoryNameError, factoryTriggerSummary, showsFactoriesTab } from "./factories.logic";
+import { makeThreadFixture } from "../../test-fixtures";
+import {
+  factoryListedThreads,
+  factoryNameError,
+  factoryTriggerSummary,
+  showsFactoriesTab,
+} from "./factories.logic";
 
 const projectId = ProjectId.make("project-api");
 const existing = [{ projectId, name: "nightly-triage" }];
@@ -46,6 +53,45 @@ describe("showsFactoriesTab", () => {
     { label: "an operator with a factory", factories: [factory], canManage: false, expected: true },
   ])("is $expected for $label", ({ factories, canManage, expected }) => {
     expect(showsFactoriesTab([{ environmentId, factories, canManage }])).toBe(expected);
+  });
+});
+
+describe("factoryListedThreads", () => {
+  it("lists runs and trigger threads, and leaves subagents and side chats to their run", () => {
+    const environmentId = EnvironmentId.make("environment-local");
+    const runId = ThreadId.make("thread-run");
+    const thread = (id: string, overrides: Parameters<typeof makeThreadFixture>[0] = {}) =>
+      makeThreadFixture({ id: ThreadId.make(id), environmentId, ...overrides });
+    const run = thread("thread-run");
+    const triggered = thread("thread-triggered");
+    const implement = thread("thread-implement", {
+      lineage: { rootThreadId: runId, parentThreadId: runId, relationshipToParent: "subagent" },
+    });
+    const sideChat = thread("thread-side-chat", {
+      lineage: {
+        rootThreadId: runId,
+        parentThreadId: runId,
+        relationshipToParent: null,
+        sideChat: true,
+      },
+    });
+    const archived = thread("thread-archived", { archivedAt: "2026-03-09T10:00:00.000Z" });
+    const owned = new Map(
+      [run, triggered, implement, sideChat, archived].map((entry) => [
+        scopedThreadKey(scopeThreadRef(environmentId, entry.id)),
+        entry,
+      ]),
+    );
+    const factory = {
+      threadIds: [run, triggered, implement, sideChat, archived, thread("thread-unloaded")].map(
+        (entry) => entry.id,
+      ),
+    };
+
+    expect(factoryListedThreads(environmentId, factory, owned, new Set())).toEqual([
+      run,
+      triggered,
+    ]);
   });
 });
 
