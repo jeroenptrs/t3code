@@ -119,7 +119,7 @@ export function factoryGraph(input: FactoryGraphInput): FactoryGraph {
 
 export interface CanvasNodeState {
   readonly lit: boolean;
-  /** The thread a click opens: the lit run, or for the Foreman its thread. */
+  /** The thread a click opens: the lit run. */
   readonly threadId: ThreadId | null;
   /** A second line under the label, for the output node. */
   readonly detail: string | null;
@@ -174,9 +174,13 @@ function ownedRoles(threads: ReadonlyArray<FactoryThread>): ReadonlyMap<ThreadId
   return roles;
 }
 
+/** The implementer of the first item that has one, since several items can run at once. */
 function outputThreadOf(items: ReadonlyArray<WorkItemSummary>): ThreadId | null {
-  const item = items.find((candidate) => candidate.stage !== "queued");
-  return item?.threads.find((thread) => thread.role === "implement")?.threadId ?? null;
+  for (const item of items) {
+    const implementer = item.threads.find((thread) => thread.role === "implement");
+    if (implementer !== undefined) return implementer.threadId;
+  }
+  return null;
 }
 
 /** One pass over the shells, writing into `into` so an unchanged scan allocates nothing. */
@@ -218,7 +222,9 @@ function edgeOfItem(item: WorkItemSummary): string | null {
       return `${
         item.source.kind === "scheduled_task"
           ? triggerNodeId(item.source.scheduledTaskId)
-          : MANUAL_TRIGGER_NODE
+          : item.source.kind === "trigger"
+            ? triggerNodeId(item.source.triggerId)
+            : MANUAL_TRIGGER_NODE
       }->foreman`;
     case "implement":
       return "foreman->implement";
@@ -241,7 +247,6 @@ function itemThread(item: WorkItemSummary): ThreadId | null {
 
 function buildState(
   graph: FactoryGraph,
-  threads: ReadonlyArray<FactoryThread>,
   items: ReadonlyArray<WorkItemSummary>,
   activity: OwnedActivity,
 ): FactoryGraphState {
@@ -265,17 +270,10 @@ function buildState(
     );
   }
   const waiting = items.find((item) => item.stage === "waiting");
-  const foremanThread = threads.find((thread) => thread.role === "foreman")?.threadId ?? null;
   const nodes = new Map<string, CanvasNodeState>();
   for (const node of graph.nodes) {
     switch (node.kind) {
       case "foreman":
-        nodes.set(node.id, {
-          lit: activity.foreman !== null,
-          threadId: activity.foreman ?? foremanThread,
-          detail: null,
-        });
-        break;
       case "implement":
       case "review":
         nodes.set(node.id, {
@@ -326,7 +324,7 @@ export function factoryGraphState(
     outputThreadOf(input.items),
     input.shells,
   );
-  return buildState(graph, input.threads, input.items, activity);
+  return buildState(graph, input.items, activity);
 }
 
 const sameGraph = (a: FactoryGraph, b: FactoryGraph) =>
@@ -389,7 +387,7 @@ export function createFactoryCanvasSelector() {
 
     let graph = previous !== null && definitionSame ? previous.graph : factoryGraph(input);
     if (previous !== null && sameGraph(previous.graph, graph)) graph = previous.graph;
-    const next = buildState(graph, input.threads, input.items, activity);
+    const next = buildState(graph, input.items, activity);
     if (
       previous !== null &&
       graph === previous.graph &&

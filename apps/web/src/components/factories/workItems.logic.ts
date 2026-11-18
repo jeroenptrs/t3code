@@ -46,7 +46,6 @@ export function workItemListInput(factoryId: FactoryId, search: WorkItemSearch):
 }
 
 export const WORK_ITEM_STAGE_LABELS = {
-  queued: "Queued",
   new: "New",
   implement: "Implement",
   review: "Review",
@@ -69,15 +68,16 @@ export const FACTORY_ROLE_LABELS = {
   review: "Review",
 } as const satisfies Record<FactoryRoleName, string>;
 
+/** A failure a person dismissed no longer reads as one that needs them. */
 export function workItemStageBadgeVariant(
   stage: WorkItemStage,
+  failureDismissed = false,
 ): "warning" | "destructive" | "outline" | "default" {
   switch (stage) {
     case "waiting":
       return "warning";
     case "failed":
-      return "destructive";
-    case "queued":
+      return failureDismissed ? "outline" : "destructive";
     case "done":
       return "outline";
     default:
@@ -120,7 +120,7 @@ export function workItemFailureMessage(error: unknown, fallback: string): string
   return error instanceof Error && error.message !== "" ? error.message : fallback;
 }
 
-/** The Foreman's thread first, then each thread that worked on the item, once each. */
+/** The item's own Foreman thread first, then each thread that worked on it, once each. */
 export function workItemThreads(item: WorkItemSummary): ReadonlyArray<WorkItemThread> {
   const foreman: ReadonlyArray<WorkItemThread> =
     item.foremanThreadId === null ? [] : [{ threadId: item.foremanThreadId, role: "foreman" }];
