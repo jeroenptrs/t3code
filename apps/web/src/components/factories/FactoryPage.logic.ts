@@ -31,7 +31,7 @@ export interface FactoryDraft {
 
 const BINDING_KEYS = ["model", "runtimeMode", "interactionMode", "isolation"] as const;
 
-function factoryRoleDraft(role: FactoryRole): FactoryRoleDraft {
+export function factoryRoleDraft(role: FactoryRole): FactoryRoleDraft {
   const { skills, tools, ...binding } = role.fileBinding;
   return {
     binding,
@@ -101,12 +101,14 @@ function roleChange(role: FactoryRole, edited: FactoryRoleDraft): FactoryRoleCha
 /** The one save the form sends: the definition as edited, and a file change per edited role. */
 export function buildFactorySaveInput(factory: Factory, draft: FactoryDraft): FactorySaveInput {
   const roles = factory.roles.flatMap((role) => {
-    const change = roleChange(role, draft.roles[role.role]);
+    const edited = draft.roles[role.role];
+    const change = edited === undefined ? null : roleChange(role, edited);
     return change === null ? [] : [change];
   });
   return {
     projectId: factory.projectId,
     definition: {
+      version: 2,
       name: factory.name,
       projects: draft.projects,
       triggers: draft.triggers.map((scheduledTaskId) => ({

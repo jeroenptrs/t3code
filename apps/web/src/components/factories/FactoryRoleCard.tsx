@@ -27,12 +27,7 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { FactoryFieldIssues } from "./FactoryIssues";
 import { issuesFor, SKILL_SOURCE_LABEL, type FactoryRoleDraft } from "./FactoryPage.logic";
-
-const FACTORY_ROLE_LABEL = {
-  foreman: "Foreman",
-  implement: "Implement",
-  review: "Review",
-} as const;
+import { factoryRoleLabel } from "./workItems.logic";
 
 const INTERACTION_MODE_LABEL: Record<ProviderInteractionMode, string> = {
   default: "Build",
@@ -157,7 +152,7 @@ export function FactoryRoleCard(props: {
     >
       <header className="flex flex-wrap items-center gap-2">
         <h3 id={`${id}-title`} className="font-medium">
-          {FACTORY_ROLE_LABEL[name]}
+          {factoryRoleLabel(name)}
         </h3>
         <Badge variant="outline">{role.source === "file" ? filePath : "Built-in"}</Badge>
         {role.source === "file" && role.bodySource === "builtin" ? (
