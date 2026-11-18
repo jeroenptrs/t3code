@@ -1,5 +1,7 @@
 import {
+  type Factory,
   FactoryRoleName,
+  isWorkItemRoleStage,
   WorkItemError,
   WorkItemOutcome,
   WorkItemStage,
@@ -45,15 +47,13 @@ export function workItemListInput(factoryId: FactoryId, search: WorkItemSearch):
   };
 }
 
-export const WORK_ITEM_STAGE_LABELS = {
+const FIXED_STAGE_LABELS: Readonly<Record<string, string>> = {
   new: "New",
-  implement: "Implement",
-  review: "Review",
   waiting: "Waiting",
   done: "Done",
   failed: "Failed",
   dropped: "Dropped",
-} as const satisfies Record<WorkItemStage, string>;
+};
 
 export const WORK_ITEM_OUTCOME_LABELS = {
   active: "Active",
@@ -62,11 +62,28 @@ export const WORK_ITEM_OUTCOME_LABELS = {
   dropped: "Dropped",
 } as const satisfies Record<WorkItemOutcome, string>;
 
-export const FACTORY_ROLE_LABELS = {
+const PRESET_ROLE_LABELS: Readonly<Record<string, string>> = {
   foreman: "Foreman",
   implement: "Implement",
   review: "Review",
-} as const satisfies Record<FactoryRoleName, string>;
+};
+
+/** A preset role's label; any other role shows as its name. */
+export const factoryRoleLabel = (role: FactoryRoleName): string =>
+  Object.hasOwn(PRESET_ROLE_LABELS, role) ? PRESET_ROLE_LABELS[role]! : role;
+
+export const workItemStageLabel = (stage: WorkItemStage): string =>
+  Object.hasOwn(FIXED_STAGE_LABELS, stage) ? FIXED_STAGE_LABELS[stage]! : factoryRoleLabel(stage);
+
+/** The stages a factory's items can be at: new, its roles' stages in order, then the rest. */
+export const factoryStages = (factory: Factory): ReadonlyArray<WorkItemStage> => [
+  "new",
+  ...factory.roles.map((role) => role.role).filter(isWorkItemRoleStage),
+  "waiting",
+  "done",
+  "failed",
+  "dropped",
+];
 
 /** A failure a person dismissed no longer reads as one that needs them. */
 export function workItemStageBadgeVariant(
@@ -115,7 +132,7 @@ const isWorkItemTransitionError = Schema.is(WorkItemTransitionError);
 export function workItemFailureMessage(error: unknown, fallback: string): string {
   if (isWorkItemError(error)) return error.message;
   if (isWorkItemTransitionError(error)) {
-    return `The item cannot move from ${WORK_ITEM_STAGE_LABELS[error.from].toLowerCase()} to ${WORK_ITEM_STAGE_LABELS[error.to].toLowerCase()}.`;
+    return `The item cannot move from ${workItemStageLabel(error.from).toLowerCase()} to ${workItemStageLabel(error.to).toLowerCase()}.`;
   }
   return error instanceof Error && error.message !== "" ? error.message : fallback;
 }

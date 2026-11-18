@@ -45,6 +45,11 @@ function setup() {
   fixture.factory = {
     id: factoryId,
     projectId: ProjectId.make("project-api"),
+    roles: [
+      { role: "foreman", enabled: true },
+      { role: "implement", enabled: true },
+      { role: "review", enabled: true },
+    ] as unknown as Factory["roles"],
     scheduledTaskIds: [],
     threads: [{ threadId: implementer, role: "implement" }],
   } satisfies Partial<Factory>;
@@ -79,13 +84,13 @@ it("lights the running implement node and the edge its work item moves on", asyn
   );
   await vi.waitFor(() => {
     expect(
-      screen.container.querySelector('[data-node="implement"]')?.getAttribute("data-lit"),
+      screen.container.querySelector('[data-node="role:implement"]')?.getAttribute("data-lit"),
     ).toBe("true");
-    expect(screen.container.querySelector('[data-node="review"]')?.getAttribute("data-lit")).toBe(
-      "false",
-    );
     expect(
-      screen.container.querySelector('[data-edge="foreman->implement"]')?.textContent,
+      screen.container.querySelector('[data-node="role:review"]')?.getAttribute("data-lit"),
+    ).toBe("false");
+    expect(
+      screen.container.querySelector('[data-edge="foreman->role:implement"]')?.textContent,
     ).toContain("Fix the login redirect");
   });
   await expect.element(screen.getByText("t3/fix-login")).toBeInTheDocument();
