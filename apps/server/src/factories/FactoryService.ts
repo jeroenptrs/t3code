@@ -856,13 +856,25 @@ const make = Effect.gen(function* () {
     return { binding, modelSelection, workspaceStrategy };
   });
 
-  const ensureForeman = Effect.fn("FactoryService.ensureForeman")(function* (factory: Factory) {
+  /**
+   * Returns the Foreman thread, and the run of `firstMessage` when a new Foreman launched with it.
+   * Only a worktree launch takes it: the worktree lands after the launch returns, and a send before
+   * then would start the turn in the project checkout. The launch's own message waits for it.
+   */
+  const ensureForeman = Effect.fn("FactoryService.ensureForeman")(function* (
+    factory: Factory,
+    firstMessage?: ThreadLaunchService.ThreadLaunchInitialMessage & {
+      readonly messageId: MessageId;
+    },
+  ) {
     return yield* foremanLocks.withLock(
       factory.id,
       Effect.gen(function* () {
         const existing = yield* foremanRow(factory.id);
-        if (existing?.live === true) return existing.threadId;
+        if (existing?.live === true) return { threadId: existing.threadId, firstRunId: null };
         const launch = yield* foremanLaunch(factory);
+        const initialMessage =
+          launch.workspaceStrategy.type === "worktree" ? firstMessage : undefined;
         const threadId = ThreadId.make(`${FACTORY_FOREMAN_THREAD_ID_PREFIX}${yield* randomUuidV4}`);
         // The row lands before the launch, so the first provider session sees the role.
         yield* sql
@@ -883,7 +895,7 @@ const make = Effect.gen(function* () {
             }),
           )
           .pipe(Effect.catch(unavailable("written")));
-        yield* threadLaunch
+        const launched = yield* threadLaunch
           .launch({
             commandId: CommandId.make(`factory-foreman-launch:${threadId}`),
             threadId,
@@ -893,6 +905,7 @@ const make = Effect.gen(function* () {
             runtimeMode: launch.binding.runtimeMode,
             interactionMode: launch.binding.interactionMode,
             workspaceStrategy: launch.workspaceStrategy,
+            ...(initialMessage === undefined ? {} : { initialMessage }),
             createdBy: "agent",
             creationSource: "server",
           })
@@ -904,7 +917,13 @@ const make = Effect.gen(function* () {
               ),
             ),
           );
-        return threadId;
+        const firstRunId =
+          initialMessage === undefined
+            ? null
+            : (launched.projection.messages.find(
+                (message) => message.id === initialMessage.messageId,
+              )?.runId ?? null);
+        return { threadId, firstRunId };
       }),
     );
   });
@@ -912,7 +931,7 @@ const make = Effect.gen(function* () {
   const ensureForemanThread = Effect.fn("FactoryService.ensureForemanThread")(function* (
     factoryId: FactoryId,
   ) {
-    return yield* ensureForeman(yield* read(factoryId));
+    return (yield* ensureForeman(yield* read(factoryId))).threadId;
   });
 
   const ledgerUnavailable = workItemUnavailable("Work items could not be read or written.");
@@ -1126,15 +1145,7 @@ const make = Effect.gen(function* () {
     item: WorkItemSummary,
   ) {
     const factory = yield* read(item.factoryId);
-    const threadId = yield* ensureForeman(factory);
-    yield* sql`
-      UPDATE fork_factory_work_items SET foreman_thread_id = ${threadId}
-      WHERE work_item_id = ${item.id}
-    `.pipe(Effect.catch(ledgerUnavailable));
-    const sent = yield* sendToForeman({
-      projectId: factory.projectId,
-      commandId: CommandId.make(`factory-work-item:${item.id}`),
-      threadId,
+    const message = {
       messageId: MessageId.make(`factory-work-item:${item.id}`),
       text: renderWorkItemMessage({
         workItemId: item.id,
@@ -1143,15 +1154,28 @@ const make = Effect.gen(function* () {
         source: item.source,
       }),
       attachments: [],
-      mode: "queue",
-      freshContext: true,
-      createdBy: "agent",
-      creationSource: "server",
-    } satisfies freshContext.FreshSendInput);
+    };
+    const { threadId, firstRunId } = yield* ensureForeman(factory, message);
+    yield* sql`
+      UPDATE fork_factory_work_items SET foreman_thread_id = ${threadId}
+      WHERE work_item_id = ${item.id}
+    `.pipe(Effect.catch(ledgerUnavailable));
+    const runId =
+      firstRunId ??
+      (yield* sendToForeman({
+        ...message,
+        projectId: factory.projectId,
+        commandId: CommandId.make(`factory-work-item:${item.id}`),
+        threadId,
+        mode: "queue",
+        freshContext: true,
+        createdBy: "agent",
+        creationSource: "server",
+      } satisfies freshContext.FreshSendInput)).run.id;
     const at = yield* nowIso;
     yield* sql`
       UPDATE fork_factory_work_items
-      SET foreman_run_id = ${sent.run.id}, dispatched_at = ${at}, updated_at = ${at}
+      SET foreman_run_id = ${runId}, dispatched_at = ${at}, updated_at = ${at}
       WHERE work_item_id = ${item.id}
     `.pipe(Effect.catch(ledgerUnavailable));
   });
@@ -1416,12 +1440,15 @@ const make = Effect.gen(function* () {
     `;
     if (items.length === 0) return null;
     // Each item starts a fresh session, so the parent run belongs to the item whose run is the
-    // latest fresh one at or before it.
+    // latest fresh one at or before it. A thread's first run is fresh without the flag.
     const { runs } = yield* threadManagement.getThreadRecords(parentThreadId, ["runs"]);
     const parentRun = runs.find((run) => run.id === parentRunId);
     if (parentRun === undefined) return null;
     const sessionStart = runs
-      .filter((run) => run.freshContext === true && run.ordinal <= parentRun.ordinal)
+      .filter(
+        (run) =>
+          (run.freshContext === true || run.ordinal === 1) && run.ordinal <= parentRun.ordinal,
+      )
       .toSorted((left, right) => right.ordinal - left.ordinal)[0];
     const item = items.find((candidate) => candidate.foremanRunId === sessionStart?.id);
     if (item === undefined || !isWorkItemStage(item.stage) || isTerminalWorkItemStage(item.stage))
