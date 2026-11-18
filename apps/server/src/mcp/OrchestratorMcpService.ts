@@ -3116,7 +3116,7 @@ const make = Effect.gen(function* () {
           "Delegated tasks require an active run owned by this MCP provider session.",
         );
       }
-      // A Foreman's delegation takes the child role's binding over these arguments.
+      // A Foreman's delegation takes the binding of the role its work item is at.
       const delegation = Option.isNone(factories)
         ? input
         : yield* factories.value
@@ -3234,7 +3234,6 @@ const make = Effect.gen(function* () {
         yield* factories.value.attachDelegatedChild({
           parentThreadId: scope.thread.threadId,
           childThreadId,
-          taskRole: delegation.role,
         });
       }
           const childRunEvent = result.storedEvents.find(

@@ -55,15 +55,41 @@ export const FactorySkillName = TrimmedNonEmptyString.check(
 );
 export type FactorySkillName = typeof FactorySkillName.Type;
 
-export const FactoryRoleName = Schema.Literals(["foreman", "implement", "review"]);
+/** A role's name, written like a factory's. `FactoryRoleName` does not reject reserved names. */
+export const FactoryRoleName = TrimmedNonEmptyString.check(
+  Schema.isPattern(FACTORY_NAME_PATTERN),
+  Schema.isMaxLength(64),
+);
 export type FactoryRoleName = typeof FactoryRoleName.Type;
+
+/** Every factory has a Foreman, which no definition can remove or disable. */
+export const FACTORY_FOREMAN_ROLE = "foreman";
+
+/** The stages that are not a role's, which no role may be named. */
+const FIXED_WORK_ITEM_STAGES: ReadonlySet<string> = new Set([
+  "new",
+  "waiting",
+  "done",
+  "failed",
+  "dropped",
+]);
+// `queued` is a stage items once had.
+const RESERVED_FACTORY_ROLE_NAMES: ReadonlySet<string> = new Set([
+  ...FIXED_WORK_ITEM_STAGES,
+  "queued",
+]);
+
+export const isReservedFactoryRoleName = (name: string): boolean =>
+  RESERVED_FACTORY_ROLE_NAMES.has(name);
 
 /** Where a role's agent works: the project's own checkout, or a worktree of its own. */
 export const FactoryIsolation = Schema.Literals(["shared", "worktree"]);
 export type FactoryIsolation = typeof FactoryIsolation.Type;
 
-/** A role file's frontmatter. A binding the file leaves out takes the role's built-in default. */
+/** A role file's frontmatter. A binding the file leaves out takes the role's default. */
 export const FactoryRoleBinding = Schema.Struct({
+  /** Absent means enabled. The Foreman ignores it. */
+  enabled: Schema.optionalKey(Schema.Boolean),
   model: Schema.optionalKey(ModelSelection),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
@@ -100,18 +126,21 @@ export const FactoryRolePath = TrimmedNonEmptyString.check(
 );
 export type FactoryRolePath = typeof FactoryRolePath.Type;
 
-/** `factory.json`. */
+/**
+ * `factory.json`. A file without `version` is read as this, with `implement` and `review` added
+ * to `roles` when it leaves them out; every save writes version 2.
+ */
 export const FactoryDefinition = Schema.Struct({
+  version: Schema.Literal(2),
   name: FactoryName,
   /** T3 project names the factory may work in. The owning project is implied. */
   projects: Schema.Array(TrimmedNonEmptyString),
   triggers: Schema.Array(FactoryTrigger),
-  /** The file for each role that has one. A role left out uses `roles/<role>.md` if it exists. */
-  roles: Schema.Struct({
-    foreman: Schema.optionalKey(FactoryRolePath),
-    implement: Schema.optionalKey(FactoryRolePath),
-    review: Schema.optionalKey(FactoryRolePath),
-  }),
+  /**
+   * The factory's roles besides the Foreman, which it always has, in order: each to its file, or
+   * null for none. Keys are checked as role names when read and saved.
+   */
+  roles: Schema.Record(Schema.String, Schema.NullOr(FactoryRolePath)),
 });
 export type FactoryDefinition = typeof FactoryDefinition.Type;
 
@@ -148,13 +177,26 @@ export const FactoryRole = Schema.Struct({
   /** What the role file sets, for editing. Empty for a built-in role. */
   fileBinding: FactoryRoleBinding,
   binding: FactoryEffectiveBinding,
-  /** The role's instructions: the file's body when it has one, else the built-in body. */
+  /** False when the role file disables it: the Foreman is not told of it and cannot use it. */
+  enabled: Schema.Boolean,
+  /**
+   * The role's instructions: the file's body when it has one, else its preset's body, which is
+   * empty for a role that is not named after a preset.
+   */
   body: Schema.String,
   bodySource: FactoryRoleSource,
   /** `binding.skills` that exist, in order. A name that does not is an `unknown_skill` issue. */
   skills: Schema.Array(FactorySkill),
 });
 export type FactoryRole = typeof FactoryRole.Type;
+
+/** A built-in role a factory's role of that name layers over, or a new role copies. */
+export const FactoryRolePreset = Schema.Struct({
+  name: FactoryRoleName,
+  binding: FactoryEffectiveBinding,
+  body: Schema.String,
+});
+export type FactoryRolePreset = typeof FactoryRolePreset.Type;
 
 export const FactoryIssueCode = Schema.Literals([
   "invalid_definition",
@@ -232,8 +274,10 @@ export const Factory = Schema.Struct({
   definition: FactoryDefinition,
   /** `definition.projects`, each with the project it names here. */
   projects: Schema.Array(FactoryProject),
-  /** Foreman, implement, and review, in that order. */
+  /** The Foreman, then `definition.roles` in order. */
   roles: Schema.Array(FactoryRole),
+  /** The presets a role can start from, the Foreman's included. */
+  rolePresets: Schema.Array(FactoryRolePreset),
   /** Every skill a role here can name, by name: the factory's, then home, then built-in. */
   skills: Schema.Array(FactorySkill),
   issues: Schema.Array(FactoryIssue),
@@ -245,23 +289,27 @@ export type Factory = typeof Factory.Type;
 
 export const FactoryRoleFile = Schema.Struct({
   binding: FactoryRoleBinding,
-  /** Null or blank keeps the built-in instructions. */
+  /** Null or blank keeps the preset's instructions, or none for a role without a preset. */
   body: Schema.NullOr(Schema.String.check(Schema.isMaxLength(65_536))),
 });
 export type FactoryRoleFile = typeof FactoryRoleFile.Type;
 
 export const FactoryRoleChange = Schema.Struct({
   role: FactoryRoleName,
-  /** Null deletes the role's file, so its built-in default applies. */
+  /** Null deletes the role's file, so its defaults apply. */
   file: Schema.NullOr(FactoryRoleFile),
 });
 export type FactoryRoleChange = typeof FactoryRoleChange.Type;
 
-/** Writes `factory.json` and the given role files, creating the factory when it is new. */
+/**
+ * Writes `factory.json` and the given role files, creating the factory when it is new. A role
+ * joins by being listed in `definition.roles` and leaves by being left out; its file goes only
+ * with a `file: null` change.
+ */
 export const FactorySaveInput = Schema.Struct({
   projectId: ProjectId,
   definition: FactoryDefinition,
-  /** At most one change per role. A role left out keeps its file as it is. */
+  /** At most one change per role, each for a role the definition lists or the Foreman. */
   roles: Schema.optionalKey(Schema.Array(FactoryRoleChange)),
 });
 export type FactorySaveInput = typeof FactorySaveInput.Type;
@@ -398,20 +446,27 @@ export const FACTORY_FOREMAN_THREAD_ID_PREFIX = "factory-foreman:";
 export const WorkItemId = TrimmedNonEmptyString.pipe(Schema.brand("WorkItemId"));
 export type WorkItemId = typeof WorkItemId.Type;
 
-/** `waiting`: a gate holds the item for a person. `done`, `failed`, and `dropped` are terminal. */
-export const WorkItemStage = Schema.Literals([
-  "new",
-  "implement",
-  "review",
-  "waiting",
-  "done",
-  "failed",
-  "dropped",
-]);
+/**
+ * `new`, `waiting`, `done`, `failed`, `dropped`, or the name of the role that runs the item.
+ * `waiting`: a gate holds the item for a person. `done`, `failed`, and `dropped` are terminal.
+ */
+export const WorkItemStage = FactoryRoleName;
 export type WorkItemStage = typeof WorkItemStage.Type;
 
-/** Where a gate sends the item when the person approves. */
-export const WorkItemResumeStage = Schema.Literals(["implement", "review", "done"]);
+/** Whether `stage` is a role's, not one of the fixed stages. The Foreman's is never a stage. */
+export const isWorkItemRoleStage = (stage: string): boolean =>
+  stage !== FACTORY_FOREMAN_ROLE && !RESERVED_FACTORY_ROLE_NAMES.has(stage);
+
+const stageExcept = (excluded: ReadonlyArray<string>, expected: string) =>
+  WorkItemStage.check(
+    Schema.makeFilter((stage: string) => !excluded.includes(stage), { expected }),
+  );
+
+/** Where a gate sends the item when the person approves: a role's stage, or `done`. */
+export const WorkItemResumeStage = stageExcept(
+  ["new", "waiting", "queued", "failed", "dropped"],
+  "a role name or done",
+);
 export type WorkItemResumeStage = typeof WorkItemResumeStage.Type;
 
 /** What a person decides at a gate. */
@@ -525,34 +580,29 @@ export const WorkItem = Schema.Struct({
 });
 export type WorkItem = typeof WorkItem.Type;
 
-const TERMINAL_WORK_ITEM_STAGES: ReadonlySet<WorkItemStage> = new Set([
-  "done",
-  "failed",
-  "dropped",
-]);
+const TERMINAL_WORK_ITEM_STAGES: ReadonlySet<string> = new Set(["done", "failed", "dropped"]);
 
 export const isTerminalWorkItemStage = (stage: WorkItemStage): boolean =>
   TERMINAL_WORK_ITEM_STAGES.has(stage);
 
-const NEXT_WORK_ITEM_STAGES = {
-  new: ["implement", "waiting", "dropped", "failed"],
-  implement: ["review", "waiting", "failed", "dropped"],
-  review: ["implement", "done", "waiting", "failed"],
-  // Plus the stage the waiting gate resumes to.
-  waiting: ["dropped", "failed"],
-  done: [],
-  failed: [],
-  dropped: [],
-} satisfies Record<WorkItemStage, ReadonlyArray<WorkItemStage>>;
-
-/** Whether an item at `from` may move to `to`. Out of `waiting`, the gate's resume stage too. */
+/**
+ * Whether an item at `from` may move to `to`. Whether a role stage names a role the factory has
+ * is the service's to check.
+ */
 export function canTransitionWorkItem(
   from: WorkItemStage,
   to: WorkItemStage,
   gate: WorkItemGate,
 ): boolean {
-  if (from === "waiting" && gate.state === "waiting" && to === gate.resumeStage) return true;
-  return (NEXT_WORK_ITEM_STAGES[from] as ReadonlyArray<WorkItemStage>).includes(to);
+  const toRole = isWorkItemRoleStage(to);
+  if (from === "new") return toRole || ["waiting", "dropped", "failed"].includes(to);
+  if (from === "waiting") {
+    return (
+      (gate.state === "waiting" && to === gate.resumeStage) || ["dropped", "failed"].includes(to)
+    );
+  }
+  if (!isWorkItemRoleStage(from)) return false;
+  return (toRole && to !== from) || ["done", "waiting", "failed", "dropped"].includes(to);
 }
 
 export const WorkItemListInput = Schema.Struct({
@@ -597,14 +647,11 @@ export const WorkItemDismissFailureInput = Schema.Struct({
 });
 export type WorkItemDismissFailureInput = typeof WorkItemDismissFailureInput.Type;
 
-/** Stages the Foreman moves an item to. `waiting` takes a gate instead. */
-export const WorkItemAdvanceStage = Schema.Literals([
-  "implement",
-  "review",
-  "done",
-  "failed",
-  "dropped",
-]);
+/** Stages the Foreman moves an item to: a role's, `done`, `failed`, or `dropped`. */
+export const WorkItemAdvanceStage = stageExcept(
+  ["new", "waiting", "queued"],
+  "a role name, done, failed, or dropped",
+);
 export type WorkItemAdvanceStage = typeof WorkItemAdvanceStage.Type;
 
 export const WorkItemAdvanceInput = Schema.Struct({
@@ -623,10 +670,10 @@ export const WorkItemGateInput = Schema.Struct({
 export type WorkItemGateInput = typeof WorkItemGateInput.Type;
 
 /**
- * `not_foreman`: only the item's Foreman thread may do this. `gate_waiting`: only a person's
- * answer moves the item on. `no_gate`: no gate waits for an answer. `not_failed`: only a failed
- * item's failure can be dismissed. `unavailable`: the database or the Foreman thread could not be
- * reached.
+ * `not_foreman`: only the item's Foreman may do this. `gate_waiting`: only a person's answer moves
+ * the item on. `no_gate`: no gate waits. `not_failed`: only a failed item's failure is dismissed.
+ * `unknown_role`, `role_disabled`: the factory has no such role, or has it disabled. `no_role`: the
+ * item is at no role's stage. `unavailable`: the database or the Foreman could not be reached.
  */
 export const WorkItemErrorCode = Schema.Literals([
   "not_found",
@@ -634,6 +681,9 @@ export const WorkItemErrorCode = Schema.Literals([
   "gate_waiting",
   "no_gate",
   "not_failed",
+  "unknown_role",
+  "role_disabled",
+  "no_role",
   "unavailable",
 ]);
 export type WorkItemErrorCode = typeof WorkItemErrorCode.Type;
