@@ -1,3 +1,4 @@
+import { factorySaveInput } from "@t3tools/client-runtime/factories";
 import { triggerFiltersSummary } from "@t3tools/client-runtime/scheduled-task-trigger";
 import {
   scheduledTaskTrigger,
@@ -38,7 +39,6 @@ import {
   useFactoryEditable,
   useFactorySave,
 } from "./FactoryPageParts";
-import { factorySaveInput } from "./FactoryRoles.logic";
 
 const SOURCE_LABELS: Record<Trigger["source"]["kind"], string> = {
   schedule: msg("Schedule", { $context: "trigger source" }),

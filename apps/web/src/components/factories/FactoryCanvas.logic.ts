@@ -1,3 +1,4 @@
+import { factoryRoleLabel } from "@t3tools/client-runtime/factories";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 import {
@@ -15,7 +16,6 @@ import {
 import { msg } from "gt-react";
 
 import { m } from "../../i18n/messages";
-import { factoryRoleLabel } from "./workItems.logic";
 
 export const CANVAS_NODE_WIDTH = 148;
 export const CANVAS_NODE_HEIGHT = 44;
@@ -90,7 +90,7 @@ export function factoryGraph(input: FactoryGraphInput): FactoryGraph {
       {
         id: "foreman",
         kind: "foreman",
-        label: factoryRoleLabel(FACTORY_FOREMAN_ROLE),
+        label: factoryRoleLabel(FACTORY_FOREMAN_ROLE, m),
         role: FACTORY_FOREMAN_ROLE,
       },
     ],
@@ -98,7 +98,7 @@ export function factoryGraph(input: FactoryGraphInput): FactoryGraph {
       ...input.roles.map((role) => ({
         id: roleNodeId(role),
         kind: "role" as const,
-        label: factoryRoleLabel(role),
+        label: factoryRoleLabel(role, m),
         role,
       })),
       {

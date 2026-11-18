@@ -1,3 +1,5 @@
+import { factoryRoleLabel } from "@t3tools/client-runtime/factories";
+import { factorySaveInput, roleEnabledChange } from "@t3tools/client-runtime/factories";
 import {
   FACTORY_FOREMAN_ROLE,
   type EnvironmentId,
@@ -50,13 +52,10 @@ import {
 } from "./FactoryRoleBinding";
 import {
   addRoleSaveInput,
-  factorySaveInput,
-  roleEnabledChange,
   roleNameError,
   type RoleNameError,
   type RoleStart,
 } from "./FactoryRoles.logic";
-import { factoryRoleLabel } from "./workItems.logic";
 
 export const ROLE_STATUS: Record<FactoryRoleStatus, { readonly tone: StatusTone; label: string }> =
   {
