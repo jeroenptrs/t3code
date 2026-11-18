@@ -2,8 +2,7 @@ import type { FactoryIssue } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
-
-const ROLE_LABEL = { foreman: "Foreman", implement: "Implement", review: "Review" } as const;
+import { factoryRoleLabel } from "./workItems.logic";
 
 const issueKey = (issue: FactoryIssue) =>
   `${issue.code}:${issue.role}:${issue.field}:${issue.message}`;
@@ -23,7 +22,7 @@ export function FactoryIssuesList({ issues }: { readonly issues: ReadonlyArray<F
         <ul className="list-disc ps-4">
           {issues.map((issue) => (
             <li key={issueKey(issue)}>
-              {issue.role === null ? null : `${ROLE_LABEL[issue.role]}: `}
+              {issue.role === null ? null : `${factoryRoleLabel(issue.role)}: `}
               {issue.message}
             </li>
           ))}
