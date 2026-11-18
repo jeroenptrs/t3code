@@ -1,7 +1,7 @@
 /**
  * Fork-only software factories (docs/internals/factories.md). Reads and writes each factory's
  * definition files in its project's checkout, reports what the factory owns and what of that
- * needs a person, keeps the work item ledger, and launches and messages the Foreman thread.
+ * needs a person, keeps the work item ledger, and launches each work item's own Foreman thread.
  */
 import {
   type AuthUserId,
@@ -41,6 +41,7 @@ import {
   type WorkItemAdvanceInput,
   type WorkItemAnswerGateInput,
   type WorkItemCreateInput,
+  type WorkItemDismissFailureInput,
   WorkItemError,
   WorkItemGate,
   type WorkItemGateInput,
@@ -73,6 +74,7 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as ServerActivation from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import {
@@ -91,7 +93,6 @@ import {
 } from "./factoryFiles.ts";
 import * as FactorySkillStore from "./FactorySkillStore.ts";
 import { builtinRoles } from "./roles/index.ts";
-import type { freshContext } from "./upstream/index.ts";
 import {
   bindDelegation,
   renderGateAnswerMessage,
@@ -117,21 +118,14 @@ export class FactoryService extends Context.Service<
      * scheduled tasks stay.
      */
     readonly delete: (factoryId: FactoryId) => Effect.Effect<FactoryDeleteResult, FactoryError>;
-    /** The factory's Foreman thread; null when it has none, or its thread is archived or gone. */
-    readonly foremanThread: (factoryId: FactoryId) => Effect.Effect<ThreadId | null, FactoryError>;
-    /** Launches a Foreman thread when the factory has no live one, and returns its thread. */
-    readonly ensureForemanThread: (
-      factoryId: FactoryId,
-    ) => Effect.Effect<ThreadId, FactoryError | WorkItemError>;
     /** Newest first, at most 200. Without a factory, every factory's. */
     readonly listWorkItems: (
       filter: WorkItemFilter,
     ) => Effect.Effect<WorkItemListResult, WorkItemError>;
     readonly readWorkItem: (workItemId: WorkItemId) => Effect.Effect<WorkItem, WorkItemError>;
     /**
-     * Records the item at `new` and sends it to the Foreman as a fresh session's message when the
-     * factory has no active or queued item. Otherwise records it at `queued`, behind the others,
-     * and sends the oldest queued item when none is active.
+     * Records the item at `new` and launches its own Foreman thread with the item as the first
+     * message. An item that cannot be started stays on record as failed, and the error comes back.
      */
     readonly createWorkItem: (
       input: WorkItemCreateInput,
@@ -142,10 +136,7 @@ export class FactoryService extends Context.Service<
       readonly title: string;
       readonly source: WorkItemTriggerSource;
     }) => Effect.Effect<WorkItem, FactoryError | WorkItemError>;
-    /**
-     * The item's Foreman moves it on and names the threads that worked on it. Ending the item
-     * sends the factory's next queued one.
-     */
+    /** The item's Foreman moves it on and names the threads that worked on it. */
     readonly advanceWorkItem: (
       callerThreadId: ThreadId,
       input: WorkItemAdvanceInput,
@@ -155,14 +146,24 @@ export class FactoryService extends Context.Service<
       callerThreadId: ThreadId,
       input: WorkItemGateInput,
     ) => Effect.Effect<WorkItem, WorkItemError | WorkItemTransitionError>;
-    /**
-     * Records a person's answer, then tells the Foreman in the item's session. A rejection ends
-     * the item and sends the factory's next queued one.
-     */
+    /** Records a person's answer, then tells the item's Foreman thread. A rejection ends it. */
     readonly answerWorkItemGate: (
       userId: AuthUserId | null,
       input: WorkItemAnswerGateInput,
     ) => Effect.Effect<WorkItem, WorkItemError | WorkItemTransitionError>;
+    /**
+     * A person dismisses a failed item's failure, so it stops asking for attention, or restores
+     * it. The item stays failed, and its log records who did it.
+     */
+    readonly setWorkItemFailureDismissed: (
+      userId: AuthUserId | null,
+      input: WorkItemDismissFailureInput,
+    ) => Effect.Effect<WorkItem, WorkItemError>;
+    /**
+     * Starts every item at `new` that has no Foreman thread yet, such as one a restart left
+     * between insert and launch. A repeat is harmless. The layer forks this when it starts.
+     */
+    readonly dispatchPending: Effect.Effect<void>;
     /**
      * A Foreman's delegation to a role with a binding takes that binding's isolation, modes, and
      * model over the call's, and the work item's log records it. Before the item's first child,
@@ -171,7 +172,6 @@ export class FactoryService extends Context.Service<
      */
     readonly prepareDelegation: (input: {
       readonly parentThreadId: ThreadId;
-      readonly parentRunId: RunId;
       readonly delegation: FactoryDelegation;
     }) => Effect.Effect<FactoryDelegation, FactoryError | WorkItemError>;
     /**
@@ -180,7 +180,6 @@ export class FactoryService extends Context.Service<
      */
     readonly attachDelegatedChild: (input: {
       readonly parentThreadId: ThreadId;
-      readonly parentRunId: RunId;
       readonly childThreadId: ThreadId;
       readonly taskRole: OrchestratorMcpTaskRole | undefined;
     }) => Effect.Effect<void>;
@@ -208,6 +207,7 @@ const WorkItemRow = Schema.Struct({
   foremanThreadId: Schema.NullOr(ThreadId),
   foremanRunId: Schema.NullOr(RunId),
   dispatchedAt: Schema.NullOr(Schema.String),
+  failureDismissedAt: Schema.NullOr(Schema.String),
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });
@@ -309,9 +309,8 @@ const make = Effect.gen(function* () {
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const skillStore = yield* FactorySkillStore.FactorySkillStore;
-  // One launch per factory at a time. The ledger lock serializes a factory's stage changes with
-  // its dispatches, so two items that end together cannot both send the next one.
-  const foremanLocks = yield* KeyedLock.make<FactoryId>();
+  // Serializes a factory's stage changes, dispatches, and deletion, so a dispatch sees whether its
+  // item was already started and a delete never races a launch.
   const ledgerLocks = yield* KeyedLock.make<FactoryId>();
 
   const factoryDirectory = (project: ProjectRow, name: FactoryName) =>
@@ -487,28 +486,34 @@ const make = Effect.gen(function* () {
             WHERE w.factory_id IN ${sql.in(factoryIds)}
             ORDER BY t.created_at, t.rowid
           `.pipe(NodeSqliteClient.readOnly);
-    // A failed item counts unless a person failed it, as a rejected gate would.
-    const workItemCounts =
+    const waitingCounts =
       factoryIds.length === 0
         ? []
-        : yield* sql<{
-            readonly factoryId: string;
-            readonly waiting: number;
-            readonly failed: number;
-          }>`
-            SELECT
-              w.factory_id AS "factoryId",
-              SUM(CASE WHEN w.stage = 'waiting' THEN 1 ELSE 0 END) AS waiting,
-              SUM(CASE WHEN w.stage = 'failed' AND COALESCE((
+        : yield* sql<{ readonly factoryId: string; readonly waiting: number }>`
+            SELECT w.factory_id AS "factoryId", COUNT(*) AS waiting
+            FROM fork_factory_work_items w
+            WHERE w.factory_id IN ${sql.in(factoryIds)} AND w.stage = 'waiting'
+            GROUP BY w.factory_id
+          `.pipe(NodeSqliteClient.readOnly);
+    // A failed item asks for attention unless a person failed it, as a rejected gate would, or
+    // dismissed the failure. Its run thread is checked against the shells below.
+    const failedItems =
+      factoryIds.length === 0
+        ? []
+        : yield* sql<{ readonly factoryId: string; readonly foremanThreadId: string | null }>`
+            SELECT w.factory_id AS "factoryId", w.foreman_thread_id AS "foremanThreadId"
+            FROM fork_factory_work_items w
+            WHERE w.factory_id IN ${sql.in(factoryIds)}
+              AND w.stage = 'failed'
+              AND w.failure_dismissed_at IS NULL
+              AND COALESCE((
                 SELECT json_extract(t.actor_json, '$.kind')
                 FROM fork_factory_work_item_transitions t
                 WHERE t.work_item_id = w.work_item_id
+                  AND t.to_stage = 'failed' AND t.from_stage <> 'failed'
                 ORDER BY t.at DESC, t.rowid DESC
                 LIMIT 1
-              ), '') <> 'user' THEN 1 ELSE 0 END) AS failed
-            FROM fork_factory_work_items w
-            WHERE w.factory_id IN ${sql.in(factoryIds)}
-            GROUP BY w.factory_id
+              ), '') <> 'user'
           `.pipe(NodeSqliteClient.readOnly);
     // idx_fork_messages_scheduled_task (fork migration 016) serves this lookup.
     const taskRows =
@@ -550,7 +555,14 @@ const make = Effect.gen(function* () {
       return { factory, scheduledTaskIds, threads: [...threads.values()] };
     });
 
-    const threadIds = [...new Set(owned.flatMap(({ threads }) => threads.map((t) => t.threadId)))];
+    const threadIds = [
+      ...new Set([
+        ...owned.flatMap(({ threads }) => threads.map((t) => t.threadId)),
+        ...failedItems.flatMap((item) =>
+          item.foremanThreadId === null ? [] : [ThreadId.make(item.foremanThreadId)],
+        ),
+      ]),
+    ];
     const shells =
       threadIds.length === 0
         ? []
@@ -558,9 +570,19 @@ const make = Effect.gen(function* () {
     const shellById = new Map(shells.map((shell) => [shell.id, shell]));
 
     return owned.map(({ factory, scheduledTaskIds, threads }): OwnedView => {
-      const counts = workItemCounts.find((row) => row.factoryId === factory.id);
-      const gatesWaiting = counts?.waiting ?? 0;
-      let failedRuns = counts?.failed ?? 0;
+      const gatesWaiting = waitingCounts.find((row) => row.factoryId === factory.id)?.waiting ?? 0;
+      // A run thread that is settled, archived, or deleted means the failure is done with. An
+      // item whose run never started has no thread to settle, so it keeps counting.
+      let failedRuns = 0;
+      for (const item of failedItems) {
+        if (item.factoryId !== factory.id) continue;
+        if (item.foremanThreadId === null) {
+          failedRuns += 1;
+          continue;
+        }
+        const shell = shellById.get(ThreadId.make(item.foremanThreadId));
+        if (shell !== undefined && shell.settledOverride !== "settled") failedRuns += 1;
+      }
       let questions = 0;
       for (const { threadId } of threads) {
         const shell = shellById.get(threadId);
@@ -795,31 +817,6 @@ const make = Effect.gen(function* () {
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
-  /** The newest foreman row's thread, and whether that thread is still usable. */
-  const foremanRow = Effect.fn("FactoryService.foremanRow")(function* (factoryId: FactoryId) {
-    const rows = yield* sql<{ readonly threadId: string }>`
-      SELECT thread_id AS "threadId" FROM fork_factory_threads
-      WHERE factory_id = ${factoryId} AND role = 'foreman'
-      ORDER BY created_at DESC, rowid DESC
-      LIMIT 1
-    `.pipe(Effect.catch(unavailable("read")));
-    const row = rows[0];
-    if (row === undefined) return null;
-    const threadId = ThreadId.make(row.threadId);
-    const shell = yield* threadManagement
-      .getThreadShell(threadId)
-      .pipe(Effect.catch(unavailable("read")));
-    return {
-      threadId,
-      live: shell !== null && shell.deletedAt === null && shell.archivedAt === null,
-    };
-  });
-
-  const foremanThread = Effect.fn("FactoryService.foremanThread")(function* (factoryId: FactoryId) {
-    const row = yield* foremanRow(factoryId);
-    return row?.live === true ? row.threadId : null;
-  });
-
   const launchFailed = workItemUnavailable("The Foreman thread could not be started.");
 
   /** Model, modes, and checkout for a new Foreman thread, from the foreman role's binding. */
@@ -856,84 +853,6 @@ const make = Effect.gen(function* () {
     return { binding, modelSelection, workspaceStrategy };
   });
 
-  /**
-   * Returns the Foreman thread, and the run of `firstMessage` when a new Foreman launched with it.
-   * Only a worktree launch takes it: the worktree lands after the launch returns, and a send before
-   * then would start the turn in the project checkout. The launch's own message waits for it.
-   */
-  const ensureForeman = Effect.fn("FactoryService.ensureForeman")(function* (
-    factory: Factory,
-    firstMessage?: ThreadLaunchService.ThreadLaunchInitialMessage & {
-      readonly messageId: MessageId;
-    },
-  ) {
-    return yield* foremanLocks.withLock(
-      factory.id,
-      Effect.gen(function* () {
-        const existing = yield* foremanRow(factory.id);
-        if (existing?.live === true) return { threadId: existing.threadId, firstRunId: null };
-        const launch = yield* foremanLaunch(factory);
-        const initialMessage =
-          launch.workspaceStrategy.type === "worktree" ? firstMessage : undefined;
-        const threadId = ThreadId.make(`${FACTORY_FOREMAN_THREAD_ID_PREFIX}${yield* randomUuidV4}`);
-        // The row lands before the launch, so the first provider session sees the role.
-        yield* sql
-          .withTransaction(
-            Effect.gen(function* () {
-              if (existing !== null) {
-                yield* Effect.logInfo(
-                  "The factory's Foreman thread is archived or deleted, so a new one replaces it.",
-                ).pipe(Effect.annotateLogs({ factoryId: factory.id, threadId: existing.threadId }));
-                yield* sql`
-                  DELETE FROM fork_factory_threads WHERE thread_id = ${existing.threadId}
-                `;
-              }
-              yield* sql`
-                INSERT INTO fork_factory_threads (factory_id, thread_id, role, created_at)
-                VALUES (${factory.id}, ${threadId}, 'foreman', ${yield* nowIso})
-              `;
-            }),
-          )
-          .pipe(Effect.catch(unavailable("written")));
-        const launched = yield* threadLaunch
-          .launch({
-            commandId: CommandId.make(`factory-foreman-launch:${threadId}`),
-            threadId,
-            projectId: factory.projectId,
-            title: `Foreman: ${factory.name}`,
-            modelSelection: launch.modelSelection,
-            runtimeMode: launch.binding.runtimeMode,
-            interactionMode: launch.binding.interactionMode,
-            workspaceStrategy: launch.workspaceStrategy,
-            ...(initialMessage === undefined ? {} : { initialMessage }),
-            createdBy: "agent",
-            creationSource: "server",
-          })
-          .pipe(
-            Effect.catch((error) =>
-              sql`DELETE FROM fork_factory_threads WHERE thread_id = ${threadId}`.pipe(
-                Effect.ignore({ log: true }),
-                Effect.andThen(launchFailed(error)),
-              ),
-            ),
-          );
-        const firstRunId =
-          initialMessage === undefined
-            ? null
-            : (launched.projection.messages.find(
-                (message) => message.id === initialMessage.messageId,
-              )?.runId ?? null);
-        return { threadId, firstRunId };
-      }),
-    );
-  });
-
-  const ensureForemanThread = Effect.fn("FactoryService.ensureForemanThread")(function* (
-    factoryId: FactoryId,
-  ) {
-    return (yield* ensureForeman(yield* read(factoryId))).threadId;
-  });
-
   const ledgerUnavailable = workItemUnavailable("Work items could not be read or written.");
 
   const loadWorkItems = Effect.fn("FactoryService.loadWorkItems")(function* (
@@ -951,6 +870,7 @@ const make = Effect.gen(function* () {
         w.foreman_thread_id AS "foremanThreadId",
         w.foreman_run_id AS "foremanRunId",
         w.dispatched_at AS "dispatchedAt",
+        w.failure_dismissed_at AS "failureDismissedAt",
         w.created_at AS "createdAt",
         w.updated_at AS "updatedAt"
       FROM fork_factory_work_items w
@@ -1140,111 +1060,104 @@ const make = Effect.gen(function* () {
   const sendToForeman = (input: ThreadManagementService.ThreadManagementSendInput) =>
     threadManagement.sendToThread(input).pipe(Effect.catch(foremanUnreachable));
 
-  /** Sends a queued item to its factory's Foreman as a fresh session's message. */
-  const dispatchWorkItem = Effect.fn("FactoryService.dispatchWorkItem")(function* (
-    item: WorkItemSummary,
-  ) {
+  /**
+   * Launches the item's own Foreman thread with the item as its first message, so a worktree run
+   * waits in `preparing` until its worktree is bound. Ids derive from the item, so a repeat after a
+   * crash replays the same launch.
+   */
+  const launchRun = Effect.fn("FactoryService.launchRun")(function* (item: WorkItemSummary) {
     const factory = yield* read(item.factoryId);
-    const message = {
-      messageId: MessageId.make(`factory-work-item:${item.id}`),
-      text: renderWorkItemMessage({
-        workItemId: item.id,
-        factoryName: factory.name,
-        title: item.title,
-        source: item.source,
-      }),
-      attachments: [],
-    };
-    const { threadId, firstRunId } = yield* ensureForeman(factory, message);
+    const launch = yield* foremanLaunch(factory);
+    const threadId = ThreadId.make(`${FACTORY_FOREMAN_THREAD_ID_PREFIX}${item.id}`);
+    const messageId = MessageId.make(`factory-work-item:${item.id}`);
+    // The row lands before the launch, so the first provider session sees the role.
     yield* sql`
-      UPDATE fork_factory_work_items SET foreman_thread_id = ${threadId}
-      WHERE work_item_id = ${item.id}
-    `.pipe(Effect.catch(ledgerUnavailable));
-    const runId =
-      firstRunId ??
-      (yield* sendToForeman({
-        ...message,
-        projectId: factory.projectId,
-        commandId: CommandId.make(`factory-work-item:${item.id}`),
+      INSERT INTO fork_factory_threads (factory_id, thread_id, role, created_at)
+      VALUES (${factory.id}, ${threadId}, 'foreman', ${yield* nowIso})
+      ON CONFLICT (thread_id) DO NOTHING
+    `.pipe(Effect.catch(unavailable("written")));
+    const launched = yield* threadLaunch
+      .launch({
+        commandId: CommandId.make(`factory-foreman-launch:${item.id}`),
         threadId,
-        mode: "queue",
-        freshContext: true,
+        projectId: factory.projectId,
+        title: item.title,
+        modelSelection: launch.modelSelection,
+        runtimeMode: launch.binding.runtimeMode,
+        interactionMode: launch.binding.interactionMode,
+        workspaceStrategy: launch.workspaceStrategy,
+        initialMessage: {
+          messageId,
+          text: renderWorkItemMessage({
+            workItemId: item.id,
+            factoryName: factory.name,
+            title: item.title,
+            source: item.source,
+          }),
+          attachments: [],
+        },
         createdBy: "agent",
         creationSource: "server",
-      } satisfies freshContext.FreshSendInput)).run.id;
+      })
+      .pipe(
+        Effect.catch((error) =>
+          sql`DELETE FROM fork_factory_threads WHERE thread_id = ${threadId}`.pipe(
+            Effect.ignore({ log: true }),
+            Effect.andThen(launchFailed(error)),
+          ),
+        ),
+      );
+    const runId =
+      launched.projection.messages.find((message) => message.id === messageId)?.runId ?? null;
     const at = yield* nowIso;
     yield* sql`
       UPDATE fork_factory_work_items
-      SET foreman_run_id = ${runId}, dispatched_at = ${at}, updated_at = ${at}
+      SET foreman_thread_id = ${threadId}, foreman_run_id = ${runId}, dispatched_at = ${at},
+        updated_at = ${at}
       WHERE work_item_id = ${item.id}
     `.pipe(Effect.catch(ledgerUnavailable));
   });
 
   /**
-   * Call under the factory's ledger lock. A factory has one active item: sent, and not yet done,
-   * failed, or dropped. A `waiting` item stays active, because the gate answer continues its
-   * session.
+   * Starts an item at `new` that has no run yet; any other item is left alone. One the server
+   * cannot start fails, and the error comes back. Each is also on the item's own record.
    */
-  const hasActiveItem = (factoryId: FactoryId) =>
-    hasItemOutside(factoryId, ["queued", "done", "failed", "dropped"]);
-
-  /** Call under the factory's ledger lock: whether it has an active or a queued item. */
-  const hasOpenItem = (factoryId: FactoryId) =>
-    hasItemOutside(factoryId, ["done", "failed", "dropped"]);
-
-  const hasItemOutside = (factoryId: FactoryId, stages: ReadonlyArray<WorkItemStage>) =>
-    sql<{ readonly found: number }>`
-      SELECT 1 AS found FROM fork_factory_work_items
-      WHERE factory_id = ${factoryId} AND stage NOT IN ${sql.in(stages)}
-      LIMIT 1
-    `.pipe(
-      Effect.map((rows) => rows.length > 0),
-      Effect.catch(ledgerUnavailable),
+  const dispatchWorkItem = (workItemId: WorkItemId) =>
+    withLedgerItem(workItemId, (item) =>
+      Effect.gen(function* () {
+        if (item.stage !== "new" || item.dispatchedAt !== null) return null;
+        const error = yield* launchRun(item).pipe(
+          Effect.as(null),
+          Effect.catch((cause) => Effect.succeed(cause)),
+        );
+        if (error === null) return null;
+        // The item stays on record as failed, so the person sees what did not start.
+        yield* moveWorkItem({ item, to: "failed", actor: { kind: "server" }, note: error.message });
+        return error;
+      }),
     );
 
-  /** Sends an item at `new`. One the server cannot send fails, and the error comes back. */
-  const sendOrFail = Effect.fn("FactoryService.sendOrFail")(function* (item: WorkItemSummary) {
-    const error = yield* dispatchWorkItem(item).pipe(
-      Effect.as(null),
-      Effect.catch((cause) => Effect.succeed(cause)),
-    );
-    if (error === null) return null;
-    // The item stays on record as failed, so the person sees what did not start.
-    yield* moveWorkItem({ item, to: "failed", actor: { kind: "server" }, note: error.message });
-    return error;
-  });
-
-  /**
-   * Call under the factory's ledger lock. When the factory has no active item, moves the oldest
-   * queued one to `new` and sends it. An item that cannot be sent fails, and the next one is
-   * tried. Returns those failures by item; each is also on the item's own record.
-   */
-  const dispatchNext = Effect.fn("FactoryService.dispatchNext")(function* (factoryId: FactoryId) {
-    const failures = new Map<WorkItemId, FactoryError | WorkItemError>();
-    for (;;) {
-      if (yield* hasActiveItem(factoryId)) return failures;
-      const [next] = yield* sql<{ readonly id: string }>`
-        SELECT work_item_id AS "id" FROM fork_factory_work_items
-        WHERE factory_id = ${factoryId} AND stage = 'queued'
-        ORDER BY created_at, rowid
-        LIMIT 1
-      `.pipe(Effect.catch(ledgerUnavailable));
-      if (next === undefined) return failures;
-      const workItemId = WorkItemId.make(next.id);
-      yield* moveWorkItem({
-        item: yield* loadWorkItem(workItemId),
-        to: "new",
-        actor: { kind: "server" },
-        note: "No item was active, so the server sent the oldest queued one to the Foreman.",
-      });
-      const error = yield* sendOrFail(yield* loadWorkItem(workItemId));
-      if (error === null) return failures;
-      failures.set(workItemId, error);
+  const dispatchPending: FactoryService["Service"]["dispatchPending"] = Effect.gen(function* () {
+    const pending = yield* sql<{ readonly id: string }>`
+      SELECT work_item_id AS "id" FROM fork_factory_work_items
+      WHERE stage = 'new' AND dispatched_at IS NULL
+      ORDER BY created_at, rowid
+    `;
+    for (const { id } of pending) {
+      const error = yield* dispatchWorkItem(WorkItemId.make(id));
+      if (error !== null) {
+        yield* Effect.logWarning("Could not start a pending work item's Foreman thread", {
+          workItemId: id,
+          error: error.message,
+        });
+      }
     }
-  });
-
-  const dispatchAfterEnd = (factoryId: FactoryId) =>
-    dispatchNext(factoryId).pipe(Effect.ignore({ log: true }));
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning("Could not start pending work items", { errorTag: error._tag }),
+    ),
+    Effect.withSpan("FactoryService.dispatchPending"),
+  );
 
   const advanceWorkItem = Effect.fn("FactoryService.advanceWorkItem")(function* (
     callerThreadId: ThreadId,
@@ -1276,9 +1189,6 @@ const make = Effect.gen(function* () {
           note: input.note ?? null,
           threads: input.threads ?? [],
         });
-        if (input.stage !== item.stage && isTerminalWorkItemStage(input.stage)) {
-          yield* dispatchAfterEnd(item.factoryId);
-        }
       }),
     );
     return yield* readWorkItem(input.workItemId);
@@ -1336,26 +1246,16 @@ const make = Effect.gen(function* () {
     const createdAt = yield* nowIso;
     const sourceJson = yield* encodeSource(source).pipe(Effect.catch(ledgerUnavailable));
     const gateJson = yield* encodeGate({ state: "none" }).pipe(Effect.catch(ledgerUnavailable));
-    const failure = yield* ledgerLocks.withLock(
-      factory.id,
-      Effect.gen(function* () {
-        // Behind an active or a queued item the new one queues, so items go out in order.
-        const stage: WorkItemStage = (yield* hasOpenItem(factory.id)) ? "queued" : "new";
-        yield* sql`
-          INSERT INTO fork_factory_work_items (
-            work_item_id, factory_id, title, source_json, stage, gate_json,
-            foreman_thread_id, foreman_run_id, dispatched_at, created_at, updated_at
-          ) VALUES (
-            ${workItemId}, ${factory.id}, ${input.title}, ${sourceJson}, ${stage}, ${gateJson},
-            NULL, NULL, NULL, ${createdAt}, ${createdAt}
-          )
-        `.pipe(Effect.catch(ledgerUnavailable));
-        if (stage === "new") return yield* sendOrFail(yield* loadWorkItem(workItemId));
-        // With no active item, the oldest queued one goes now; it is this one only when older
-        // ones fail to send.
-        return (yield* dispatchNext(factory.id)).get(workItemId) ?? null;
-      }),
-    );
+    yield* sql`
+      INSERT INTO fork_factory_work_items (
+        work_item_id, factory_id, title, source_json, stage, gate_json,
+        foreman_thread_id, foreman_run_id, dispatched_at, created_at, updated_at
+      ) VALUES (
+        ${workItemId}, ${factory.id}, ${input.title}, ${sourceJson}, 'new', ${gateJson},
+        NULL, NULL, NULL, ${createdAt}, ${createdAt}
+      )
+    `.pipe(Effect.catch(ledgerUnavailable));
+    const failure = yield* dispatchWorkItem(workItemId);
     if (failure !== null) return yield* failure;
     return yield* readWorkItem(workItemId);
   });
@@ -1392,8 +1292,7 @@ const make = Effect.gen(function* () {
           },
         });
         const projectId = parseFactoryId(item.factoryId)?.projectId;
-        // Steers the item's session when it is running; no fresh context, so the Foreman keeps it.
-        // Sent before the next item, so a rejection reaches this item's session.
+        // Continues the item's own Foreman thread, steering it when it is running.
         const unsent =
           item.foremanThreadId === null || projectId === undefined
             ? null
@@ -1417,40 +1316,61 @@ const make = Effect.gen(function* () {
                 Effect.as(null),
                 Effect.catch((cause) => Effect.succeed(cause)),
               );
-        if (isTerminalWorkItemStage(to)) yield* dispatchAfterEnd(item.factoryId);
         if (unsent !== null) return yield* unsent;
       }),
     );
     return yield* readWorkItem(input.workItemId);
   });
 
-  /** The live item whose fresh Foreman session `parentRunId` is in, if any. */
+  const setWorkItemFailureDismissed = Effect.fn("FactoryService.setWorkItemFailureDismissed")(
+    function* (userId: AuthUserId | null, input: WorkItemDismissFailureInput) {
+      const actorJson = yield* encodeActor({ kind: "user", userId }).pipe(
+        Effect.catch(ledgerUnavailable),
+      );
+      yield* withLedgerItem(input.workItemId, (item) =>
+        Effect.gen(function* () {
+          if (item.stage !== "failed") {
+            return yield* new WorkItemError({
+              code: "not_failed",
+              message: `Work item ${item.id} has not failed, so it has no failure to dismiss.`,
+            });
+          }
+          if ((item.failureDismissedAt !== null) === input.dismissed) return;
+          const at = yield* nowIso;
+          const transitionId = `work-item-transition:${yield* randomUuidV4}`;
+          yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                yield* sql`
+                  UPDATE fork_factory_work_items
+                  SET failure_dismissed_at = ${input.dismissed ? at : null}, updated_at = ${at}
+                  WHERE work_item_id = ${item.id}
+                `;
+                yield* sql`
+                  INSERT INTO fork_factory_work_item_transitions (
+                    transition_id, work_item_id, from_stage, to_stage, actor_json, note, at
+                  ) VALUES (
+                    ${transitionId}, ${item.id}, 'failed', 'failed', ${actorJson},
+                    ${input.dismissed ? "Dismissed the failure." : "Restored the failure."}, ${at}
+                  )
+                `;
+              }),
+            )
+            .pipe(Effect.catch(ledgerUnavailable));
+        }),
+      );
+      return yield* readWorkItem(input.workItemId);
+    },
+  );
+
+  /** The item `parentThreadId` is the Foreman thread of, while it is not done, failed, or dropped. */
   const foremanRunItem = Effect.fn("FactoryService.foremanRunItem")(function* (
     parentThreadId: ThreadId,
-    parentRunId: RunId,
   ) {
-    const items = yield* sql<{
-      readonly workItemId: string;
-      readonly foremanRunId: string;
-      readonly stage: string;
-    }>`
-      SELECT work_item_id AS "workItemId", foreman_run_id AS "foremanRunId", stage
-      FROM fork_factory_work_items
-      WHERE foreman_thread_id = ${parentThreadId} AND foreman_run_id IS NOT NULL
+    const [item] = yield* sql<{ readonly workItemId: string; readonly stage: string }>`
+      SELECT work_item_id AS "workItemId", stage FROM fork_factory_work_items
+      WHERE foreman_thread_id = ${parentThreadId}
     `;
-    if (items.length === 0) return null;
-    // Each item starts a fresh session, so the parent run belongs to the item whose run is the
-    // latest fresh one at or before it. A thread's first run is fresh without the flag.
-    const { runs } = yield* threadManagement.getThreadRecords(parentThreadId, ["runs"]);
-    const parentRun = runs.find((run) => run.id === parentRunId);
-    if (parentRun === undefined) return null;
-    const sessionStart = runs
-      .filter(
-        (run) =>
-          (run.freshContext === true || run.ordinal === 1) && run.ordinal <= parentRun.ordinal,
-      )
-      .toSorted((left, right) => right.ordinal - left.ordinal)[0];
-    const item = items.find((candidate) => candidate.foremanRunId === sessionStart?.id);
     if (item === undefined || !isWorkItemStage(item.stage) || isTerminalWorkItemStage(item.stage))
       return null;
     return WorkItemId.make(item.workItemId);
@@ -1547,7 +1467,6 @@ const make = Effect.gen(function* () {
 
   const prepareDelegation = Effect.fn("FactoryService.prepareDelegation")(function* (input: {
     readonly parentThreadId: ThreadId;
-    readonly parentRunId: RunId;
     readonly delegation: FactoryDelegation;
   }) {
     const [owner] = yield* sql<{ readonly factoryId: string }>`
@@ -1556,7 +1475,7 @@ const make = Effect.gen(function* () {
     `.pipe(NodeSqliteClient.readOnly, Effect.catch(ledgerUnavailable));
     if (owner === undefined) return input.delegation;
     const factory = yield* read(FactoryId.make(owner.factoryId));
-    const workItemId = yield* foremanRunItem(input.parentThreadId, input.parentRunId).pipe(
+    const workItemId = yield* foremanRunItem(input.parentThreadId).pipe(
       Effect.catch(ledgerUnavailable),
     );
     if (workItemId !== null) yield* requireCommitIdentity(factory, workItemId);
@@ -1573,11 +1492,10 @@ const make = Effect.gen(function* () {
   const attachDelegatedChild = Effect.fn("FactoryService.attachDelegatedChild")(
     function* (input: {
       readonly parentThreadId: ThreadId;
-      readonly parentRunId: RunId;
       readonly childThreadId: ThreadId;
       readonly taskRole: OrchestratorMcpTaskRole | undefined;
     }) {
-      const workItemId = yield* foremanRunItem(input.parentThreadId, input.parentRunId);
+      const workItemId = yield* foremanRunItem(input.parentThreadId);
       if (workItemId === null) return;
       yield* sql`
         INSERT INTO fork_factory_work_item_threads (work_item_id, thread_id, role, created_at)
@@ -1595,13 +1513,14 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  // Items a restart or migration left undispatched; off the startup path, and logged on failure.
+  yield* ServerActivation.forkParked(dispatchPending);
+
   return FactoryService.of({
     list,
     read,
     save,
     delete: deleteFactory,
-    foremanThread,
-    ensureForemanThread,
     listWorkItems,
     readWorkItem,
     createWorkItem,
@@ -1609,6 +1528,8 @@ const make = Effect.gen(function* () {
     advanceWorkItem,
     gateWorkItem,
     answerWorkItemGate,
+    setWorkItemFailureDismissed,
+    dispatchPending,
     prepareDelegation,
     attachDelegatedChild,
   });

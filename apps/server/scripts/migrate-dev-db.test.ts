@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { runForkMigrations } from "../src/persistence/ForkMigrations.ts";
 import { runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { dropResumableFamilies, runMigrateDevDb } from "./migrate-dev-db.ts";
@@ -153,7 +154,25 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
           0, 'accepted', 0, '[]')`;
       yield* sql`INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
         VALUES ('session-1', 'user', '[]', 'pairing', '2026-08-01', '2027-08-01')`;
-      if (toMigrationInclusive === undefined) yield* insertPeerLink(sql);
+      if (toMigrationInclusive === undefined) {
+        yield* insertPeerLink(sql);
+        yield* runForkMigrations();
+        for (const [id, stage] of [
+          ["work-item:open", "new"],
+          ["work-item:gated", "waiting"],
+          ["work-item:done", "done"],
+        ] as const) {
+          yield* sql`INSERT INTO fork_factory_work_items
+            (work_item_id, factory_id, title, source_json, stage, gate_json, foreman_thread_id,
+              foreman_run_id, dispatched_at, created_at, updated_at)
+            VALUES (${id}, 'factory:project-kept:triage', ${id}, '{"kind":"manual","text":"Fix."}',
+              ${stage}, '{"state":"none"}', NULL, NULL, NULL, '2026-08-01', '2026-08-01')`;
+          yield* sql`INSERT INTO fork_factory_work_item_transitions
+            (transition_id, work_item_id, from_stage, to_stage, actor_json, note, at)
+            VALUES (${`transition-${id}`}, ${id}, 'new', ${stage}, '{"kind":"server"}', NULL,
+              '2026-08-01')`;
+        }
+      }
     }),
   );
   return databasePath;
@@ -191,6 +210,10 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
             FROM orchestration_v2_projection_threads WHERE thread_id = 'stopped-thread'`;
           const [project] = yield* sql<{ scripts_json: string }>`
             SELECT scripts_json FROM projection_projects WHERE project_id = 'project-kept'`;
+          const workItems = yield* sql<{ work_item_id: string; transitions: number }>`
+            SELECT w.work_item_id, (SELECT COUNT(*) FROM fork_factory_work_item_transitions t
+              WHERE t.work_item_id = w.work_item_id) AS transitions
+            FROM fork_factory_work_items w ORDER BY w.work_item_id`;
           const [leftovers] = yield* sql<{
             auth: number;
             tasks: number;
@@ -207,7 +230,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
               (SELECT COUNT(*) FROM scheduled_task_webhook_deliveries) AS deliveries,
               (SELECT COUNT(*) FROM orchestration_v2_projection_context_transfers) AS transfers,
               (SELECT COUNT(*) FROM peer_environment_links) AS links`;
-          return { threads, events, sessions, pullRequest, project, leftovers };
+          return { threads, events, sessions, pullRequest, project, leftovers, workItems };
         }),
       );
       assert.deepStrictEqual(
@@ -246,6 +269,11 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
           },
         ],
         "copied project scripts stay listed but never run on settle in the original checkout",
+      );
+      assert.deepStrictEqual(
+        kept.workItems,
+        [{ work_item_id: "work-item:done", transitions: 1 }],
+        "open work items are dropped, so the dev server never starts the source's Foreman threads",
       );
       assert.deepStrictEqual(kept.leftovers, {
         auth: 0,
