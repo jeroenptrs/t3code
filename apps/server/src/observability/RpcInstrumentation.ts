@@ -194,6 +194,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.factoriesWorkItemsRead]: "factories",
   [WS_METHODS.factoriesWorkItemsCreate]: "factories",
   [WS_METHODS.factoriesWorkItemsAnswerGate]: "factories",
+  [WS_METHODS.factoriesWorkItemsDismissFailure]: "factories",
   [WS_METHODS.pullRequestsInvalidate]: "pull-requests",
   [WS_METHODS.pullRequestsReportState]: "pull-requests",
   [WS_METHODS.pullRequestsSubscribeRefreshes]: "pull-requests",
