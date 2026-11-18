@@ -12460,5 +12460,10 @@
   "27d76249d09eb69f": "Guide de revue prêt",
   "faa3bb26abb39c93": "Échec du guide de revue",
   "b7df38b7d8792d78": "Ouvrir le guide",
-  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue"
+  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue",
+  "f85d012f56ee8e23": "Ignoré",
+  "5faac35b21638e8c": "Ignorer l’échec",
+  "563e4478fe91a497": "Rétablir l’échec",
+  "9923147967f589d0": "Impossible de mettre à jour l’échec.",
+  "ba5bcda4144279c3": "Élément de travail envoyé au Foreman"
 }

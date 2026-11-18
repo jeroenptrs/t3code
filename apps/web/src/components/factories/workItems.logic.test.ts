@@ -67,7 +67,6 @@ describe("workItemFailureMessage", () => {
 
 describe("workItemStageBadgeVariant", () => {
   it.each([
-    ["queued", "outline"],
     ["new", "default"],
     ["implement", "default"],
     ["review", "default"],
@@ -77,5 +76,10 @@ describe("workItemStageBadgeVariant", () => {
     ["dropped", "default"],
   ] as const)("maps %s to %s", (stage, variant) => {
     expect(workItemStageBadgeVariant(stage)).toBe(variant);
+  });
+
+  it("shows a dismissed failure as outline", () => {
+    expect(workItemStageBadgeVariant("failed", true)).toBe("outline");
+    expect(workItemStageBadgeVariant("waiting", true)).toBe("warning");
   });
 });

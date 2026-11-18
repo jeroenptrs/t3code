@@ -3,10 +3,10 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { FACTORY_FOREMAN_THREAD_ID_PREFIX, type EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { useParams } from "@tanstack/react-router";
 import { PlusIcon } from "lucide-react";
-import { Fragment, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { attachSidebarTree } from "../../lib/sidebarTree";
 import type { FactoryEnvironment } from "../../state/factories";
@@ -87,8 +87,6 @@ export function SidebarFactoriesList(props: {
                   return thread === undefined || thread.archivedAt !== null ? [] : [thread];
                 }),
               );
-              const isForeman = (thread: EnvironmentThreadShell) =>
-                thread.id.startsWith(FACTORY_FOREMAN_THREAD_ID_PREFIX);
               const rowId = sidebarFactoryRowId(environmentId, factory.id);
               const isExpanded = expanded.has(key);
               return (
@@ -105,17 +103,7 @@ export function SidebarFactoriesList(props: {
                 >
                   {isExpanded ? (
                     <>
-                      {threads.filter(isForeman).map((thread) => (
-                        <Fragment key={thread.id}>
-                          <li className="list-none px-(--sidebar-row-content-inset) pt-1 text-xs font-medium text-sidebar-muted-foreground">
-                            Foreman
-                          </li>
-                          {props.renderThread(thread, rowId)}
-                        </Fragment>
-                      ))}
-                      {threads
-                        .filter((thread) => !isForeman(thread))
-                        .map((thread) => props.renderThread(thread, rowId))}
+                      {threads.map((thread) => props.renderThread(thread, rowId))}
                       <FactoryScheduledTaskLinks
                         environmentId={environmentId}
                         parentRow={rowId}

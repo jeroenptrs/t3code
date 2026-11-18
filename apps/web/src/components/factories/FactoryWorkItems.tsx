@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   FactoryRoleName,
   WorkItemOutcome,
@@ -9,6 +10,7 @@ import {
   type WorkItemSummary,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
+import { useGT } from "gt-react";
 import { ChevronDownIcon, PlusIcon } from "lucide-react";
 import { Fragment, useState } from "react";
 
@@ -16,6 +18,7 @@ import { cn } from "~/lib/utils";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { factoriesEnvironment } from "../../state/factories";
 import { useEnvironmentQuery } from "../../state/query";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { RelativeTime } from "../RelativeTime";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -29,6 +32,7 @@ import {
   WORK_ITEM_OUTCOME_LABELS,
   WORK_ITEM_STAGE_LABELS,
   workItemActorLabel,
+  workItemFailureMessage,
   workItemListInput,
   workItemSourceLabel,
   workItemStageBadgeVariant,
@@ -72,11 +76,70 @@ function FilterSelect<Value extends string>(props: {
   );
 }
 
-function WorkItemStageBadge(props: { readonly stage: WorkItemSummary["stage"] }) {
+function WorkItemStageBadge(props: { readonly item: WorkItemSummary }) {
+  const gt = useGT();
+  const { stage } = props.item;
+  const dismissed = stage === "failed" && props.item.failureDismissedAt !== null;
   return (
-    <Badge variant={workItemStageBadgeVariant(props.stage)}>
-      {WORK_ITEM_STAGE_LABELS[props.stage]}
-    </Badge>
+    <span className="flex items-center gap-1.5">
+      <Badge variant={workItemStageBadgeVariant(stage, dismissed)}>
+        {WORK_ITEM_STAGE_LABELS[stage]}
+      </Badge>
+      {dismissed ? (
+        <span className="text-xs text-muted-foreground">
+          {gt("Dismissed", { $context: "a failed work item a person no longer needs to act on" })}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** Dismisses a failed item's failure, so it stops asking for attention, or restores it. */
+function WorkItemFailureDismiss(props: {
+  readonly environmentId: EnvironmentId;
+  readonly item: WorkItemSummary;
+}) {
+  const gt = useGT();
+  const canDismiss = useAtomValue(
+    factoriesEnvironment.dismissWorkItemFailure.permissionAtom(props.environmentId),
+  );
+  const dismiss = useAtomCommand(factoriesEnvironment.dismissWorkItemFailure, {
+    label: "dismiss a work item failure",
+    reportFailure: false,
+  });
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!canDismiss) return null;
+  const dismissed = props.item.failureDismissedAt !== null;
+  const submit = async () => {
+    if (sending) return;
+    setSending(true);
+    setError(null);
+    const result = await dismiss({
+      environmentId: props.environmentId,
+      input: { workItemId: props.item.id, dismissed: !dismissed },
+    });
+    setSending(false);
+    if (result._tag === "Failure") {
+      setError(
+        workItemFailureMessage(
+          squashAtomCommandFailure(result),
+          gt("The failure could not be updated."),
+        ),
+      );
+    }
+  };
+  return (
+    <div className="flex flex-col items-start gap-1">
+      <Button size="xs" variant="outline" disabled={sending} onClick={() => void submit()}>
+        {dismissed ? gt("Restore failure") : gt("Dismiss failure")}
+      </Button>
+      {error === null ? null : (
+        <p role="alert" className="text-sm text-destructive-foreground">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -233,7 +296,7 @@ export function FactoryWorkItems(props: {
                       </button>
                     </TableCell>
                     <TableCell>
-                      <WorkItemStageBadge stage={item.stage} />
+                      <WorkItemStageBadge item={item} />
                     </TableCell>
                     <TableCell>
                       <span className="text-muted-foreground">
@@ -294,10 +357,8 @@ function WorkItemDetails(props: {
   return (
     <div className="flex flex-col gap-3 py-1 whitespace-normal">
       <p className="max-h-40 overflow-y-auto text-sm whitespace-pre-wrap">{item.source.text}</p>
-      {item.stage === "queued" ? (
-        <p className="text-xs text-muted-foreground">
-          Queued behind this factory's active item. It goes to the Foreman when that item ends.
-        </p>
+      {item.stage === "failed" ? (
+        <WorkItemFailureDismiss environmentId={props.environmentId} item={item} />
       ) : null}
       {item.gate.state === "waiting" ? (
         <WorkItemGateAnswer
