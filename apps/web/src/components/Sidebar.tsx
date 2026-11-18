@@ -193,7 +193,6 @@ import {
   buildBulkUnpinContextMenuItem,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
-  firstValidTimestampMs,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -203,7 +202,10 @@ import {
   resolveSidebarSweepKeys,
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
-  resolveSidebarThreadSection,
+  resolveSidebarThreadShelf,
+  sectionSidebarThreads,
+  sortSidebarSections,
+  type SidebarSections,
   resolveSidebarReorderableThreadKeys,
   searchSidebarThreads,
   shouldCreateNewThreadInCurrentProject,
@@ -211,7 +213,6 @@ import {
   sidebarListItemId,
   sidebarThreadKeyAtY,
   sortInboxThreadsByReturn,
-  sortPinnedThreadsForSidebar,
   sortThreadsForSidebar,
   sortWorkingThreadsBySend,
   useSnoozeWakeClock,
@@ -351,6 +352,8 @@ const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
 
 const inboxReturns = createInboxReturnTracker();
+// Owned threads never reach Home's tracker, and a tracker forgets the threads it is not shown.
+const factoryInboxReturns = createInboxReturnTracker();
 
 type SidebarOptimisticDrop = {
   readonly key: string;
@@ -380,6 +383,57 @@ interface SidebarThreadPartitionInput {
   // on the clock, so the minute tick, the precise snooze-wake tick and the inbox
   // tracker's expiry version are inputs: a new key repartitions.
   readonly clockKey: string;
+}
+
+/** Places a factory's threads as Home places its own, Working shelf grace included. */
+function useFactoryThreadSections(input: {
+  readonly ownedThreads: ReadonlyMap<string, EnvironmentThreadShell>;
+  readonly delegatedUnderParent: ReadonlySet<string>;
+  readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
+  readonly now: string;
+}) {
+  const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
+  const clockKey = useSyncExternalStore(
+    factoryInboxReturns.subscribe,
+    factoryInboxReturns.getSnapshot,
+  );
+  return factoryThreadSections({ ...input, workingShelfEnabled, clockKey });
+}
+
+function factoryThreadSections(input: {
+  readonly ownedThreads: ReadonlyMap<string, EnvironmentThreadShell>;
+  readonly delegatedUnderParent: ReadonlySet<string>;
+  readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
+  readonly now: string;
+  readonly workingShelfEnabled: boolean;
+  // The tracker's expiry version: a new one repartitions, as Home's clock key does.
+  readonly clockKey: number;
+}) {
+  const inbox = factoryInboxReturns.observe(
+    input.workingShelfEnabled
+      ? filterSidebarV2VisibleThreads(
+          [...input.ownedThreads.values()],
+          null,
+          input.delegatedUnderParent,
+        )
+      : null,
+  );
+  const shelf = {
+    configLoaded: (thread: EnvironmentThreadShell) => input.serverConfigs.has(thread.environmentId),
+    now: input.now,
+    isWorking: (thread: EnvironmentThreadShell) =>
+      input.workingShelfEnabled && inbox.isWorking(thread),
+    sortActive: (threads: readonly EnvironmentThreadShell[]) =>
+      input.workingShelfEnabled
+        ? sortInboxThreadsByReturn(threads, inbox.returnedAt)
+        : sortThreadsForSidebar(threads),
+  };
+  return {
+    sectionOf: (thread: EnvironmentThreadShell): SidebarSection =>
+      resolveSidebarThreadShelf(thread, { ...shelf, configLoaded: shelf.configLoaded(thread) }),
+    sectionsOf: (threads: readonly EnvironmentThreadShell[]) =>
+      sectionSidebarThreads(threads, shelf),
+  };
 }
 
 function scrollSidebarToTop(content: HTMLElement | null) {
@@ -653,23 +707,22 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     homeThread,
   );
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
-  const pinned: EnvironmentThreadShell[] = [];
-  const active: EnvironmentThreadShell[] = [];
-  const working: EnvironmentThreadShell[] = [];
-  const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) =>
+  const isWorking = (thread: EnvironmentThreadShell, manuallyMoved = false) =>
     workingShelfEnabled &&
-    (manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread))
-      ? working
-      : active;
-  const snoozed: EnvironmentThreadShell[] = [];
-  const settled: EnvironmentThreadShell[] = [];
+    (manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread));
+  const sections: SidebarSections<EnvironmentThreadShell> = {
+    pinned: [],
+    active: [],
+    working: [],
+    snoozed: [],
+    settled: [],
+  };
   const { draggableThreadKeys, activeReorderableThreadKeys } = resolveSidebarReorderableThreadKeys({
     threads: visible,
     serverConfigs,
     connectedEnvironmentIds: input.connectedEnvironmentIds,
   });
   for (const thread of visible) {
-    const configLoaded = serverConfigs.has(thread.environmentId);
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
     if (optimisticDrop?.key === threadKey) {
       const projected = applySidebarThreadDrop(
@@ -678,45 +731,41 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
         optimisticDrop.occurredAt,
         optimisticDrop.assignedKeys.get(threadKey),
       );
-      (optimisticDrop.section === "pinned"
-        ? pinned
-        : optimisticDrop.section === "settled"
-          ? settled
-          : inbox(projected, true)
-      ).push(
+      sections[
+        optimisticDrop.section === "active"
+          ? isWorking(projected, true)
+            ? "working"
+            : "active"
+          : optimisticDrop.section
+      ].push(
         optimisticDrop.clearsSnooze
           ? projected
           : { ...projected, snoozedAt: thread.snoozedAt, snoozedUntil: thread.snoozedUntil },
       );
     } else {
-      const section = resolveSidebarThreadSection({
-        snoozed: configLoaded && effectiveSnoozed(thread, { now: preciseNow }),
-        settled: configLoaded && thread.settledOverride === "settled",
-        pinned: thread.pinnedAt != null,
-      });
-      (section === "snoozed"
-        ? snoozed
-        : section === "settled"
-          ? settled
-          : section === "pinned"
-            ? pinned
-            : inbox(thread)
-      ).push(thread);
+      sections[
+        resolveSidebarThreadShelf(thread, {
+          configLoaded: serverConfigs.has(thread.environmentId),
+          now: preciseNow,
+          isWorking,
+        })
+      ].push(thread);
     }
   }
   // Availability gates dragging only; sorting must stay consistent across clients.
-  const sortedPinned = sortPinnedThreadsForSidebar(pinned);
-  const sortedActive = sortActiveBySend
-    ? sortWorkingThreadsBySend(active)
-    : workingShelfEnabled
-      ? sortInboxThreadsByReturn(active, inboxObservation.returnedAt)
-      : sortThreadsForSidebar(active);
+  const sorted = sortSidebarSections(sections, (active) =>
+    sortActiveBySend
+      ? sortWorkingThreadsBySend(active)
+      : workingShelfEnabled
+        ? sortInboxThreadsByReturn(active, inboxObservation.returnedAt)
+        : sortThreadsForSidebar(active),
+  );
   return {
     pinnedThreads:
       optimisticDrop?.section !== "pinned" || optimisticDrop.order === null
-        ? sortedPinned
+        ? sorted.pinned
         : orderItemsByPreferredIds({
-            items: sortedPinned,
+            items: sorted.pinned,
             preferredIds: optimisticDrop.order,
             getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
           }),
@@ -724,19 +773,15 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     activeReorderableThreadKeys,
     activeThreads:
       optimisticDrop?.section !== "active" || optimisticDrop.order === null
-        ? sortedActive
+        ? sorted.active
         : orderItemsByPreferredIds({
-            items: sortedActive,
+            items: sorted.active,
             preferredIds: optimisticDrop.order,
             getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
           }),
-    workingThreads: sortWorkingThreadsBySend(working),
-    snoozedThreads: snoozed.toSorted(
-      (left, right) =>
-        firstValidTimestampMs(left.snoozedUntil ?? null) -
-        firstValidTimestampMs(right.snoozedUntil ?? null),
-    ),
-    settledThreads: sortSettledThreads(settled),
+    workingThreads: sorted.working,
+    snoozedThreads: sorted.snoozed,
+    settledThreads: sorted.settled,
     visibleThreads: visible,
     snoozeNow: preciseNow,
   };
@@ -1171,7 +1216,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const routeRowThreadKey =
     routeThreadRef === null
       ? null
-      : scopedThreadKey(resolveListedAncestorThreadRef(routeThreadRef, threads));
+      : scopedThreadKey(
+          resolveListedAncestorThreadRef(
+            routeThreadRef,
+            // A run's subagent opens under its run's row.
+            showingFactories ? [...sidebarFactories.ownedThreads.values()] : threads,
+          ),
+        );
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   // The open draft's first send names its thread in place; a finalized draft reached by
   // navigation resolves through its redirect instead, and still reveals.
@@ -1861,14 +1912,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   const dndSensors = useSensors(useSensor(SidebarPointerSensor, pointerSensorOptions));
   const sectionByThreadKeyRef = useRef(sectionByThreadKey);
-  const factoryThreadSection = (thread: EnvironmentThreadShell): SidebarSection => {
-    const configLoaded = serverConfigs.has(thread.environmentId);
-    return resolveSidebarThreadSection({
-      snoozed: configLoaded && effectiveSnoozed(thread, { now: snoozeNow }),
-      settled: configLoaded && thread.settledOverride === "settled",
-      pinned: thread.pinnedAt != null,
-    });
-  };
+  const factoryThreads = useFactoryThreadSections({
+    ownedThreads: sidebarFactories.ownedThreads,
+    delegatedUnderParent,
+    serverConfigs,
+    now: snoozeNow,
+  });
   // Factory rows act through the same ref-read lookups as Home rows, so those cover them too.
   const rowLookups = (() => {
     if (!showingFactories || sidebarFactories.ownedThreads.size === 0) {
@@ -1877,7 +1926,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const settled = new Set(settledThreadKeys);
     const snoozed = new Set(snoozedThreadKeys);
     for (const [key, thread] of sidebarFactories.ownedThreads) {
-      const section = factoryThreadSection(thread);
+      const section = factoryThreads.sectionOf(thread);
       if (section === "settled") settled.add(key);
       if (section === "snoozed") snoozed.add(key);
     }
@@ -3394,12 +3443,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               <SidebarFactoriesList
                 environments={sidebarFactories.environments}
                 ownedThreads={sidebarFactories.ownedThreads}
+                delegatedUnderParent={delegatedUnderParent}
+                sectionsOf={factoryThreads.sectionsOf}
+                routeRowThreadKey={routeRowThreadKey}
                 environmentLabelById={environmentLabelById}
                 projectByKey={projectByKey}
-                renderThread={(thread, factoryRow) => (
+                renderThread={(thread, section, parentRow) => (
                   <StaticThreadRow
                     key={threadShellKey(thread)}
-                    {...threadRowProps(thread, factoryThreadSection(thread), factoryRow)}
+                    {...threadRowProps(thread, section, parentRow)}
                   />
                 )}
               />

@@ -2,6 +2,7 @@ import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
+import { sortWorkingThreadsBySend } from "@t3tools/client-runtime/state/thread-inbox";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -35,6 +36,8 @@ import {
 import {
   getThreadSortTimestamp,
   planPinnedReorder,
+  sortPinnedThreadsByOrderKey,
+  sortSettledThreads,
   sortThreads,
   toSortableTimestamp,
   type ThreadSortInput,
@@ -193,7 +196,7 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 
 export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled";
 
-export function resolveSidebarThreadSection(input: {
+function resolveSidebarThreadSection(input: {
   readonly snoozed: boolean;
   readonly settled: boolean;
   readonly pinned: boolean;
@@ -202,6 +205,67 @@ export function resolveSidebarThreadSection(input: {
   if (input.settled) return "settled";
   if (input.pinned) return "pinned";
   return "active";
+}
+
+export type SidebarSections<T> = { readonly [Section in SidebarSection]: T[] };
+
+/** Home's section for a thread at rest; `configLoaded` gates snooze and settle as Home does. */
+export function resolveSidebarThreadShelf<T extends SidebarThreadSummary>(
+  thread: T,
+  input: {
+    readonly configLoaded: boolean;
+    readonly now: string;
+    readonly isWorking: (thread: T) => boolean;
+  },
+): SidebarSection {
+  const section = resolveSidebarThreadSection({
+    snoozed: input.configLoaded && effectiveSnoozed(thread, { now: input.now }),
+    settled: input.configLoaded && thread.settledOverride === "settled",
+    pinned: thread.pinnedAt != null,
+  });
+  return section === "active" && input.isWorking(thread) ? "working" : section;
+}
+
+/** Orders each section as Home lists it; `sortActive` picks the order of the active rows. */
+export function sortSidebarSections<T extends SidebarThreadSummary>(
+  sections: SidebarSections<T>,
+  sortActive: (threads: readonly T[]) => T[],
+): SidebarSections<T> {
+  return {
+    pinned: sortPinnedThreadsByOrderKey(sections.pinned),
+    active: sortActive(sections.active),
+    working: sortWorkingThreadsBySend(sections.working),
+    snoozed: sections.snoozed.toSorted(
+      (left, right) =>
+        firstValidTimestampMs(left.snoozedUntil ?? null) -
+        firstValidTimestampMs(right.snoozedUntil ?? null),
+    ),
+    settled: sortSettledThreads(sections.settled),
+  };
+}
+
+/** Threads in Home's sections and order, for lists outside Home such as a factory's runs. */
+export function sectionSidebarThreads<T extends SidebarThreadSummary>(
+  threads: readonly T[],
+  input: {
+    readonly configLoaded: (thread: T) => boolean;
+    readonly now: string;
+    readonly isWorking: (thread: T) => boolean;
+    readonly sortActive: (threads: readonly T[]) => T[];
+  },
+): SidebarSections<T> {
+  const sections: SidebarSections<T> = {
+    pinned: [],
+    active: [],
+    working: [],
+    snoozed: [],
+    settled: [],
+  };
+  for (const thread of threads) {
+    const configLoaded = input.configLoaded(thread);
+    sections[resolveSidebarThreadShelf(thread, { ...input, configLoaded })].push(thread);
+  }
+  return sortSidebarSections(sections, input.sortActive);
 }
 
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
@@ -1080,9 +1144,7 @@ export type SidebarV2TopStatusKind =
   | "woke"
   | "working";
 
-export function firstValidTimestampMs(
-  ...candidates: ReadonlyArray<string | null | undefined>
-): number {
+function firstValidTimestampMs(...candidates: ReadonlyArray<string | null | undefined>): number {
   for (const candidate of candidates) {
     if (candidate == null) continue;
     const parsed = Date.parse(candidate);

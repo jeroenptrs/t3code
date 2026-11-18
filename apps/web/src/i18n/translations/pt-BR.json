@@ -12102,7 +12102,11 @@
   "a6caa48b22f6f702": "Excluir {name}?",
   "7c5aa604a24cad22": [
     "Isso remove .t3/factories/",
-    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
     "/ com as funções e skills dela e descarta os itens de trabalho. As threads voltam para o Início. Isso não pode ser desfeito."
   ],
   "fd268008419cee5d": "Os gatilhos dela continuam. Exclua-os nas Configurações se não precisar mais deles.",
@@ -12291,5 +12295,22 @@
   "8df6d63976456e38": "Pessoa",
   "716d7803b27b2204": "Servidor",
   "a055b9e321fca88f": "Adicione uma nota para rejeitar.",
-  "6592d50bfdf6b692": "O item não pode passar de {from} para {to}."
+  "6592d50bfdf6b692": "O item não pode passar de {from} para {to}.",
+  "efbeb45b1a8af207": "Ainda não há fábricas. Crie uma para processar os itens de trabalho de um projeto com papéis próprios.",
+  "49d1858c7666b5a4": "Ainda não há fábricas",
+  "f8c2c599678e2e60": "Novo item de trabalho em {factory}",
+  "4bae6f80acb530ed": "Nova fábrica",
+  "99b071f396bd6c0f": "Ainda não há execuções nem gatilhos",
+  "5f2da42a7a2abe64": [
+    "Novo item de trabalho em ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "92c01f25b469c00c": "Ocultar o que pertence a {factory}",
+  "1492a6f4ede26c44": "Mostrar o que pertence a {factory}",
+  "fea5b119aed850fa": "Use letras minúsculas, dígitos e hifens simples, como nightly-triage.",
+  "b1b794caabbb77aa": "Este projeto já tem uma fábrica com este nome."
 }
