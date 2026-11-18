@@ -11,6 +11,7 @@ import { environmentThreadShells } from "../../state/threads";
 import {
   CANVAS_NODE_HEIGHT,
   CANVAS_NODE_WIDTH,
+  canvasRoles,
   createFactoryCanvasSelector,
   truncateLabel,
   type CanvasEdge,
@@ -45,6 +46,7 @@ const factoryCanvasAtom = Atom.family((environmentId: EnvironmentId) =>
       );
       return select({
         environmentId,
+        roles: canvasRoles(factory),
         scheduledTaskIds: factory.scheduledTaskIds,
         scheduledTasks: tasks?.tasks ?? null,
         threads: factory.threads,
