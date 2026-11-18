@@ -7,6 +7,7 @@ import {
   type AuthUserId,
   canTransitionWorkItem,
   CommandId,
+  FACTORY_FOREMAN_ROLE,
   FACTORY_FOREMAN_THREAD_ID_PREFIX,
   type Factory,
   type FactoryAttention,
@@ -21,14 +22,15 @@ import {
   type FactoryRole,
   FactoryRoleName,
   type FactoryRolePath,
+  type FactoryRolePreset,
   type FactorySaveInput,
   type FactorySkill,
   type FactoryThread,
   isTerminalWorkItemStage,
+  isWorkItemRoleStage,
   makeFactoryId,
   MessageId,
   type OrchestratorMcpDelegateTaskInput,
-  type OrchestratorMcpTaskRole,
   parseFactoryId,
   type ProjectId,
   RunId,
@@ -83,24 +85,24 @@ import {
   effectiveBinding,
   FACTORIES_DIRECTORY,
   FACTORY_FILE_NAME,
-  parseFactoryJson,
-  parseRoleFile,
+  factoryRoleNames,
+  readFactoryFiles,
   renderFactoryJson,
   renderRoleFile,
   resolveProjects,
   resolveRoleSkills,
+  roleEnabled,
+  type RoleFileEntry,
+  roleNameProblem,
   toFactorySkill,
 } from "./factoryFiles.ts";
 import * as FactorySkillStore from "./FactorySkillStore.ts";
-import { builtinRoles } from "./roles/index.ts";
-import {
-  bindDelegation,
-  renderGateAnswerMessage,
-  renderWorkItemMessage,
-  workItemRoleForTask,
-} from "./workItems.ts";
+import { roleDefaults, rolePresets } from "./roles/index.ts";
+import { bindDelegation, renderGateAnswerMessage, renderWorkItemMessage } from "./workItems.ts";
 
-const ROLE_NAMES = FactoryRoleName.literals;
+const ROLE_PRESETS: ReadonlyArray<FactoryRolePreset> = Object.entries(rolePresets).map(
+  ([name, preset]) => ({ name, binding: preset.binding, body: preset.body }),
+);
 const isFactoryName = Schema.is(FactoryName);
 const isRoleName = Schema.is(FactoryRoleName);
 const isWorkItemStage = Schema.is(WorkItemStage);
@@ -136,7 +138,10 @@ export class FactoryService extends Context.Service<
       readonly title: string;
       readonly source: WorkItemTriggerSource;
     }) => Effect.Effect<WorkItem, FactoryError | WorkItemError>;
-    /** The item's Foreman moves it on and names the threads that worked on it. */
+    /**
+     * The item's Foreman moves it on and names the threads that worked on it. A role stage must
+     * name one of the factory's enabled roles as it is now.
+     */
     readonly advanceWorkItem: (
       callerThreadId: ThreadId,
       input: WorkItemAdvanceInput,
@@ -165,23 +170,23 @@ export class FactoryService extends Context.Service<
      */
     readonly dispatchPending: Effect.Effect<void>;
     /**
-     * A Foreman's delegation to a role with a binding takes that binding's isolation, modes, and
-     * model over the call's, and the work item's log records it. Before the item's first child,
-     * a checkout with no Git committer identity holds the item at a gate and fails the
-     * delegation. Other threads' delegations come back as they are.
+     * A Foreman's delegation takes the binding of the enabled role its item's stage names, and the
+     * item's log records it; any other stage fails it. Before the item's first child, a checkout
+     * with no Git committer identity gates the item and fails it. Other threads' delegations, and
+     * those of a Foreman whose item has ended, come back as they are.
      */
     readonly prepareDelegation: (input: {
       readonly parentThreadId: ThreadId;
       readonly delegation: FactoryDelegation;
     }) => Effect.Effect<FactoryDelegation, FactoryError | WorkItemError>;
     /**
-     * Names a delegated task's child on the work item its Foreman parent runs, when the parent
-     * is a Foreman thread. Logs and ignores failures, since delegation must not depend on it.
+     * Names a delegated task's child on the work item its Foreman parent runs, as the role whose
+     * stage the item is at, when the parent is a Foreman thread. Logs and ignores failures, since
+     * delegation must not depend on it.
      */
     readonly attachDelegatedChild: (input: {
       readonly parentThreadId: ThreadId;
       readonly childThreadId: ThreadId;
-      readonly taskRole: OrchestratorMcpTaskRole | undefined;
     }) => Effect.Effect<void>;
   }
 >()("t3/factories/FactoryService") {}
@@ -282,20 +287,91 @@ const unavailable =
       ),
     );
 
-const builtinRole = (
-  role: FactoryRoleName,
-  path: FactoryRolePath | null,
+/** A role as its file lays over its defaults, and what is wrong with it. */
+function resolveRole(
+  { role, path: rolePath, file }: RoleFileEntry,
+  providers: ReadonlyArray<ServerProvider>,
   skills: ReadonlyArray<FactorySkill>,
-): FactoryRole => ({
-  role,
-  path,
-  source: "builtin",
-  fileBinding: {},
-  binding: builtinRoles[role].binding,
-  body: builtinRoles[role].body,
-  bodySource: "builtin",
-  skills,
-});
+): { readonly role: FactoryRole; readonly issues: ReadonlyArray<FactoryIssue> } {
+  const defaults = roleDefaults(role);
+  if (file === null) {
+    const resolved = resolveRoleSkills(role, defaults.binding.skills, skills);
+    return {
+      role: {
+        role,
+        path: rolePath,
+        source: "builtin",
+        fileBinding: {},
+        binding: defaults.binding,
+        enabled: true,
+        body: defaults.body,
+        bodySource: "builtin",
+        skills: resolved.skills,
+      },
+      issues:
+        rolePath === null
+          ? resolved.issues
+          : [
+              {
+                code: "missing_role_file",
+                role,
+                field: null,
+                message: `${rolePath} does not exist, so ${role} uses its defaults.`,
+              },
+              ...resolved.issues,
+            ],
+    };
+  }
+  const binding = effectiveBinding(defaults.binding, file.binding);
+  const resolved = resolveRoleSkills(role, binding.skills, skills);
+  const enabled = roleEnabled(role, file.binding);
+  return {
+    role: {
+      role,
+      path: rolePath,
+      source: "file",
+      fileBinding: file.binding,
+      binding,
+      enabled: enabled.enabled,
+      body: file.body ?? defaults.body,
+      bodySource: file.body === null ? "builtin" : "file",
+      skills: resolved.skills,
+    },
+    issues: [
+      ...file.issues,
+      ...(enabled.issue === null ? [] : [enabled.issue]),
+      ...bindingIssues(role, binding, providers),
+      ...resolved.issues,
+    ],
+  };
+}
+
+/** The roles a Foreman can delegate to: the enabled ones besides itself. */
+const delegateRoles = (factory: Factory) =>
+  factory.roles
+    .filter((role) => role.role !== FACTORY_FOREMAN_ROLE && role.enabled)
+    .map((role) => role.role);
+
+/** Why `role` cannot work an item of `factory` now, or null when it can. */
+function roleProblem(factory: Factory, role: string, verb: string): WorkItemError | null {
+  const usable = delegateRoles(factory);
+  const roles = `Roles you can ${verb}: ${usable.length === 0 ? "none" : usable.join(", ")}.`;
+  const found =
+    role === FACTORY_FOREMAN_ROLE ? undefined : factory.roles.find((r) => r.role === role);
+  if (found === undefined) {
+    return new WorkItemError({
+      code: "unknown_role",
+      message: `The ${factory.name} factory has no role ${role} to work an item. ${roles}`,
+    });
+  }
+  if (!found.enabled) {
+    return new WorkItemError({
+      code: "role_disabled",
+      message: `The ${role} role is disabled in the ${factory.name} factory. ${roles}`,
+    });
+  }
+  return null;
+}
 
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -316,18 +392,6 @@ const make = Effect.gen(function* () {
   const factoryDirectory = (project: ProjectRow, name: FactoryName) =>
     path.join(project.workspaceRoot, ...FACTORIES_DIRECTORY, name);
 
-  /** None when the file does not exist. */
-  const readText = (filePath: string) =>
-    fileSystem.readFileString(filePath).pipe(
-      Effect.asSome,
-      Effect.catchTags({
-        PlatformError: (error) =>
-          error.reason._tag === "NotFound"
-            ? Effect.succeed(Option.none<string>())
-            : Effect.fail(error),
-      }),
-    );
-
   const loadCatalog = Effect.gen(function* () {
     const projects = yield* projectStore.list();
     const providers = yield* providerRegistry.getProviders;
@@ -339,64 +403,17 @@ const make = Effect.gen(function* () {
     } satisfies Catalog;
   }).pipe(Effect.catch(unavailable("read")));
 
-  const loadRole = Effect.fn("FactoryService.loadRole")(function* (
-    directory: string,
-    role: FactoryRoleName,
-    rolePath: FactoryRolePath | undefined,
-    providers: ReadonlyArray<ServerProvider>,
-    skills: ReadonlyArray<FactorySkill>,
-  ) {
-    // A role left out of factory.json still has a file when roles/<role>.md exists.
-    const listed = rolePath !== undefined;
-    const filePath = rolePath ?? defaultRolePath(role);
-    const text = yield* readText(path.join(directory, filePath));
-    if (Option.isNone(text)) {
-      const builtin = resolveRoleSkills(role, builtinRoles[role].binding.skills, skills);
-      if (!listed) return { role: builtinRole(role, null, builtin.skills), issues: builtin.issues };
-      return {
-        role: builtinRole(role, filePath, builtin.skills),
-        issues: [
-          {
-            code: "missing_role_file",
-            role,
-            field: null,
-            message: `${filePath} does not exist, so ${role} uses its built-in default.`,
-          } satisfies FactoryIssue,
-          ...builtin.issues,
-        ],
-      };
-    }
-    const parsed = parseRoleFile(role, text.value);
-    const binding = effectiveBinding(builtinRoles[role].binding, parsed.binding);
-    const resolved = resolveRoleSkills(role, binding.skills, skills);
-    return {
-      role: {
-        role,
-        path: filePath,
-        source: "file",
-        fileBinding: parsed.binding,
-        binding,
-        body: parsed.body ?? builtinRoles[role].body,
-        bodySource: parsed.body === null ? "builtin" : "file",
-        skills: resolved.skills,
-      } satisfies FactoryRole,
-      issues: [...parsed.issues, ...bindingIssues(role, binding, providers), ...resolved.issues],
-    };
-  });
-
   const loadFactory = Effect.fn("FactoryService.loadFactory")(function* (
     project: ProjectRow,
     name: FactoryName,
     providers: ReadonlyArray<ServerProvider>,
   ) {
     const directory = factoryDirectory(project, name);
-    const text = yield* readText(path.join(directory, FACTORY_FILE_NAME));
-    if (Option.isNone(text)) return Option.none<LoadedFactory>();
-    const { definition, issues } = parseFactoryJson(name, text.value);
+    const files = yield* readFactoryFiles(fileSystem, path, directory, name);
+    if (Option.isNone(files)) return Option.none<LoadedFactory>();
+    const { definition, issues } = files.value;
     const skills = (yield* skillStore.resolve(directory)).map(toFactorySkill);
-    const roles = yield* Effect.forEach(ROLE_NAMES, (role) =>
-      loadRole(directory, role, definition.roles[role], providers, skills),
-    );
+    const roles = files.value.roles.map((entry) => resolveRole(entry, providers, skills));
     return Option.some<LoadedFactory>({
       id: makeFactoryId(project.projectId, name),
       project,
@@ -670,6 +687,7 @@ const make = Effect.gen(function* () {
       definition: view.factory.definition,
       projects: view.projects,
       roles: view.factory.roles,
+      rolePresets: ROLE_PRESETS,
       skills: view.factory.skills,
       issues: view.issues,
       scheduledTaskIds: view.scheduledTaskIds,
@@ -694,9 +712,25 @@ const make = Effect.gen(function* () {
       .resolve(directory)
       .pipe(Effect.catch(unavailable("read")));
 
-    const rolePaths: { [Role in FactoryRoleName]?: FactoryRolePath } = {
-      ...input.definition.roles,
-    };
+    for (const role of Object.keys(input.definition.roles)) {
+      const problem = roleNameProblem(role);
+      if (problem !== null) {
+        issues.push({ code: "invalid_definition", role: null, field: "roles", message: problem });
+      }
+    }
+    const listed = new Set<string>(factoryRoleNames(input.definition));
+    // A role the save removes keeps the path the file on disk gave it, so its file can go.
+    const previous = yield* readFactoryFiles(
+      fileSystem,
+      path,
+      directory,
+      input.definition.name,
+    ).pipe(Effect.catch(unavailable("read")));
+    const previousPaths = Option.match(previous, {
+      onNone: (): FactoryDefinition["roles"] => ({}),
+      onSome: (files) => files.definition.roles,
+    });
+    const rolePaths: Record<string, FactoryRolePath | null> = { ...input.definition.roles };
     const writes: Array<{ readonly rolePath: FactoryRolePath; readonly text: string }> = [];
     const removals: Array<FactoryRolePath> = [];
     const changed = new Set<FactoryRoleName>();
@@ -711,29 +745,47 @@ const make = Effect.gen(function* () {
         continue;
       }
       changed.add(role);
-      const rolePath = rolePaths[role] ?? defaultRolePath(role);
+      const isListed = listed.has(role);
       if (file === null) {
-        removals.push(rolePath);
-        delete rolePaths[role];
+        removals.push((isListed ? rolePaths[role] : previousPaths[role]) ?? defaultRolePath(role));
+        if (role === FACTORY_FOREMAN_ROLE) delete rolePaths[role];
+        else if (isListed) rolePaths[role] = null;
         continue;
       }
+      if (!isListed) {
+        issues.push({
+          code: "invalid_definition",
+          role,
+          field: "roles",
+          message: `${role} is not one of the factory's roles. List it in roles to add it.`,
+        });
+        continue;
+      }
+      if (role === FACTORY_FOREMAN_ROLE && file.binding.enabled === false) {
+        issues.push({
+          code: "invalid_binding",
+          role,
+          field: "enabled",
+          message: "The Foreman cannot be disabled.",
+        });
+        continue;
+      }
+      const rolePath = rolePaths[role] ?? defaultRolePath(role);
       rolePaths[role] = rolePath;
       writes.push({ rolePath, text: renderRoleFile(file.binding, file.body) });
-      const binding = effectiveBinding(builtinRoles[role].binding, file.binding);
+      const binding = effectiveBinding(roleDefaults(role).binding, file.binding);
       issues.push(
         ...bindingIssues(role, binding, catalog.providers),
         ...resolveRoleSkills(role, binding.skills, savedSkills).issues,
       );
     }
-    const touched = [...writes.map((write) => write.rolePath), ...removals];
-    for (const shared of new Set(
-      touched.filter((rolePath, i) => touched.indexOf(rolePath) !== i),
-    )) {
+    const used = [...Object.values(rolePaths).filter((rolePath) => rolePath !== null), ...removals];
+    for (const shared of new Set(used.filter((rolePath, i) => used.indexOf(rolePath) !== i))) {
       issues.push({
         code: "invalid_definition",
         role: null,
         field: "roles",
-        message: `Two roles in this save use ${shared}; give each its own file.`,
+        message: `Two roles use ${shared}; give each its own file.`,
       });
     }
     if (issues.length > 0) {
@@ -762,7 +814,7 @@ const make = Effect.gen(function* () {
       // Last, so a failed role write leaves the factory pointing at the files it had.
       yield* fileSystem.writeFileString(
         path.join(directory, FACTORY_FILE_NAME),
-        renderFactoryJson({ ...input.definition, roles: rolePaths }),
+        renderFactoryJson({ ...input.definition, version: 2, roles: rolePaths }),
       );
     }).pipe(Effect.catch(unavailable("written")));
 
@@ -822,8 +874,8 @@ const make = Effect.gen(function* () {
   /** Model, modes, and checkout for a new Foreman thread, from the foreman role's binding. */
   const foremanLaunch = Effect.fn("FactoryService.foremanLaunch")(function* (factory: Factory) {
     const binding =
-      factory.roles.find((role) => role.role === "foreman")?.binding ??
-      builtinRoles.foreman.binding;
+      factory.roles.find((role) => role.role === FACTORY_FOREMAN_ROLE)?.binding ??
+      rolePresets.foreman.binding;
     const project = yield* projectStore
       .get(factory.projectId)
       .pipe(Effect.catch(unavailable("read")));
@@ -1159,6 +1211,22 @@ const make = Effect.gen(function* () {
     Effect.withSpan("FactoryService.dispatchPending"),
   );
 
+  /** Fails when `stage` names a role the item's factory cannot use now; other stages pass. */
+  const requireRoleStage = Effect.fn("FactoryService.requireRoleStage")(function* (
+    item: WorkItemSummary,
+    stage: string,
+    verb: string,
+  ) {
+    if (stage !== FACTORY_FOREMAN_ROLE && !isWorkItemRoleStage(stage)) return;
+    const factory = yield* read(item.factoryId).pipe(
+      Effect.mapError(
+        (error) => new WorkItemError({ code: "unavailable", message: error.message }),
+      ),
+    );
+    const problem = roleProblem(factory, stage, verb);
+    if (problem !== null) return yield* problem;
+  });
+
   const advanceWorkItem = Effect.fn("FactoryService.advanceWorkItem")(function* (
     callerThreadId: ThreadId,
     input: WorkItemAdvanceInput,
@@ -1171,6 +1239,7 @@ const make = Effect.gen(function* () {
             message: `Work item ${item.id} waits on a person's answer to its gate, which moves it on.`,
           });
         }
+        if (input.stage !== item.stage) yield* requireRoleStage(item, input.stage, "advance to");
         // The same stage only names threads.
         if (
           input.stage !== item.stage &&
@@ -1200,6 +1269,7 @@ const make = Effect.gen(function* () {
   ) {
     yield* withForemanItem(callerThreadId, input.workItemId, (item) =>
       Effect.gen(function* () {
+        yield* requireRoleStage(item, input.resumeStage, "resume to");
         if (!canTransitionWorkItem(item.stage, "waiting", item.gate)) {
           return yield* new WorkItemTransitionError({
             workItemId: item.id,
@@ -1373,7 +1443,7 @@ const make = Effect.gen(function* () {
     `;
     if (item === undefined || !isWorkItemStage(item.stage) || isTerminalWorkItemStage(item.stage))
       return null;
-    return WorkItemId.make(item.workItemId);
+    return { id: WorkItemId.make(item.workItemId), stage: item.stage };
   });
 
   /** A note on the item's log that changes no stage: a transition row from its stage to itself. */
@@ -1452,7 +1522,7 @@ const make = Effect.gen(function* () {
             gate: {
               state: "waiting",
               question: missing,
-              resumeStage: item.stage === "review" ? "review" : "implement",
+              resumeStage: item.stage,
               askedAt: yield* nowIso,
             },
           });
@@ -1474,34 +1544,40 @@ const make = Effect.gen(function* () {
       WHERE thread_id = ${input.parentThreadId} AND role = 'foreman'
     `.pipe(NodeSqliteClient.readOnly, Effect.catch(ledgerUnavailable));
     if (owner === undefined) return input.delegation;
+    const item = yield* foremanRunItem(input.parentThreadId).pipe(Effect.catch(ledgerUnavailable));
+    if (item === null) return input.delegation;
     const factory = yield* read(FactoryId.make(owner.factoryId));
-    const workItemId = yield* foremanRunItem(input.parentThreadId).pipe(
-      Effect.catch(ledgerUnavailable),
-    );
-    if (workItemId !== null) yield* requireCommitIdentity(factory, workItemId);
-    const role = workItemRoleForTask(input.delegation.role);
-    if (role === null) return input.delegation;
-    const binding =
-      factory.roles.find((candidate) => candidate.role === role)?.binding ??
-      builtinRoles[role].binding;
-    const bound = bindDelegation(role, input.delegation, binding);
-    if (workItemId !== null) yield* logWorkItem(workItemId, bound.note);
+    if (item.stage === "waiting") {
+      return yield* new WorkItemError({
+        code: "gate_waiting",
+        message: `Work item ${item.id} waits on a person's answer to its gate, so nothing can be delegated for it. End your turn; their answer arrives as your next message.`,
+      });
+    }
+    if (!isWorkItemRoleStage(item.stage)) {
+      const usable = delegateRoles(factory);
+      return yield* new WorkItemError({
+        code: "no_role",
+        message: `Work item ${item.id} is at ${item.stage}, which is no role's stage, so this task has no role. Advance the item with t3_work_item_advance to the role you delegate to, then delegate. Roles you can delegate to: ${usable.length === 0 ? "none" : usable.join(", ")}.`,
+      });
+    }
+    const problem = roleProblem(factory, item.stage, "delegate to");
+    if (problem !== null) return yield* problem;
+    const role = factory.roles.find((candidate) => candidate.role === item.stage)!;
+    yield* requireCommitIdentity(factory, item.id);
+    const bound = bindDelegation(role.role, input.delegation, role.binding);
+    yield* logWorkItem(item.id, bound.note);
     return bound.delegation;
   });
 
   const attachDelegatedChild = Effect.fn("FactoryService.attachDelegatedChild")(
-    function* (input: {
-      readonly parentThreadId: ThreadId;
-      readonly childThreadId: ThreadId;
-      readonly taskRole: OrchestratorMcpTaskRole | undefined;
-    }) {
-      const workItemId = yield* foremanRunItem(input.parentThreadId);
-      if (workItemId === null) return;
+    function* (input: { readonly parentThreadId: ThreadId; readonly childThreadId: ThreadId }) {
+      const item = yield* foremanRunItem(input.parentThreadId);
+      if (item === null) return;
       yield* sql`
         INSERT INTO fork_factory_work_item_threads (work_item_id, thread_id, role, created_at)
         VALUES (
-          ${workItemId}, ${input.childThreadId}, ${workItemRoleForTask(input.taskRole)},
-          ${yield* nowIso}
+          ${item.id}, ${input.childThreadId},
+          ${isWorkItemRoleStage(item.stage) ? item.stage : null}, ${yield* nowIso}
         )
         ON CONFLICT (work_item_id, thread_id) DO NOTHING
       `;

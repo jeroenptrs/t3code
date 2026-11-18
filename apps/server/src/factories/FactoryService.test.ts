@@ -45,7 +45,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { parseSkillFile } from "./factoryFiles.ts";
 import * as FactoryService from "./FactoryService.ts";
 import * as FactorySkillStore from "./FactorySkillStore.ts";
-import { builtinRoles } from "./roles/index.ts";
+import { rolePresets } from "./roles/index.ts";
 import { builtinSkills } from "./skills/index.ts";
 
 const codex = ProviderInstanceId.make("codex");
@@ -242,7 +242,8 @@ describe("FactoryService", () => {
         path: "roles/foreman.md",
         source: "file",
         fileBinding: {},
-        binding: builtinRoles.foreman.binding,
+        binding: rolePresets.foreman.binding,
+        enabled: true,
         body: "Route everything to implement.",
         bodySource: "file",
         skills: [],
@@ -253,7 +254,8 @@ describe("FactoryService", () => {
         path: "roles/implement.md",
         source: "file",
         fileBinding: { isolation: "shared", skills },
-        binding: { ...builtinRoles.implement.binding, isolation: "shared", skills },
+        binding: { ...rolePresets.implement.binding, isolation: "shared", skills },
+        enabled: true,
         body: "Fix the bug.",
         bodySource: "file",
         skills: [
@@ -262,7 +264,7 @@ describe("FactoryService", () => {
         ],
       });
       assert.strictEqual(review?.binding.runtimeMode, "approval-required");
-      assert.strictEqual(review?.body, builtinRoles.review.body);
+      assert.strictEqual(review?.body, rolePresets.review.body);
       assert.strictEqual(review?.bodySource, "builtin");
       const factoryReview = {
         name: "review",
@@ -346,14 +348,23 @@ describe("FactoryService", () => {
         },
         body: "Fix the bug the task names.",
       };
-      const definition = { name: "triage", projects: ["backend"], triggers: [], roles: {} };
+      const definition = {
+        version: 2 as const,
+        name: "triage",
+        projects: ["backend"],
+        triggers: [],
+        roles: { implement: null, review: null },
+      };
 
       const saved = yield* save({
         projectId: backend.projectId,
         definition,
         roles: [{ role: "implement", file: implement }],
       });
-      assert.deepStrictEqual(saved.definition.roles, { implement: "roles/implement.md" });
+      assert.deepStrictEqual(saved.definition.roles, {
+        implement: "roles/implement.md",
+        review: null,
+      });
       assert.deepStrictEqual(saved.roles[1]?.fileBinding, implement.binding);
       assert.strictEqual(saved.roles[1]?.body, implement.body);
       assert.deepStrictEqual(saved.roles[1]?.skills, [
@@ -373,9 +384,26 @@ describe("FactoryService", () => {
         definition: saved.definition,
         roles: [{ role: "implement", file: null }],
       });
-      assert.deepStrictEqual(reset.definition.roles, {});
+      assert.deepStrictEqual(reset.definition.roles, { implement: null, review: null });
       assert.strictEqual(reset.roles[1]?.source, "builtin");
       assert.deepStrictEqual(reset.roles[1]?.skills, [builtinSkill("implement")]);
+      assert.isFalse(yield* fileSystem.exists(roleFile));
+
+      // A role left out of the definition leaves the factory, and a null change takes its file.
+      yield* save({
+        projectId: backend.projectId,
+        definition,
+        roles: [{ role: "implement", file: implement }],
+      });
+      const removed = yield* save({
+        projectId: backend.projectId,
+        definition: { ...definition, roles: { review: null } },
+        roles: [{ role: "implement", file: null }],
+      });
+      assert.deepStrictEqual(
+        removed.roles.map((role) => role.role),
+        ["foreman", "review"],
+      );
       assert.isFalse(yield* fileSystem.exists(roleFile));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -392,7 +420,13 @@ describe("FactoryService", () => {
       const error = yield* FactoryService.FactoryService.use((factories) =>
         factories.save({
           projectId: backend.projectId,
-          definition: { name: "triage", projects: [], triggers: [], roles: {} },
+          definition: {
+            version: 2,
+            name: "triage",
+            projects: [],
+            triggers: [],
+            roles: { review: null },
+          },
           roles: [
             {
               role: "review",
@@ -413,6 +447,151 @@ describe("FactoryService", () => {
         [
           ["unknown_model", "review", false],
           ["unknown_skill", "review", true],
+        ],
+      );
+      assert.isFalse(yield* fileSystem.exists(`${root}/.t3/factories/triage`));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "reads a factory.json without a version with its implied roles, and saves version 2",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* checkout({
+          ".t3/factories/triage/factory.json": factoryJson({
+            name: "triage",
+            roles: { review: "prompts/review.md" },
+          }),
+          ".t3/factories/triage/roles/implement.md": "---\nisolation: shared\n---\n",
+          ".t3/factories/triage/prompts/review.md": "Review hard.\n",
+        });
+        const backend = project("project-backend", "backend", root);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const { factory, saved } = yield* Effect.gen(function* () {
+          const factories = yield* FactoryService.FactoryService;
+          const factory = yield* factories.read(makeFactoryId(backend.projectId, "triage"));
+          yield* factories.save({ projectId: backend.projectId, definition: factory.definition });
+          return { factory, saved: yield* factories.read(factory.id) };
+        }).pipe(Effect.provide(layerFor({ projects: [backend] })));
+
+        const roles = { review: "prompts/review.md", implement: "roles/implement.md" };
+        assert.deepStrictEqual(factory.definition, {
+          version: 2,
+          name: "triage",
+          projects: [],
+          triggers: [],
+          roles,
+        });
+        assert.deepStrictEqual(
+          factory.roles.map((role) => [role.role, role.path, role.source, role.enabled]),
+          [
+            ["foreman", null, "builtin", true],
+            ["review", "prompts/review.md", "file", true],
+            ["implement", "roles/implement.md", "file", true],
+          ],
+        );
+        assert.deepStrictEqual(factory.issues, []);
+        assert.deepStrictEqual(
+          JSON.parse(yield* fileSystem.readFileString(`${root}/.t3/factories/triage/factory.json`)),
+          { version: 2, name: "triage", projects: [], triggers: [], roles },
+        );
+        assert.deepStrictEqual(saved.roles, factory.roles);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("gives a preset-named role its preset and any other role plain defaults", () =>
+    Effect.gen(function* () {
+      const root = yield* checkout({
+        ".t3/factories/triage/factory.json": factoryJson({
+          version: 2,
+          name: "triage",
+          roles: {
+            analysis: null,
+            docs: null,
+            sorting: "roles/sorting.md",
+            foreman: "roles/foreman.md",
+          },
+        }),
+        ".t3/factories/triage/roles/sorting.md":
+          "---\nenabled: false\nskills: [implement]\n---\n\nSort the bugs.\n",
+        ".t3/factories/triage/roles/foreman.md": "---\nenabled: false\n---\n",
+      });
+      const backend = project("project-backend", "backend", root);
+      const factory = yield* FactoryService.FactoryService.use((factories) =>
+        factories.read(makeFactoryId(backend.projectId, "triage")),
+      ).pipe(Effect.provide(layerFor({ projects: [backend] })));
+
+      const [foreman, analysis, docs, sorting] = factory.roles;
+      assert.deepStrictEqual(
+        factory.roles.map((role) => role.role),
+        ["foreman", "analysis", "docs", "sorting"],
+      );
+      assert.isTrue(foreman?.enabled);
+      assert.deepStrictEqual(
+        [analysis?.binding, analysis?.body, analysis?.enabled],
+        [rolePresets.analysis.binding, rolePresets.analysis.body, true],
+      );
+      const plain = {
+        model: null,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        isolation: "worktree",
+        skills: [],
+        tools: [],
+      } as const;
+      assert.deepStrictEqual([docs?.binding, docs?.body, docs?.skills], [plain, "", []]);
+      assert.deepStrictEqual(sorting?.fileBinding, { enabled: false, skills: ["implement"] });
+      assert.deepStrictEqual(sorting?.binding, { ...plain, skills: ["implement"] });
+      assert.deepStrictEqual(
+        [sorting?.enabled, sorting?.body, sorting?.skills],
+        [false, "Sort the bugs.", [builtinSkill("implement")]],
+      );
+      assert.deepStrictEqual(
+        factory.rolePresets.map((preset) => preset.name),
+        ["foreman", "implement", "review", "analysis"],
+      );
+      assert.deepStrictEqual(
+        factory.issues.map((issue) => [issue.code, issue.role, issue.field]),
+        [["invalid_binding", "foreman", "enabled"]],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses reserved names, a disabled Foreman, an unlisted role, and shared files", () =>
+    Effect.gen(function* () {
+      const root = yield* checkout({});
+      const backend = project("project-backend", "backend", root);
+      const fileSystem = yield* FileSystem.FileSystem;
+      const error = yield* FactoryService.FactoryService.use((factories) =>
+        factories.save({
+          projectId: backend.projectId,
+          definition: {
+            version: 2,
+            name: "triage",
+            projects: [],
+            triggers: [],
+            roles: {
+              waiting: null,
+              "Bad Name": null,
+              docs: "roles/shared.md",
+              notes: "roles/shared.md",
+            },
+          },
+          roles: [
+            { role: "foreman", file: { binding: { enabled: false }, body: null } },
+            { role: "ghost", file: { binding: {}, body: "Haunt." } },
+          ],
+        }),
+      ).pipe(Effect.provide(layerFor({ projects: [backend] })), Effect.flip);
+      assert.strictEqual(error.code, "invalid");
+      assert.deepStrictEqual(
+        error.issues?.map((issue) => [issue.code, issue.role, issue.field]),
+        [
+          ["invalid_definition", null, "roles"],
+          ["invalid_definition", null, "roles"],
+          ["invalid_binding", "foreman", "enabled"],
+          ["invalid_definition", "ghost", "roles"],
+          ["invalid_definition", null, "roles"],
         ],
       );
       assert.isFalse(yield* fileSystem.exists(`${root}/.t3/factories/triage`));
@@ -928,10 +1107,10 @@ describe("FactoryService work items", () => {
           assert.include(launch!.input.initialMessage?.text, item.id);
 
           const implementer = ThreadId.make("thread-implementer");
+          yield* factories.advanceWorkItem(foreman, { workItemId: item.id, stage: "implement" });
           yield* factories.attachDelegatedChild({
             parentThreadId: foreman,
             childThreadId: implementer,
-            taskRole: "implementation",
           });
           assert.deepStrictEqual((yield* factories.readWorkItem(item.id)).threads, [
             { threadId: implementer, role: "implement" },
@@ -1156,63 +1335,89 @@ describe("FactoryService work items", () => {
   );
 
   it.effect("lets only the item's Foreman advance it, along the transition table", () =>
-    withWorkItems(({ factoryId }) =>
-      Effect.gen(function* () {
-        const factories = yield* FactoryService.FactoryService;
-        const item = yield* factories.createWorkItem({ factoryId, title: "Fix", text: "Fix it." });
-        const foreman = item.foremanThreadId!;
-        const child = ThreadId.make("thread-implementer");
+    withWorkItems(
+      ({ factoryId }) =>
+        Effect.gen(function* () {
+          const factories = yield* FactoryService.FactoryService;
+          const item = yield* factories.createWorkItem({
+            factoryId,
+            title: "Fix",
+            text: "Fix it.",
+          });
+          const foreman = item.foremanThreadId!;
+          const child = ThreadId.make("thread-implementer");
 
-        const denied = yield* factories
-          .advanceWorkItem(otherThread, { workItemId: item.id, stage: "implement" })
-          .pipe(Effect.flip);
-        assert.strictEqual(denied._tag === "WorkItemError" && denied.code, "not_foreman");
+          const denied = yield* factories
+            .advanceWorkItem(otherThread, { workItemId: item.id, stage: "implement" })
+            .pipe(Effect.flip);
+          assert.strictEqual(denied._tag === "WorkItemError" && denied.code, "not_foreman");
+          const refused = yield* factories
+            .advanceWorkItem(foreman, { workItemId: item.id, stage: "done" })
+            .pipe(Effect.flip);
+          assert.deepStrictEqual(
+            refused._tag === "WorkItemTransitionError" && [refused.from, refused.to],
+            ["new", "done"],
+          );
+          // A role stage names a role the factory has and has enabled, which the Foreman is not.
+          for (const [stage, code] of [
+            ["triage", "unknown_role"],
+            ["foreman", "unknown_role"],
+            ["review", "role_disabled"],
+          ] as const) {
+            const error = yield* factories
+              .advanceWorkItem(foreman, { workItemId: item.id, stage })
+              .pipe(Effect.flip);
+            assert.strictEqual(error._tag === "WorkItemError" && error.code, code);
+            assert.include(error.message, "Roles you can advance to: implement.");
+          }
 
-        yield* factories.advanceWorkItem(foreman, {
-          workItemId: item.id,
-          stage: "implement",
-          note: "Delegated the fix.",
-          threads: [{ threadId: child, role: "implement" }],
-        });
-        const refused = yield* factories
-          .advanceWorkItem(foreman, { workItemId: item.id, stage: "done" })
-          .pipe(Effect.flip);
-        assert.deepStrictEqual(
-          refused._tag === "WorkItemTransitionError" && [refused.from, refused.to],
-          ["implement", "done"],
-        );
-        // The same stage only names another thread.
-        const reviewer = ThreadId.make("thread-reviewer");
-        const named = yield* factories.advanceWorkItem(foreman, {
-          workItemId: item.id,
-          stage: "implement",
-          threads: [{ threadId: reviewer, role: null }],
-        });
+          yield* factories.advanceWorkItem(foreman, {
+            workItemId: item.id,
+            stage: "implement",
+            note: "Delegated the fix.",
+            threads: [{ threadId: child, role: "implement" }],
+          });
+          // The same stage only names another thread.
+          const reviewer = ThreadId.make("thread-reviewer");
+          const named = yield* factories.advanceWorkItem(foreman, {
+            workItemId: item.id,
+            stage: "implement",
+            threads: [{ threadId: reviewer, role: null }],
+          });
 
-        assert.strictEqual(named.stage, "implement");
-        assert.deepStrictEqual(named.threads, [
-          { threadId: child, role: "implement" },
-          { threadId: reviewer, role: null },
-        ]);
-        assert.deepStrictEqual(
-          named.transitions.map(({ from, to, actor, note }) => ({ from, to, actor, note })),
-          [
-            {
-              from: "new",
-              to: "implement",
-              actor: { kind: "foreman", threadId: foreman },
-              note: "Delegated the fix.",
-            },
-          ],
-        );
-        const listed = yield* factories.listWorkItems({ factoryId, role: "implement" });
-        assert.deepStrictEqual(
-          listed.workItems.map((workItem) => workItem.id),
-          [item.id],
-        );
-        const done = yield* factories.listWorkItems({ factoryId, outcome: "done" });
-        assert.deepStrictEqual(done.workItems, []);
-      }),
+          assert.strictEqual(named.stage, "implement");
+          assert.deepStrictEqual(named.threads, [
+            { threadId: child, role: "implement" },
+            { threadId: reviewer, role: null },
+          ]);
+          assert.deepStrictEqual(
+            named.transitions.map(({ from, to, actor, note }) => ({ from, to, actor, note })),
+            [
+              {
+                from: "new",
+                to: "implement",
+                actor: { kind: "foreman", threadId: foreman },
+                note: "Delegated the fix.",
+              },
+            ],
+          );
+          const listed = yield* factories.listWorkItems({ factoryId, role: "implement" });
+          assert.deepStrictEqual(
+            listed.workItems.map((workItem) => workItem.id),
+            [item.id],
+          );
+          const done = yield* factories.listWorkItems({ factoryId, outcome: "done" });
+          assert.deepStrictEqual(done.workItems, []);
+          const gated = yield* factories
+            .gateWorkItem(foreman, {
+              workItemId: item.id,
+              question: "Review?",
+              resumeStage: "review",
+            })
+            .pipe(Effect.flip);
+          assert.strictEqual(gated._tag === "WorkItemError" && gated.code, "role_disabled");
+        }),
+      { files: { "roles/review.md": "---\nenabled: false\n---\n" } },
     ),
   );
 
@@ -1292,20 +1497,26 @@ describe("FactoryService work items", () => {
         const second = yield* factories.createWorkItem({ factoryId, title: "Two", text: "Two." });
         const implementer = ThreadId.make("thread-implementer");
         const reviewer = ThreadId.make("thread-reviewer");
+        // The child's role is its item's stage.
+        yield* factories.advanceWorkItem(first.foremanThreadId!, {
+          workItemId: first.id,
+          stage: "implement",
+        });
+        yield* factories.advanceWorkItem(second.foremanThreadId!, {
+          workItemId: second.id,
+          stage: "review",
+        });
         yield* factories.attachDelegatedChild({
           parentThreadId: first.foremanThreadId!,
           childThreadId: implementer,
-          taskRole: "implementation",
         });
         yield* factories.attachDelegatedChild({
           parentThreadId: second.foremanThreadId!,
           childThreadId: reviewer,
-          taskRole: "review",
         });
         yield* factories.attachDelegatedChild({
           parentThreadId: otherThread,
           childThreadId: ThreadId.make("thread-unrelated"),
-          taskRole: "implementation",
         });
         // Once its item ends, the Foreman thread's children belong to no item.
         yield* factories.advanceWorkItem(first.foremanThreadId!, {
@@ -1315,7 +1526,6 @@ describe("FactoryService work items", () => {
         yield* factories.attachDelegatedChild({
           parentThreadId: first.foremanThreadId!,
           childThreadId: ThreadId.make("thread-late"),
-          taskRole: "review",
         });
 
         assert.deepStrictEqual((yield* factories.readWorkItem(first.id)).threads, [
@@ -1327,78 +1537,112 @@ describe("FactoryService work items", () => {
       }),
     ),
   );
-  it.effect("gives a Foreman's delegated child its role's binding over the call's arguments", () =>
-    withWorkItems(
-      ({ factoryId }) =>
-        Effect.gen(function* () {
-          const factories = yield* FactoryService.FactoryService;
-          const item = yield* factories.createWorkItem({
-            factoryId,
-            title: "Fix",
-            text: "Fix it.",
-          });
-          const foreman = item.foremanThreadId!;
-          const prepare = (
-            parentThreadId: ThreadId,
-            delegation: FactoryService.FactoryDelegation,
-          ) => factories.prepareDelegation({ parentThreadId, delegation });
+  it.effect(
+    "binds a Foreman's delegation to the role its item is at, over the call's arguments",
+    () =>
+      withWorkItems(
+        ({ factoryId }) =>
+          Effect.gen(function* () {
+            const factories = yield* FactoryService.FactoryService;
+            const item = yield* factories.createWorkItem({
+              factoryId,
+              title: "Fix",
+              text: "Fix it.",
+            });
+            const foreman = item.foremanThreadId!;
+            const prepare = (
+              parentThreadId: ThreadId,
+              delegation: FactoryService.FactoryDelegation,
+            ) => factories.prepareDelegation({ parentThreadId, delegation });
+            const advance = (stage: string) =>
+              factories.advanceWorkItem(foreman, { workItemId: item.id, stage });
 
-          // The trial: the Foreman passes no isolation, and the implement role binds a worktree.
-          const implement = yield* prepare(foreman, { task: "Fix it.", role: "implementation" });
-          assert.deepStrictEqual(implement, {
-            task: "Fix it.",
-            role: "implementation",
-            isolation: "worktree",
-            runtimeMode: "full-access",
-            interactionMode: "default",
-          });
+            // At new no role is chosen yet, so the Foreman must advance first.
+            const early = yield* prepare(foreman, { task: "Fix it.", role: "implementation" }).pipe(
+              Effect.flip,
+            );
+            assert.strictEqual(early._tag === "WorkItemError" && early.code, "no_role");
+            assert.include(early.message, "t3_work_item_advance");
+            assert.include(early.message, "Roles you can delegate to: implement, review.");
 
-          const review = yield* prepare(foreman, {
-            task: "Review it.",
-            role: "review",
-            isolation: "worktree",
-            runtimeMode: "approval-required",
-            target: { providerInstanceId: ProviderInstanceId.make("claude"), model: "haiku" },
-          });
-          assert.deepStrictEqual(review, {
-            task: "Review it.",
-            role: "review",
-            isolation: "shared",
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            target: { providerInstanceId: codex, model: "gpt-6", options: [] },
-          });
+            // The trial: the Foreman passes no isolation, and the implement role binds a worktree.
+            // The task's own role does not choose the binding; the stage does.
+            yield* advance("implement");
+            const implement = yield* prepare(foreman, { task: "Fix it.", role: "review" });
+            assert.deepStrictEqual(implement, {
+              task: "Fix it.",
+              role: "review",
+              isolation: "worktree",
+              runtimeMode: "full-access",
+              interactionMode: "default",
+            });
 
-          // A role with no binding, and a thread no factory owns, keep the call as it is.
-          const research = { task: "Look around.", role: "research", isolation: "shared" } as const;
-          assert.deepStrictEqual(yield* prepare(foreman, research), research);
-          const unowned = { task: "Fix it.", role: "implementation" } as const;
-          assert.deepStrictEqual(yield* prepare(otherThread, unowned), unowned);
+            yield* advance("review");
+            const review = yield* prepare(foreman, {
+              task: "Review it.",
+              role: "review",
+              isolation: "worktree",
+              runtimeMode: "approval-required",
+              target: { providerInstanceId: ProviderInstanceId.make("claude"), model: "haiku" },
+            });
+            assert.deepStrictEqual(review, {
+              task: "Review it.",
+              role: "review",
+              isolation: "shared",
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              target: { providerInstanceId: codex, model: "gpt-6", options: [] },
+            });
 
-          const logged = (yield* factories.readWorkItem(item.id)).transitions;
-          assert.deepStrictEqual(
-            logged.map(({ from, to, actor }) => ({ from, to, actor })),
-            [
-              { from: "new", to: "new", actor: { kind: "server" } },
-              { from: "new", to: "new", actor: { kind: "server" } },
-            ],
-          );
-          assert.strictEqual(
-            logged[0]!.note,
-            "Applied the implement role's binding to a delegated task: isolation worktree, runtime mode full-access, interaction mode default.",
-          );
-          assert.strictEqual(
-            logged[1]!.note,
-            "Applied the review role's binding to a delegated task: isolation shared, runtime mode full-access, interaction mode default, model codex/gpt-6. It replaced the call's isolation worktree, runtime mode approval-required, model claude/haiku.",
-          );
-        }),
-      {
-        files: {
-          "roles/review.md":
-            "---\nisolation: shared\nmodel:\n  instanceId: codex\n  model: gpt-6\n---\n",
+            // A role disabled after the advance takes no more children.
+            const factory = yield* factories.read(factoryId);
+            yield* factories.save({
+              projectId: factory.projectId,
+              definition: factory.definition,
+              roles: [
+                {
+                  role: "review",
+                  file: {
+                    binding: { ...factory.roles[2]!.fileBinding, enabled: false },
+                    body: null,
+                  },
+                },
+              ],
+            });
+            const disabled = yield* prepare(foreman, { task: "Review it." }).pipe(Effect.flip);
+            assert.strictEqual(disabled._tag === "WorkItemError" && disabled.code, "role_disabled");
+            assert.include(disabled.message, "Roles you can delegate to: implement.");
+
+            // A thread no factory owns keeps the call as it is.
+            const unowned = { task: "Fix it.", role: "implementation" } as const;
+            assert.deepStrictEqual(yield* prepare(otherThread, unowned), unowned);
+
+            const logged = (yield* factories.readWorkItem(item.id)).transitions.filter(
+              ({ actor }) => actor.kind === "server",
+            );
+            assert.deepStrictEqual(
+              logged.map(({ from, to }) => ({ from, to })),
+              [
+                { from: "implement", to: "implement" },
+                { from: "review", to: "review" },
+              ],
+            );
+            assert.strictEqual(
+              logged[0]!.note,
+              "Applied the implement role's binding to a delegated task: isolation worktree, runtime mode full-access, interaction mode default.",
+            );
+            assert.strictEqual(
+              logged[1]!.note,
+              "Applied the review role's binding to a delegated task: isolation shared, runtime mode full-access, interaction mode default, model codex/gpt-6. It replaced the call's isolation worktree, runtime mode approval-required, model claude/haiku.",
+            );
+          }),
+        {
+          files: {
+            "roles/review.md":
+              "---\nisolation: shared\nmodel:\n  instanceId: codex\n  model: gpt-6\n---\n",
+          },
         },
-      },
-    ),
+      ),
   );
   it.effect("holds an item at a gate when its checkout has no Git identity, until it has one", () =>
     withWorkItems(({ factoryId, recorded }) =>
@@ -1406,6 +1650,10 @@ describe("FactoryService work items", () => {
         const factories = yield* FactoryService.FactoryService;
         yield* Ref.set(recorded.gitIdentity, false);
         const item = yield* factories.createWorkItem({ factoryId, title: "Fix", text: "Fix it." });
+        yield* factories.advanceWorkItem(item.foremanThreadId!, {
+          workItemId: item.id,
+          stage: "implement",
+        });
         const delegate = factories.prepareDelegation({
           parentThreadId: item.foremanThreadId!,
           delegation: { task: "Fix it.", role: "implementation" },
@@ -1417,7 +1665,14 @@ describe("FactoryService work items", () => {
         assert.strictEqual(gated.stage, "waiting");
         assert.deepStrictEqual(
           gated.transitions.map(({ from, to, actor }) => ({ from, to, actor })),
-          [{ from: "new", to: "waiting", actor: { kind: "server" } }],
+          [
+            {
+              from: "new",
+              to: "implement",
+              actor: { kind: "foreman", threadId: item.foremanThreadId! },
+            },
+            { from: "implement", to: "waiting", actor: { kind: "server" } },
+          ],
         );
         const question = gated.gate.state === "waiting" ? gated.gate.question : "";
         assert.include(question, "user.email");
