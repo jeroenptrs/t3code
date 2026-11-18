@@ -2,8 +2,10 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import type { EnvironmentId, FactoryId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
+import { msg } from "gt-react";
 import { useId, useState } from "react";
 
+import { m } from "../../i18n/messages";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { factoriesEnvironment } from "../../state/factories";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -95,15 +97,7 @@ function NewWorkItemDialog(props: {
       return;
     }
     props.onClose();
-    toastManager.add(
-      result.value.stage === "queued"
-        ? {
-            type: "success",
-            title: "Work item queued",
-            description: "It goes to the Foreman when the active item ends.",
-          }
-        : { type: "success", title: "Work item sent to the Foreman" },
-    );
+    toastManager.add({ type: "success", title: m(msg("Work item sent to the Foreman")) });
   };
 
   return (
