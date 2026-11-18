@@ -4,7 +4,6 @@ import {
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpInteractionMode,
   type OrchestratorMcpRuntimeMode,
-  OrchestratorMcpTaskRole,
   type ProviderInteractionMode,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
@@ -12,7 +11,6 @@ import {
 } from "@t3tools/contracts";
 import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 
 /** How much a runtime mode allows, narrowest first. */
 export function runtimeModeRank(mode: RuntimeMode): number {
@@ -155,12 +153,4 @@ export function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
   return input.role === undefined || input.role === "general"
     ? input.task
     : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
-}
-
-const isTaskRole = Schema.is(OrchestratorMcpTaskRole);
-
-/** The role `taskPrompt` wrote into a stored task prompt; undefined for none or `general`. */
-export function taskRoleOfPrompt(prompt: string): OrchestratorMcpTaskRole | undefined {
-  const role = /^Act as the (\w+) sub-agent for this task\.\n\n/.exec(prompt)?.[1];
-  return isTaskRole(role) ? role : undefined;
 }

@@ -70,7 +70,7 @@ import { scrubFeedback } from "../../apps/server/src/feedback/scrubFeedback.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { FactoriesToolkit } from "../../apps/server/src/mcp/toolkits/factories/tools.ts";
 import { builtinSkillEntries } from "../../apps/server/src/factories/factoryFiles.ts";
-import { builtinRoles } from "../../apps/server/src/factories/roles/index.ts";
+import { roleDefaults } from "../../apps/server/src/factories/roles/index.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
 import { IssuesToolkit } from "../../apps/server/src/mcp/toolkits/issues/tools.ts";
 import { MessageToolkit } from "../../apps/server/src/mcp/toolkits/message/tools.ts";
@@ -366,7 +366,7 @@ export const McpToolUseCase = Schema.Struct({
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     /**
-     * The thread runs as this built-in factory role: T3's text gets the role's `<factory_role>`
+     * The thread runs as this factory role: T3's text gets the role's `<factory_role>`
      * block, built from source with its bound built-in skills, and the shell simulator knows that
      * each skill's SKILL.md is in `.agents/skills/<name>/` under the working directory.
      */
@@ -647,16 +647,20 @@ const claudeQueryOptions = (
   return makeClaudeQueryOptions(input);
 };
 
-/** The instructions T3 gives a thread of the built-in `role`, with its built-in skills. */
+/**
+ * The instructions T3 gives a thread of `role` with its preset's body and built-in skills. A
+ * Foreman is told it can delegate to implement and review, as in a new factory.
+ */
 const factoryRoleInstructions = (role: FactoryRoleName) => ({
   factoryId: "factory:project-app:acme",
   role,
-  body: builtinRoles[role].body,
-  skills: builtinRoles[role].binding.skills.flatMap((name) =>
+  body: roleDefaults(role).body,
+  skills: roleDefaults(role).binding.skills.flatMap((name) =>
     builtinSkillEntries.flatMap((skill) =>
       skill.name === name && skill.source === "builtin" ? [skill] : [],
     ),
   ),
+  ...(role === "foreman" ? { delegates: ["implement", "review"] } : {}),
 });
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
