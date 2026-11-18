@@ -12892,5 +12892,10 @@
   "f6a91589456cca50": "Genehmigt",
   "c92657bb7f2293ff": "Genehmigung nötig",
   "f1e5c1be1ac92361": "Genehmigen",
-  "fcb5f3c4d4753326": "Über diese Verbindung lassen sich keine Befehle genehmigen. Verwende einen Client, der das Terminal verwenden darf."
+  "fcb5f3c4d4753326": "Über diese Verbindung lassen sich keine Befehle genehmigen. Verwende einen Client, der das Terminal verwenden darf.",
+  "f85d012f56ee8e23": "Verworfen",
+  "5faac35b21638e8c": "Fehler verwerfen",
+  "563e4478fe91a497": "Verwerfen rückgängig machen",
+  "9923147967f589d0": "Der Fehler konnte nicht aktualisiert werden.",
+  "ba5bcda4144279c3": "Arbeitselement an den Foreman gesendet"
 }

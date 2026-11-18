@@ -12887,5 +12887,10 @@
   "f6a91589456cca50": "Aprobado",
   "c92657bb7f2293ff": "Necesita aprobación",
   "f1e5c1be1ac92361": "Aprobar",
-  "fcb5f3c4d4753326": "Esta conexión no puede aprobar comandos. Usa un cliente que pueda usar el terminal."
+  "fcb5f3c4d4753326": "Esta conexión no puede aprobar comandos. Usa un cliente que pueda usar el terminal.",
+  "f85d012f56ee8e23": "Descartado",
+  "5faac35b21638e8c": "Descartar fallo",
+  "563e4478fe91a497": "Deshacer descarte",
+  "9923147967f589d0": "No se pudo actualizar el fallo.",
+  "ba5bcda4144279c3": "Elemento de trabajo enviado al Foreman"
 }
