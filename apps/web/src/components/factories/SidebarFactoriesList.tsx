@@ -3,30 +3,59 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, FactoryId, FactorySummary } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useParams } from "@tanstack/react-router";
+import { T, useGT, Var } from "gt-react";
 import { PlusIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 
 import { attachSidebarTree } from "../../lib/sidebarTree";
-import type { FactoryEnvironment } from "../../state/factories";
-import { sortThreadsForSidebar } from "../Sidebar.logic";
+import { factoriesEnvironment, type FactoryEnvironment } from "../../state/factories";
+import type { SidebarSection, SidebarSections } from "../Sidebar.logic";
 import { Button } from "../ui/button";
+import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { factoryListedThreads } from "./factories.logic";
 import { FactoryScheduledTaskLinks } from "./FactoryScheduledTaskLinks";
 import { NewFactoryDialog } from "./NewFactoryDialog";
+import { NewWorkItemDialogHost, openNewWorkItemDialog } from "./NewWorkItemDialog";
 import { SidebarFactoryRow, sidebarFactoryRowId } from "./SidebarFactoryRow";
 
-/** The Factories tab: each environment's factories, and what each owns once expanded. */
+type Shelf = "working" | "snoozed" | "settled";
+
+const SHELVES: ReadonlyArray<Shelf> = ["working", "snoozed", "settled"];
+
+/** The Factories tab: each environment's factories, and their runs once expanded. */
 export function SidebarFactoriesList(props: {
   readonly environments: ReadonlyArray<FactoryEnvironment>;
   readonly ownedThreads: ReadonlyMap<string, EnvironmentThreadShell>;
+  readonly delegatedUnderParent: ReadonlySet<string>;
+  /** Home's sections and order for a factory's threads. */
+  readonly sectionsOf: (
+    threads: readonly EnvironmentThreadShell[],
+  ) => SidebarSections<EnvironmentThreadShell>;
+  /** The open thread's row, which stays visible in a collapsed shelf as it does in Home. */
+  readonly routeRowThreadKey: string | null;
   readonly environmentLabelById: ReadonlyMap<EnvironmentId, string>;
   readonly projectByKey: ReadonlyMap<string, EnvironmentProject>;
-  readonly renderThread: (thread: EnvironmentThreadShell, parentRow: string) => ReactNode;
+  readonly renderThread: (
+    thread: EnvironmentThreadShell,
+    section: SidebarSection,
+    parentRow: string,
+  ) => ReactNode;
 }) {
+  const gt = useGT();
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  // Working starts open and the other shelves closed; a key here flips its shelf.
+  const [flippedShelves, setFlippedShelves] = useState<ReadonlySet<string>>(() => new Set());
   const [creating, setCreating] = useState(false);
-  const activeFactoryId = useParams({ strict: false }).factoryId ?? null;
+  const [addingTo, setAddingTo] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly factoryId: FactoryId;
+  } | null>(null);
+  const params = useParams({ strict: false });
+  const activeFactoryId = params.factoryId ?? null;
   const groups = props.environments.flatMap(({ environmentId, factories }) =>
     factories === null || factories.length === 0
       ? []
@@ -40,19 +69,28 @@ export function SidebarFactoriesList(props: {
   const canCreate = props.environments.some(
     ({ factories, canManage }) => factories !== null && canManage,
   );
-  const toggle = (key: string) =>
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (!next.delete(key)) next.add(key);
-      return next;
-    });
+  const toggleIn =
+    (setter: typeof setExpanded) =>
+    (key: string): void =>
+      setter((current) => {
+        const next = new Set(current);
+        if (!next.delete(key)) next.add(key);
+        return next;
+      });
+  const toggle = toggleIn(setExpanded);
+  const toggleShelf = toggleIn(setFlippedShelves);
+  const addWorkItem = (environmentId: EnvironmentId, factoryId: FactoryId, key: string) => {
+    setExpanded((current) => new Set(current).add(key));
+    setAddingTo({ environmentId, factoryId });
+    openNewWorkItemDialog(environmentId, factoryId);
+  };
 
   return (
     <div ref={attachSidebarTree} className="flex flex-col gap-2">
       {canCreate ? (
         <Button variant="outline" size="xs" onClick={() => setCreating(true)}>
           <PlusIcon />
-          New factory
+          <T>New factory</T>
         </Button>
       ) : null}
       {creating ? (
@@ -62,11 +100,23 @@ export function SidebarFactoriesList(props: {
           onClose={() => setCreating(false)}
         />
       ) : null}
+      {/* The factory page mounts its own host for the factory it shows. */}
+      {addingTo !== null &&
+      !(
+        addingTo.factoryId === activeFactoryId && addingTo.environmentId === params.environmentId
+      ) ? (
+        <NewWorkItemDialogHost
+          environmentId={addingTo.environmentId}
+          factoryId={addingTo.factoryId}
+        />
+      ) : null}
       {groups.length === 0 ? (
         <p className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground">
           {canCreate
-            ? "No factories yet. A factory gives a project its own foreman, implement, and review roles."
-            : "No factories yet"}
+            ? gt(
+                "No factories yet. Create one to run a project's work items through its own roles.",
+              )
+            : gt("No factories yet")}
         </p>
       ) : null}
       {groups.map(({ environmentId, factories }) => (
@@ -79,14 +129,6 @@ export function SidebarFactoriesList(props: {
           <ul role="presentation" className="flex flex-col gap-px">
             {factories.map((factory) => {
               const key = `${environmentId}\n${factory.id}`;
-              const threads = sortThreadsForSidebar(
-                factory.threadIds.flatMap((threadId) => {
-                  const thread = props.ownedThreads.get(
-                    scopedThreadKey(scopeThreadRef(environmentId, threadId)),
-                  );
-                  return thread === undefined || thread.archivedAt !== null ? [] : [thread];
-                }),
-              );
               const rowId = sidebarFactoryRowId(environmentId, factory.id);
               const isExpanded = expanded.has(key);
               return (
@@ -100,21 +142,30 @@ export function SidebarFactoriesList(props: {
                   active={activeFactoryId === factory.id}
                   expanded={isExpanded}
                   onToggle={() => toggle(key)}
+                  action={
+                    <NewWorkItemButton
+                      environmentId={environmentId}
+                      factory={factory}
+                      rowId={rowId}
+                      onClick={() => addWorkItem(environmentId, factory.id, key)}
+                    />
+                  }
                 >
                   {isExpanded ? (
-                    <>
-                      {threads.map((thread) => props.renderThread(thread, rowId))}
-                      <FactoryScheduledTaskLinks
-                        environmentId={environmentId}
-                        parentRow={rowId}
-                        scheduledTaskIds={factory.scheduledTaskIds}
-                      />
-                      {threads.length === 0 && factory.scheduledTaskIds.length === 0 ? (
-                        <li className="list-none px-(--sidebar-row-content-inset) py-1.5 text-xs text-sidebar-muted-foreground">
-                          Owns no threads or scheduled tasks yet
-                        </li>
-                      ) : null}
-                    </>
+                    <FactoryThreads
+                      environmentId={environmentId}
+                      factory={factory}
+                      rowId={rowId}
+                      isShelfExpanded={(shelf) =>
+                        (shelf === "working") !== flippedShelves.has(`${key}\n${shelf}`)
+                      }
+                      onToggleShelf={(shelf) => toggleShelf(`${key}\n${shelf}`)}
+                      ownedThreads={props.ownedThreads}
+                      delegatedUnderParent={props.delegatedUnderParent}
+                      sectionsOf={props.sectionsOf}
+                      routeRowThreadKey={props.routeRowThreadKey}
+                      renderThread={props.renderThread}
+                    />
                   ) : null}
                 </SidebarFactoryRow>
               );
@@ -123,5 +174,120 @@ export function SidebarFactoriesList(props: {
         </section>
       ))}
     </div>
+  );
+}
+
+/** A factory's runs in Home's sections, then its scheduled tasks. */
+function FactoryThreads(props: {
+  readonly environmentId: EnvironmentId;
+  readonly factory: FactorySummary;
+  readonly rowId: string;
+  readonly isShelfExpanded: (shelf: Shelf) => boolean;
+  readonly onToggleShelf: (shelf: Shelf) => void;
+  readonly ownedThreads: ReadonlyMap<string, EnvironmentThreadShell>;
+  readonly delegatedUnderParent: ReadonlySet<string>;
+  readonly sectionsOf: (
+    threads: readonly EnvironmentThreadShell[],
+  ) => SidebarSections<EnvironmentThreadShell>;
+  readonly routeRowThreadKey: string | null;
+  readonly renderThread: (
+    thread: EnvironmentThreadShell,
+    section: SidebarSection,
+    parentRow: string,
+  ) => ReactNode;
+}) {
+  const gt = useGT();
+  const threads = factoryListedThreads(
+    props.environmentId,
+    props.factory,
+    props.ownedThreads,
+    props.delegatedUnderParent,
+  );
+  const sections = props.sectionsOf(threads);
+  const shelfLabel: Record<Shelf, string> = {
+    working: gt("Working", { $context: "sidebar section" }),
+    snoozed: gt("Snoozed", { $context: "sidebar section" }),
+    settled: gt("Settled", { $context: "sidebar section" }),
+  };
+  return (
+    <>
+      {sections.pinned.map((thread) => props.renderThread(thread, "pinned", props.rowId))}
+      {sections.active.map((thread) => props.renderThread(thread, "active", props.rowId))}
+      {SHELVES.map((shelf) => {
+        const shelfThreads = sections[shelf];
+        if (shelfThreads.length === 0) return null;
+        const shelfRow = `${props.rowId}:shelf:${shelf}`;
+        const shelfExpanded = props.isShelfExpanded(shelf);
+        const shown = shelfExpanded
+          ? shelfThreads
+          : shelfThreads.filter(
+              (thread) =>
+                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+                props.routeRowThreadKey,
+            );
+        return (
+          <Fragment key={shelf}>
+            <li className="list-none">
+              <CollapsibleSectionHeader
+                data-sidebar-row={shelfRow}
+                data-sidebar-parent={props.rowId}
+                expanded={shelfExpanded}
+                onClick={() => props.onToggleShelf(shelf)}
+                accessory={<span className="font-normal tabular-nums">{shelfThreads.length}</span>}
+              >
+                {shelfLabel[shelf]}
+              </CollapsibleSectionHeader>
+            </li>
+            {shown.map((thread) => props.renderThread(thread, shelf, shelfRow))}
+          </Fragment>
+        );
+      })}
+      <FactoryScheduledTaskLinks
+        environmentId={props.environmentId}
+        parentRow={props.rowId}
+        scheduledTaskIds={props.factory.scheduledTaskIds}
+      />
+      {threads.length === 0 && props.factory.scheduledTaskIds.length === 0 ? (
+        <li className="list-none px-(--sidebar-row-content-inset) py-1.5 text-xs text-sidebar-muted-foreground">
+          <T>No runs or triggers yet</T>
+        </li>
+      ) : null}
+    </>
+  );
+}
+
+/** Starts a run: a manual work item for this factory, for people who may create one. */
+function NewWorkItemButton(props: {
+  readonly environmentId: EnvironmentId;
+  readonly factory: FactorySummary;
+  readonly rowId: string;
+  readonly onClick: () => void;
+}) {
+  const gt = useGT();
+  const canCreate = useAtomValue(
+    factoriesEnvironment.createWorkItem.permissionAtom(props.environmentId),
+  );
+  if (!canCreate) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            data-sidebar-action-for={props.rowId}
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label={gt("New work item in {factory}", { factory: props.factory.name })}
+            onClick={props.onClick}
+          />
+        }
+      >
+        <PlusIcon aria-hidden />
+      </TooltipTrigger>
+      <TooltipPopup>
+        <T>
+          New work item in <Var>{props.factory.name}</Var>
+        </T>
+      </TooltipPopup>
+    </Tooltip>
   );
 }

@@ -1,7 +1,17 @@
-import { FactoryName, type FactorySummary, type Trigger } from "@t3tools/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  FactoryName,
+  type EnvironmentId,
+  type FactorySummary,
+  type Trigger,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
 
+import { m } from "../../i18n/messages";
 import type { FactoryEnvironment } from "../../state/factories";
+import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
 import { triggerSummary } from "../settings/scheduledTasksSettings.logic";
 
 const isFactoryName = Schema.is(FactoryName);
@@ -14,6 +24,23 @@ export function showsFactoriesTab(environments: ReadonlyArray<FactoryEnvironment
   return environments.some(
     ({ factories, canManage }) => factories !== null && (factories.length > 0 || canManage),
   );
+}
+
+/**
+ * The threads a factory lists: its runs, and threads its scheduled tasks start. A run's subagents
+ * and side chats open inside the run, as they do everywhere else.
+ */
+export function factoryListedThreads<T extends EnvironmentThreadShell>(
+  environmentId: EnvironmentId,
+  factory: Pick<FactorySummary, "threadIds">,
+  ownedThreads: ReadonlyMap<string, T>,
+  delegatedUnderParent: ReadonlySet<string>,
+): T[] {
+  const owned = factory.threadIds.flatMap((threadId) => {
+    const thread = ownedThreads.get(scopedThreadKey(scopeThreadRef(environmentId, threadId)));
+    return thread === undefined ? [] : [thread];
+  });
+  return filterSidebarV2VisibleThreads(owned, null, delegatedUnderParent);
 }
 
 export function factoriesAttentionTotal(environments: ReadonlyArray<FactoryEnvironment>): number {
@@ -34,13 +61,13 @@ export function factoryNameError(
   projectId: string | null,
 ): string | null {
   const trimmed = name.trim();
-  if (trimmed === "") return "Enter a name.";
-  if (trimmed.length > 64) return "Use 64 characters or fewer.";
+  if (trimmed === "") return m(msg("Enter a name."));
+  if (trimmed.length > 64) return m(msg("Use 64 characters or fewer."));
   if (!isFactoryName(trimmed)) {
-    return "Use lowercase letters, digits, and single hyphens, such as nightly-triage.";
+    return m(msg("Use lowercase letters, digits, and single hyphens, such as nightly-triage."));
   }
   if (existing.some((factory) => factory.projectId === projectId && factory.name === trimmed)) {
-    return "This project already has a factory with this name.";
+    return m(msg("This project already has a factory with this name."));
   }
   return null;
 }
