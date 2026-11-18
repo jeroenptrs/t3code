@@ -115,6 +115,10 @@
       "types": "./src/scheduledTaskTrigger.ts",
       "default": "./src/scheduledTaskTrigger.ts"
     },
+    "./factories": {
+      "types": "./src/factories.ts",
+      "default": "./src/factories.ts"
+    },
     "./portal-user": {
       "types": "./src/portalUser.ts",
       "default": "./src/portalUser.ts"

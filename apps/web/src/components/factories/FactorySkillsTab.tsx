@@ -3,6 +3,7 @@
  * factory's own, T3 home's, or the built-in one. Administrators create, edit, and delete the
  * factory and home levels here.
  */
+import { factoryRoleLabel } from "@t3tools/client-runtime/factories";
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -41,7 +42,6 @@ import {
   skillTemplate,
   withSkillName,
 } from "./FactorySkills.logic";
-import { factoryRoleLabel } from "./workItems.logic";
 
 const isSkillName = Schema.is(FactorySkillName);
 const isSkillError = Schema.is(FactorySkillError);
