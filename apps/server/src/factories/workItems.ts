@@ -57,6 +57,11 @@ ${note === "" ? "They left no note." : `Their note: ${note}`}
 ${next}`;
 }
 
+/** What the Foreman gets once a person drops its item. */
+export function renderDropMessage(workItemId: WorkItemId): string {
+  return `A person dropped work item ${workItemId}. Stop work on it and hand back a short report.`;
+}
+
 /**
  * The delegation with the role's isolation, modes, and model in place of the call's, and the note
  * the item's log keeps. A null model leaves the call's target as it is.
