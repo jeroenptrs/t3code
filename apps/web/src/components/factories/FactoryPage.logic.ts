@@ -87,15 +87,5 @@ export function factoryRoleStatus(
   return role.enabled ? "enabled" : "disabled";
 }
 
-/**
- * Whether a save can keep the definition. A `factory.json` that could not be read comes back with
- * empty lists, so saving it would write those over the person's file.
- */
-export function canSaveDefinition(factory: Pick<Factory, "issues">): boolean {
-  return !factory.issues.some(
-    (issue) => issue.role === null && issue.code === "invalid_definition" && issue.field === null,
-  );
-}
-
 /** The factory page's route, for links and navigation inside it. */
 export const FACTORY_ROUTE = "/factories/$environmentId/$factoryId";

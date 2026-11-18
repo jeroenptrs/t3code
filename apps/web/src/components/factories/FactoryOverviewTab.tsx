@@ -1,4 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
+import {
+  createNeedsYouSelector,
+  needsYouListInputs,
+  type NeedsYouRow,
+} from "@t3tools/client-runtime/factories";
 import type { EnvironmentId, FactoryId, WorkItemSummary } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -11,7 +16,6 @@ import { environmentThreadShells } from "../../state/threads";
 import { RelativeTime } from "../RelativeTime";
 import { SettingsSection } from "../settings/settingsLayout";
 import { FactoryCanvas } from "./FactoryCanvas";
-import { createNeedsYouSelector, type NeedsYouRow } from "./FactoryOverviewTab.logic";
 import { FACTORY_ROUTE } from "./FactoryPage.logic";
 import type { FactoryTabProps } from "./FactoryPage";
 import {
@@ -23,23 +27,21 @@ import {
 
 const NO_ITEMS: ReadonlyArray<WorkItemSummary> = [];
 
-const waitingInput = (factoryId: FactoryId) => ({ factoryId, stage: "waiting" });
-const failedInput = (factoryId: FactoryId) => ({ factoryId, outcome: "failed" as const });
-
 /** Rows only change when an item or its run thread's settled or archived state does. */
 const needsYouAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.family((factoryId: FactoryId) => {
     const select = createNeedsYouSelector();
     return Atom.make((get) => {
-      const list = (input: ReturnType<typeof waitingInput | typeof failedInput>) =>
+      const inputs = needsYouListInputs(factoryId);
+      const list = (input: (typeof inputs)[keyof typeof inputs]) =>
         AsyncResult.getOrElse(
           get(factoriesEnvironment.workItems({ environmentId, input })),
           () => null,
         )?.workItems ?? NO_ITEMS;
       return select({
         environmentId,
-        waiting: list(waitingInput(factoryId)),
-        failed: list(failedInput(factoryId)),
+        waiting: list(inputs.waiting),
+        failed: list(inputs.failed),
         shells: get(environmentThreadShells.threadShellsAtom),
       });
     }).pipe(Atom.withLabel(`web-factory-needs-you:${environmentId}:${factoryId}`));
@@ -95,11 +97,12 @@ function NeedsYouRowLink(props: {
 function NeedsYou(props: { readonly environmentId: EnvironmentId; readonly factoryId: FactoryId }) {
   const gt = useGT();
   const { environmentId, factoryId } = props;
+  const inputs = needsYouListInputs(factoryId);
   const waiting = useEnvironmentQuery(
-    factoriesEnvironment.workItems({ environmentId, input: waitingInput(factoryId) }),
+    factoriesEnvironment.workItems({ environmentId, input: inputs.waiting }),
   );
   const failed = useEnvironmentQuery(
-    factoriesEnvironment.workItems({ environmentId, input: failedInput(factoryId) }),
+    factoriesEnvironment.workItems({ environmentId, input: inputs.failed }),
   );
   const rows = useAtomValue(needsYouAtom(environmentId)(factoryId));
   const error = waiting.error ?? failed.error;

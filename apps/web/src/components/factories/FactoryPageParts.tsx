@@ -2,6 +2,7 @@
  * Fork-only. The pieces every factory tab shares: the status dot, the issue count on a tab, the
  * save each view sends, and the loading and error states that keep a tab's footprint.
  */
+import { canSaveDefinition } from "@t3tools/client-runtime/factories";
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, Factory, FactoryIssue, FactorySaveInput } from "@t3tools/contracts";
@@ -26,7 +27,6 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
 import { cn } from "~/lib/utils";
-import { canSaveDefinition } from "./FactoryPage.logic";
 
 export type StatusTone = "success" | "warning" | "destructive" | "muted";
 

@@ -1,3 +1,8 @@
+import {
+  gateAnswerError,
+  gateAnswerInput,
+  workItemFailureMessage,
+} from "@t3tools/client-runtime/factories";
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, WorkItemGateDecision, WorkItemId } from "@t3tools/contracts";
@@ -9,7 +14,6 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
-import { gateAnswerError, gateAnswerInput, workItemFailureMessage } from "./workItems.logic";
 
 /** The question a gate holds the item on, and for administrators, approve or reject with a note. */
 export function WorkItemGateAnswer(props: {

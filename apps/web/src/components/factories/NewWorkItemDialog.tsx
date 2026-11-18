@@ -1,3 +1,4 @@
+import { workItemFailureMessage } from "@t3tools/client-runtime/factories";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, FactoryId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -23,7 +24,6 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
-import { workItemFailureMessage } from "./workItems.logic";
 
 /**
  * Which factory asked for the dialog, set by the factory page or the command palette and rendered
@@ -93,6 +93,7 @@ function NewWorkItemDialog(props: {
         workItemFailureMessage(
           squashAtomCommandFailure(result),
           gt("The work item could not be created."),
+          m,
         ),
       );
       return;

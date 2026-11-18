@@ -1,3 +1,5 @@
+import { factoryRoleLabel } from "@t3tools/client-runtime/factories";
+import { factorySaveInput } from "@t3tools/client-runtime/factories";
 import {
   FACTORY_FOREMAN_ROLE,
   type FactoryIssue,
@@ -30,7 +32,6 @@ import {
 } from "./FactoryPageParts";
 import { FactoryBindingFields, useFactoryModelChoices } from "./FactoryRoleBinding";
 import {
-  factorySaveInput,
   removeRoleSaveInput,
   roleDraft,
   roleDraftChanged,
@@ -39,7 +40,6 @@ import {
 } from "./FactoryRoles.logic";
 import { ROLE_STATUS } from "./FactoryRolesTab";
 import { SKILL_SOURCE_LABEL } from "./FactorySkills.logic";
-import { factoryRoleLabel } from "./workItems.logic";
 
 /** Fields a card shows its issues beside; the rest list above the cards. */
 const CARD_FIELDS = new Set([
