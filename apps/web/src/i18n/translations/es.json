@@ -12776,5 +12776,10 @@
   "99d51127f573296b": "Otra cuenta",
   "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
   "99963c0142e17f00": "Para la nueva cuenta de {tracker}.",
-  "6d8e4ebc889bace9": "Añadir cuenta"
+  "6d8e4ebc889bace9": "Añadir cuenta",
+  "f85d012f56ee8e23": "Descartado",
+  "5faac35b21638e8c": "Descartar fallo",
+  "563e4478fe91a497": "Deshacer descarte",
+  "9923147967f589d0": "No se pudo actualizar el fallo.",
+  "ba5bcda4144279c3": "Elemento de trabajo enviado al Foreman"
 }

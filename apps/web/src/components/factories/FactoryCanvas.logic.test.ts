@@ -22,13 +22,15 @@ const environmentId = EnvironmentId.make("environment-local");
 const factoryId = FactoryId.make("factory:project-api:nightly");
 const nightly = ScheduledTaskId.make("task-nightly");
 const webhook = ScheduledTaskId.make("task-webhook");
-const foreman = ThreadId.make("factory-foreman:1");
+const foreman = ThreadId.make("factory-foreman:work-item:1");
+const otherRun = ThreadId.make("factory-foreman:work-item:2");
 const implementer = ThreadId.make("thread-implement");
 const reviewer = ThreadId.make("thread-review");
 const unrelated = ThreadId.make("thread-unrelated");
 
 const threads: ReadonlyArray<FactoryThread> = [
   { threadId: foreman, role: "foreman" },
+  { threadId: otherRun, role: "foreman" },
   { threadId: implementer, role: "implement" },
   { threadId: reviewer, role: "review" },
 ];
@@ -68,6 +70,7 @@ function item(
     foremanThreadId: foreman,
     foremanRunId: null,
     dispatchedAt: null,
+    failureDismissedAt: null,
     threads: [],
     createdAt: "2026-11-06T00:00:00.000Z",
     updatedAt: "2026-11-06T00:00:00.000Z",
@@ -118,7 +121,6 @@ describe("factoryGraphState", () => {
     [...result.edges].flatMap(([id, edge]) => (edge.lit ? [[id, edge.title, edge.more]] : []));
 
   it.each([
-    ["queued", []],
     ["new", [["trigger:manual->foreman", "Item 1", 0]]],
     ["implement", [["foreman->implement", "Item 1", 0]]],
     ["review", [["foreman->review", "Item 1", 0]]],
@@ -129,7 +131,7 @@ describe("factoryGraphState", () => {
     expect(litEdges(state([], [item("1", stage)]))).toEqual(expected);
   });
 
-  it("lights a scheduled item's own trigger edge and groups items on one edge", () => {
+  it("lights each item's edge, a trigger's own, and groups items on one edge", () => {
     const result = state(
       [],
       [
@@ -138,12 +140,38 @@ describe("factoryGraphState", () => {
         }),
         item("2", "implement"),
         item("3", "implement"),
+        item("4", "new", {
+          source: {
+            kind: "trigger",
+            triggerId: webhook,
+            title: "Webhook",
+            event: {
+              source: "manual",
+              type: "manual",
+              occurredAt: "2026-11-06T00:00:00.000Z",
+              payload: { type: "manual" },
+            },
+            text: "",
+          },
+        }),
       ],
     );
     expect(litEdges(result)).toEqual([
       ["trigger:task-nightly->foreman", "Item 1", 0],
+      ["trigger:task-webhook->foreman", "Item 4", 0],
       ["foreman->implement", "Item 2", 1],
     ]);
+  });
+
+  it("lights the Foreman from whichever run thread is active, and from none when none is", () => {
+    const lit = (shells: ReadonlyArray<CanvasShell>) => {
+      const node = state(shells, [item("1", "implement"), item("2", "review")]).nodes.get(
+        "foreman",
+      );
+      return [node?.lit, node?.threadId];
+    };
+    expect(lit([shell(foreman, false), shell(otherRun, true)])).toEqual([true, otherRun]);
+    expect(lit([shell(foreman, false), shell(otherRun, false)])).toEqual([false, null]);
   });
 
   it("lights role nodes from owned running threads and the gate from a waiting item", () => {

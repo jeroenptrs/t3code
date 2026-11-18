@@ -12788,5 +12788,10 @@
   "99d51127f573296b": "Ett konto till",
   "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare.",
   "99963c0142e17f00": "För det nya {tracker}-kontot.",
-  "6d8e4ebc889bace9": "Lägg till konto"
+  "6d8e4ebc889bace9": "Lägg till konto",
+  "f85d012f56ee8e23": "Avfärdad",
+  "5faac35b21638e8c": "Avfärda felet",
+  "563e4478fe91a497": "Ångra avfärdande",
+  "9923147967f589d0": "Felet kunde inte uppdateras.",
+  "ba5bcda4144279c3": "Arbetsobjektet skickades till Foreman"
 }

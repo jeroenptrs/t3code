@@ -12790,5 +12790,10 @@
   "99d51127f573296b": "Another account",
   "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
   "99963c0142e17f00": "For the new {tracker} account.",
-  "6d8e4ebc889bace9": "Add account"
+  "6d8e4ebc889bace9": "Add account",
+  "f85d012f56ee8e23": "Dismissed",
+  "5faac35b21638e8c": "Dismiss failure",
+  "563e4478fe91a497": "Restore failure",
+  "9923147967f589d0": "The failure could not be updated.",
+  "ba5bcda4144279c3": "Work item sent to the Foreman"
 }

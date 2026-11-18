@@ -12781,5 +12781,10 @@
   "99d51127f573296b": "Weiteres Konto",
   "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer.",
   "99963c0142e17f00": "Für das neue {tracker}-Konto.",
-  "6d8e4ebc889bace9": "Konto hinzufügen"
+  "6d8e4ebc889bace9": "Konto hinzufügen",
+  "f85d012f56ee8e23": "Verworfen",
+  "5faac35b21638e8c": "Fehler verwerfen",
+  "563e4478fe91a497": "Verwerfen rückgängig machen",
+  "9923147967f589d0": "Der Fehler konnte nicht aktualisiert werden.",
+  "ba5bcda4144279c3": "Arbeitselement an den Foreman gesendet"
 }
