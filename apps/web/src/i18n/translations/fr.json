@@ -12813,5 +12813,10 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Annuler la fusion automatique de la pile",
-  "012c67c7f1a99e33": "Fusion automatique de la pile"
+  "012c67c7f1a99e33": "Fusion automatique de la pile",
+  "f85d012f56ee8e23": "Ignoré",
+  "5faac35b21638e8c": "Ignorer l’échec",
+  "563e4478fe91a497": "Rétablir l’échec",
+  "9923147967f589d0": "Impossible de mettre à jour l’échec.",
+  "ba5bcda4144279c3": "Élément de travail envoyé au Foreman"
 }

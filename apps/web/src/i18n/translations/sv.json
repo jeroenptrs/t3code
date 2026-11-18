@@ -12820,5 +12820,10 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Avbryt automatisk merge för stacken",
-  "012c67c7f1a99e33": "Merga stacken automatiskt"
+  "012c67c7f1a99e33": "Merga stacken automatiskt",
+  "f85d012f56ee8e23": "Avfärdad",
+  "5faac35b21638e8c": "Avfärda felet",
+  "563e4478fe91a497": "Ångra avfärdande",
+  "9923147967f589d0": "Felet kunde inte uppdateras.",
+  "ba5bcda4144279c3": "Arbetsobjektet skickades till Foreman"
 }

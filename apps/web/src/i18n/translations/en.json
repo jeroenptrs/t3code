@@ -12822,5 +12822,10 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Cancel stack auto-merge",
-  "012c67c7f1a99e33": "Auto-merge stack"
+  "012c67c7f1a99e33": "Auto-merge stack",
+  "f85d012f56ee8e23": "Dismissed",
+  "5faac35b21638e8c": "Dismiss failure",
+  "563e4478fe91a497": "Restore failure",
+  "9923147967f589d0": "The failure could not be updated.",
+  "ba5bcda4144279c3": "Work item sent to the Foreman"
 }

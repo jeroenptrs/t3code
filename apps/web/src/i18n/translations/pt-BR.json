@@ -12813,5 +12813,10 @@
     ")"
   ],
   "33d18dda74f6d7b3": "Cancelar merge automático da pilha",
-  "012c67c7f1a99e33": "Merge automático da pilha"
+  "012c67c7f1a99e33": "Merge automático da pilha",
+  "f85d012f56ee8e23": "Dispensada",
+  "5faac35b21638e8c": "Dispensar falha",
+  "563e4478fe91a497": "Desfazer dispensa",
+  "9923147967f589d0": "Não foi possível atualizar a falha.",
+  "ba5bcda4144279c3": "Item de trabalho enviado ao Foreman"
 }
