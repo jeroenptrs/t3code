@@ -1,3 +1,4 @@
+import { factorySaveInput } from "@t3tools/client-runtime/factories";
 import { useAtomValue } from "@effect/atom-react";
 import { FACTORY_FOREMAN_ROLE, type FactoryRole } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
@@ -23,7 +24,6 @@ import {
 } from "./FactoryPageParts";
 import { FactoryBindingFields, useFactoryModelChoices } from "./FactoryRoleBinding";
 import {
-  factorySaveInput,
   roleDraft,
   roleDraftChanged,
   roleFileChange,

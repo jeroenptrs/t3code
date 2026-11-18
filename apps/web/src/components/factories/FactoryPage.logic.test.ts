@@ -1,7 +1,7 @@
 import type { FactoryIssue } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { canSaveDefinition, issueCountByTab, validateFactoryPageSearch } from "./FactoryPage.logic";
+import { issueCountByTab, validateFactoryPageSearch } from "./FactoryPage.logic";
 
 describe("validateFactoryPageSearch", () => {
   it.each([
@@ -36,14 +36,5 @@ describe("issueCountByTab", () => {
       issue(null, "projects", "unknown_project"),
     ]);
     expect(Object.fromEntries(counts)).toEqual({ roles: 2, triggers: 1, settings: 1 });
-  });
-});
-
-describe("canSaveDefinition", () => {
-  it("refuses saves over a factory.json that could not be read", () => {
-    expect(canSaveDefinition({ issues: [issue(null, null, "invalid_definition")] })).toBe(false);
-    expect(canSaveDefinition({ issues: [issue(null, "projects", "invalid_definition")] })).toBe(
-      true,
-    );
   });
 });
