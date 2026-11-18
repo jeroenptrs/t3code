@@ -33,21 +33,33 @@ factory…** opens a factory by name.
 
 A new factory uses the built-in foreman, implement, and review roles until you change them.
 
+## The factory page
+
+A factory's page opens on **Overview**: a canvas of how work moves from its triggers through the
+Foreman to its roles, and **Needs you**, the gates to answer and failed items to look at. Click a
+trigger on the canvas to see the factory's triggers, or a role to open it. Each row under
+**Needs you** opens the item's run thread.
+
+The other tabs are **Work items**, **Roles**, **Skills**, **Triggers**, and **Settings**. Each
+saves its own changes. A tab with a problem in the factory's files shows how many beside its name.
+The tab is part of the page's address, so a reload or a shared link keeps it.
+
 ## Edit a factory
 
-The factory page lists any problems in its files, then the definition and the three roles.
-
-- **Projects** are the other projects the factory may work in, by name. Its own project is always
-  included.
-- **Triggers** are the project's triggers that send it work. Click one to open it in
-  **Settings > Triggers**.
-- Each role shows its model, runtime mode, interaction mode, where it works, its skills, its tool
-  allowlist, and its instructions. **Built-in** means the role has no file yet.
-
-Edit any of these and click **Save**. A role you change gets its own file at
-`roles/<role>.md`, holding only the settings you set. **Use built-in instructions** deletes the
-role's file when you save, so the role goes back to the built-in settings and instructions. A
-blank **Instructions** box also keeps the built-in instructions.
+- **Roles** lists the Foreman and the factory's other roles. The switch beside a role turns it on
+  or off at once; the Foreman is always on. Click a role to edit its instructions, the skills it
+  binds, and its model, runtime mode, interaction mode, and where it works, then click **Save
+  changes**. A role you change gets its own file at `roles/<role>.md`.
+- **Add role** starts a role from a preset or from scratch. A preset added under its own name has
+  no file, so it follows the preset; under another name it starts as a copy of the preset.
+  **Remove role**, at the bottom of a role's page, takes it out of the factory and deletes its
+  file.
+- **Triggers** lists the triggers that send the factory work, with their source, filters, and what
+  a polled trigger acts on first. **Add trigger** opens the trigger form with the factory as its
+  target; the arrow beside it attaches a trigger the project already has. Click a trigger to edit
+  it. **Detach** stops it sending work here and leaves it in **Settings > Triggers**.
+- **Settings** holds the other projects the factory may work in, the Foreman's model and where it
+  works, and **Delete factory**.
 
 If the server refuses a save, such as for a model the provider does not offer or a skill that does
 not exist, the reason appears beside the field and nothing is written.
@@ -58,9 +70,11 @@ A skill is a folder of instructions an agent loads when its task calls for them.
 review roles start with the built-in `implement` and `review` skills, which hold the checks that
 must pass before a change goes to review and the review checklist.
 
-To add your own skill, create `.t3/factories/<name>/skills/<skill>/SKILL.md` in the project, with
-`name` and `description` frontmatter, then add the skill's name to a role's **Skills**. A folder
-with the name of a built-in skill replaces that skill.
+To add your own skill, click **New skill** on the factory's **Skills** tab, or create
+`.t3/factories/<name>/skills/<skill>/SKILL.md` in the project with `name` and `description`
+frontmatter. Then add it on a role's page under **Skills**. A role uses a skill as written; edit
+the skill itself on the **Skills** tab. A skill with the name of a built-in skill replaces that
+skill.
 
 When a role's agent starts, T3 Code copies its skills into the folder the agent works in, under
 `.agents/skills`, `.claude/skills`, and `.codex/skills`, where each provider looks, and hides them
@@ -69,17 +83,14 @@ worktree is removed.
 
 ## Send work to a factory
 
-Each request you send a factory is a work item. The factory's Foreman gets it as a new message in
-a fresh session, routes it to implement and review, and moves it through the stages **New**,
-**Implement**, and **Review** to **Done**, **Failed**, or **Dropped**. The Foreman is one thread
-per factory, named `Foreman: <factory>`, and starts the first time the factory gets work. The
-factory page header links to it as **Foreman thread**, and in the **Factories** tab it shows first
-under its factory.
+Each request you send a factory is a work item. Each item runs in its own Foreman thread, which
+routes it to the factory's roles and moves it through the stages **New**, a stage per role, and
+then **Done**, **Failed**, or **Dropped**.
 
 To create a work item:
 
-1. Open the factory's page and click **New work item**. On the factory page, **New work item…** in
-   the command palette does the same.
+1. On the factory's **Work items** tab, click **New work item**. On the factory page, **New work
+   item…** in the command palette does the same.
 2. Enter a title and the request.
 3. Click **Create work item**.
 
@@ -87,21 +98,24 @@ Only administrators can create work items. An agent can also send one for you wh
 
 ### Follow the work
 
-The factory page lists its work items under **Work items**, newest first, with the threads that
-worked on each one. Filter the list by stage, by the role of a thread that worked on the item, or
-by outcome. **Active** is every item that has not ended. The filters stay in the page's address,
-so a reload or a shared link keeps them.
+The **Work items** tab lists the factory's items, newest first. Filter them by stage or by outcome.
+**Active** is every item that has not ended. The list does not update live; the refresh button
+beside **New work item** reads it again.
 
-Click an item's title to see its request, the question a gate holds it on, and each stage change
-with who made it. The list does not update live. To read it again, click the refresh button
-beside **Work items**.
+Click an item to see its request, its stage history with who made each change, and a link to its
+run thread. From there you can also:
+
+- **Drop item**: end an item that has not ended. Its Foreman thread is told to stop.
+- **Dismiss failure**: stop a failed item from asking for your attention. The item stays in the
+  list and reads as dismissed. **Restore failure** undoes it.
 
 ### Answer a gate
 
 When the Foreman needs a decision, it holds the work item at **Waiting** with a question, and the
-factory's attention count goes up. The item shows under **Needs you** at the top of the factory
-page. Read the question, then click **Approve** or **Reject**. A rejection needs a note that says
-why. An approval takes an optional note. Approving sends the item back to the stage the Foreman
-asked for. Rejecting drops it. The Foreman reads your answer and note in the item's session.
+item shows under **Needs you** on the Overview. Open the item on the **Work items** tab, read the
+question, then click **Approve** or **Reject**. A rejection needs a note that says why. An approval
+takes an optional note. Approving sends the item back to the stage the Foreman asked for.
+Rejecting drops it. The Foreman reads your answer and note in the item's thread.
 
-Only administrators can answer a gate. Operators see the question.
+Only administrators can answer a gate, drop an item, or dismiss a failure. Operators see the
+question.

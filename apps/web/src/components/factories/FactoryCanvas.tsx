@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, FactoryId, ThreadId, WorkItemSummary } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { useGT } from "gt-react";
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -19,6 +20,7 @@ import {
   type CanvasNode,
   type CanvasNodeState,
 } from "./FactoryCanvas.logic";
+import { FACTORY_ROUTE } from "./FactoryPage.logic";
 
 const NO_ITEMS: ReadonlyArray<WorkItemSummary> = [];
 
@@ -74,8 +76,41 @@ function ThreadAnchor(props: {
   );
 }
 
+/** A trigger opens the Triggers tab and a role its page; the gate and output open the lit run. */
+function NodeAnchor(props: {
+  readonly environmentId: EnvironmentId;
+  readonly factoryId: FactoryId;
+  readonly node: CanvasNode;
+  readonly state: CanvasNodeState;
+  readonly children: ReactNode;
+}) {
+  const { node } = props;
+  if (node.kind === "trigger" || node.role !== null) {
+    return (
+      <Link
+        to={FACTORY_ROUTE}
+        params={{ environmentId: props.environmentId, factoryId: props.factoryId }}
+        search={
+          node.role === null
+            ? { tab: "triggers" as const }
+            : { tab: "roles" as const, role: node.role }
+        }
+        className="cursor-pointer"
+      >
+        {props.children}
+      </Link>
+    );
+  }
+  return (
+    <ThreadAnchor environmentId={props.environmentId} threadId={props.state.threadId}>
+      {props.children}
+    </ThreadAnchor>
+  );
+}
+
 function CanvasNodeShape(props: {
   readonly environmentId: EnvironmentId;
+  readonly factoryId: FactoryId;
   readonly node: CanvasNode;
   readonly state: CanvasNodeState;
 }) {
@@ -83,7 +118,12 @@ function CanvasNodeShape(props: {
   const label = truncateLabel(node.label, 20);
   const centerY = node.y + CANVAS_NODE_HEIGHT / 2;
   return (
-    <ThreadAnchor environmentId={props.environmentId} threadId={state.threadId}>
+    <NodeAnchor
+      environmentId={props.environmentId}
+      factoryId={props.factoryId}
+      node={node}
+      state={state}
+    >
       <g data-node={node.id} data-lit={state.lit} aria-label={node.label}>
         <title>{state.detail === null ? node.label : `${node.label}: ${state.detail}`}</title>
         {state.lit ? (
@@ -129,7 +169,7 @@ function CanvasNodeShape(props: {
           </text>
         )}
       </g>
-    </ThreadAnchor>
+    </NodeAnchor>
   );
 }
 
@@ -174,19 +214,17 @@ export function FactoryCanvas(props: {
   readonly environmentId: EnvironmentId;
   readonly factoryId: FactoryId;
 }) {
+  const gt = useGT();
   const { environmentId } = props;
   const canvas = useAtomValue(factoryCanvasAtom(environmentId)(props.factoryId));
   if (canvas === null) return null;
   const { graph } = canvas;
   return (
-    <section className="flex flex-col gap-3" aria-labelledby="factory-canvas">
-      <h2 id="factory-canvas" className="font-medium">
-        Canvas
-      </h2>
+    <section className="flex flex-col gap-3">
       <svg
         viewBox={`0 0 ${graph.width} ${graph.height}`}
         className="h-auto w-full max-w-4xl"
-        aria-labelledby="factory-canvas"
+        aria-label={gt("How work moves through the factory")}
       >
         {graph.edges.map((edge) => (
           <CanvasEdgeLine
@@ -200,6 +238,7 @@ export function FactoryCanvas(props: {
           <CanvasNodeShape
             key={node.id}
             environmentId={environmentId}
+            factoryId={props.factoryId}
             node={node}
             state={canvas.nodes.get(node.id)!}
           />
