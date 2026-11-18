@@ -687,6 +687,16 @@ const layerRecordedLaunch = (recorded: Recorded) =>
               worktreePath: null,
               createdBy: launch.createdBy,
               creationSource: launch.creationSource,
+              // As the real launch does, the first message's run waits for its workspace.
+              ...(launch.initialMessage === undefined
+                ? {}
+                : {
+                    initialMessage: {
+                      ...launch.initialMessage,
+                      messageId: launch.initialMessage.messageId!,
+                      workspaceStrategy: launch.workspaceStrategy,
+                    },
+                  }),
             });
             const projection = yield* orchestrator.getThreadProjection(threadId);
             return { threadId, projection, resumed: false };
@@ -857,6 +867,50 @@ describe("FactoryService work items", () => {
         assert.strictEqual(yield* factories.foremanThread(factoryId), foremanThreadId);
       }),
     ),
+  );
+
+  it.effect(
+    "starts a Foreman bound to a worktree on its first item once the worktree is ready",
+    () =>
+      withWorkItems(
+        ({ factoryId, recorded }) =>
+          Effect.gen(function* () {
+            const factories = yield* FactoryService.FactoryService;
+            const item = yield* factories.createWorkItem({
+              factoryId,
+              title: "Fix the login bug",
+              text: "Users cannot sign in with SSO.",
+            });
+            const foreman = item.foremanThreadId!;
+
+            // A send right after the launch would start the turn in the project checkout, and
+            // binding the worktree a moment later would interrupt it.
+            const [run] = yield* runs(foreman);
+            assert.strictEqual(item.foremanRunId, run!.id);
+            assert.strictEqual(run!.status, "preparing");
+            assert.deepStrictEqual(run!.workspacePreparation, {
+              type: "worktree",
+              baseRef: "c0ffee",
+              startFromOrigin: false,
+            });
+            assert.lengthOf(yield* Ref.get(recorded.sends), 0);
+            const [launch] = yield* Ref.get(recorded.launches);
+            assert.include(launch!.input.initialMessage?.text, item.id);
+
+            // The first run starts the item's session, so its delegated child is named on it.
+            const implementer = ThreadId.make("thread-implementer");
+            yield* factories.attachDelegatedChild({
+              parentThreadId: foreman,
+              parentRunId: run!.id,
+              childThreadId: implementer,
+              taskRole: "implementation",
+            });
+            assert.deepStrictEqual((yield* factories.readWorkItem(item.id)).threads, [
+              { threadId: implementer, role: "implement" },
+            ]);
+          }),
+        { files: { "roles/foreman.md": "---\nisolation: worktree\n---\n" } },
+      ),
   );
 
   it.effect("sends one item at a time and the next once the Foreman ends the active one", () =>
