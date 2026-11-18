@@ -20,47 +20,86 @@ keeps that shape and binds it to what T3 Code already has.
   a self-improvement run can change it by merge request. Runtime state (work
   items, runs, scores, proposals) lives in the T3 database under fork
   migrations. The UI reads both, and edits write files.
-- **A role is a binding, not a program.** A role binds instructions, skills, a
-  model and provider instance, a runtime mode, an isolation choice, and a tool
-  allowlist. Roles are library objects shared across factories. The first set is
-  foreman, implement, and review. Triage joins with native triggers, and
-  analysis joins once implement and review are stable.
-- **The Foreman is a prompt, not a pipeline.** Code owns ingress, the work item
-  ledger, and gates. The Foreman decides routing, composes each child's task,
-  holds the revision loop between implementer and reviewer, and talks to the
-  human at gates. It does not write code.
+- **A role is a name with a binding, not a program.** A role binds
+  instructions, skills, a model and provider instance, a runtime mode, an
+  interaction mode, an isolation choice, and a tool allowlist. Roles are open.
+  A factory has the roles its `factory.json` lists, and `foreman` is the one it
+  always has. `implement`, `review`, and `analysis` ship as presets in
+  [`roles/`](../../apps/server/src/factories/roles/index.ts). A role named after
+  a preset layers its file over the preset. Any other role has only its own
+  body and a plain default binding. A client starts one as a copy of a preset
+  or from scratch.
+  A role file can set `enabled: false` to take the role out of routing without
+  deleting it. The Foreman cannot be disabled or removed.
+- **A work item's stage names the role that runs it.** A stage is `new`,
+  `waiting`, `done`, `failed`, `dropped`, or a role's name, so no role may take
+  a fixed stage's name. The Foreman advances the item to a role's stage and then
+  delegates. The server gives the child the role at the item's stage, and that
+  role's binding replaces the call's isolation, modes, and model. It refuses an
+  advance or a delegation to an unknown or disabled role, and a delegation
+  before an advance.
+  The role does not come from a `delegate_task` argument. The tool's schema
+  stays as upstream has it, and the ledger's stage is true by construction,
+  because no child runs as a role its item is not at.
+- **The Foreman is a prompt, not a pipeline.** Code owns intake, the work item
+  ledger, and gates. Triggers and the ledger decide what becomes a run. The
+  Foreman decides routing among the enabled roles it is told of, composes each
+  child's task, holds the revision loop between implementer and reviewer, and
+  talks to the human at gates. It does not write code.
+- **Each work item is a run in its own Foreman thread.** Every item, from a
+  trigger or created by hand, launches a Foreman thread titled after the item.
+  That thread owns the item to the end, and a gate answer continues in it.
+  There is no queue and no limit on concurrent runs. The Foreman role's
+  binding sets the model, modes, and isolation of every run thread. An earlier
+  design kept one Foreman thread per factory and queued items behind the active
+  one, so one stuck run held up every item. A run that is its own thread opens,
+  settles, and archives like any thread, and that is how a person acknowledges
+  it. The service starts every undispatched item when it starts. Thread ids
+  derive from the item, so a repeated launch is harmless.
+- **A worktree Foreman gets its item at launch.** A Foreman bound to a worktree
+  launches with the work item as the launch's initial message, so the run waits
+  until the worktree is bound. A send right after the launch would start the
+  turn in the project checkout, and binding the worktree then interrupts it.
 - **The Foreman is not Home.** Upstream's Home agent is a per-user assistant
-  that acts as the user across machines. A Foreman is per factory, server-owned,
-  runs under the factory's scope, and gets a fresh session per work item. We take
-  Home's thread-management toolkit and its wake-on-completion reports, and leave
-  its opt-in setting, user attribution, and "do what the user can do" scope.
-- **A work item is its own entity.** It spans several threads across stages and
-  carries a source reference, a stage, and gate state. Threads stay what they
-  are.
+  that acts as the user across machines. A Foreman runs one work item for one
+  factory, is server-owned, and runs under the factory's scope. We take Home's
+  thread-management toolkit and its wake-on-completion reports, and leave its
+  opt-in setting, user attribution, and "do what the user can do" scope.
+- **A work item is its own entity.** It spans its run thread and the children
+  that thread delegates, and carries a source reference, a stage, and gate
+  state. Threads stay what they are.
 - **Stages start as skills.** Implement and review behaviour, including "checks
   must pass before handing back", ships first as instructions. A rule that fails
   twice in real use becomes a server-enforced gate.
-- **Factories compose from library parts.** Projects (one or several, so a
-  workspace project can span backend and frontend repos), trigger templates,
-  roles, and skills are referenced by name. The factory itself is the wiring plus
-  the Foreman's instructions.
-- **Role prompts live on disk, with a baked-in default and the app as editor.**
-  Three layers, lowest precedence first. The server ships one built-in
-  instruction block per role, so a factory with no role files works. A role
-  file at `.t3/factories/<name>/roles/<role>.md` carries the bindings in
-  frontmatter and replaces the built-in body with its own. The Factories view
-  edits those files and validates the bindings against the provider catalog.
-  The database never stores a prompt. At launch the server appends the role body
-  to the thread's instructions, the way Jira breakdown threads get theirs, binds
-  the named skills into the provider's skill directory for that worktree, and
-  the Foreman's task for the work item is the user message.
+- **Factories compose from parts referenced by name.** Projects (one or
+  several, so a workspace project can span backend and frontend repos),
+  triggers, and skills are referenced by name. A skill comes from the factory,
+  from T3 home, or from the built-in set. The factory itself is the wiring plus
+  its roles.
+- **Role prompts live on disk, with presets and the app as editor.** Three
+  layers, lowest precedence first. The server ships a body and a binding per
+  preset, so a factory with no role files works. `factory.json` has
+  `"version": 2` and maps each role to its file or to none. A file without
+  `version` implies `implement` and `review`. A role file at
+  `.t3/factories/<name>/roles/<role>.md` carries the binding and `enabled` in
+  frontmatter, and its body replaces the preset's. The Factories view edits
+  those files and validates the bindings against the provider catalog. The
+  database never stores a prompt. At launch the server appends the role body
+  to the thread's instructions, the way Jira breakdown threads get theirs, and
+  binds the named skills into the provider's skill directory for that worktree.
+  The Foreman's instructions also list the enabled roles it can delegate to,
+  and the work item is its first user message.
 - **Access.** Operators view factories and their runs. Administrators manage
   them. The guard is a scope pair in `CLIENT_GUARDED_RPC_SCOPES`, so management
   can open to operators later without a redesign.
 - **Factories get their own tab.** A Factories tab sits beside the current home
   view. Threads a factory owns and the scheduled tasks it owns leave the home
-  view and appear there. Each tab shows an attention count for gates, failed
-  runs, and questions.
+  view. Each factory lists its runs there in Home's sections, beside its
+  triggers. A run's subagents show inside the run's own view. Each tab shows an
+  attention count for gates, failed threads, failed work items, and questions.
+  A failed work item stops counting once a person failed it, dismissed the
+  failure, or settled, archived, or deleted its run thread. A dismissed failure
+  stays listed and can be restored, so the count never hides an item for good.
 
 ## Trigger seam
 
@@ -138,8 +177,9 @@ Each milestone ships on its own.
 
 - Factory record: name, projects, roles, triggers, Foreman instructions. Files
   under `.t3/factories/`, runtime state in fork migrations.
-- Three fixed roles: foreman, implement, review, each binding instructions,
-  skills, model, runtime mode, isolation, and a tool allowlist.
+- Three roles, foreman, implement, and review, each binding instructions,
+  skills, model, runtime mode, isolation, and a tool allowlist. The
+  [Refinement](#refinement) opened the set.
 - Factories tab beside home, with factory-owned threads and scheduled tasks
   moved there and an attention count on each tab.
 - Operator view, administrator manage.
@@ -149,7 +189,8 @@ Each milestone ships on its own.
 ### M2. Foreman thread and work item ledger
 
 - One Foreman thread per factory, fresh session per work item, out of the
-  sidebar.
+  sidebar. The [Refinement](#refinement) replaced it with a thread per work
+  item.
 - Work item entity with source reference, stage, owning threads, and gate state.
   The Foreman advances it through MCP tools, and the server records the
   transition.
@@ -217,7 +258,32 @@ thread links to, never for a query or a project.
 - Delete a factory: removes its directory, drops its work items, releases its
   threads, behind the manage scope with confirmation.
 
-### M8. Analysis role
+### Refinement
+
+Real use of M0 to M7 showed the run model, the roles, and the UI were too
+rough to build analysis and scoring on. One stuck item held up the factory,
+adding a role meant changing the contract, and the factory page was one long
+form.
+
+- Each work item runs in its own Foreman thread, with no queue. Fork migration
+  024 moved `queued` items back to `new`, and the stage is gone.
+- A worktree Foreman launches with its item as the initial message, which fixed
+  runs that started in the project checkout and were interrupted.
+- A person can drop an item, and dismiss or restore a failure. A failed item
+  leaves the attention count once its run thread is settled, archived, or
+  deleted.
+- Roles are open: `factory.json` version 2, presets for implement, review, and
+  analysis, `enabled` in a role file, and a child's role taken from its item's
+  stage.
+- The sidebar lists each factory's runs in Home's sections, with a "+" for a
+  manual work item. The factory page has tabs (Overview, Work items, Roles,
+  Skills, Triggers, Settings), and each view saves its own changes.
+
+### M8. Analysis role (paused)
+
+Paused until the refined factories have carried enough real work to show
+where analysis helps. The analysis role exists as a preset that runs in plan
+mode, so the role itself is done. The spec artifact and its gate are open.
 
 - Analysis role that reads the work item, the Jira issue, and the relevant repos
   and writes up scope, approach, affected repos, acceptance criteria, and work
@@ -226,7 +292,10 @@ thread links to, never for a query or a project.
   and review checks, with a human gate on it, is decided after the canvas and
   a trial of the role as a plain hand-back.
 
-### M9. Scoring and self-improvement
+### M9. Scoring and self-improvement (paused)
+
+Paused until M8 settles what a run hands back, since that is what a scorer
+grades.
 
 - Run record with outcome, stage, duration, model, and cost, with retention from
   day one.
@@ -340,7 +409,8 @@ review, done in about a minute with no gate.
   appeared on its role's node as soon as the Foreman's advance named it. A
   child the Foreman delegates without naming it in the advance would run
   unlit until the next advance, since `factory.threads` is what the canvas
-  reads.
+  reads. Resolved on 2026-11-18 by the [Refinement](#refinement). The server
+  now refuses a delegation before the advance that names its role.
 - **The reviewer's worktree branch is not the item's.** The server gave the
   reviewer a worktree on `t3/trim-slug-hyphens` while it reviewed the
   implementer's `trial/trim-hyphens` commit in detached HEAD. The Output node
