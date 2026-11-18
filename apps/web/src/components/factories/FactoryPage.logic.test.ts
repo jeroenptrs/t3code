@@ -35,6 +35,7 @@ const builtinRole = (role: FactoryRole["role"]): FactoryRole => ({
     skills: [],
     tools: [],
   },
+  enabled: true,
   body: `Built-in ${role} instructions.`,
   bodySource: "builtin",
   skills: [],
@@ -45,10 +46,11 @@ const factory: Factory = {
   projectId,
   name: "nightly-triage",
   definition: {
+    version: 2,
     name: "nightly-triage",
     projects: ["web"],
     triggers: [{ kind: "scheduled_task", scheduledTaskId: taskId }],
-    roles: { review: "roles/review.md" },
+    roles: { implement: null, review: "roles/review.md" },
   },
   projects: [{ name: "web", projectId: ProjectId.make("project-web") }],
   roles: [
@@ -58,13 +60,16 @@ const factory: Factory = {
       role: "review",
       path: "roles/review.md",
       source: "file",
-      fileBinding: { model, skills: ["review-checklist"] },
+      // A disabled role keeps `enabled: false` through every save of its file.
+      fileBinding: { enabled: false, model, skills: ["review-checklist"] },
       binding: { ...builtinRole("review").binding, model, skills: ["review-checklist"] },
+      enabled: false,
       body: "Review against the task.",
       bodySource: "file",
       skills: [{ name: "review-checklist", source: "factory", description: "", replaces: null }],
     },
   ],
+  rolePresets: [],
   skills: [{ name: "review-checklist", source: "factory", description: "", replaces: null }],
   issues: [],
   scheduledTaskIds: [taskId],
@@ -90,9 +95,12 @@ describe("buildFactorySaveInput", () => {
       triggers: [],
       roles: {
         ...draft.roles,
-        foreman: { ...draft.roles.foreman, binding: { runtimeMode: "approval-required" as const } },
-        implement: { ...draft.roles.implement, tools: " Bash, Edit ,, Bash", skills: "  " },
-        review: { ...draft.roles.review, useBuiltin: true },
+        foreman: {
+          ...draft.roles.foreman!,
+          binding: { runtimeMode: "approval-required" as const },
+        },
+        implement: { ...draft.roles.implement!, tools: " Bash, Edit ,, Bash", skills: "  " },
+        review: { ...draft.roles.review!, useBuiltin: true },
       },
     };
     expect(factoryDraftChanged(factory, edited)).toBe(true);
@@ -113,13 +121,16 @@ describe("buildFactorySaveInput", () => {
       ...draft,
       roles: {
         ...draft.roles,
-        foreman: { ...draft.roles.foreman, body: "Route every item to review first." },
-        review: { ...draft.roles.review, body: "   " },
+        foreman: { ...draft.roles.foreman!, body: "Route every item to review first." },
+        review: { ...draft.roles.review!, body: "   " },
       },
     };
     expect(buildFactorySaveInput(factory, edited).roles).toEqual([
       { role: "foreman", file: { binding: {}, body: "Route every item to review first." } },
-      { role: "review", file: { binding: { model, skills: ["review-checklist"] }, body: null } },
+      {
+        role: "review",
+        file: { binding: { enabled: false, model, skills: ["review-checklist"] }, body: null },
+      },
     ]);
   });
 
@@ -127,7 +138,7 @@ describe("buildFactorySaveInput", () => {
     const draft = factoryDraft(factory);
     const edited = {
       ...draft,
-      roles: { ...draft.roles, implement: { ...draft.roles.implement, useBuiltin: true } },
+      roles: { ...draft.roles, implement: { ...draft.roles.implement!, useBuiltin: true } },
     };
     expect(buildFactorySaveInput(factory, edited).roles).toBeUndefined();
   });

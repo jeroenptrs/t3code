@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  type Factory,
   FactoryId,
   ScheduledTaskId,
   ThreadId,
@@ -11,6 +12,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  canvasRoles,
   createFactoryCanvasSelector,
   factoryGraph,
   factoryGraphState,
@@ -79,6 +81,7 @@ function item(
 }
 
 const definition = {
+  roles: ["implement", "review"],
   scheduledTaskIds: [nightly, webhook],
   scheduledTasks: [{ id: nightly, title: "Nightly triage" }],
 };
@@ -91,8 +94,8 @@ describe("factoryGraph", () => {
       ["trigger:task-webhook", 0, "task-webhook"],
       ["trigger:manual", 0, "Manual"],
       ["foreman", 1, "Foreman"],
-      ["implement", 2, "Implement"],
-      ["review", 2, "Review"],
+      ["role:implement", 2, "Implement"],
+      ["role:review", 2, "Review"],
       ["gate", 2, "Gate"],
       ["output", 3, "Output"],
     ]);
@@ -101,8 +104,8 @@ describe("factoryGraph", () => {
       "trigger:task-nightly->foreman",
       "trigger:task-webhook->foreman",
       "trigger:manual->foreman",
-      "foreman->implement",
-      "foreman->review",
+      "foreman->role:implement",
+      "foreman->role:review",
       "foreman->gate",
       "foreman->output",
     ]);
@@ -110,6 +113,25 @@ describe("factoryGraph", () => {
     expect(layerX.size).toBe(1);
     const ys = graph.nodes.filter((node) => node.layer === 0).map((node) => node.y);
     expect(ys[1]! - ys[0]!).toBe(ys[2]! - ys[1]!);
+  });
+
+  it("draws one node per enabled role besides the Foreman, in the factory's order", () => {
+    const roles = [
+      { role: "foreman", enabled: true },
+      { role: "analysis", enabled: true },
+      { role: "review", enabled: false },
+      { role: "implement", enabled: true },
+    ];
+    const drawn = canvasRoles({ roles } as unknown as Factory);
+    expect(drawn).toEqual(["analysis", "implement"]);
+    expect(
+      factoryGraph({ ...definition, roles: drawn })
+        .nodes.filter((node) => node.kind === "role")
+        .map((node) => [node.id, node.label]),
+    ).toEqual([
+      ["role:analysis", "analysis"],
+      ["role:implement", "Implement"],
+    ]);
   });
 });
 
@@ -122,8 +144,10 @@ describe("factoryGraphState", () => {
 
   it.each([
     ["new", [["trigger:manual->foreman", "Item 1", 0]]],
-    ["implement", [["foreman->implement", "Item 1", 0]]],
-    ["review", [["foreman->review", "Item 1", 0]]],
+    ["implement", [["foreman->role:implement", "Item 1", 0]]],
+    ["review", [["foreman->role:review", "Item 1", 0]]],
+    // A disabled role has no node, so an item still at its stage lights nothing.
+    ["analysis", []],
     ["waiting", [["foreman->gate", "Item 1", 0]]],
     ["done", []],
     ["failed", []],
@@ -159,7 +183,7 @@ describe("factoryGraphState", () => {
     expect(litEdges(result)).toEqual([
       ["trigger:task-nightly->foreman", "Item 1", 0],
       ["trigger:task-webhook->foreman", "Item 4", 0],
-      ["foreman->implement", "Item 2", 1],
+      ["foreman->role:implement", "Item 2", 1],
     ]);
   });
 
@@ -182,7 +206,7 @@ describe("factoryGraphState", () => {
     expect(
       [...result.nodes].flatMap(([id, node]) => (node.lit ? [[id, node.threadId]] : [])),
     ).toEqual([
-      ["implement", implementer],
+      ["role:implement", implementer],
       ["gate", foreman],
     ]);
   });
@@ -230,7 +254,7 @@ describe("createFactoryCanvasSelector", () => {
     );
     const stopped = select(input([shell(implementer, false)]));
     expect(stopped).not.toBe(first);
-    expect(stopped.nodes.get("implement")?.lit).toBe(false);
+    expect(stopped.nodes.get("role:implement")?.lit).toBe(false);
     expect(stopped.graph).toBe(first.graph);
   });
 });
