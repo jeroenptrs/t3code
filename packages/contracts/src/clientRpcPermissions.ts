@@ -144,6 +144,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // A work item starts the Foreman's agent, and a gate answer moves the item on.
   [WS_METHODS.factoriesWorkItemsCreate]: AuthFactoriesManageScope,
   [WS_METHODS.factoriesWorkItemsAnswerGate]: AuthFactoriesManageScope,
+  [WS_METHODS.factoriesWorkItemsDismissFailure]: AuthFactoriesManageScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

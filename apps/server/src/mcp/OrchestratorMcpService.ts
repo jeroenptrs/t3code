@@ -3127,7 +3127,6 @@ const make = Effect.gen(function* () {
         : yield* factories.value
             .prepareDelegation({
               parentThreadId: scope.thread.threadId,
-              parentRunId: parentRun.id,
               delegation: input,
             })
             .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
@@ -3239,7 +3238,6 @@ const make = Effect.gen(function* () {
       if (childThreadId !== null && Option.isSome(factories)) {
         yield* factories.value.attachDelegatedChild({
           parentThreadId: scope.thread.threadId,
-          parentRunId: parentRun.id,
           childThreadId,
           taskRole: delegation.role,
         });

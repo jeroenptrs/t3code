@@ -600,6 +600,8 @@ describe("Factories authorization", () => {
               Effect.sync(() => handled.push("workItems.create")).pipe(Effect.as(workItem)),
             [WS_METHODS.factoriesWorkItemsAnswerGate]: () =>
               Effect.sync(() => handled.push("workItems.answerGate")).pipe(Effect.as(workItem)),
+            [WS_METHODS.factoriesWorkItemsDismissFailure]: () =>
+              Effect.sync(() => handled.push("workItems.dismissFailure")).pipe(Effect.as(workItem)),
           }),
           RpcAuthorization.layer(scopes),
         ),
@@ -624,6 +626,7 @@ describe("Factories authorization", () => {
     foremanThreadId: null,
     foremanRunId: null,
     dispatchedAt: null,
+    failureDismissedAt: null,
     threads: [],
     createdAt: "2026-11-05T00:00:00.000Z",
     updatedAt: "2026-11-05T00:00:00.000Z",
@@ -631,6 +634,7 @@ describe("Factories authorization", () => {
   };
   const create = { factoryId: factory.id, title: workItem.title, text: workItem.source.text };
   const answer = { workItemId, decision: "approved" as const, note: "" };
+  const dismiss = { workItemId, dismissed: true };
 
   it.effect("refuses a reader before any factory handler runs", () =>
     Effect.gen(function* () {
@@ -672,12 +676,15 @@ describe("Factories authorization", () => {
       expect(
         yield* client[WS_METHODS.factoriesWorkItemsAnswerGate](answer).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthFactoriesManageScope });
+      expect(
+        yield* client[WS_METHODS.factoriesWorkItemsDismissFailure](dismiss).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthFactoriesManageScope });
       expect(handled).toEqual(["list", "workItems.list", "skills.list"]);
     }).pipe(Effect.scoped),
   );
 
   it.effect(
-    "lets an administrator save a factory and its skills, create work items, and answer gates",
+    "lets an administrator save a factory and its skills, create work items, answer gates, and dismiss failures",
     () =>
     Effect.gen(function* () {
       const handled: Array<string> = [];
@@ -685,12 +692,14 @@ describe("Factories authorization", () => {
       yield* client[WS_METHODS.factoriesSave](save);
       yield* client[WS_METHODS.factoriesWorkItemsCreate](create);
       yield* client[WS_METHODS.factoriesWorkItemsAnswerGate](answer);
+        yield* client[WS_METHODS.factoriesWorkItemsDismissFailure](dismiss);
         yield* client[WS_METHODS.factoriesSkillsSave](skillSave);
         yield* client[WS_METHODS.factoriesSkillsDelete](skillDelete);
         expect(handled).toEqual([
           "save",
           "workItems.create",
           "workItems.answerGate",
+          "workItems.dismissFailure",
           "skills.save",
           "skills.delete",
         ]);
