@@ -1,9 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
-  FactoryRoleName,
   WorkItemOutcome,
-  WorkItemStage,
   type EnvironmentId,
   type Factory,
   type ThreadId,
@@ -28,14 +26,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { NewWorkItemDialogHost, openNewWorkItemDialog } from "./NewWorkItemDialog";
 import { WorkItemGateAnswer } from "./WorkItemGateAnswer";
 import {
-  FACTORY_ROLE_LABELS,
+  factoryRoleLabel,
+  factoryStages,
   WORK_ITEM_OUTCOME_LABELS,
-  WORK_ITEM_STAGE_LABELS,
   workItemActorLabel,
   workItemFailureMessage,
   workItemListInput,
   workItemSourceLabel,
   workItemStageBadgeVariant,
+  workItemStageLabel,
   workItemThreads,
   type WorkItemSearch,
 } from "./workItems.logic";
@@ -83,7 +82,7 @@ function WorkItemStageBadge(props: { readonly item: WorkItemSummary }) {
   return (
     <span className="flex items-center gap-1.5">
       <Badge variant={workItemStageBadgeVariant(stage, dismissed)}>
-        {WORK_ITEM_STAGE_LABELS[stage]}
+        {workItemStageLabel(stage)}
       </Badge>
       {dismissed ? (
         <span className="text-xs text-muted-foreground">
@@ -167,12 +166,6 @@ function ThreadLink(props: {
   );
 }
 
-const STAGE_OPTIONS = WorkItemStage.literals.map(
-  (stage) => [stage, WORK_ITEM_STAGE_LABELS[stage]] as const,
-);
-const ROLE_OPTIONS = FactoryRoleName.literals.map(
-  (role) => [role, FACTORY_ROLE_LABELS[role]] as const,
-);
 const OUTCOME_OPTIONS = WorkItemOutcome.literals.map(
   (outcome) => [outcome, WORK_ITEM_OUTCOME_LABELS[outcome]] as const,
 );
@@ -196,6 +189,12 @@ export function FactoryWorkItems(props: {
   const items = query.data?.workItems ?? null;
   const filtered =
     search.stage !== undefined || search.role !== undefined || search.outcome !== undefined;
+  const stageOptions = factoryStages(props.factory).map(
+    (stage) => [stage, workItemStageLabel(stage)] as const,
+  );
+  const roleOptions = props.factory.roles.map(
+    (role) => [role.role, factoryRoleLabel(role.role)] as const,
+  );
   const toggle = (id: string) =>
     setExpanded((current) => {
       const next = new Set(current);
@@ -234,14 +233,14 @@ export function FactoryWorkItems(props: {
           label="Stage"
           allLabel="Any stage"
           value={search.stage}
-          options={STAGE_OPTIONS}
+          options={stageOptions}
           onChange={(stage) => props.onSearchChange({ ...search, stage })}
         />
         <FilterSelect
           label="Role"
           allLabel="Any role"
           value={search.role}
-          options={ROLE_OPTIONS}
+          options={roleOptions}
           onChange={(role) => props.onSearchChange({ ...search, role })}
         />
         <FilterSelect
@@ -310,9 +309,7 @@ export function FactoryWorkItems(props: {
                             key={thread.threadId}
                             environmentId={environmentId}
                             threadId={thread.threadId}
-                            label={
-                              thread.role === null ? "Thread" : FACTORY_ROLE_LABELS[thread.role]
-                            }
+                            label={thread.role === null ? "Thread" : factoryRoleLabel(thread.role)}
                           />
                         ))}
                       </span>
@@ -380,8 +377,8 @@ function WorkItemDetails(props: {
               <Timestamp value={transition.at} />
               <span>
                 {transition.from === transition.to
-                  ? WORK_ITEM_STAGE_LABELS[transition.to]
-                  : `${WORK_ITEM_STAGE_LABELS[transition.from]} to ${WORK_ITEM_STAGE_LABELS[transition.to]}`}
+                  ? workItemStageLabel(transition.to)
+                  : `${workItemStageLabel(transition.from)} to ${workItemStageLabel(transition.to)}`}
               </span>
               <span className="text-muted-foreground">
                 by {workItemActorLabel(transition.actor)}
