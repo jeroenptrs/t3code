@@ -2,7 +2,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import type { EnvironmentId, FactoryId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
-import { msg } from "gt-react";
+import { msg, T, useGT } from "gt-react";
 import { useId, useState } from "react";
 
 import { m } from "../../i18n/messages";
@@ -67,6 +67,7 @@ function NewWorkItemDialog(props: {
   readonly factoryId: FactoryId;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const id = useId();
   const create = useAtomCommand(factoriesEnvironment.createWorkItem, {
     label: "create a work item",
@@ -91,7 +92,7 @@ function NewWorkItemDialog(props: {
       setError(
         workItemFailureMessage(
           squashAtomCommandFailure(result),
-          "The work item could not be created.",
+          gt("The work item could not be created."),
         ),
       );
       return;
@@ -116,15 +117,18 @@ function NewWorkItemDialog(props: {
           }}
         >
           <DialogHeader>
-            <DialogTitle>New work item</DialogTitle>
+            <DialogTitle>
+              <T>New work item</T>
+            </DialogTitle>
             <DialogDescription>
-              The Foreman gets the request as a new message and routes it to implement and review.
-              While another item is active, this one waits in the queue.
+              <T>
+                The item runs in its own Foreman thread, which routes it to the factory's roles.
+              </T>
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor={`${id}-title`}>Title</Label>
+              <Label htmlFor={`${id}-title`}>{gt("Title", { $context: "work item title" })}</Label>
               <Input
                 id={`${id}-title`}
                 value={title}
@@ -135,11 +139,13 @@ function NewWorkItemDialog(props: {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor={`${id}-text`}>Request</Label>
+              <Label htmlFor={`${id}-text`}>
+                {gt("Request", { $context: "what a work item asks for" })}
+              </Label>
               <Textarea
                 id={`${id}-text`}
                 value={text}
-                placeholder="What should the factory do?"
+                placeholder={gt("What should the factory do?")}
                 onChange={(event) => setText(event.target.value)}
               />
             </div>
@@ -151,10 +157,10 @@ function NewWorkItemDialog(props: {
           </DialogPanel>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={props.onClose}>
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button type="submit" disabled={!ready || creating}>
-              {creating ? "Creating…" : "Create work item"}
+              {creating ? gt("Creating…") : gt("Create work item")}
             </Button>
           </DialogFooter>
         </form>
