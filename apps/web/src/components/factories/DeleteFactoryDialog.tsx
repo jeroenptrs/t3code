@@ -1,5 +1,6 @@
 import type { EnvironmentId, Factory } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { T, useGT, Var } from "gt-react";
 import { useState } from "react";
 
 import { factoriesEnvironment } from "../../state/factories";
@@ -16,12 +17,13 @@ import {
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 
-/** A Delete button and the confirmation that says what goes with the factory. */
+/** A Delete factory button and the confirmation that says what goes with the factory. */
 export function DeleteFactoryDialog(props: {
   readonly environmentId: EnvironmentId;
   readonly factory: Factory;
   readonly disabled: boolean;
 }) {
+  const gt = useGT();
   const { environmentId, factory } = props;
   const remove = useAtomCommand(factoriesEnvironment.delete, "delete a factory");
   const navigate = useNavigate();
@@ -35,18 +37,18 @@ export function DeleteFactoryDialog(props: {
     if (result._tag === "Failure") return;
     setOpen(false);
     await navigate({ to: "/" });
-    toastManager.add({ type: "success", title: "Factory deleted" });
+    toastManager.add({ type: "success", title: gt("Factory deleted") });
   };
 
   return (
     <>
       <Button
-        size="sm"
+        size="xs"
         variant="destructive-outline"
         disabled={props.disabled}
         onClick={() => setOpen(true)}
       >
-        Delete
+        {gt("Delete factory")}
       </Button>
       <AlertDialog
         open={open}
@@ -56,21 +58,23 @@ export function DeleteFactoryDialog(props: {
       >
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {factory.name}?</AlertDialogTitle>
+            <AlertDialogTitle>{gt("Delete {name}?", { name: factory.name })}</AlertDialogTitle>
             <AlertDialogDescription>
-              This removes .t3/factories/{factory.name}/ with its roles and skills, and drops its
-              work items. Its threads move back to Home.
+              <T>
+                This removes .t3/factories/<Var>{factory.name}</Var>/ with its roles and skills, and
+                drops its work items. Its threads move back to Home. This cannot be undone.
+              </T>
             </AlertDialogDescription>
             <AlertDialogDescription>
-              Its scheduled tasks stay. Delete them in Settings if you no longer need them.
+              <T>Its triggers stay. Delete them in Settings if you no longer need them.</T>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose disabled={deleting} render={<Button variant="outline" />}>
-              Cancel
+              <T>Cancel</T>
             </AlertDialogClose>
             <Button variant="destructive" disabled={deleting} onClick={() => void confirm()}>
-              {deleting ? "Deleting…" : "Delete factory"}
+              {deleting ? gt("Deleting…") : gt("Delete factory")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

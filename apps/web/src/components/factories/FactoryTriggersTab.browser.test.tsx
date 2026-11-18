@@ -12,7 +12,7 @@ import { page } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
-import { FactoryDefinitionSection } from "./FactoryDefinitionSection";
+import { FactoryTriggersTab } from "./FactoryTriggersTab";
 
 const environmentId = EnvironmentId.make("laptop");
 const projectId = ProjectId.make("project-api");
@@ -20,7 +20,9 @@ const factory = {
   id: FactoryId.make("factory:project-api:nightly-triage"),
   projectId,
   name: "nightly-triage",
-} as Factory;
+  definition: { version: 2, name: "nightly-triage", projects: [], triggers: [], roles: {} },
+  issues: [],
+} as unknown as Factory;
 
 function environment() {
   return {
@@ -79,12 +81,20 @@ vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
   useProjects: (() => [{ id: projectId, environmentId, title: "API" }]) as never,
 }));
-vi.mock(import("../../state/factories"), async (original) => ({
-  ...(await original()),
-  useFactoryEnvironments: (() => [
-    { environmentId, factories: [factory], canManage: true },
-  ]) as never,
-}));
+vi.mock(import("../../state/factories"), async (original) => {
+  const actual = await original();
+  const allowed = Atom.make(true);
+  return {
+    ...actual,
+    factoriesEnvironment: {
+      ...actual.factoriesEnvironment,
+      save: { ...actual.factoriesEnvironment.save, permissionAtom: () => allowed },
+    },
+    useFactoryEnvironments: (() => [
+      { environmentId, factories: [factory], canManage: true },
+    ]) as never,
+  };
+});
 vi.mock(import("../../hooks/useSettings"), async (original) => ({
   ...(await original()),
   useEnvironmentSettings: (() => DEFAULT_UNIFIED_SETTINGS) as never,
@@ -92,17 +102,12 @@ vi.mock(import("../../hooks/useSettings"), async (original) => ({
 
 it("opens Add trigger on the factory's project, creating its work items", async () => {
   await using screen = await render(
-    <FactoryDefinitionSection
+    <FactoryTriggersTab
       environmentId={environmentId}
       factory={factory}
-      projects={[]}
-      triggers={[]}
-      editable
-      disabled={false}
-      issues={[]}
-      onProjectsChange={() => {}}
-      onTriggersChange={() => {}}
-      onTriggerCreated={() => {}}
+      canManage
+      search={{ tab: "triggers" }}
+      onSaved={() => {}}
     />,
   );
   await screen.getByRole("button", { name: "Add trigger" }).click();
