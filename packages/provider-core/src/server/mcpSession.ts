@@ -31,6 +31,8 @@ export interface FactoryRoleInstructions {
   readonly body: string;
   /** The skills the role binds, in binding order, as written to `.agents/skills/<name>/`. */
   readonly skills: ReadonlyArray<{ readonly name: string; readonly description: string }>;
+  /** The Foreman's only: the factory's enabled roles it can delegate to, in order. */
+  readonly delegates?: ReadonlyArray<string>;
 }
 
 export function withAgentDeviceEnvironment(
