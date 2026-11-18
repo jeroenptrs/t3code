@@ -1,7 +1,12 @@
 import { EnvironmentId, ProjectId, makeFactoryId, type FactorySummary } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { factoryAttentionTotal, factoryListSections, hasFactories } from "./FactoriesScreen.logic";
+import {
+  describeFactoryAttention,
+  factoryAttentionTotal,
+  factoryListSections,
+  hasFactories,
+} from "./FactoriesScreen.logic";
 
 const ENVIRONMENT_A = EnvironmentId.make("environment-a");
 const ENVIRONMENT_B = EnvironmentId.make("environment-b");
@@ -64,5 +69,14 @@ describe("the entry point's badge and visibility", () => {
     expect(hasFactories(lists)).toBe(true);
     expect(hasFactories([{ environmentId: ENVIRONMENT_A, factories: [] }])).toBe(false);
     expect(factoryAttentionTotal([])).toBe(0);
+  });
+});
+
+describe("describeFactoryAttention", () => {
+  it("counts each kind with its plural, and says nothing while nothing waits", () => {
+    expect(
+      describeFactoryAttention({ gatesWaiting: 1, failedRuns: 2, questions: 0, total: 3 }),
+    ).toBe("1 gate waiting, 2 failed runs, 0 questions");
+    expect(describeFactoryAttention(factory("ship", 0).attention)).toBeNull();
   });
 });

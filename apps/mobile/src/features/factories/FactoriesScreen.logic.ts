@@ -1,4 +1,7 @@
 import type { EnvironmentId, FactorySummary, ProjectId } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export interface EnvironmentFactoryList {
   readonly environmentId: EnvironmentId;
@@ -43,12 +46,20 @@ export function factoryAttentionTotal(lists: ReadonlyArray<EnvironmentFactoryLis
   return total;
 }
 
-export function describeFactoryAttention(attention: FactorySummary["attention"]): string {
-  const count = (value: number, one: string, many: string) =>
-    `${value} ${value === 1 ? one : many}`;
-  return [
-    count(attention.gatesWaiting, "gate waiting", "gates waiting"),
-    count(attention.failedRuns, "failed run", "failed runs"),
-    count(attention.questions, "question", "questions"),
-  ].join(", ");
+/** What waits on a person, or null when nothing does. */
+export function describeFactoryAttention(
+  attention: FactorySummary["attention"],
+  resolve: MessageResolver = m,
+): string | null {
+  if (attention.total === 0) return null;
+  return resolve(
+    msg(
+      "{gates, plural, one {{gates} gate waiting} other {{gates} gates waiting}}, {failed, plural, one {{failed} failed run} other {{failed} failed runs}}, {questions, plural, one {{questions} question} other {{questions} questions}}",
+      {
+        gates: attention.gatesWaiting,
+        failed: attention.failedRuns,
+        questions: attention.questions,
+      },
+    ),
+  );
 }

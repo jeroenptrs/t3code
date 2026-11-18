@@ -1,10 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
-import { View } from "react-native";
+import { useNavigation } from "@react-navigation/native";
+import { useGT, useMessages } from "gt-react-native";
+import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useResolveClassNames } from "uniwind";
 
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
+import { RowPressable } from "../../components/ui/RowPressable";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useProjects } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
@@ -26,14 +31,18 @@ export function useFactoriesEntry() {
 }
 
 export function FactoriesScreen() {
+  const gt = useGT();
+  const messages = useMessages();
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const rippleStyle = useResolveClassNames("bg-subtle-strong");
   const lists = useAtomValue(connectedFactoryListsAtom);
   const { presentationById } = useEnvironments();
   const projects = useProjects();
   const sections = factoryListSections({
     lists,
     environmentLabel: (environmentId) =>
-      presentationById.get(environmentId)?.entry.target.label ?? "Environment",
+      presentationById.get(environmentId)?.entry.target.label ?? gt("Environment"),
     projectTitle: (environmentId, projectId) =>
       projects.find(
         (project) => project.environmentId === environmentId && project.id === projectId,
@@ -41,7 +50,7 @@ export function FactoriesScreen() {
   });
 
   return (
-    <SettingsScreen title="Factories">
+    <SettingsScreen title={gt("Factories")}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -52,27 +61,59 @@ export function FactoriesScreen() {
         {sections.length === 0 ? (
           <EmptyState
             variant="plain"
-            title="No factories"
-            detail="Factories from your connected environments show up here."
+            title={gt("No factories")}
+            detail={gt("Factories from your connected environments show up here.")}
           />
         ) : (
           sections.map((section) => (
             <SettingsSection key={section.environmentId} title={section.title ?? undefined}>
-              {section.rows.map(({ factory, projectTitle }) => {
-                const attention = describeFactoryAttention(factory.attention);
-                const description = projectTitle ? `${projectTitle} · ${attention}` : attention;
+              {section.rows.map(({ factory, projectTitle }, index) => {
+                const attention = describeFactoryAttention(factory.attention, messages);
                 return (
-                  <View
+                  <RowPressable
                     key={factory.id}
-                    accessible
-                    accessibilityLabel={`${factory.name}, ${description}`}
+                    accessibilityRole="button"
+                    accessibilityLabel={[factory.name, projectTitle, attention]
+                      .filter(Boolean)
+                      .join(", ")}
+                    onPress={() =>
+                      navigation.navigate("SettingsFactory", {
+                        environmentId: section.environmentId,
+                        factoryId: factory.id,
+                      })
+                    }
+                    android_ripple={{ color: rippleStyle.backgroundColor }}
+                    unstable_pressDelay={Platform.OS === "android" ? 50 : undefined}
+                    className={
+                      index === 0
+                        ? "bg-grouped-card"
+                        : "border-t border-border-subtle bg-grouped-card"
+                    }
                   >
                     <ListRowLayout
                       label={factory.name}
-                      description={description}
-                      accessory={<AttentionBadge count={factory.attention.total} />}
+                      description={projectTitle ?? undefined}
+                      meta={
+                        attention === null ? undefined : (
+                          <AppText textRole="footnote" className="text-foreground-muted">
+                            {attention}
+                          </AppText>
+                        )
+                      }
+                      accessory={
+                        <View className="flex-row items-center gap-3">
+                          <AttentionBadge count={factory.attention.total} />
+                          <SymbolView
+                            name="chevron.right"
+                            size={16}
+                            tintColorClassName="accent-chevron"
+                            type="monochrome"
+                            weight="semibold"
+                          />
+                        </View>
+                      }
                     />
-                  </View>
+                  </RowPressable>
                 );
               })}
             </SettingsSection>
