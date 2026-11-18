@@ -13058,5 +13058,10 @@
   "0d50b5bfe7151ece": "Não foi possível baixar o arquivo",
   "eb1fd384ad5919dd": "Nota interna",
   "b45f0b467e9406d0": "Responder ao cliente",
-  "d454bfdeea6f1129": "Abrir pré-visualização"
+  "d454bfdeea6f1129": "Abrir pré-visualização",
+  "f85d012f56ee8e23": "Dispensada",
+  "5faac35b21638e8c": "Dispensar falha",
+  "563e4478fe91a497": "Desfazer dispensa",
+  "9923147967f589d0": "Não foi possível atualizar a falha.",
+  "ba5bcda4144279c3": "Item de trabalho enviado ao Foreman"
 }

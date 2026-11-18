@@ -13066,5 +13066,10 @@
   "0d50b5bfe7151ece": "Could not download file",
   "eb1fd384ad5919dd": "Internal note",
   "b45f0b467e9406d0": "Reply to customer",
-  "d454bfdeea6f1129": "Open preview"
+  "d454bfdeea6f1129": "Open preview",
+  "f85d012f56ee8e23": "Dismissed",
+  "5faac35b21638e8c": "Dismiss failure",
+  "563e4478fe91a497": "Restore failure",
+  "9923147967f589d0": "The failure could not be updated.",
+  "ba5bcda4144279c3": "Work item sent to the Foreman"
 }

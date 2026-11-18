@@ -13058,5 +13058,10 @@
   "0d50b5bfe7151ece": "Impossible de télécharger le fichier",
   "eb1fd384ad5919dd": "Note interne",
   "b45f0b467e9406d0": "Répondre au client",
-  "d454bfdeea6f1129": "Ouvrir l’aperçu"
+  "d454bfdeea6f1129": "Ouvrir l’aperçu",
+  "f85d012f56ee8e23": "Ignoré",
+  "5faac35b21638e8c": "Ignorer l’échec",
+  "563e4478fe91a497": "Rétablir l’échec",
+  "9923147967f589d0": "Impossible de mettre à jour l’échec.",
+  "ba5bcda4144279c3": "Élément de travail envoyé au Foreman"
 }
