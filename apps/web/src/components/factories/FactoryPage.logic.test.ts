@@ -1,189 +1,49 @@
-import {
-  FactoryId,
-  ProjectId,
-  ProviderInstanceId,
-  ScheduledTaskId,
-  type Factory,
-  type FactoryRole,
-} from "@t3tools/contracts";
+import type { FactoryIssue } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  attachTrigger,
-  buildFactorySaveInput,
-  factoryDraft,
-  factoryDraftChanged,
-  skillDeleteMessage,
-  skillTemplate,
-  withSkillName,
-} from "./FactoryPage.logic";
+import { canSaveDefinition, issueCountByTab, validateFactoryPageSearch } from "./FactoryPage.logic";
 
-const projectId = ProjectId.make("project-api");
-const taskId = ScheduledTaskId.make("task-nightly");
-const model = { instanceId: ProviderInstanceId.make("claude"), model: "claude-haiku-5-5" };
-
-const builtinRole = (role: FactoryRole["role"]): FactoryRole => ({
-  role,
-  path: null,
-  source: "builtin",
-  fileBinding: {},
-  binding: {
-    model: null,
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    isolation: "worktree",
-    skills: [],
-    tools: [],
-  },
-  enabled: true,
-  body: `Built-in ${role} instructions.`,
-  bodySource: "builtin",
-  skills: [],
+describe("validateFactoryPageSearch", () => {
+  it.each([
+    [{}, {}],
+    [{ tab: "overview" }, {}],
+    [
+      { tab: "roles", role: "implement" },
+      { tab: "roles", role: "implement" },
+    ],
+    // A role page belongs to the Roles tab, and filters to Work items.
+    [{ tab: "skills", role: "implement", stage: "new" }, { tab: "skills" }],
+    [
+      { tab: "work-items", stage: "triage", outcome: "active", item: "work-item:1" },
+      { tab: "work-items", stage: "triage", outcome: "active", item: "work-item:1" },
+    ],
+    [{ tab: "work-items", stage: "Shipped!", outcome: 3 }, { tab: "work-items" }],
+    [{ tab: "canvas", role: "Not A Role" }, {}],
+  ])("reads %j", (raw, expected) => {
+    expect(validateFactoryPageSearch(raw)).toEqual(expected);
+  });
 });
 
-const factory: Factory = {
-  id: FactoryId.make("factory:project-api:nightly-triage"),
-  projectId,
-  name: "nightly-triage",
-  definition: {
-    version: 2,
-    name: "nightly-triage",
-    projects: ["web"],
-    triggers: [{ kind: "scheduled_task", scheduledTaskId: taskId }],
-    roles: { implement: null, review: "roles/review.md" },
-  },
-  projects: [{ name: "web", projectId: ProjectId.make("project-web") }],
-  roles: [
-    builtinRole("foreman"),
-    builtinRole("implement"),
-    {
-      role: "review",
-      path: "roles/review.md",
-      source: "file",
-      // A disabled role keeps `enabled: false` through every save of its file.
-      fileBinding: { enabled: false, model, skills: ["review-checklist"] },
-      binding: { ...builtinRole("review").binding, model, skills: ["review-checklist"] },
-      enabled: false,
-      body: "Review against the task.",
-      bodySource: "file",
-      skills: [{ name: "review-checklist", source: "factory", description: "", replaces: null }],
-    },
-  ],
-  rolePresets: [],
-  skills: [{ name: "review-checklist", source: "factory", description: "", replaces: null }],
-  issues: [],
-  scheduledTaskIds: [taskId],
-  threads: [],
-  attention: { gatesWaiting: 0, failedRuns: 0, questions: 0, total: 0 },
-};
+const issue = (role: string | null, field: string | null, code = "unknown_model"): FactoryIssue =>
+  ({ code, role, field, message: "" }) as FactoryIssue;
 
-describe("buildFactorySaveInput", () => {
-  it("sends the definition unchanged and no role files when nothing was edited", () => {
-    const draft = factoryDraft(factory);
-    expect(factoryDraftChanged(factory, draft)).toBe(false);
-    expect(buildFactorySaveInput(factory, draft)).toEqual({
-      projectId,
-      definition: factory.definition,
-    });
-  });
-
-  it("writes only the edited roles, keeping a built-in body built-in", () => {
-    const draft = factoryDraft(factory);
-    const edited = {
-      ...draft,
-      projects: ["web", "docs"],
-      triggers: [],
-      roles: {
-        ...draft.roles,
-        foreman: {
-          ...draft.roles.foreman!,
-          binding: { runtimeMode: "approval-required" as const },
-        },
-        implement: { ...draft.roles.implement!, tools: " Bash, Edit ,, Bash", skills: "  " },
-        review: { ...draft.roles.review!, useBuiltin: true },
-      },
-    };
-    expect(factoryDraftChanged(factory, edited)).toBe(true);
-    expect(buildFactorySaveInput(factory, edited)).toEqual({
-      projectId,
-      definition: { ...factory.definition, projects: ["web", "docs"], triggers: [] },
-      roles: [
-        { role: "foreman", file: { binding: { runtimeMode: "approval-required" }, body: null } },
-        { role: "implement", file: { binding: { tools: ["Bash", "Edit"] }, body: null } },
-        { role: "review", file: null },
-      ],
-    });
-  });
-
-  it("writes an edited body and keeps the role file's own bindings", () => {
-    const draft = factoryDraft(factory);
-    const edited = {
-      ...draft,
-      roles: {
-        ...draft.roles,
-        foreman: { ...draft.roles.foreman!, body: "Route every item to review first." },
-        review: { ...draft.roles.review!, body: "   " },
-      },
-    };
-    expect(buildFactorySaveInput(factory, edited).roles).toEqual([
-      { role: "foreman", file: { binding: {}, body: "Route every item to review first." } },
-      {
-        role: "review",
-        file: { binding: { enabled: false, model, skills: ["review-checklist"] }, body: null },
-      },
+describe("issueCountByTab", () => {
+  it("counts a role's issues on Roles, triggers on Triggers, and factory.json on Settings", () => {
+    const counts = issueCountByTab([
+      issue("implement", "model"),
+      issue("foreman", null),
+      issue(null, "triggers", "unknown_scheduled_task"),
+      issue(null, "projects", "unknown_project"),
     ]);
-  });
-
-  it("sends no change for a built-in role reset to built-in", () => {
-    const draft = factoryDraft(factory);
-    const edited = {
-      ...draft,
-      roles: { ...draft.roles, implement: { ...draft.roles.implement!, useBuiltin: true } },
-    };
-    expect(buildFactorySaveInput(factory, edited).roles).toBeUndefined();
+    expect(Object.fromEntries(counts)).toEqual({ roles: 2, triggers: 1, settings: 1 });
   });
 });
 
-describe("attachTrigger", () => {
-  const added = ScheduledTaskId.make("task-jira");
-
-  it("saves at once when the page holds no edits", () => {
-    for (const draft of [null, factoryDraft(factory)]) {
-      expect(attachTrigger(factory, draft, added)).toEqual({
-        draft: { ...factoryDraft(factory), triggers: [taskId, added] },
-        saveNow: true,
-      });
-    }
-  });
-
-  it("adds the trigger to unsaved edits and leaves the save to the person", () => {
-    const draft = { ...factoryDraft(factory), projects: ["web", "docs"] };
-    expect(attachTrigger(factory, draft, added)).toEqual({
-      draft: { ...draft, triggers: [taskId, added] },
-      saveNow: false,
-    });
-  });
-});
-
-describe("withSkillName", () => {
-  it.each([
-    [skillTemplate("lint"), "run-checks", skillTemplate("run-checks")],
-    // Only the frontmatter's name changes, not a line in the instructions.
-    ["---\nname: a\n---\nname: keep\n", "b", "---\nname: b\n---\nname: keep\n"],
-    ["---\ndescription: x\n---\nname: keep\n", "b", "---\ndescription: x\n---\nname: keep\n"],
-    ["No frontmatter.\nname: keep\n", "b", "No frontmatter.\nname: keep\n"],
-  ])("sets the frontmatter name of %j to %s", (body, name, expected) => {
-    expect(withSkillName(body, name)).toBe(expected);
-  });
-});
-
-describe("skillDeleteMessage", () => {
-  it.each([
-    ["factory", "home", "The home skill of that name applies instead."],
-    ["home", "builtin", "The built-in skill of that name applies instead."],
-    ["factory", null, "Roles that bind lint then go without it."],
-  ] as const)("names what applies after a %s skill over %s goes", (source, replaces, after) => {
-    const message = skillDeleteMessage({ name: "lint", source, description: "", replaces });
-    expect(message.split("\n")[1]).toBe(after);
+describe("canSaveDefinition", () => {
+  it("refuses saves over a factory.json that could not be read", () => {
+    expect(canSaveDefinition({ issues: [issue(null, null, "invalid_definition")] })).toBe(false);
+    expect(canSaveDefinition({ issues: [issue(null, "projects", "invalid_definition")] })).toBe(
+      true,
+    );
   });
 });
