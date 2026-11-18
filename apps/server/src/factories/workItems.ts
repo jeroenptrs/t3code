@@ -1,14 +1,12 @@
 /**
- * Fork-only work item helpers for `FactoryService`: the messages the Foreman reads, the role a
- * delegated task's child takes on an item, and that role's binding laid over the delegation. Plain
- * functions; the ledger itself is in the service.
+ * Fork-only work item helpers for `FactoryService`: the messages the Foreman reads, and a role's
+ * binding laid over a delegation. Plain functions; the ledger itself is in the service.
  */
 import type {
   FactoryEffectiveBinding,
   FactoryName,
   FactoryRoleName,
   OrchestratorMcpDelegateTaskInput,
-  OrchestratorMcpTaskRole,
   WorkItemGateDecision,
   WorkItemId,
   WorkItemSource,
@@ -58,12 +56,6 @@ ${note === "" ? "They left no note." : `Their note: ${note}`}
 
 ${next}`;
 }
-
-/** The role a delegated task's child takes on the Foreman's work item. */
-export const workItemRoleForTask = (
-  taskRole: OrchestratorMcpTaskRole | undefined,
-): FactoryRoleName | null =>
-  taskRole === "implementation" ? "implement" : taskRole === "review" ? "review" : null;
 
 /**
  * The delegation with the role's isolation, modes, and model in place of the call's, and the note
