@@ -239,18 +239,18 @@ describe("command permissions", () => {
     WS_METHODS.triggersFireCurrent,
     ORCHESTRATION_V2_WS_METHODS.stopWorkflow,
   ])("uses the target grant for both availability and execution of %s", (method) =>
-      Effect.gen(function* () {
-        const registry = yield* setup;
-        const permissions = createCommandPermissions(runtime, method);
-        registry.set(sessions(env), AsyncResult.success(grant(true)));
-        expect(registry.get(permissions.permissionAtom(env))).toBe(true);
-        expect(permissions.permissionAtom(env)).toBe(permissions.permissionAtom(env));
-        yield* permissions.authorize(registry, env);
-        registry.set(sessions(other), AsyncResult.success(grant(false)));
-        expect(registry.get(permissions.permissionAtom(other))).toBe(false);
-        const denied = yield* permissions.authorize(registry, other).pipe(Effect.flip);
-        expect(denied._tag).toBe("EnvironmentAuthorizationError");
-      }),
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const permissions = createCommandPermissions(runtime, method);
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      expect(registry.get(permissions.permissionAtom(env))).toBe(true);
+      expect(permissions.permissionAtom(env)).toBe(permissions.permissionAtom(env));
+      yield* permissions.authorize(registry, env);
+      registry.set(sessions(other), AsyncResult.success(grant(false)));
+      expect(registry.get(permissions.permissionAtom(other))).toBe(false);
+      const denied = yield* permissions.authorize(registry, other).pipe(Effect.flip);
+      expect(denied._tag).toBe("EnvironmentAuthorizationError");
+    }),
   );
   it.effect("waits for an initial grant", () =>
     Effect.gen(function* () {
@@ -608,6 +608,7 @@ it.effect.each([
   WS_METHODS.factoriesWorkItemsCreate,
   WS_METHODS.factoriesWorkItemsAnswerGate,
   WS_METHODS.factoriesWorkItemsDismissFailure,
+  WS_METHODS.factoriesWorkItemsDrop,
 ])("%s needs factories:manage, which an operator grant lacks", (method) =>
   Effect.scoped(
     Effect.gen(function* () {
