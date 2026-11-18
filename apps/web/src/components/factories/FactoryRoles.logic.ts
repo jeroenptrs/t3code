@@ -3,13 +3,13 @@ import {
   FactoryRoleName,
   isReservedFactoryRoleName,
   type Factory,
-  type FactoryDefinition,
   type FactoryRole,
   type FactoryRoleBinding,
   type FactoryRoleChange,
   type FactoryRolePreset,
   type FactorySaveInput,
 } from "@t3tools/contracts";
+import { factorySaveInput } from "@t3tools/client-runtime/factories";
 import * as Schema from "effect/Schema";
 
 /** The bindings the role page and the Foreman card edit. The rest of the file is kept as read. */
@@ -78,33 +78,6 @@ export function roleFileChange(role: FactoryRole, draft: RoleDraft): FactoryRole
       binding: { ...kept, ...draft.binding, ...(writesSkills ? { skills: draft.skills } : {}) },
       body: keepsPresetBody ? null : draft.body,
     },
-  };
-}
-
-/** The role's file with `enabled` set, everything else kept. Absent means enabled. */
-export function roleEnabledChange(role: FactoryRole, enabled: boolean): FactoryRoleChange {
-  const { enabled: _enabled, ...binding } = role.fileBinding;
-  return {
-    role: role.role,
-    file: {
-      binding: enabled ? binding : { ...binding, enabled: false },
-      body: role.bodySource === "file" ? role.body : null,
-    },
-  };
-}
-
-/** A save that writes the definition as read, with only the given changes. */
-export function factorySaveInput(
-  factory: Pick<Factory, "projectId" | "definition">,
-  changes: {
-    readonly definition?: Partial<Pick<FactoryDefinition, "projects" | "triggers" | "roles">>;
-    readonly roles?: ReadonlyArray<FactoryRoleChange>;
-  },
-): FactorySaveInput {
-  return {
-    projectId: factory.projectId,
-    definition: { ...factory.definition, ...changes.definition, version: 2 },
-    ...(changes.roles === undefined || changes.roles.length === 0 ? {} : { roles: changes.roles }),
   };
 }
 

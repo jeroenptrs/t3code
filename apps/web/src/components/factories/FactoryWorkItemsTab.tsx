@@ -1,3 +1,12 @@
+import {
+  canDropWorkItem,
+  factoryStages,
+  isDismissedFailure,
+  WORK_ITEM_OUTCOME_LABELS,
+  workItemActorLabel,
+  workItemFailureMessage,
+  workItemStageLabel,
+} from "@t3tools/client-runtime/factories";
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -31,17 +40,10 @@ import type { FactoryTabProps } from "./FactoryPage";
 import { FactoryConfirmDialog, FactoryLoadError } from "./FactoryPageParts";
 import { WorkItemGateAnswer } from "./WorkItemGateAnswer";
 import {
-  canDropWorkItem,
-  factoryStages,
-  isDismissedFailure,
   isWorkItemSearchFiltered,
-  WORK_ITEM_OUTCOME_LABELS,
-  workItemActorLabel,
-  workItemFailureMessage,
   workItemListInput,
   workItemSourceLabel,
   workItemStageBadgeVariant,
-  workItemStageLabel,
 } from "./workItems.logic";
 
 const ALL = "all";
