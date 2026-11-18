@@ -12903,7 +12903,11 @@
   "a6caa48b22f6f702": "{name} löschen?",
   "7c5aa604a24cad22": [
     "Dadurch werden .t3/factories/",
-    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
     "/ mit ihren Rollen und Skills entfernt und ihre Arbeitselemente verworfen. Ihre Threads kehren zu Start zurück. Das kann nicht rückgängig gemacht werden."
   ],
   "fd268008419cee5d": "Ihre Trigger bleiben. Lösche sie in den Einstellungen, wenn du sie nicht mehr brauchst.",
@@ -13092,5 +13096,22 @@
   "8df6d63976456e38": "Person",
   "716d7803b27b2204": "Server",
   "a055b9e321fca88f": "Füge eine Notiz hinzu, um abzulehnen.",
-  "6592d50bfdf6b692": "Das Element kann nicht von {from} zu {to} wechseln."
+  "6592d50bfdf6b692": "Das Element kann nicht von {from} zu {to} wechseln.",
+  "efbeb45b1a8af207": "Noch keine Fabriken. Erstelle eine, um die Arbeitselemente eines Projekts durch eigene Rollen laufen zu lassen.",
+  "49d1858c7666b5a4": "Noch keine Fabriken",
+  "f8c2c599678e2e60": "Neues Arbeitselement in {factory}",
+  "4bae6f80acb530ed": "Neue Fabrik",
+  "99b071f396bd6c0f": "Noch keine Ausführungen oder Trigger",
+  "5f2da42a7a2abe64": [
+    "Neues Arbeitselement in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "92c01f25b469c00c": "Ausblenden, was {factory} gehört",
+  "1492a6f4ede26c44": "Anzeigen, was {factory} gehört",
+  "fea5b119aed850fa": "Verwende Kleinbuchstaben, Ziffern und einzelne Bindestriche, etwa nightly-triage.",
+  "b1b794caabbb77aa": "Dieses Projekt hat bereits eine Fabrik mit diesem Namen."
 }

@@ -12910,7 +12910,11 @@
   "a6caa48b22f6f702": "Ta bort {name}?",
   "7c5aa604a24cad22": [
     "Det här tar bort .t3/factories/",
-    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
     "/ med dess roller och färdigheter och släpper dess arbetsobjekt. Dess trådar flyttas tillbaka till Hem. Det går inte att ångra."
   ],
   "fd268008419cee5d": "Dess utlösare finns kvar. Ta bort dem i inställningarna om du inte längre behöver dem.",
@@ -13099,5 +13103,22 @@
   "8df6d63976456e38": "Person",
   "716d7803b27b2204": "Server",
   "a055b9e321fca88f": "Lägg till en anteckning för att avvisa.",
-  "6592d50bfdf6b692": "Objektet kan inte gå från {from} till {to}."
+  "6592d50bfdf6b692": "Objektet kan inte gå från {from} till {to}.",
+  "efbeb45b1a8af207": "Inga fabriker än. Skapa en för att köra ett projekts arbetsobjekt genom egna roller.",
+  "49d1858c7666b5a4": "Inga fabriker än",
+  "f8c2c599678e2e60": "Nytt arbetsobjekt i {factory}",
+  "4bae6f80acb530ed": "Ny fabrik",
+  "99b071f396bd6c0f": "Inga körningar eller utlösare än",
+  "5f2da42a7a2abe64": [
+    "Nytt arbetsobjekt i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "92c01f25b469c00c": "Dölj det som {factory} äger",
+  "1492a6f4ede26c44": "Visa det som {factory} äger",
+  "fea5b119aed850fa": "Använd gemener, siffror och enkla bindestreck, till exempel nightly-triage.",
+  "b1b794caabbb77aa": "Det här projektet har redan en fabrik med det här namnet."
 }
