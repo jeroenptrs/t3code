@@ -94,6 +94,7 @@ const workItem: WorkItem = {
   foremanRunId: null,
   dispatchedAt: null,
   failureDismissedAt: null,
+  failedByUser: false,
   threads: [],
   createdAt: "2026-11-05T00:00:00.000Z",
   updatedAt: "2026-11-05T00:00:00.000Z",
@@ -140,6 +141,7 @@ const call = (
     gateWorkItem: (threadId) => foremanOnly(threadId, "gateWorkItem", calls),
     setWorkItemFailureDismissed: () =>
       Effect.sync(() => calls.push("setWorkItemFailureDismissed")).pipe(Effect.as(workItem)),
+    dropWorkItem: () => Effect.sync(() => calls.push("dropWorkItem")).pipe(Effect.as(workItem)),
   });
   const skillStore = Layer.mock(FactorySkillStore.FactorySkillStore)({
     list: () => Effect.sync(() => calls.push("skills.list")).pipe(Effect.as({ skills: [] })),

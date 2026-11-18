@@ -567,6 +567,8 @@ export const WorkItemSummary = Schema.Struct({
   dispatchedAt: Schema.NullOr(IsoDateTime),
   /** When a person dismissed the item's failure, so it no longer asks for attention. */
   failureDismissedAt: Schema.NullOr(IsoDateTime),
+  /** Whether a person moved the item to `failed`, so its failure needs no one's attention. */
+  failedByUser: Schema.Boolean,
   threads: Schema.Array(WorkItemThread),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -646,6 +648,12 @@ export const WorkItemDismissFailureInput = Schema.Struct({
   dismissed: Schema.Boolean,
 });
 export type WorkItemDismissFailureInput = typeof WorkItemDismissFailureInput.Type;
+
+/** A person drops an item that has not ended; its Foreman thread is told to stop. */
+export const WorkItemDropInput = Schema.Struct({
+  workItemId: WorkItemId,
+});
+export type WorkItemDropInput = typeof WorkItemDropInput.Type;
 
 /** Stages the Foreman moves an item to: a role's, `done`, `failed`, or `dropped`. */
 export const WorkItemAdvanceStage = stageExcept(

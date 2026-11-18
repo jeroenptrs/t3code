@@ -645,6 +645,7 @@ it.effect.each([
   WS_METHODS.factoriesWorkItemsCreate,
   WS_METHODS.factoriesWorkItemsAnswerGate,
   WS_METHODS.factoriesWorkItemsDismissFailure,
+  WS_METHODS.factoriesWorkItemsDrop,
 ])("%s needs factories:manage, which an operator grant lacks", (method) =>
   Effect.scoped(
     Effect.gen(function* () {

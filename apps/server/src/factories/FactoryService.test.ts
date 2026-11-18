@@ -1297,6 +1297,7 @@ describe("FactoryService work items", () => {
         });
         assert.strictEqual(dismissed.stage, "failed");
         assert.isNotNull(dismissed.failureDismissedAt);
+        assert.isFalse(dismissed.failedByUser);
         assert.strictEqual((yield* factories.read(factoryId)).attention.failedRuns, 0);
         assert.deepStrictEqual(
           (yield* factories.listWorkItems({ factoryId, outcome: "failed" })).workItems.map(
@@ -1330,6 +1331,37 @@ describe("FactoryService work items", () => {
             },
           ],
         );
+      }),
+    ),
+  );
+
+  it.effect("lets a person drop an item that has not ended and tells its Foreman to stop", () =>
+    withWorkItems(({ factoryId, recorded }) =>
+      Effect.gen(function* () {
+        const factories = yield* FactoryService.FactoryService;
+        const item = yield* factories.createWorkItem({ factoryId, title: "Fix", text: "Fix it." });
+        const foreman = item.foremanThreadId!;
+        yield* factories.advanceWorkItem(foreman, { workItemId: item.id, stage: "implement" });
+        const userId = AuthUserId.make("user-ada");
+
+        const dropped = yield* factories.dropWorkItem(userId, { workItemId: item.id });
+        assert.strictEqual(dropped.stage, "dropped");
+        assert.deepStrictEqual(
+          dropped.transitions.slice(-1).map(({ from, to, actor }) => ({ from, to, actor })),
+          [{ from: "implement", to: "dropped", actor: { kind: "user", userId } }],
+        );
+        const told = (yield* Ref.get(recorded.sends)).at(-1)!;
+        assert.strictEqual(told.threadId, foreman);
+        assert.strictEqual(told.mode, "auto");
+        assert.include(told.text, "Stop work on it");
+
+        const again = yield* factories
+          .dropWorkItem(userId, { workItemId: item.id })
+          .pipe(Effect.flip);
+        assert.deepStrictEqual(again._tag === "WorkItemTransitionError" && [again.from, again.to], [
+          "dropped",
+          "dropped",
+        ]);
       }),
     ),
   );
