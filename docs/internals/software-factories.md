@@ -266,7 +266,10 @@ adding a role meant changing the contract, and the factory page was one long
 form.
 
 - Each work item runs in its own Foreman thread, with no queue. Fork migration
-  024 moved `queued` items back to `new`, and the stage is gone.
+  024 drops `queued` items with a note, and the stage is gone. Starting them
+  would launch a burst of runs for stale work on deploy. Migration 025 drops
+  the items an earlier 024 moved back to `new`: any item created before 024
+  ran that never started.
 - A worktree Foreman launches with its item as the initial message, which fixed
   runs that started in the project checkout and were interrupted.
 - A person can drop an item, and dismiss or restore a failure. A failed item
