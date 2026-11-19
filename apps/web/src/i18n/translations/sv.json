@@ -13041,5 +13041,7 @@
   "92c01f25b469c00c": "Dölj det som {factory} äger",
   "1492a6f4ede26c44": "Visa det som {factory} äger",
   "fea5b119aed850fa": "Använd gemener, siffror och enkla bindestreck, till exempel nightly-triage.",
-  "b1b794caabbb77aa": "Det här projektet har redan en fabrik med det här namnet."
+  "b1b794caabbb77aa": "Det här projektet har redan en fabrik med det här namnet.",
+  "b462588e4e40009c": "Pågår",
+  "e197c4963bacc746": "{count} körs"
 }
