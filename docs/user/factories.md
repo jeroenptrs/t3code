@@ -135,6 +135,10 @@ To create a work item:
 A trigger attached to the factory creates work items the same way. Only administrators can create
 work items. An agent can also send one for you when you ask it to.
 
+If the Foreman's model names a provider that is not set up or is turned off, or a model the provider
+does not offer, the item fails at once with that reason and no run starts. Fix the model under
+**Foreman** on the **Settings** tab. A role with the same problem gets no agents until you fix it.
+
 ### Follow the work
 
 To watch a run, open it in the sidebar under its factory. The run thread shows what the Foreman
