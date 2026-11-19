@@ -200,6 +200,7 @@ export const FactoryIssueCode = Schema.Literals([
   "invalid_role_file",
   "invalid_binding",
   "unknown_provider_instance",
+  "disabled_provider_instance",
   "unknown_model",
   "invalid_model_options",
   "unsupported_runtime_mode",
@@ -673,7 +674,7 @@ export type WorkItemGateInput = typeof WorkItemGateInput.Type;
  * `not_foreman`: only the item's Foreman may do this. `gate_waiting`: a person's answer moves it.
  * `no_gate`: no gate waits. `not_failed`: only a failure is dismissed. `unknown_role`,
  * `role_disabled`: no such role, or it is off. `no_role`: a Foreman delegated naming no role.
- * `unavailable`: the database or the Foreman could not be reached.
+ * `invalid_binding`: the role's provider or model cannot run. `unavailable`: no database or Foreman.
  */
 export const WorkItemErrorCode = Schema.Literals([
   "not_found",
@@ -684,6 +685,7 @@ export const WorkItemErrorCode = Schema.Literals([
   "unknown_role",
   "role_disabled",
   "no_role",
+  "invalid_binding",
   "unavailable",
 ]);
 export type WorkItemErrorCode = typeof WorkItemErrorCode.Type;

@@ -563,6 +563,16 @@ export function bindingIssues(
     ];
   }
   const issues: Array<FactoryIssue> = [];
+  if (!provider.enabled) {
+    issues.push(
+      issue(
+        "disabled_provider_instance",
+        role,
+        "model",
+        `${selection.instanceId} is turned off in this environment's provider settings.`,
+      ),
+    );
+  }
   // A provider that lists no models accepts any; this matches delegate_task.
   const model = provider.models.find((candidate) => candidate.slug === selection.model);
   if (provider.models.length > 0 && model === undefined) {
