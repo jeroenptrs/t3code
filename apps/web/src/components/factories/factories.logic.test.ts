@@ -7,6 +7,7 @@ import {
   factoryListedThreads,
   factoryNameError,
   factoryTriggerSummary,
+  settledShelfRows,
   showsFactoriesTab,
 } from "./factories.logic";
 
@@ -109,5 +110,28 @@ describe("factoryTriggerSummary", () => {
     expect(factoryTriggerSummary({ source: { kind: "jira" }, filters: [], target: workItem })).toBe(
       "Jira → nightly-triage",
     );
+  });
+});
+
+describe("settledShelfRows", () => {
+  const environmentId = EnvironmentId.make("environment-local");
+  const threads = Array.from({ length: 5 }, (_, index) => ({
+    environmentId,
+    id: ThreadId.make(`thread-${index}`),
+  }));
+  const keyOf = (index: number) =>
+    scopedThreadKey(scopeThreadRef(environmentId, ThreadId.make(`thread-${index}`)));
+
+  it("shows the first threads up to the limit and counts the rest", () => {
+    expect(settledShelfRows(threads, 2, null)).toEqual({ shown: threads.slice(0, 2), hidden: 3 });
+    expect(settledShelfRows(threads, 5, null)).toEqual({ shown: threads, hidden: 0 });
+  });
+
+  it("keeps the open thread past the limit, and does not count it as hidden", () => {
+    expect(settledShelfRows(threads, 2, keyOf(4))).toEqual({
+      shown: [threads[0], threads[1], threads[4]],
+      hidden: 2,
+    });
+    expect(settledShelfRows(threads, 2, keyOf(1)).hidden).toBe(3);
   });
 });
