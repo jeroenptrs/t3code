@@ -12,6 +12,7 @@ import {
   FactoryName,
   type FactoryProject,
   FactoryRoleBinding,
+  FactoryRoleDescription,
   FactoryRoleName,
   FactoryRolePath,
   type FactorySkill,
@@ -222,6 +223,10 @@ const bindingFields: Record<
   { readonly decode: (value: unknown) => Option.Option<unknown>; readonly expected: string }
 > = {
   enabled: { decode: Schema.decodeUnknownOption(Schema.Boolean), expected: "true or false" },
+  description: {
+    decode: Schema.decodeUnknownOption(FactoryRoleDescription),
+    expected: "one line of at most 200 characters",
+  },
   model: { decode: Schema.decodeUnknownOption(ModelSelection), expected: "{ instanceId, model }" },
   runtimeMode: {
     decode: Schema.decodeUnknownOption(RuntimeMode),
