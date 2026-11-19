@@ -960,7 +960,13 @@ const layerWorkItems = (backend: ProjectStore.ProjectRow, recorded: Recorded) =>
           get: (projectId) =>
             Effect.succeed(projectId === backend.projectId ? Option.some(backend) : Option.none()),
         }),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([provider]) }),
+        // A second instance that is configured but turned off.
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([
+            provider,
+            { ...provider, instanceId: ProviderInstanceId.make("codex-off"), enabled: false },
+          ]),
+        }),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         }),
@@ -1308,6 +1314,60 @@ describe("FactoryService work items", () => {
           assert.lengthOf(yield* Ref.get(recorded.launches), 0);
         }),
       { defaultModel: false },
+    ),
+  );
+
+  it.effect.each([
+    ["an unknown provider instance", "missing", "gpt-6", "No provider instance missing"],
+    ["a disabled provider instance", "codex-off", "gpt-6", "codex-off is turned off"],
+    ["a model its instance does not offer", "codex", "gpt-9", "does not offer the model gpt-9"],
+  ] as const)(
+    "fails an item whose Foreman binds %s instead of starting it",
+    ([, instanceId, model, reason]) =>
+      withWorkItems(
+        ({ factoryId, recorded }) =>
+          Effect.gen(function* () {
+            const factories = yield* FactoryService.FactoryService;
+            const error = yield* factories
+              .createWorkItem({ factoryId, title: "Fix", text: "Fix it." })
+              .pipe(Effect.flip);
+            assert.strictEqual(error._tag === "WorkItemError" && error.code, "invalid_binding");
+            assert.include(error.message, reason);
+            assert.lengthOf(yield* Ref.get(recorded.launches), 0);
+
+            const [item] = (yield* factories.listWorkItems({ factoryId })).workItems;
+            assert.strictEqual(item!.stage, "failed");
+            assert.isNull(item!.foremanThreadId);
+            const read = yield* factories.readWorkItem(item!.id);
+            assert.include(read.transitions[0]!.note, reason);
+          }),
+        {
+          files: {
+            "roles/foreman.md": `---\nmodel:\n  instanceId: ${instanceId}\n  model: ${model}\n---\n`,
+          },
+        },
+      ),
+  );
+
+  it.effect("refuses to delegate to a role whose provider instance is unknown", () =>
+    withWorkItems(
+      ({ factoryId }) =>
+        Effect.gen(function* () {
+          const factories = yield* FactoryService.FactoryService;
+          const item = yield* factories.createWorkItem({
+            factoryId,
+            title: "Fix",
+            text: "Fix it.",
+          });
+          const refused = yield* delegate(item, "review").pipe(Effect.flip);
+          assert.strictEqual(refused._tag === "WorkItemError" && refused.code, "invalid_binding");
+          assert.include(refused.message, "No provider instance missing");
+          assert.strictEqual((yield* factories.readWorkItem(item.id)).stage, "new");
+          yield* delegate(item, "implement");
+        }),
+      {
+        files: { "roles/review.md": "---\nmodel:\n  instanceId: missing\n  model: x\n---\n" },
+      },
     ),
   );
 
