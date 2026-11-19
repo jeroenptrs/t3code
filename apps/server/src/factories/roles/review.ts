@@ -9,6 +9,8 @@ export const binding = {
   tools: [],
 } satisfies FactoryEffectiveBinding;
 
+export const description =
+  "Reviews one change against its task and runs the checks. It never edits the code.";
 export const body = `You review one change against the task the Foreman wrote for it. You work in your own worktree, on the branch under review.
 
 Your skill says how to review, which checks to run, and how to hand back. Read it and follow it.

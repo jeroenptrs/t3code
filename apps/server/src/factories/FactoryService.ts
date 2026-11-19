@@ -107,7 +107,12 @@ import {
 } from "./workItems.ts";
 
 const ROLE_PRESETS: ReadonlyArray<FactoryRolePreset> = Object.entries(rolePresets).map(
-  ([name, preset]) => ({ name, binding: preset.binding, body: preset.body }),
+  ([name, preset]) => ({
+    name,
+    binding: preset.binding,
+    description: preset.description,
+    body: preset.body,
+  }),
 );
 const isFactoryName = Schema.is(FactoryName);
 const isRoleName = Schema.is(FactoryRoleName);
@@ -319,6 +324,7 @@ function resolveRole(
         source: "builtin",
         fileBinding: {},
         binding: defaults.binding,
+        description: defaults.description,
         enabled: true,
         body: defaults.body,
         bodySource: "builtin",
@@ -348,6 +354,7 @@ function resolveRole(
       source: "file",
       fileBinding: file.binding,
       binding,
+      description: file.binding.description ?? defaults.description,
       enabled: enabled.enabled,
       body: file.body ?? defaults.body,
       bodySource: file.body === null ? "builtin" : "file",

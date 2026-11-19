@@ -98,7 +98,7 @@ const make = Effect.gen(function* () {
 
   /**
    * The role, its file, the skills it binds that exist in binding order, and for the Foreman the
-   * enabled roles it can delegate to. Defaults fill in for a missing file or factory.
+   * enabled roles it can delegate to with what each is for. Defaults fill in for a missing file.
    */
   const boundRole = Effect.fn("FactoryThreads.boundRole")(function* (threadId: ThreadId) {
     const found = yield* factoryRole(threadId);
@@ -121,7 +121,10 @@ const make = Effect.gen(function* () {
                 entry.role !== FACTORY_FOREMAN_ROLE &&
                 roleEnabled(entry.role, entry.file?.binding ?? {}).enabled,
             )
-            .map((entry) => entry.role)
+            .map((entry) => ({
+              name: entry.role,
+              description: entry.file?.binding.description ?? roleDefaults(entry.role).description,
+            }))
         : null;
     return { ...found, body: file?.body ?? defaults.body, skills, delegates };
   });

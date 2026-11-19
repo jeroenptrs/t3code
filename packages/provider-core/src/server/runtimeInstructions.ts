@@ -63,7 +63,13 @@ ${factoryRole.skills
   const delegates =
     factoryRole.delegates === undefined
       ? ""
-      : `\n\nRoles you can delegate to: ${factoryRole.delegates.length === 0 ? "none" : factoryRole.delegates.join(", ")}`;
+      : factoryRole.delegates.length === 0
+        ? "\n\nRoles you can delegate to: none"
+        : `\n\nRoles you can delegate to:\n${factoryRole.delegates
+            .map(({ name, description }) =>
+              description === "" ? `- ${name}` : `- ${name}: ${toSingleLine(description)}`,
+            )
+            .join("\n")}`;
   return `<factory_role factory="${factoryRole.factoryId}" role="${factoryRole.role}">
 ${factoryRole.body.trim()}${delegates}${skills}
 </factory_role>`;

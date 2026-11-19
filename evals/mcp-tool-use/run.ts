@@ -641,7 +641,14 @@ const factoryRoleInstructions = (role: FactoryRoleName) => ({
       skill.name === name && skill.source === "builtin" ? [skill] : [],
     ),
   ),
-  ...(role === "foreman" ? { delegates: ["implement", "review"] } : {}),
+  ...(role === "foreman"
+    ? {
+        delegates: (["implement", "review"] as const).map((name) => ({
+          name,
+          description: roleDefaults(name).description,
+        })),
+      }
+    : {}),
 });
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */

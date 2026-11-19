@@ -70,6 +70,7 @@ const factory: Factory = {
       source: "builtin",
       fileBinding: {},
       binding: rolePresets.foreman.binding,
+      description: rolePresets.foreman.description,
       enabled: true,
       body: rolePresets.foreman.body,
       bodySource: "builtin",
