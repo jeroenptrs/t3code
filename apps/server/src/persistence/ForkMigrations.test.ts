@@ -245,6 +245,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [22, "ScheduledTaskTarget"],
       [23, "PollTriggerStart"],
       [24, "FactoryWorkItemRuns"],
+      [25, "FactoryStaleWorkItems"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
@@ -314,7 +315,7 @@ it.effect(
         )
       `;
       }
-      yield* runForkMigrations();
+      yield* runForkMigrations({ toMigrationInclusive: 20 });
       const rows = yield* sql<{
         readonly id: string;
         readonly stage: string;
@@ -330,7 +331,7 @@ it.effect(
     }).pipe(Effect.provide(memoryDatabase())),
 );
 
-it.effect("moves queued work items back to new and drops their queue transitions", () =>
+it.effect("drops queued work items with a note instead of starting them", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* runMigrations();
@@ -375,7 +376,7 @@ it.effect("moves queued work items back to new and drops their queue transitions
       FROM fork_factory_work_items ORDER BY work_item_id
     `;
     assert.deepStrictEqual(items, [
-      { id: "work-item:queued", stage: "new", dispatchedAt: null, dismissedAt: null },
+      { id: "work-item:queued", stage: "dropped", dispatchedAt: null, dismissedAt: null },
       {
         id: "work-item:running",
         stage: "implement",
@@ -383,10 +384,74 @@ it.effect("moves queued work items back to new and drops their queue transitions
         dismissedAt: null,
       },
     ]);
-    const transitions = yield* sql<{ readonly id: string }>`
-      SELECT transition_id AS "id" FROM fork_factory_work_item_transitions ORDER BY transition_id
+    const transitions = yield* sql<{
+      readonly workItemId: string;
+      readonly from: string;
+      readonly to: string;
+      readonly actor: string;
+      readonly note: string | null;
+    }>`
+      SELECT work_item_id AS "workItemId", from_stage AS "from", to_stage AS "to",
+        actor_json AS "actor", note
+      FROM fork_factory_work_item_transitions
+      WHERE transition_id <> 't-3' OR work_item_id <> 'work-item:running'
+      ORDER BY work_item_id, at
     `;
-    assert.deepStrictEqual(transitions, [{ id: "t-3" }]);
+    assert.deepStrictEqual(transitions, [
+      {
+        workItemId: "work-item:queued",
+        from: "new",
+        to: "dropped",
+        actor: '{"kind":"server"}',
+        note: "Dropped without a run: it was queued before each work item got its own run.",
+      },
+    ]);
+  }).pipe(Effect.provide(memoryDatabase())),
+);
+
+it.effect("drops items migration 024 left unstarted, and keeps newer ones for dispatch", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations();
+    yield* runForkMigrations({ toMigrationInclusive: 24 });
+    // A server that ran 024 as it first shipped moved its queued items back to `new`.
+    yield* sql`
+      UPDATE ${sql(forkMigrationsTable)} SET created_at = '2026-11-18 12:00:00'
+      WHERE migration_id = 24
+    `;
+    for (const [id, dispatchedAt, createdAt] of [
+      ["work-item:stale", null, "2026-11-01T00:00:00.000Z"],
+      ["work-item:started", "2026-11-01T00:00:01.000Z", "2026-11-01T00:00:00.000Z"],
+      ["work-item:fresh", null, "2026-11-18T12:00:01.000Z"],
+    ] as const) {
+      yield* sql`
+        INSERT INTO fork_factory_work_items (
+          work_item_id, factory_id, title, source_json, stage, gate_json,
+          foreman_thread_id, foreman_run_id, dispatched_at, created_at, updated_at
+        ) VALUES (
+          ${id}, 'factory:project-1:triage', ${id}, '{"kind":"manual","text":"Fix it."}', 'new',
+          '{"state":"none"}', NULL, NULL, ${dispatchedAt}, ${createdAt}, ${createdAt}
+        )
+      `;
+    }
+    yield* runForkMigrations();
+    const items = yield* sql<{ readonly id: string; readonly stage: string }>`
+      SELECT work_item_id AS "id", stage FROM fork_factory_work_items ORDER BY work_item_id
+    `;
+    assert.deepStrictEqual(items, [
+      { id: "work-item:fresh", stage: "new" },
+      { id: "work-item:stale", stage: "dropped" },
+      { id: "work-item:started", stage: "new" },
+    ]);
+    const notes = yield* sql<{ readonly workItemId: string; readonly note: string | null }>`
+      SELECT work_item_id AS "workItemId", note FROM fork_factory_work_item_transitions
+    `;
+    assert.deepStrictEqual(notes, [
+      {
+        workItemId: "work-item:stale",
+        note: "Dropped without a run: it was queued before each work item got its own run.",
+      },
+    ]);
   }).pipe(Effect.provide(memoryDatabase())),
 );
 
