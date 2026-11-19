@@ -16,10 +16,12 @@ import {
   FactorySkillReadInput,
   FactorySkillReadResult,
   FactorySkillSaveInput,
+  OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpFailure,
   WorkItem,
   WorkItemAdvanceInput,
   WorkItemCreateInput,
+  WorkItemDelegateInput,
   WorkItemDismissFailureInput,
   WorkItemError,
   WorkItemGateInput,
@@ -33,6 +35,7 @@ import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 
 const shared = {
   failure: Schema.Union([OrchestratorMcpFailure, FactoryError]),
@@ -156,10 +159,23 @@ const WorkItemCreateTool = Tool.make("t3_work_item_create", {
   success: WorkItem,
 }).annotate(Tool.Destructive, false);
 
+const FactoryDelegateTool = Tool.make("t3_factory_delegate", {
+  ...shared,
+  failure: OrchestratorMcpFailure,
+  dependencies: [...shared.dependencies, OrchestratorMcpService.OrchestratorMcpService],
+  description:
+    "Foreman only. Start one child for your work item as one of the factory's enabled roles, with only `task`. The role sets its model, modes, checkout, and skills. Children run at once: call it again for another part or another role. Use it, not delegate_task. Keep `taskId` for `task_status` and `task_cancel`.",
+  parameters: WorkItemDelegateInput,
+  success: OrchestratorMcpDelegateTaskResult,
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
 const WorkItemAdvanceTool = Tool.make("t3_work_item_advance", {
   ...workItemShared,
   description:
-    "Foreman only. Move your work item to a role's stage, or to done, failed, or dropped. Advance to a role before you delegate to it, in a separate call: the stage sets the child's role. The same stage only adds `threads`.",
+    "Foreman only. End your work item: done, failed, or dropped. Delegating moves it to working.",
   parameters: WorkItemAdvanceInput,
   success: WorkItem,
 })
@@ -169,7 +185,7 @@ const WorkItemAdvanceTool = Tool.make("t3_work_item_advance", {
 const WorkItemGateTool = Tool.make("t3_work_item_gate", {
   ...workItemShared,
   description:
-    "Foreman only. Hold your work item for a person's decision, then end your turn. The answer arrives as your next message: approval resumes at `resumeStage` (a role or done), rejection drops the item.",
+    "Foreman only. Hold your work item for a person's decision, then end your turn. The answer arrives as your next message: approval resumes at `resumeStage` (working or done), rejection drops the item.",
   parameters: WorkItemGateInput,
   success: WorkItem,
 })
@@ -195,6 +211,7 @@ export const FactoriesToolkit = Toolkit.make(
   WorkItemListTool,
   WorkItemReadTool,
   WorkItemCreateTool,
+  FactoryDelegateTool,
   WorkItemAdvanceTool,
   WorkItemGateTool,
   WorkItemDismissFailureTool,

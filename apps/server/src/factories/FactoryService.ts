@@ -27,7 +27,6 @@ import {
   type FactorySkill,
   type FactoryThread,
   isTerminalWorkItemStage,
-  isWorkItemRoleStage,
   makeFactoryId,
   MessageId,
   type OrchestratorMcpDelegateTaskInput,
@@ -58,6 +57,7 @@ import {
   type WorkItemThread,
   WorkItemTransitionError,
 } from "@t3tools/contracts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -144,10 +144,7 @@ export class FactoryService extends Context.Service<
       readonly title: string;
       readonly source: WorkItemTriggerSource;
     }) => Effect.Effect<WorkItem, FactoryError | WorkItemError>;
-    /**
-     * The item's Foreman moves it on and names the threads that worked on it. A role stage must
-     * name one of the factory's enabled roles as it is now.
-     */
+    /** The item's Foreman ends it: done, failed, or dropped. */
     readonly advanceWorkItem: (
       callerThreadId: ThreadId,
       input: WorkItemAdvanceInput,
@@ -184,28 +181,32 @@ export class FactoryService extends Context.Service<
      */
     readonly dispatchPending: Effect.Effect<void>;
     /**
-     * A Foreman's delegation takes the binding of the enabled role its item's stage names, and the
-     * item's log records it; any other stage fails it. Before the item's first child, a checkout
-     * with no Git committer identity gates the item and fails it. Other threads' delegations, and
-     * those of a Foreman whose item has ended, come back as they are.
+     * Binds a Foreman's delegation to the enabled role it names, moves its item to `working`, and
+     * names the child on the item before the child exists. Refuses no role or an unusable one, and
+     * gates the first child on a Git identity. Other threads' calls come back as they are.
      */
     readonly prepareDelegation: (input: {
       readonly parentThreadId: ThreadId;
+      /** The delegation's command, from which the child's thread id derives. */
+      readonly commandId: CommandId;
       readonly delegation: FactoryDelegation;
+      /** What `t3_factory_delegate` names; null for a plain `delegate_task`. */
+      readonly factoryRole: FactoryDelegationRole | null;
     }) => Effect.Effect<FactoryDelegation, FactoryError | WorkItemError>;
-    /**
-     * Names a delegated task's child on the work item its Foreman parent runs, as the role whose
-     * stage the item is at, when the parent is a Foreman thread. Logs and ignores failures, since
-     * delegation must not depend on it.
-     */
-    readonly attachDelegatedChild: (input: {
-      readonly parentThreadId: ThreadId;
-      readonly childThreadId: ThreadId;
-    }) => Effect.Effect<void>;
   }
 >()("t3/factories/FactoryService") {}
 
 export type FactoryDelegation = OrchestratorMcpDelegateTaskInput;
+
+/**
+ * What `t3_factory_delegate` names for the `delegate_task` path it runs: the work item and the
+ * role the child runs as. Null for a plain `delegate_task`, so upstream's signature stays as is.
+ */
+export const FactoryDelegationRole = Context.Reference<{
+  readonly workItemId: WorkItemId;
+  readonly role: FactoryRoleName;
+} | null>("t3/factories/FactoryDelegationRole", { defaultValue: () => null });
+export type FactoryDelegationRole = NonNullable<typeof FactoryDelegationRole.Service>;
 
 export interface WorkItemFilter {
   readonly factoryId?: FactoryId | undefined;
@@ -963,6 +964,7 @@ const make = Effect.gen(function* () {
           : [
               sql`EXISTS (
                 SELECT 1 FROM fork_factory_work_item_threads t
+                JOIN orchestration_v2_projection_threads p ON p.thread_id = t.thread_id
                 WHERE t.work_item_id = w.work_item_id AND t.role = ${filter.role}
               )`,
             ]),
@@ -971,6 +973,7 @@ const make = Effect.gen(function* () {
       LIMIT ${WORK_ITEM_LIST_LIMIT}
     `.pipe(NodeSqliteClient.readOnly, Effect.flatMap(decodeWorkItemRows));
     const ids = rows.map((row) => row.id);
+    // A child's row lands before its thread does; a delegation that failed leaves one with none.
     const threadRows =
       ids.length === 0
         ? []
@@ -979,10 +982,11 @@ const make = Effect.gen(function* () {
             readonly threadId: string;
             readonly role: string | null;
           }>`
-            SELECT work_item_id AS "workItemId", thread_id AS "threadId", role
-            FROM fork_factory_work_item_threads
-            WHERE work_item_id IN ${sql.in(ids)}
-            ORDER BY created_at, rowid
+            SELECT t.work_item_id AS "workItemId", t.thread_id AS "threadId", t.role
+            FROM fork_factory_work_item_threads t
+            JOIN orchestration_v2_projection_threads p ON p.thread_id = t.thread_id
+            WHERE t.work_item_id IN ${sql.in(ids)}
+            ORDER BY t.created_at, t.rowid
           `.pipe(NodeSqliteClient.readOnly);
     return rows.map((row): WorkItemSummary => ({
       ...row,
@@ -1031,7 +1035,10 @@ const make = Effect.gen(function* () {
     } satisfies WorkItem;
   });
 
-  /** One stage change: the item's row, its transition, and any threads it names, together. */
+  /**
+   * One stage change: the item's row, its transition, and any threads it names, together. At the
+   * same stage, a note is a log entry: a transition from the stage to itself.
+   */
   const moveWorkItem = Effect.fn("FactoryService.moveWorkItem")(function* (input: {
     readonly item: WorkItemSummary;
     readonly to: WorkItemStage;
@@ -1049,14 +1056,14 @@ const make = Effect.gen(function* () {
     yield* sql
       .withTransaction(
         Effect.gen(function* () {
-          if (input.to !== input.item.stage) {
-            yield* sql`
-              UPDATE fork_factory_work_items
-              SET stage = ${input.to},
-                gate_json = ${gateJson},
-                updated_at = ${at}
-              WHERE work_item_id = ${input.item.id}
-            `;
+          yield* sql`
+            UPDATE fork_factory_work_items
+            SET stage = ${input.to},
+              gate_json = ${gateJson},
+              updated_at = ${at}
+            WHERE work_item_id = ${input.item.id}
+          `;
+          if (input.to !== input.item.stage || input.note !== null) {
             yield* sql`
               INSERT INTO fork_factory_work_item_transitions (
                 transition_id, work_item_id, from_stage, to_stage, actor_json, note, at
@@ -1065,19 +1072,13 @@ const make = Effect.gen(function* () {
                 ${actorJson}, ${input.note}, ${at}
               )
             `;
-          } else if ((input.threads ?? []).length > 0) {
-            yield* sql`
-              UPDATE fork_factory_work_items SET updated_at = ${at}
-              WHERE work_item_id = ${input.item.id}
-            `;
           }
           yield* Effect.forEach(
             input.threads ?? [],
             (thread) => sql`
               INSERT INTO fork_factory_work_item_threads (work_item_id, thread_id, role, created_at)
               VALUES (${input.item.id}, ${thread.threadId}, ${thread.role}, ${at})
-              ON CONFLICT (work_item_id, thread_id)
-              DO UPDATE SET role = COALESCE(excluded.role, fork_factory_work_item_threads.role)
+              ON CONFLICT (work_item_id, thread_id) DO UPDATE SET role = excluded.role
             `,
             { discard: true },
           );
@@ -1235,22 +1236,6 @@ const make = Effect.gen(function* () {
     Effect.withSpan("FactoryService.dispatchPending"),
   );
 
-  /** Fails when `stage` names a role the item's factory cannot use now; other stages pass. */
-  const requireRoleStage = Effect.fn("FactoryService.requireRoleStage")(function* (
-    item: WorkItemSummary,
-    stage: string,
-    verb: string,
-  ) {
-    if (stage !== FACTORY_FOREMAN_ROLE && !isWorkItemRoleStage(stage)) return;
-    const factory = yield* read(item.factoryId).pipe(
-      Effect.mapError(
-        (error) => new WorkItemError({ code: "unavailable", message: error.message }),
-      ),
-    );
-    const problem = roleProblem(factory, stage, verb);
-    if (problem !== null) return yield* problem;
-  });
-
   const advanceWorkItem = Effect.fn("FactoryService.advanceWorkItem")(function* (
     callerThreadId: ThreadId,
     input: WorkItemAdvanceInput,
@@ -1263,12 +1248,7 @@ const make = Effect.gen(function* () {
             message: `Work item ${item.id} waits on a person's answer to its gate, which moves it on.`,
           });
         }
-        if (input.stage !== item.stage) yield* requireRoleStage(item, input.stage, "advance to");
-        // The same stage only names threads.
-        if (
-          input.stage !== item.stage &&
-          !canTransitionWorkItem(item.stage, input.stage, item.gate)
-        ) {
+        if (!canTransitionWorkItem(item.stage, input.stage, item.gate)) {
           return yield* new WorkItemTransitionError({
             workItemId: item.id,
             from: item.stage,
@@ -1280,7 +1260,6 @@ const make = Effect.gen(function* () {
           to: input.stage,
           actor: { kind: "foreman", threadId: callerThreadId },
           note: input.note ?? null,
-          threads: input.threads ?? [],
         });
       }),
     );
@@ -1293,7 +1272,6 @@ const make = Effect.gen(function* () {
   ) {
     yield* withForemanItem(callerThreadId, input.workItemId, (item) =>
       Effect.gen(function* () {
-        yield* requireRoleStage(item, input.resumeStage, "resume to");
         if (!canTransitionWorkItem(item.stage, "waiting", item.gate)) {
           return yield* new WorkItemTransitionError({
             workItemId: item.id,
@@ -1514,26 +1492,6 @@ const make = Effect.gen(function* () {
     return { id: WorkItemId.make(item.workItemId), stage: item.stage };
   });
 
-  /** A note on the item's log that changes no stage: a transition row from its stage to itself. */
-  const logWorkItem = Effect.fn("FactoryService.logWorkItem")(function* (
-    workItemId: WorkItemId,
-    note: string,
-  ) {
-    const actorJson = yield* encodeActor({ kind: "server" }).pipe(Effect.catch(ledgerUnavailable));
-    yield* withLedgerItem(workItemId, (item) =>
-      Effect.gen(function* () {
-        yield* sql`
-          INSERT INTO fork_factory_work_item_transitions (
-            transition_id, work_item_id, from_stage, to_stage, actor_json, note, at
-          ) VALUES (
-            ${`work-item-transition:${yield* randomUuidV4}`}, ${item.id}, ${item.stage},
-            ${item.stage}, ${actorJson}, ${note}, ${yield* nowIso}
-          )
-        `.pipe(Effect.catch(ledgerUnavailable));
-      }),
-    );
-  });
-
   /**
    * Why no child can commit in the checkout, or null when Git resolves a committer identity.
    * `git var` fails the way `git commit` would, so this never accepts a guessed identity.
@@ -1590,7 +1548,7 @@ const make = Effect.gen(function* () {
             gate: {
               state: "waiting",
               question: missing,
-              resumeStage: item.stage,
+              resumeStage: "working",
               askedAt: yield* nowIso,
             },
           });
@@ -1605,15 +1563,32 @@ const make = Effect.gen(function* () {
 
   const prepareDelegation = Effect.fn("FactoryService.prepareDelegation")(function* (input: {
     readonly parentThreadId: ThreadId;
+    readonly commandId: CommandId;
     readonly delegation: FactoryDelegation;
+    readonly factoryRole: FactoryDelegationRole | null;
   }) {
+    const named = input.factoryRole;
     const [owner] = yield* sql<{ readonly factoryId: string }>`
       SELECT factory_id AS "factoryId" FROM fork_factory_threads
       WHERE thread_id = ${input.parentThreadId} AND role = 'foreman'
     `.pipe(NodeSqliteClient.readOnly, Effect.catch(ledgerUnavailable));
-    if (owner === undefined) return input.delegation;
-    const item = yield* foremanRunItem(input.parentThreadId).pipe(Effect.catch(ledgerUnavailable));
-    if (item === null) return input.delegation;
+    const item =
+      owner === undefined
+        ? null
+        : yield* foremanRunItem(input.parentThreadId).pipe(Effect.catch(ledgerUnavailable));
+    if (item === null || owner === undefined) {
+      if (named === null) return input.delegation;
+      return yield* new WorkItemError({
+        code: "not_foreman",
+        message: `Only work item ${named.workItemId}'s Foreman thread may delegate for it, until the item ends.`,
+      });
+    }
+    if (named !== null && named.workItemId !== item.id) {
+      return yield* new WorkItemError({
+        code: "not_foreman",
+        message: `This thread is the Foreman of work item ${item.id}, not ${named.workItemId}.`,
+      });
+    }
     const factory = yield* read(FactoryId.make(owner.factoryId));
     if (item.stage === "waiting") {
       return yield* new WorkItemError({
@@ -1621,41 +1596,39 @@ const make = Effect.gen(function* () {
         message: `Work item ${item.id} waits on a person's answer to its gate, so nothing can be delegated for it. End your turn; their answer arrives as your next message.`,
       });
     }
-    if (!isWorkItemRoleStage(item.stage)) {
+    if (named === null) {
       const usable = delegateRoles(factory);
       return yield* new WorkItemError({
         code: "no_role",
-        message: `Work item ${item.id} is at ${item.stage}, which is no role's stage, so this task has no role. Advance the item with t3_work_item_advance to the role you delegate to, then delegate. Roles you can delegate to: ${usable.length === 0 ? "none" : usable.join(", ")}.`,
+        message: `Each child of work item ${item.id} runs as one of the factory's roles. Delegate with t3_factory_delegate and name the role. Roles you can delegate to: ${usable.length === 0 ? "none" : usable.join(", ")}.`,
       });
     }
-    const problem = roleProblem(factory, item.stage, "delegate to");
+    const problem = roleProblem(factory, named.role, "delegate to");
     if (problem !== null) return yield* problem;
-    const role = factory.roles.find((candidate) => candidate.role === item.stage)!;
+    const role = factory.roles.find((candidate) => candidate.role === named.role)!;
     yield* requireCommitIdentity(factory, item.id);
     const bound = bindDelegation(role.role, input.delegation, role.binding);
-    yield* logWorkItem(item.id, bound.note);
+    // The orchestrator derives the child's id from the command the same way.
+    const childThreadId = IdAllocator.derive.delegatedTaskThread({ commandId: input.commandId });
+    yield* withLedgerItem(item.id, (current) =>
+      Effect.gen(function* () {
+        if (current.stage !== "new" && current.stage !== "working") {
+          return yield* new WorkItemError({
+            code: current.stage === "waiting" ? "gate_waiting" : "not_foreman",
+            message: `Work item ${item.id} is ${current.stage}, so nothing can be delegated for it.`,
+          });
+        }
+        yield* moveWorkItem({
+          item: current,
+          to: "working",
+          actor: { kind: "server" },
+          note: bound.note,
+          threads: [{ threadId: childThreadId, role: role.role }],
+        });
+      }),
+    );
     return bound.delegation;
   });
-
-  const attachDelegatedChild = Effect.fn("FactoryService.attachDelegatedChild")(
-    function* (input: { readonly parentThreadId: ThreadId; readonly childThreadId: ThreadId }) {
-      const item = yield* foremanRunItem(input.parentThreadId);
-      if (item === null) return;
-      yield* sql`
-        INSERT INTO fork_factory_work_item_threads (work_item_id, thread_id, role, created_at)
-        VALUES (
-          ${item.id}, ${input.childThreadId},
-          ${isWorkItemRoleStage(item.stage) ? item.stage : null}, ${yield* nowIso}
-        )
-        ON CONFLICT (work_item_id, thread_id) DO NOTHING
-      `;
-    },
-    Effect.catch((error) =>
-      Effect.logWarning("Could not name a delegated task's thread on its work item", {
-        errorTag: error._tag,
-      }),
-    ),
-  );
 
   // Items a restart left undispatched; off the startup path, and logged on failure.
   yield* ServerActivation.forkParked(dispatchPending);
@@ -1676,7 +1649,6 @@ const make = Effect.gen(function* () {
     dropWorkItem,
     dispatchPending,
     prepareDelegation,
-    attachDelegatedChild,
   });
 });
 

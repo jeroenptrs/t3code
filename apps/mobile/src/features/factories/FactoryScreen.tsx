@@ -7,7 +7,7 @@ import {
   canSaveDefinition,
   factoryRoleLabel,
   factorySaveInput,
-  factoryStages,
+  WORK_ITEM_STAGES,
   needsYouListInputs,
   roleEnabledChange,
   WORK_ITEM_OUTCOME_LABELS,
@@ -155,7 +155,7 @@ export function FactoryScreen({ route }: FactoryScreenProps) {
                   selected: filter.stage === undefined,
                   onPress: () => setFilter(({ stage: _stage, ...rest }) => rest),
                 },
-                ...factoryStages(factory).map((stage) => ({
+                ...WORK_ITEM_STAGES.map((stage) => ({
                   id: `stage:${stage}`,
                   title: workItemStageLabel(stage, messages),
                   selected: filter.stage === stage,
@@ -223,6 +223,7 @@ export function FactoryScreen({ route }: FactoryScreenProps) {
         <NeedsYou environmentId={environmentId} factoryId={factoryId} onOpen={setOpenItem} />
       ) : view === "work-items" ? (
         <WorkItems
+          environmentId={environmentId}
           query={workItems}
           filtered={filtered}
           canCreate={canCreate}
@@ -452,6 +453,7 @@ function SkeletonRows(props: { readonly rows: number }) {
 }
 
 function WorkItems(props: {
+  readonly environmentId: EnvironmentId;
   readonly query: EnvironmentQueryView<{ readonly workItems: ReadonlyArray<WorkItemSummary> }>;
   readonly filtered: boolean;
   readonly canCreate: boolean;
@@ -502,7 +504,7 @@ function WorkItems(props: {
           item={item}
           first={index === 0}
           accessibilityHint={workItemStageLabel(item.stage, messages)}
-          meta={<WorkItemStageText item={item} />}
+          meta={<WorkItemStageText environmentId={props.environmentId} item={item} />}
           onPress={() => props.onOpen(item.id)}
         />
       ))}

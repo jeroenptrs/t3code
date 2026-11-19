@@ -35,6 +35,7 @@ import ForkMigration0022 from "./ForkMigrations/022_ScheduledTaskTarget.ts";
 import ForkMigration0023 from "./ForkMigrations/023_PollTriggerStart.ts";
 import ForkMigration0024 from "./ForkMigrations/024_FactoryWorkItemRuns.ts";
 import ForkMigration0025 from "./ForkMigrations/025_FactoryStaleWorkItems.ts";
+import ForkMigration0026 from "./ForkMigrations/026_FactoryWorkItemWorking.ts";
 
 export const forkMigrationsTable = "fork_sql_migrations";
 
@@ -64,6 +65,7 @@ export const forkMigrationEntries = [
   [23, "PollTriggerStart", ForkMigration0023],
   [24, "FactoryWorkItemRuns", ForkMigration0024],
   [25, "FactoryStaleWorkItems", ForkMigration0025],
+  [26, "FactoryWorkItemWorking", ForkMigration0026],
 ] as const;
 
 export const forkMigrationManifest = forkMigrationEntries.map(([id, name]) => [id, name] as const);

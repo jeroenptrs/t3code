@@ -23,8 +23,10 @@ import {
   gateAnswerInput,
   needsYouRows,
   roleEnabledChange,
+  runningRoles,
   workItemFailureMessage,
   type NeedsYouShell,
+  type RunningRoleShell,
 } from "./factories.ts";
 
 const environmentId = EnvironmentId.make("environment-local");
@@ -79,7 +81,7 @@ describe("needsYouRows", () => {
       [shell({ environmentId: EnvironmentId.make("remote") })],
       0,
     ],
-    ["an item that has not failed", item({ stage: "implement" }), [shell()], 0],
+    ["an item that has not failed", item({ stage: "working" }), [shell()], 0],
   ] as const)("counts %s as %i", (_name, failed, shells, expected) => {
     expect(failures(failed, shells)).toBe(expected);
   });
@@ -225,5 +227,44 @@ describe("workItemFailureMessage", () => {
     expect(workItemFailureMessage(error, "The answer could not be sent.", mFallback)).toBe(
       expected,
     );
+  });
+});
+
+describe("runningRoles", () => {
+  it("groups the item's running children by role, and leaves out finished and roleless ones", () => {
+    const thread = (id: string) => ThreadId.make(id);
+    const runtime = (status: "running" | "completed") => ({
+      status,
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: null,
+      lastError: null,
+      updatedAt: "2026-11-18T10:00:00.000Z",
+    });
+    const shells: ReadonlyArray<RunningRoleShell> = [
+      { environmentId, id: thread("t-api"), runtime: runtime("running") },
+      { environmentId, id: thread("t-ui"), runtime: runtime("running") },
+      { environmentId, id: thread("t-review"), runtime: runtime("completed") },
+      { environmentId, id: thread("t-helper"), runtime: runtime("running") },
+      // The same id in another environment is another thread.
+      {
+        environmentId: EnvironmentId.make("other"),
+        id: thread("t-checks"),
+        runtime: runtime("running"),
+      },
+    ];
+    const working = item({
+      stage: "working",
+      threads: [
+        { threadId: thread("t-api"), role: "implement" },
+        { threadId: thread("t-review"), role: "review" },
+        { threadId: thread("t-ui"), role: "implement" },
+        { threadId: thread("t-helper"), role: null },
+        { threadId: thread("t-checks"), role: "checks" },
+      ],
+    });
+    expect(runningRoles(working, environmentId, shells)).toEqual([
+      { role: "implement", threadIds: [thread("t-api"), thread("t-ui")] },
+    ]);
   });
 });

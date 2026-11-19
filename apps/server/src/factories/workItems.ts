@@ -33,7 +33,7 @@ Title: ${input.title}
 
 ${source.text.trim()}
 
-Advance this item with t3_work_item_advance as you route it, and hold it for a person with t3_work_item_gate.`;
+Delegate each task with t3_factory_delegate, naming the role. Hold the item for a person with t3_work_item_gate, and end it with t3_work_item_advance.`;
 }
 
 /** The follow-up the Foreman gets once a person answers its gate. */
@@ -47,7 +47,9 @@ export function renderGateAnswerMessage(input: {
   const note = input.note.trim();
   const next =
     input.decision === "approved"
-      ? `The item is at ${input.stage} again. Carry on from there.`
+      ? input.stage === "done"
+        ? "The item is done. Hand back your report."
+        : "Carry on from there."
       : `The item is ${input.stage}. Stop work on it and hand back a short report.`;
   return `The person ${input.decision} the gate on work item ${input.workItemId}.
 

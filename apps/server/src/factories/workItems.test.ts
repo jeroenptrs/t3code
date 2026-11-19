@@ -29,6 +29,6 @@ Title: Nightly sweep
 
 Look over the open merge requests.
 
-Advance this item with t3_work_item_advance as you route it, and hold it for a person with t3_work_item_gate.`);
+Delegate each task with t3_factory_delegate, naming the role. Hold the item for a person with t3_work_item_gate, and end it with t3_work_item_advance.`);
   });
 });
