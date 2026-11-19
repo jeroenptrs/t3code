@@ -42,7 +42,7 @@ it.effect("gives a factory's threads and its Foreman's children their role body 
     );
     yield* fileSystem.writeFileString(
       path.join(directory, "roles", "strict-review.md"),
-      "---\nisolation: shared\n---\n\nBlock on any failing check.\n",
+      "---\nisolation: shared\ndescription: Blocks on any failing check.\n---\n\nBlock on any failing check.\n",
     );
     yield* fileSystem.writeFileString(
       path.join(directory, "roles", "docs.md"),
@@ -154,7 +154,10 @@ it.effect("gives a factory's threads and its Foreman's children their role body 
         role: "foreman",
         body: "Route only bugs.",
         skills: [],
-        delegates: ["implement", "review"],
+        delegates: [
+          { name: "implement", description: rolePresets.implement.description },
+          { name: "review", description: "Blocks on any failing check." },
+        ],
       },
       implementRole,
       reviewRole,

@@ -7,6 +7,7 @@ import * as review from "./review.ts";
 
 interface RoleDefaults {
   readonly binding: FactoryEffectiveBinding;
+  readonly description: string;
   readonly body: string;
 }
 
@@ -15,15 +16,20 @@ interface RoleDefaults {
  * Foreman always does.
  */
 export const rolePresets = {
-  foreman: { binding: foreman.binding, body: foreman.body },
-  implement: { binding: implement.binding, body: implement.body },
-  review: { binding: review.binding, body: review.body },
-  analysis: { binding: analysis.binding, body: analysis.body },
+  foreman: { binding: foreman.binding, description: foreman.description, body: foreman.body },
+  implement: {
+    binding: implement.binding,
+    description: implement.description,
+    body: implement.body,
+  },
+  review: { binding: review.binding, description: review.description, body: review.body },
+  analysis: { binding: analysis.binding, description: analysis.description, body: analysis.body },
 } satisfies Record<string, RoleDefaults>;
 
 /** What a role with no preset starts from: the project's model and a worktree of its own. */
 const plainRole: RoleDefaults = {
   binding: { ...implement.binding, isolation: "worktree", skills: [] },
+  description: "",
   body: "",
 };
 
