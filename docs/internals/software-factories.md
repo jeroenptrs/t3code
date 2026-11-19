@@ -59,7 +59,11 @@ keeps that shape and binds it to what T3 Code already has.
   design kept one Foreman thread per factory and queued items behind the active
   one, so one stuck run held up every item. A run that is its own thread opens,
   settles, and archives like any thread, and that is how a person acknowledges
-  it. The service starts every undispatched item when it starts. Thread ids
+  it. A Foreman or child role whose provider instance is unknown or turned off,
+  or whose model the instance does not offer, starts no thread: the item
+  fails, or the delegation is refused, with that reason. A launch that started
+  anyway would leave the item at `new` with a run that can never begin. The
+  service starts every undispatched item when it starts. Thread ids
   derive from the item, so a repeated launch is harmless.
 - **A worktree Foreman gets its item at launch.** A Foreman bound to a worktree
   launches with the work item as the launch's initial message, so the run waits
