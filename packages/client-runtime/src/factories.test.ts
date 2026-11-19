@@ -132,6 +132,7 @@ const review: FactoryRole = {
     skills: ["review-checklist"],
     tools: ["Read"],
   },
+  description: "",
   enabled: false,
   body: "Review against the task.",
   bodySource: "file",

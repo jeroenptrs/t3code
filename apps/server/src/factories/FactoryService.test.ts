@@ -77,6 +77,7 @@ const project = (id: string, title: string, workspaceRoot: string): ProjectStore
   faviconPath: null,
   projectIcon: null,
   scripts: [],
+  trackedFolders: [],
   pinnedAt: null,
   archivedAt: null,
   createdAt: "2026-11-01T00:00:00.000Z",
@@ -225,8 +226,10 @@ describe("FactoryService", () => {
           roles: { implement: "roles/implement.md", review: "roles/review.md" },
         }),
         ".t3/factories/triage/roles/implement.md":
-          "---\nisolation: shared\nskills: [run-checks, implement, lint]\n---\n\nFix the bug.\n",
-        ".t3/factories/triage/roles/review.md": "---\nruntimeMode: approval-required\n---\n",
+          "---\nisolation: shared\ndescription: Fixes one bug at a time.\nskills: [run-checks, implement, lint]\n---\n\nFix the bug.\n",
+        // A description must be one line, so this one is reported and the preset's applies.
+        ".t3/factories/triage/roles/review.md":
+          "---\nruntimeMode: approval-required\ndescription: |\n  Two\n  lines\n---\n",
         // Not listed in factory.json: the file at the default path still counts.
         ".t3/factories/triage/roles/foreman.md": "Route everything to implement.\n",
         // A factory skill of a built-in's name replaces it; a folder without SKILL.md is no skill.
@@ -246,6 +249,7 @@ describe("FactoryService", () => {
         source: "file",
         fileBinding: {},
         binding: rolePresets.foreman.binding,
+        description: rolePresets.foreman.description,
         enabled: true,
         body: "Route everything to implement.",
         bodySource: "file",
@@ -256,8 +260,9 @@ describe("FactoryService", () => {
         role: "implement",
         path: "roles/implement.md",
         source: "file",
-        fileBinding: { isolation: "shared", skills },
+        fileBinding: { isolation: "shared", description: "Fixes one bug at a time.", skills },
         binding: { ...rolePresets.implement.binding, isolation: "shared", skills },
+        description: "Fixes one bug at a time.",
         enabled: true,
         body: "Fix the bug.",
         bodySource: "file",
@@ -267,6 +272,7 @@ describe("FactoryService", () => {
         ],
       });
       assert.strictEqual(review?.binding.runtimeMode, "approval-required");
+      assert.strictEqual(review?.description, rolePresets.review.description);
       assert.strictEqual(review?.body, rolePresets.review.body);
       assert.strictEqual(review?.bodySource, "builtin");
       const factoryReview = {
@@ -289,6 +295,7 @@ describe("FactoryService", () => {
         factory.issues.map((issue) => [issue.code, issue.role, issue.field]),
         [
           ["unknown_skill", "implement", "skills"],
+          ["invalid_binding", "review", "description"],
           ["unknown_project", null, "projects"],
         ],
       );

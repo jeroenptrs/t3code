@@ -21,6 +21,7 @@ export type RoleBindingDraft = Pick<
 /** One role as its page edits it. */
 export interface RoleDraft {
   readonly binding: RoleBindingDraft;
+  readonly description: string;
   readonly skills: ReadonlyArray<string>;
   readonly body: string;
 }
@@ -36,6 +37,7 @@ export function roleDraft(role: FactoryRole): RoleDraft {
       ...(interactionMode === undefined ? {} : { interactionMode }),
       ...(isolation === undefined ? {} : { isolation }),
     },
+    description: role.description,
     skills: role.binding.skills,
     body: role.body,
   };
@@ -48,6 +50,7 @@ export function roleDraftChanged(role: FactoryRole, draft: RoleDraft): boolean {
   const read = roleDraft(role);
   return (
     draft.body !== read.body ||
+    draft.description !== read.description ||
     !sameList(draft.skills, read.skills) ||
     BINDING_KEYS.some(
       (key) => JSON.stringify(draft.binding[key]) !== JSON.stringify(read.binding[key]),
@@ -56,9 +59,9 @@ export function roleDraftChanged(role: FactoryRole, draft: RoleDraft): boolean {
 }
 
 /**
- * The role file the draft saves. `enabled` and `tools` stay as the file has them. Skills and
- * instructions the person left as the preset gave them stay unwritten, so a later preset change
- * still reaches the role.
+ * The role file the draft saves. `enabled` and `tools` stay as the file has them. Skills,
+ * description, and instructions the person left as the preset gave them stay unwritten, so a later
+ * preset change still reaches the role.
  */
 export function roleFileChange(role: FactoryRole, draft: RoleDraft): FactoryRoleChange {
   const {
@@ -67,15 +70,24 @@ export function roleFileChange(role: FactoryRole, draft: RoleDraft): FactoryRole
     interactionMode: _interactionMode,
     isolation: _isolation,
     skills: fileSkills,
+    description: fileDescription,
     ...kept
   } = role.fileBinding;
+  const description = draft.description.trim();
+  const keepsPresetDescription =
+    description === "" || (fileDescription === undefined && description === role.description);
   const writesSkills = fileSkills !== undefined || !sameList(draft.skills, role.binding.skills);
   const keepsPresetBody =
     draft.body.trim() === "" || (role.bodySource === "builtin" && draft.body === role.body);
   return {
     role: role.role,
     file: {
-      binding: { ...kept, ...draft.binding, ...(writesSkills ? { skills: draft.skills } : {}) },
+      binding: {
+        ...kept,
+        ...(keepsPresetDescription ? {} : { description }),
+        ...draft.binding,
+        ...(writesSkills ? { skills: draft.skills } : {}),
+      },
       body: keepsPresetBody ? null : draft.body,
     },
   };
@@ -121,6 +133,7 @@ export function addRoleSaveInput(
         file: {
           binding: {
             ...binding,
+            ...(start.preset.description === "" ? {} : { description: start.preset.description }),
             ...(model === null ? {} : { model }),
             ...(skills.length === 0 ? {} : { skills }),
             ...(tools.length === 0 ? {} : { tools }),

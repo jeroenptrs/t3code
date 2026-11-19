@@ -90,14 +90,15 @@ keeps that shape and binds it to what T3 Code already has.
   preset, so a factory with no role files works. `factory.json` has
   `"version": 2` and maps each role to its file or to none. A file without
   `version` implies `implement` and `review`. A role file at
-  `.t3/factories/<name>/roles/<role>.md` carries the binding and `enabled` in
-  frontmatter, and its body replaces the preset's. The Factories view edits
+  `.t3/factories/<name>/roles/<role>.md` carries the binding, `enabled`, and a
+  one-line `description` in frontmatter, and its body replaces the preset's. The Factories view edits
   those files and validates the bindings against the provider catalog. The
   database never stores a prompt. At launch the server appends the role body
   to the thread's instructions, the way Jira breakdown threads get theirs, and
   binds the named skills into the provider's skill directory for that worktree.
   The Foreman's instructions also list the enabled roles it can delegate to,
-  and the work item is its first user message.
+  each with its description, so it can route to a custom role such as
+  `checks` by what the role is for. The work item is its first user message.
 - **Access.** Operators view factories and their runs. Administrators manage
   them. The guard is a scope pair in `CLIENT_GUARDED_RPC_SCOPES`, so management
   can open to operators later without a redesign.

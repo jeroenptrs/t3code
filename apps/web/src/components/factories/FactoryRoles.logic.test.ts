@@ -35,6 +35,7 @@ const builtinRole = (role: FactoryRole["role"]): FactoryRole => ({
     skills: role === "implement" ? ["implement"] : [],
     tools: [],
   },
+  description: `Built-in ${role} description.`,
   enabled: true,
   body: `Built-in ${role} instructions.`,
   bodySource: "builtin",
@@ -45,13 +46,20 @@ const review: FactoryRole = {
   role: "review",
   path: "roles/review.md",
   source: "file",
-  fileBinding: { enabled: false, model, skills: ["review-checklist"], tools: ["Read"] },
+  fileBinding: {
+    enabled: false,
+    description: "Reviews against the task.",
+    model,
+    skills: ["review-checklist"],
+    tools: ["Read"],
+  },
   binding: {
     ...builtinRole("review").binding,
     model,
     skills: ["review-checklist"],
     tools: ["Read"],
   },
+  description: "Reviews against the task.",
   enabled: false,
   body: "Review against the task.",
   bodySource: "file",
@@ -80,6 +88,17 @@ const factory: Factory = {
 };
 
 describe("roleFileChange", () => {
+  it("writes an edited description, and leaves a blank one to the preset", () => {
+    const implement = builtinRole("implement");
+    expect(
+      roleFileChange(implement, { ...roleDraft(implement), description: " Fixes one bug. " }).file
+        ?.binding,
+    ).toEqual({ description: "Fixes one bug." });
+    expect(
+      roleFileChange(review, { ...roleDraft(review), description: "  " }).file?.binding,
+    ).not.toHaveProperty("description");
+  });
+
   it("leaves skills and instructions the preset gave unwritten", () => {
     const implement = builtinRole("implement");
     const draft = {
@@ -98,7 +117,13 @@ describe("roleFileChange", () => {
     expect(roleFileChange(review, draft)).toEqual({
       role: "review",
       file: {
-        binding: { enabled: false, tools: ["Read"], model, skills: [] },
+        binding: {
+          enabled: false,
+          tools: ["Read"],
+          description: "Reviews against the task.",
+          model,
+          skills: [],
+        },
         body: "Check the tests first.",
       },
     });
@@ -109,6 +134,7 @@ describe("roleFileChange", () => {
     expect(roleFileChange(review, draft).file?.binding).toEqual({
       enabled: false,
       tools: ["Read"],
+      description: "Reviews against the task.",
       skills: ["review-checklist"],
     });
   });
@@ -138,6 +164,7 @@ describe("addRoleSaveInput", () => {
   const preset = {
     name: "review" as FactoryRole["role"],
     binding: { ...builtinRole("review").binding, skills: ["review"] },
+    description: "Reviews one change.",
     body: "Preset review instructions.",
   };
 
@@ -164,6 +191,7 @@ describe("addRoleSaveInput", () => {
               runtimeMode: "full-access",
               interactionMode: "default",
               isolation: "worktree",
+              description: "Reviews one change.",
               skills: ["review"],
             },
             body: "Preset review instructions.",

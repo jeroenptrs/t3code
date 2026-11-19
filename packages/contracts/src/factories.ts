@@ -78,10 +78,18 @@ export const isReservedFactoryRoleName = (name: string): boolean =>
 export const FactoryIsolation = Schema.Literals(["shared", "worktree"]);
 export type FactoryIsolation = typeof FactoryIsolation.Type;
 
+/** One line on what a role is for, which the Foreman reads to route work to it. */
+export const FactoryRoleDescription = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(200),
+  Schema.isPattern(/^[^\r\n]*$/),
+);
+
 /** A role file's frontmatter. A binding the file leaves out takes the role's default. */
 export const FactoryRoleBinding = Schema.Struct({
   /** Absent means enabled. The Foreman ignores it. */
   enabled: Schema.optionalKey(Schema.Boolean),
+  /** Absent takes the preset's description, or none for a role without a preset. */
+  description: Schema.optionalKey(FactoryRoleDescription),
   model: Schema.optionalKey(ModelSelection),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
@@ -169,6 +177,8 @@ export const FactoryRole = Schema.Struct({
   /** What the role file sets, for editing. Empty for a built-in role. */
   fileBinding: FactoryRoleBinding,
   binding: FactoryEffectiveBinding,
+  /** The file's description, else its preset's; empty when neither has one. */
+  description: Schema.String,
   /** False when the role file disables it: the Foreman is not told of it and cannot use it. */
   enabled: Schema.Boolean,
   /**
@@ -186,6 +196,7 @@ export type FactoryRole = typeof FactoryRole.Type;
 export const FactoryRolePreset = Schema.Struct({
   name: FactoryRoleName,
   binding: FactoryEffectiveBinding,
+  description: Schema.String,
   body: Schema.String,
 });
 export type FactoryRolePreset = typeof FactoryRolePreset.Type;
