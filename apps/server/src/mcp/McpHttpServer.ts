@@ -1316,8 +1316,11 @@ const layerDiffWalkthroughToolkit = toolkitRegistration(
 // Fork-only: records thread ↔ Jira issue links; Jira itself is changed with jtk.
 const layerJiraIssuesToolkit = toolkitRegistration(JiraIssuesToolkit, JiraIssuesHandlers.layer);
 
-// Fork-only: software factory definitions under each project's .t3/factories.
-const layerFactoriesToolkit = toolkitRegistration(FactoriesToolkit, FactoriesHandlers.layer);
+// Fork-only: software factory definitions under each project's .t3/factories. Its delegate tool
+// runs the orchestrator's delegate path, so it shares that toolkit's service by layer memoization.
+const layerFactoriesToolkit = toolkitRegistration(FactoriesToolkit, FactoriesHandlers.layer).pipe(
+  Layer.provide(OrchestratorMcpService.layer),
+);
 
 const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceStandardToolkit,
