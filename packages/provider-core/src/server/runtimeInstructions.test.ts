@@ -20,14 +20,17 @@ describe("buildRuntimeInstructions", () => {
       role: "foreman",
       body: "Route every work item.\n",
       skills: [],
-      delegates: ["analysis", "implement"],
+      delegates: [
+        { name: "analysis", description: "" },
+        { name: "checks", description: "Runs the full CI suite on a branch.\nNo edits." },
+      ],
     };
     const withRole = buildRuntimeInstructions({ harness: "Codex", factoryRole });
     const without = buildRuntimeInstructions({ harness: "Codex" });
 
     assert.isTrue(
       withRole.endsWith(
-        '<factory_role factory="factory:project-1:triage" role="foreman">\nRoute every work item.\n\nRoles you can delegate to: analysis, implement\n</factory_role>',
+        '<factory_role factory="factory:project-1:triage" role="foreman">\nRoute every work item.\n\nRoles you can delegate to:\n- analysis\n- checks: Runs the full CI suite on a branch. No edits.\n</factory_role>',
       ),
     );
     assert.notInclude(without, "<factory_role");

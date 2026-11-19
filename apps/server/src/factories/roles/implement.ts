@@ -9,6 +9,8 @@ export const binding = {
   tools: [],
 } satisfies FactoryEffectiveBinding;
 
+export const description =
+  "Makes one code change in its own worktree and hands it back with the checks passing.";
 export const body = `You implement one task from the Foreman. You work in your own worktree, on the branch the task names.
 
 Your skill says how to do the work, run the checks, and hand back. Read it and follow it.

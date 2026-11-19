@@ -12310,5 +12310,9 @@
   "fea5b119aed850fa": "Usa letras minúsculas, dígitos y guiones simples, como nightly-triage.",
   "b1b794caabbb77aa": "Este proyecto ya tiene una fábrica con este nombre.",
   "b462588e4e40009c": "En curso",
-  "e197c4963bacc746": "{count} en ejecución"
+  "e197c4963bacc746": "{count} en ejecución",
+  "1ba0cdfa1c3ba253": "Descripción",
+  "cea36f763037eace": "En blanco mantiene la descripción de la plantilla, o ninguna para un rol nuevo.",
+  "0b5384b1aa2f8a80": "Una línea sobre lo que hace este rol.",
+  "a5dffbc7710c75bc": "Una línea sobre lo que hace este rol. El Foreman la lee para decidir qué enviar aquí."
 }

@@ -12315,5 +12315,9 @@
   "fea5b119aed850fa": "Verwende Kleinbuchstaben, Ziffern und einzelne Bindestriche, etwa nightly-triage.",
   "b1b794caabbb77aa": "Dieses Projekt hat bereits eine Fabrik mit diesem Namen.",
   "b462588e4e40009c": "In Arbeit",
-  "e197c4963bacc746": "{count} laufen"
+  "e197c4963bacc746": "{count} laufen",
+  "1ba0cdfa1c3ba253": "Beschreibung",
+  "cea36f763037eace": "Leer übernimmt die Beschreibung der Vorlage, bei einer neuen Rolle keine.",
+  "0b5384b1aa2f8a80": "Eine Zeile dazu, was diese Rolle tut.",
+  "a5dffbc7710c75bc": "Eine Zeile dazu, was diese Rolle tut. Der Foreman liest sie, um zu entscheiden, was er hierher schickt."
 }
