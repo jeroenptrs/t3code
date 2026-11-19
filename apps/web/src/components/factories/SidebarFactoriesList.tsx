@@ -7,7 +7,7 @@ import type { EnvironmentId, FactoryId, FactorySummary } from "@t3tools/contract
 import { useAtomValue } from "@effect/atom-react";
 import { useParams } from "@tanstack/react-router";
 import { T, useGT, Var } from "gt-react";
-import { PlusIcon } from "lucide-react";
+import { ChevronDownIcon, PlusIcon } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
 
 import { attachSidebarTree } from "../../lib/sidebarTree";
@@ -16,7 +16,12 @@ import type { SidebarSection, SidebarSections } from "../Sidebar.logic";
 import { Button } from "../ui/button";
 import { CollapsibleSectionHeader } from "../ui/collapsible-section-header";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { factoryListedThreads } from "./factories.logic";
+import {
+  factoryListedThreads,
+  SETTLED_SHELF_INITIAL_COUNT,
+  SETTLED_SHELF_PAGE_COUNT,
+  settledShelfRows,
+} from "./factories.logic";
 import { FactoryScheduledTaskLinks } from "./FactoryScheduledTaskLinks";
 import { NewFactoryDialog } from "./NewFactoryDialog";
 import { NewWorkItemDialogHost, openNewWorkItemDialog } from "./NewWorkItemDialog";
@@ -49,6 +54,8 @@ export function SidebarFactoriesList(props: {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   // Working starts open and the other shelves closed; a key here flips its shelf.
   const [flippedShelves, setFlippedShelves] = useState<ReadonlySet<string>>(() => new Set());
+  // How many settled runs each factory shows, after "show more" was pressed.
+  const [settledLimits, setSettledLimits] = useState<ReadonlyMap<string, number>>(() => new Map());
   const [creating, setCreating] = useState(false);
   const [addingTo, setAddingTo] = useState<{
     readonly environmentId: EnvironmentId;
@@ -160,6 +167,16 @@ export function SidebarFactoriesList(props: {
                         (shelf === "working") !== flippedShelves.has(`${key}\n${shelf}`)
                       }
                       onToggleShelf={(shelf) => toggleShelf(`${key}\n${shelf}`)}
+                      settledLimit={settledLimits.get(key) ?? SETTLED_SHELF_INITIAL_COUNT}
+                      onShowMoreSettled={() =>
+                        setSettledLimits((current) =>
+                          new Map(current).set(
+                            key,
+                            (current.get(key) ?? SETTLED_SHELF_INITIAL_COUNT) +
+                              SETTLED_SHELF_PAGE_COUNT,
+                          ),
+                        )
+                      }
                       ownedThreads={props.ownedThreads}
                       delegatedUnderParent={props.delegatedUnderParent}
                       sectionsOf={props.sectionsOf}
@@ -184,6 +201,9 @@ function FactoryThreads(props: {
   readonly rowId: string;
   readonly isShelfExpanded: (shelf: Shelf) => boolean;
   readonly onToggleShelf: (shelf: Shelf) => void;
+  /** The settled runs shown before "show more", as Home pages its Settled shelf. */
+  readonly settledLimit: number;
+  readonly onShowMoreSettled: () => void;
   readonly ownedThreads: ReadonlyMap<string, EnvironmentThreadShell>;
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly sectionsOf: (
@@ -218,8 +238,12 @@ function FactoryThreads(props: {
         if (shelfThreads.length === 0) return null;
         const shelfRow = `${props.rowId}:shelf:${shelf}`;
         const shelfExpanded = props.isShelfExpanded(shelf);
+        const paged =
+          shelf === "settled"
+            ? settledShelfRows(shelfThreads, props.settledLimit, props.routeRowThreadKey)
+            : { shown: shelfThreads, hidden: 0 };
         const shown = shelfExpanded
-          ? shelfThreads
+          ? paged.shown
           : shelfThreads.filter(
               (thread) =>
                 scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
@@ -239,6 +263,23 @@ function FactoryThreads(props: {
               </CollapsibleSectionHeader>
             </li>
             {shown.map((thread) => props.renderThread(thread, shelf, shelfRow))}
+            {shelfExpanded && paged.hidden > 0 ? (
+              <li className="list-none">
+                <button
+                  type="button"
+                  data-sidebar-row={`${shelfRow}:more`}
+                  data-sidebar-parent={shelfRow}
+                  onClick={props.onShowMoreSettled}
+                  className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                >
+                  {/* Plus means "add", so revealing more uses a chevron, as in Home. */}
+                  <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
+                  {gt("{count, plural, one {Show {count} more} other {Show {count} more}}", {
+                    count: Math.min(paged.hidden, SETTLED_SHELF_PAGE_COUNT),
+                  })}
+                </button>
+              </li>
+            ) : null}
           </Fragment>
         );
       })}

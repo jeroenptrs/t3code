@@ -79,3 +79,30 @@ export function factoryTriggerSummary(
   const summary = triggerSummary(trigger);
   return trigger.target.type === "work_item" ? summary : `${summary} → thread`;
 }
+
+/** Home's Settled page sizes: the shelf opens on the newest ten and "show more" adds 25. */
+export const SETTLED_SHELF_INITIAL_COUNT = 10;
+export const SETTLED_SHELF_PAGE_COUNT = 25;
+
+/**
+ * The first `limit` threads of a Settled shelf, plus the open thread when it sits further down, as
+ * Home keeps it. `hidden` counts the threads "show more" can still reveal.
+ */
+export function settledShelfRows<T extends Pick<EnvironmentThreadShell, "environmentId" | "id">>(
+  threads: ReadonlyArray<T>,
+  limit: number,
+  routeRowThreadKey: string | null,
+): { readonly shown: ReadonlyArray<T>; readonly hidden: number } {
+  if (threads.length <= limit) return { shown: threads, hidden: 0 };
+  const shown = threads.slice(0, limit);
+  const route = threads
+    .slice(limit)
+    .find(
+      (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeRowThreadKey,
+    );
+  return {
+    shown: route === undefined ? shown : [...shown, route],
+    hidden: threads.length - limit - (route === undefined ? 0 : 1),
+  };
+}
