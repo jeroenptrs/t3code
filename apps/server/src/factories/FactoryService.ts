@@ -389,6 +389,25 @@ function roleProblem(factory: Factory, role: string, verb: string): WorkItemErro
   return null;
 }
 
+/** Issues that keep a role's thread from starting at all, rather than starting it wrong. */
+const UNRUNNABLE_BINDING: ReadonlySet<FactoryIssue["code"]> = new Set([
+  "unknown_provider_instance",
+  "disabled_provider_instance",
+  "unknown_model",
+]);
+
+/** Why `role`'s binding cannot start a thread now, or null when it can. */
+function unrunnableBinding(factory: Factory, role: string): WorkItemError | null {
+  const found = factory.issues.find(
+    (issue) => issue.role === role && UNRUNNABLE_BINDING.has(issue.code),
+  );
+  if (found === undefined) return null;
+  return new WorkItemError({
+    code: "invalid_binding",
+    message: `The ${factory.name} factory's ${role} role cannot start a thread: ${found.message} Choose another model on the role's page.`,
+  });
+}
+
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -889,6 +908,8 @@ const make = Effect.gen(function* () {
 
   /** Model, modes, and checkout for a new Foreman thread, from the foreman role's binding. */
   const foremanLaunch = Effect.fn("FactoryService.foremanLaunch")(function* (factory: Factory) {
+    const unrunnable = unrunnableBinding(factory, FACTORY_FOREMAN_ROLE);
+    if (unrunnable !== null) return yield* unrunnable;
     const binding =
       factory.roles.find((role) => role.role === FACTORY_FOREMAN_ROLE)?.binding ??
       rolePresets.foreman.binding;
@@ -1603,7 +1624,8 @@ const make = Effect.gen(function* () {
         message: `Each child of work item ${item.id} runs as one of the factory's roles. Delegate with t3_factory_delegate and name the role. Roles you can delegate to: ${usable.length === 0 ? "none" : usable.join(", ")}.`,
       });
     }
-    const problem = roleProblem(factory, named.role, "delegate to");
+    const problem =
+      roleProblem(factory, named.role, "delegate to") ?? unrunnableBinding(factory, named.role);
     if (problem !== null) return yield* problem;
     const role = factory.roles.find((candidate) => candidate.role === named.role)!;
     yield* requireCommitIdentity(factory, item.id);
