@@ -12681,5 +12681,7 @@
   "92c01f25b469c00c": "Ausblenden, was {factory} gehört",
   "1492a6f4ede26c44": "Anzeigen, was {factory} gehört",
   "fea5b119aed850fa": "Verwende Kleinbuchstaben, Ziffern und einzelne Bindestriche, etwa nightly-triage.",
-  "b1b794caabbb77aa": "Dieses Projekt hat bereits eine Fabrik mit diesem Namen."
+  "b1b794caabbb77aa": "Dieses Projekt hat bereits eine Fabrik mit diesem Namen.",
+  "b462588e4e40009c": "In Arbeit",
+  "e197c4963bacc746": "{count} laufen"
 }

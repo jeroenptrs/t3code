@@ -2551,25 +2551,25 @@ const make = Effect.gen(function* () {
    * client, and a thread caller only with a live turn at modes covering every mode the task runs at.
    */
   const callerMayRunTask = Effect.fn("OrchestratorMcpService.callerMayRunTask")(function* (
-      scope: McpInvocationScope,
-      caller: {
-        readonly parent: Pick<OrchestrationV2ThreadProjection, "thread" | "runs"> | undefined;
-        readonly limits: {
-          readonly runtimeMode: RuntimeMode;
-          readonly interactionMode: ProviderInteractionMode;
-        };
-      },
-      task: ScheduledTask,
-    ) {
-      const live =
-        caller.parent === undefined
-          ? scope.client?.access !== "read-only"
-          : // Runs once per listed task, so it never waits on a continuation.
-            Exit.isSuccess(yield* Effect.exit(assertLiveCaller(scope, caller.parent, false)));
-      const modes = yield* scheduledTaskRunModes(task).pipe(Effect.option);
+    scope: McpInvocationScope,
+    caller: {
+      readonly parent: Pick<OrchestrationV2ThreadProjection, "thread" | "runs"> | undefined;
+      readonly limits: {
+        readonly runtimeMode: RuntimeMode;
+        readonly interactionMode: ProviderInteractionMode;
+      };
+    },
+    task: ScheduledTask,
+  ) {
+    const live =
+      caller.parent === undefined
+        ? scope.client?.access !== "read-only"
+        : // Runs once per listed task, so it never waits on a continuation.
+          Exit.isSuccess(yield* Effect.exit(assertLiveCaller(scope, caller.parent, false)));
+    const modes = yield* scheduledTaskRunModes(task).pipe(Effect.option);
     return (
       live && Option.isSome(modes) && modes.value.every((mode) => withinLimits(caller.limits, mode))
-      );
+    );
   });
 
   const summarizeScheduledTask = Effect.fn("OrchestratorMcpService.summarizeScheduledTask")(
@@ -2799,19 +2799,19 @@ const make = Effect.gen(function* () {
       yield* assertLiveCallerForOtherProject(scope, parent, target.projectId);
       // A work item goes to the factory's Foreman, whose role decides the thread and modes.
       if (target.type === "thread") {
-      // Like schedule_task: bind to this thread or start new ones, never to another thread.
-      const bindsCaller =
-        parent !== undefined &&
-        target.threadId === parent.thread.id &&
-        parent.thread.projectId === target.projectId;
-      if (target.threadId !== null && !bindsCaller && target.threadId !== existing?.threadId) {
-        return yield* failure(
-          "invalid_request",
-          "A trigger's target thread is null for new threads, or this thread in its own project.",
-        );
-      }
-      yield* resolveRuntimeMode(limits.runtimeMode, target.runtimeMode);
-      yield* resolveInteractionMode(limits.interactionMode, target.interactionMode);
+        // Like schedule_task: bind to this thread or start new ones, never to another thread.
+        const bindsCaller =
+          parent !== undefined &&
+          target.threadId === parent.thread.id &&
+          parent.thread.projectId === target.projectId;
+        if (target.threadId !== null && !bindsCaller && target.threadId !== existing?.threadId) {
+          return yield* failure(
+            "invalid_request",
+            "A trigger's target thread is null for new threads, or this thread in its own project.",
+          );
+        }
+        yield* resolveRuntimeMode(limits.runtimeMode, target.runtimeMode);
+        yield* resolveInteractionMode(limits.interactionMode, target.interactionMode);
       }
       yield* requireProject(target.projectId);
       const { commandId, ...save } = input;
@@ -3116,22 +3116,24 @@ const make = Effect.gen(function* () {
           "Delegated tasks require an active run owned by this MCP provider session.",
         );
       }
-      // A Foreman's delegation takes the binding of the role its work item is at.
-      const delegation = Option.isNone(factories)
-        ? input
-        : yield* factories.value
-            .prepareDelegation({
-              parentThreadId: scope.thread.threadId,
-              delegation: input,
-            })
-            .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
-      const providers = yield* loadProviders;
       const key = yield* requestKey(input.clientRequestId);
       const commandId = stableCommandId({
         scope,
         requestKey: key,
         operation: "delegate-task",
       });
+      // A Foreman's delegation takes the binding of the role `t3_factory_delegate` names.
+      const delegation = Option.isNone(factories)
+        ? input
+        : yield* factories.value
+            .prepareDelegation({
+              parentThreadId: scope.thread.threadId,
+              commandId,
+              delegation: input,
+              factoryRole: yield* FactoryService.FactoryDelegationRole,
+            })
+            .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
+      const providers = yield* loadProviders;
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
       const target = yield* resolveTargetRechecking({
         parent,
@@ -3230,12 +3232,6 @@ const make = Effect.gen(function* () {
           }
           const taskId = taskEvent.event.payload.id;
           const childThreadId = taskEvent.event.payload.childThreadId;
-      if (childThreadId !== null && Option.isSome(factories)) {
-        yield* factories.value.attachDelegatedChild({
-          parentThreadId: scope.thread.threadId,
-          childThreadId,
-        });
-      }
           const childRunEvent = result.storedEvents.find(
             (stored) =>
               stored.event.type === "run.created" && stored.event.threadId === childThreadId,

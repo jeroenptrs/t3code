@@ -11,7 +11,6 @@ import {
   type FactoryRoleName,
   type FactorySaveInput,
   isTerminalWorkItemStage,
-  isWorkItemRoleStage,
   WorkItemError,
   type WorkItemActor,
   type WorkItemAnswerGateInput,
@@ -26,7 +25,7 @@ import * as Schema from "effect/Schema";
 import { msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
-import type { EnvironmentThreadShell } from "./state/models.ts";
+import { type EnvironmentThreadShell, threadRuntimeIsActive } from "./state/models.ts";
 
 export type NeedsYouShell = Pick<
   EnvironmentThreadShell,
@@ -145,8 +144,9 @@ export function canSaveDefinition(factory: Pick<Factory, "issues">): boolean {
   );
 }
 
-const FIXED_STAGE_LABELS: Readonly<Record<string, string>> = {
+const STAGE_LABELS: Readonly<Record<WorkItemStage, string>> = {
   new: msg("New", { $context: "work item stage" }),
+  working: msg("Working", { $context: "work item stage, its Foreman has delegated work" }),
   waiting: msg("Waiting", { $context: "work item stage, a gate holds it for a person" }),
   done: msg("Done", { $context: "work item stage" }),
   failed: msg("Failed", { $context: "work item stage" }),
@@ -171,19 +171,61 @@ export const factoryRoleLabel = (role: FactoryRoleName, resolve: MFunctionType):
   Object.hasOwn(PRESET_ROLE_LABELS, role) ? resolve(PRESET_ROLE_LABELS[role]!) : role;
 
 export const workItemStageLabel = (stage: WorkItemStage, resolve: MFunctionType): string =>
-  Object.hasOwn(FIXED_STAGE_LABELS, stage)
-    ? resolve(FIXED_STAGE_LABELS[stage]!)
-    : factoryRoleLabel(stage, resolve);
+  resolve(STAGE_LABELS[stage]);
 
-/** The stages a factory's items can be at: new, its roles' stages in order, then the rest. */
-export const factoryStages = (factory: Pick<Factory, "roles">): ReadonlyArray<WorkItemStage> => [
+/** Every stage, in the order an item moves through them. */
+export const WORK_ITEM_STAGES: ReadonlyArray<WorkItemStage> = [
   "new",
-  ...factory.roles.map((role) => role.role).filter(isWorkItemRoleStage),
+  "working",
   "waiting",
   "done",
   "failed",
   "dropped",
 ];
+
+export type RunningRoleShell = Pick<EnvironmentThreadShell, "environmentId" | "id" | "runtime">;
+
+export interface RunningRole {
+  readonly role: FactoryRoleName;
+  /** The item's threads of this role that are running. */
+  readonly threadIds: ReadonlyArray<WorkItemSummary["threads"][number]["threadId"]>;
+}
+
+/** The roles with a running child on the item, in the order the item names them. */
+export function runningRoles(
+  item: Pick<WorkItemSummary, "threads">,
+  environmentId: EnvironmentId,
+  shells: ReadonlyArray<RunningRoleShell>,
+): ReadonlyArray<RunningRole> {
+  if (item.threads.length === 0) return [];
+  const active = new Set<string>();
+  for (const shell of shells) {
+    if (shell.environmentId === environmentId && threadRuntimeIsActive(shell.runtime)) {
+      active.add(shell.id);
+    }
+  }
+  const byRole = new Map<FactoryRoleName, Array<RunningRole["threadIds"][number]>>();
+  for (const thread of item.threads) {
+    if (thread.role === null || !active.has(thread.threadId)) continue;
+    const threadIds = byRole.get(thread.role);
+    if (threadIds === undefined) byRole.set(thread.role, [thread.threadId]);
+    else threadIds.push(thread.threadId);
+  }
+  return [...byRole].map(([role, threadIds]) => ({ role, threadIds }));
+}
+
+/** "Implement ×2, Review": each running role, with a count when more than one child runs it. */
+export const runningRolesLabel = (
+  roles: ReadonlyArray<RunningRole>,
+  resolve: MFunctionType,
+): string =>
+  roles
+    .map(({ role, threadIds }) =>
+      threadIds.length > 1
+        ? `${factoryRoleLabel(role, resolve)} ×${threadIds.length}`
+        : factoryRoleLabel(role, resolve),
+    )
+    .join(", ");
 
 export function workItemActorLabel(actor: WorkItemActor, resolve: MFunctionType): string {
   if (actor.kind === "foreman") return factoryRoleLabel("foreman", resolve);
