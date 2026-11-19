@@ -246,6 +246,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [23, "PollTriggerStart"],
       [24, "FactoryWorkItemRuns"],
       [25, "FactoryStaleWorkItems"],
+      [26, "FactoryWorkItemWorking"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;
@@ -364,7 +365,7 @@ it.effect("drops queued work items with a note instead of starting them", () =>
         )
       `;
     }
-    yield* runForkMigrations();
+    yield* runForkMigrations({ toMigrationInclusive: 24 });
     const items = yield* sql<{
       readonly id: string;
       readonly stage: string;
@@ -451,6 +452,83 @@ it.effect("drops items migration 024 left unstarted, and keeps newer ones for di
         workItemId: "work-item:stale",
         note: "Dropped without a run: it was queued before each work item got its own run.",
       },
+    ]);
+  }).pipe(Effect.provide(memoryDatabase())),
+);
+
+it.effect("moves items at a role's stage to working, and keeps the role in their history", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations();
+    yield* runForkMigrations({ toMigrationInclusive: 25 });
+    for (const [id, stage, gate] of [
+      ["work-item:review", "review", '{"state":"none"}'],
+      [
+        "work-item:gated",
+        "waiting",
+        '{"state":"waiting","question":"Ship?","resumeStage":"review","askedAt":"2026-11-01T00:00:00.000Z"}',
+      ],
+      [
+        "work-item:done",
+        "done",
+        '{"state":"answered","question":"Merge?","decision":"approved","note":"","answeredAt":"2026-11-01T00:00:00.000Z","resumeStage":"done"}',
+      ],
+    ] as const) {
+      yield* sql`
+        INSERT INTO fork_factory_work_items (
+          work_item_id, factory_id, title, source_json, stage, gate_json,
+          foreman_thread_id, foreman_run_id, dispatched_at, created_at, updated_at
+        ) VALUES (
+          ${id}, 'factory:project-1:triage', ${id}, '{"kind":"manual","text":"Fix it."}', ${stage},
+          ${gate}, NULL, NULL, '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z',
+          '2026-11-01T00:00:00.000Z'
+        )
+      `;
+    }
+    for (const [id, from, to, note] of [
+      ["t-1", "new", "implement", "Delegated the fix."],
+      ["t-2", "implement", "implement", "Applied the implement role's binding."],
+      ["t-3", "implement", "review", null],
+      ["t-4", "review", "done", null],
+    ] as const) {
+      yield* sql`
+        INSERT INTO fork_factory_work_item_transitions (
+          transition_id, work_item_id, from_stage, to_stage, actor_json, note, at
+        ) VALUES (
+          ${id}, 'work-item:done', ${from}, ${to}, '{"kind":"server"}', ${note}, ${`2026-11-01T00:00:0${id.slice(2)}.000Z`}
+        )
+      `;
+    }
+    yield* runForkMigrations();
+    const items = yield* sql<{
+      readonly id: string;
+      readonly stage: string;
+      readonly gate: string;
+    }>`
+      SELECT work_item_id AS "id", stage, gate_json AS "gate"
+      FROM fork_factory_work_items ORDER BY work_item_id
+    `;
+    assert.deepStrictEqual(
+      items.map(({ id, stage, gate }) => ({ id, stage, resume: JSON.parse(gate).resumeStage })),
+      [
+        { id: "work-item:done", stage: "done", resume: "done" },
+        { id: "work-item:gated", stage: "waiting", resume: "working" },
+        { id: "work-item:review", stage: "working", resume: undefined },
+      ],
+    );
+    const transitions = yield* sql<{
+      readonly from: string;
+      readonly to: string;
+      readonly note: string | null;
+    }>`
+      SELECT from_stage AS "from", to_stage AS "to", note
+      FROM fork_factory_work_item_transitions ORDER BY at
+    `;
+    assert.deepStrictEqual(transitions, [
+      { from: "new", to: "working", note: "Moved to implement. Delegated the fix." },
+      { from: "working", to: "working", note: "Applied the implement role's binding." },
+      { from: "working", to: "working", note: "Moved to review." },
+      { from: "working", to: "done", note: null },
     ]);
   }).pipe(Effect.provide(memoryDatabase())),
 );

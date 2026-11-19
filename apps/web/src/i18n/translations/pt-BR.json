@@ -13113,5 +13113,7 @@
   "92c01f25b469c00c": "Ocultar o que pertence a {factory}",
   "1492a6f4ede26c44": "Mostrar o que pertence a {factory}",
   "fea5b119aed850fa": "Use letras minúsculas, dígitos e hifens simples, como nightly-triage.",
-  "b1b794caabbb77aa": "Este projeto já tem uma fábrica com este nome."
+  "b1b794caabbb77aa": "Este projeto já tem uma fábrica com este nome.",
+  "b462588e4e40009c": "Em andamento",
+  "e197c4963bacc746": "{count} em execução"
 }

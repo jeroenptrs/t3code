@@ -118,9 +118,11 @@ worktree is removed.
 ## Send work to a factory
 
 Each request you send a factory is a work item. Each item starts its own run, a Foreman thread
-titled after the item, as soon as you create it. Runs do not wait for each other. The Foreman moves
-the item through the stages **New**, a stage per role, and then **Done**, **Failed**, or
-**Dropped**.
+titled after the item, as soon as you create it. Runs do not wait for each other. An item is
+**New** until the Foreman starts its first agent, then **Working** until it ends as **Done**,
+**Failed**, or **Dropped**. While it works, the Foreman can run several agents on it at once: two
+implementers on separate parts, or review and checks side by side. Each agent runs as one role,
+with that role's model, skills, and checkout.
 
 To create a work item:
 
@@ -136,13 +138,16 @@ work items. An agent can also send one for you when you ask it to.
 ### Follow the work
 
 To watch a run, open it in the sidebar under its factory. The run thread shows what the Foreman
-decides and the agents it starts for each role.
+decides and the agents it starts for each role. On the Overview canvas, each role lights while an
+agent runs as it, with a count when more than one does.
 
 The **Work items** tab lists the factory's items, newest first. Filter them by stage or by outcome.
 **Active** is every item that has not ended. The list does not update live. The refresh button
 beside **New work item** reads it again.
 
-Click an item to see its request and its stage history with who made each change. **Open run
+Beside a working item's stage, the list names the roles it has agents running as. Click an item to
+see its request and its stage history with who made each change. The history notes the role each
+agent was started as. **Open run
 thread** opens its run. From there you can also:
 
 - **Drop item** ends an item that has not ended. Its run is told to stop.
@@ -154,7 +159,8 @@ thread** opens its run. From there you can also:
 When the Foreman needs a decision, it holds the work item at **Waiting** with a question, and the
 item shows under **Needs you** on the Overview. Open the item on the **Work items** tab, read the
 question, then click **Approve** or **Reject**. A rejection needs a note that says why. An approval
-takes an optional note. Approving sends the item back to the stage the Foreman asked for.
+takes an optional note. Approving sends the item back to work, or marks it done when that is what
+the Foreman asked.
 Rejecting drops it. The Foreman reads your answer and note in the item's thread.
 
 Only administrators can answer a gate, drop an item, or dismiss a failure. Operators see the

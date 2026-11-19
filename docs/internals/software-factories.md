@@ -31,16 +31,21 @@ keeps that shape and binds it to what T3 Code already has.
   or from scratch.
   A role file can set `enabled: false` to take the role out of routing without
   deleting it. The Foreman cannot be disabled or removed.
-- **A work item's stage names the role that runs it.** A stage is `new`,
-  `waiting`, `done`, `failed`, `dropped`, or a role's name, so no role may take
-  a fixed stage's name. The Foreman advances the item to a role's stage and then
-  delegates. The server gives the child the role at the item's stage, and that
-  role's binding replaces the call's isolation, modes, and model. It refuses an
-  advance or a delegation to an unknown or disabled role, and a delegation
-  before an advance.
-  The role does not come from a `delegate_task` argument. The tool's schema
-  stays as upstream has it, and the ledger's stage is true by construction,
-  because no child runs as a role its item is not at.
+- **A child thread carries its role, not the item's stage.** The Foreman
+  names the role on each delegation with `t3_factory_delegate`, so several
+  children of one role, or of several roles, run on one item at once. The tool
+  runs `delegate_task`'s path with the role passed beside the input, which
+  keeps upstream's `delegate_task` schema as it is. The role's binding replaces
+  the call's isolation, modes, and model. The server refuses a Foreman's plain
+  `delegate_task`, and a delegation to an unknown or disabled role. It names
+  the child on the item with its role before dispatch, from the thread id the
+  orchestrator derives from the command, so the child's first session already
+  has its role's instructions and skills. A dispatch that fails leaves a row
+  with no thread, which reads skip. An item's stage is `new` until its first
+  delegation, `working` after it, and `waiting`, `done`, `failed`, or
+  `dropped`. No role takes a stage's name. An earlier design made the stage
+  name the one role that ran the item, so only one role worked on an item at a
+  time. Fork migration 026 moved items at a role's stage to `working`.
 - **The Foreman is a prompt, not a pipeline.** Code owns intake, the work item
   ledger, and gates. Triggers and the ledger decide what becomes a run. The
   Foreman decides routing among the enabled roles it is told of, composes each
@@ -276,8 +281,8 @@ form.
   leaves the attention count once its run thread is settled, archived, or
   deleted.
 - Roles are open: `factory.json` version 2, presets for implement, review, and
-  analysis, `enabled` in a role file, and a child's role taken from its item's
-  stage.
+  analysis, and `enabled` in a role file. Each child carries the role the
+  Foreman names for it, so roles run in parallel on one item.
 - The sidebar lists each factory's runs in Home's sections, with a "+" for a
   manual work item. The factory page has tabs (Overview, Work items, Roles,
   Skills, Triggers, Settings), and each view saves its own changes.
@@ -412,8 +417,8 @@ review, done in about a minute with no gate.
   appeared on its role's node as soon as the Foreman's advance named it. A
   child the Foreman delegates without naming it in the advance would run
   unlit until the next advance, since `factory.threads` is what the canvas
-  reads. Resolved on 2026-11-18 by the [Refinement](#refinement). The server
-  now refuses a delegation before the advance that names its role.
+  reads. Resolved by the [Refinement](#refinement): each delegation names its
+  role, and the child is on the item before it starts.
 - **The reviewer's worktree branch is not the item's.** The server gave the
   reviewer a worktree on `t3/trim-slug-hyphens` while it reviewed the
   implementer's `trial/trim-hyphens` commit in detached HEAD. The Output node
