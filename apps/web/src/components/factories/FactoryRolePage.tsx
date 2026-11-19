@@ -15,6 +15,7 @@ import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Empty, EmptyHeader, EmptyTitle } from "../ui/empty";
+import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
@@ -43,6 +44,7 @@ import { SKILL_SOURCE_LABEL } from "./FactorySkills.logic";
 
 /** Fields a card shows its issues beside; the rest list above the cards. */
 const CARD_FIELDS = new Set([
+  "description",
   "model",
   "runtimeMode",
   "interactionMode",
@@ -160,6 +162,35 @@ function RoleEditor(
       </div>
       <FactorySaveError refusal={refusal} />
       <FactoryIssuesList issues={pageIssues} />
+
+      <SettingsSection title={gt("Description", { $context: "a factory role's one-line summary" })}>
+        <div className="flex flex-col gap-2 p-3 sm:p-4">
+          {editable ? (
+            <Input
+              id={`${id}-description`}
+              aria-label={gt("Description", { $context: "a factory role's one-line summary" })}
+              maxLength={200}
+              value={shown.description}
+              placeholder={gt("Blank keeps the preset's description, or none for a new role.")}
+              disabled={disabled}
+              onChange={(event) => {
+                const description = event.target.value;
+                edit((current) => ({ ...current, description }));
+              }}
+            />
+          ) : (
+            <p className="text-sm">{role.description}</p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            {role.role === FACTORY_FOREMAN_ROLE
+              ? gt("One line on what this role does.")
+              : gt(
+                  "One line on what this role does. The Foreman reads it to decide what to send here.",
+                )}
+          </p>
+          <FactoryFieldIssues issues={issuesFor(issues, role.role, "description")} />
+        </div>
+      </SettingsSection>
 
       <SettingsSection title={gt("Instructions")}>
         <div className="flex flex-col gap-2 p-3 sm:p-4">

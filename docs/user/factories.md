@@ -53,8 +53,10 @@ The tab is part of the page's address, so a reload or a shared link keeps it.
 ## Edit a factory
 
 - **Roles** lists the Foreman and the factory's other roles. Click a role to edit its
-  instructions, the skills it binds, and its model, runtime mode, interaction mode, and where it
-  works, then click **Save changes**. A role you change gets its own file at `roles/<role>.md`.
+  description, its instructions, the skills it binds, and its model, runtime mode, interaction
+  mode, and where it works, then click **Save changes**. The description is one line on what the
+  role is for. The Foreman reads it to decide which role gets which work, so give a role you add,
+  such as `checks`, a description that says when to use it. A role you change gets its own file at `roles/<role>.md`.
 - **Remove role**, at the bottom of a role's page, takes the role out of the factory and deletes
   its file. The Foreman cannot be removed.
 - **Triggers** lists the triggers that send the factory work, with their source, filters, and what

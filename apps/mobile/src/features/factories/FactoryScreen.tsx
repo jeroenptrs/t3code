@@ -563,7 +563,10 @@ function Roles(props: {
     >
       {factory.roles.map((role, index) => {
         const label = factoryRoleLabel(role.role, messages);
-        const model = factoryModelLabel(role.binding.model, providers, messages);
+        // The model, then what the role is for, as the Foreman is told it.
+        const model = [factoryModelLabel(role.binding.model, providers, messages), role.description]
+          .filter((part) => part !== "")
+          .join(" · ");
         return (
           <View
             key={role.role}
