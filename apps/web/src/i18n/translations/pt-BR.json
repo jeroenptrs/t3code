@@ -13115,5 +13115,9 @@
   "fea5b119aed850fa": "Use letras minúsculas, dígitos e hifens simples, como nightly-triage.",
   "b1b794caabbb77aa": "Este projeto já tem uma fábrica com este nome.",
   "b462588e4e40009c": "Em andamento",
-  "e197c4963bacc746": "{count} em execução"
+  "e197c4963bacc746": "{count} em execução",
+  "1ba0cdfa1c3ba253": "Descrição",
+  "cea36f763037eace": "Em branco mantém a descrição da predefinição, ou nenhuma para uma função nova.",
+  "0b5384b1aa2f8a80": "Uma linha sobre o que esta função faz.",
+  "a5dffbc7710c75bc": "Uma linha sobre o que esta função faz. O Foreman a lê para decidir o que enviar para cá."
 }

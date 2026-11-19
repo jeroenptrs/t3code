@@ -10,6 +10,8 @@ export const binding = {
   tools: [],
 } satisfies FactoryEffectiveBinding;
 
+export const description =
+  "Routes each work item to the factory's roles and talks to the person at gates.";
 export const body = `You are the Foreman of this factory for one work item: this thread exists for that item alone. You decide what happens to it, and other agents do the work.
 
 For the work item:

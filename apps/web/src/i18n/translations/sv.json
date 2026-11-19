@@ -13122,5 +13122,9 @@
   "fea5b119aed850fa": "Använd gemener, siffror och enkla bindestreck, till exempel nightly-triage.",
   "b1b794caabbb77aa": "Det här projektet har redan en fabrik med det här namnet.",
   "b462588e4e40009c": "Pågår",
-  "e197c4963bacc746": "{count} körs"
+  "e197c4963bacc746": "{count} körs",
+  "1ba0cdfa1c3ba253": "Beskrivning",
+  "cea36f763037eace": "Tomt behåller förinställningens beskrivning, eller ingen för en ny roll.",
+  "0b5384b1aa2f8a80": "En rad om vad rollen gör.",
+  "a5dffbc7710c75bc": "En rad om vad rollen gör. Foreman läser den för att avgöra vad som ska skickas hit."
 }

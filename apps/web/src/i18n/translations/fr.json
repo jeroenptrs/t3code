@@ -13115,5 +13115,9 @@
   "fea5b119aed850fa": "Utilisez des lettres minuscules, des chiffres et des tirets simples, comme nightly-triage.",
   "b1b794caabbb77aa": "Ce projet a déjà une usine portant ce nom.",
   "b462588e4e40009c": "En cours",
-  "e197c4963bacc746": "{count} en cours"
+  "e197c4963bacc746": "{count} en cours",
+  "1ba0cdfa1c3ba253": "Description",
+  "cea36f763037eace": "Vide conserve la description du modèle, ou aucune pour un nouveau rôle.",
+  "0b5384b1aa2f8a80": "Une ligne sur ce que fait ce rôle.",
+  "a5dffbc7710c75bc": "Une ligne sur ce que fait ce rôle. Le Foreman la lit pour décider quoi envoyer ici."
 }
