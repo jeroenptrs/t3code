@@ -1657,7 +1657,7 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // Items a restart or migration left undispatched; off the startup path, and logged on failure.
+  // Items a restart left undispatched; off the startup path, and logged on failure.
   yield* ServerActivation.forkParked(dispatchPending);
 
   return FactoryService.of({
