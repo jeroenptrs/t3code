@@ -1,13 +1,12 @@
 /**
  * The role a factory thread runs as, with its instructions and skills as the factory's files say
- * now: the role it was started as, or for a child the Foreman delegated, the role its work item
- * was at when it was delegated. Apart from `FactoryService` because provider sessions read it, and that service launches
+ * now: the role it was started as, or for a child the Foreman delegated, the role it was delegated
+ * as. Apart from `FactoryService` because provider sessions read it, and that service launches
  * threads through orchestration, so depending on it would make a layer cycle.
  */
 import {
   FACTORY_FOREMAN_ROLE,
   FactoryRoleName,
-  isWorkItemRoleStage,
   parseFactoryId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -21,7 +20,6 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import {
   effectiveBinding,
@@ -61,7 +59,6 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const projects = yield* ProjectStore.ProjectStoreV2;
-  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const skillStore = yield* FactorySkillStore.FactorySkillStore;
 
   /** The factory's directory and files; none when it has no `factory.json`. */
@@ -75,11 +72,7 @@ const make = Effect.gen(function* () {
     return Option.map(files, (value) => ({ directory, ...value }));
   });
 
-  /**
-   * A child the Foreman delegated has the role its work item names it with. Its first session can
-   * start before that row is written, so until then its role is the stage of the item its parent
-   * Foreman runs, which is the stage the delegation was bound to.
-   */
+  /** A child the Foreman delegated has the role its work item names it with, before it starts. */
   const delegatedRole = Effect.fn("FactoryThreads.delegatedRole")(function* (threadId: ThreadId) {
     const [named] = yield* sql<{ readonly factoryId: string; readonly role: string | null }>`
       SELECT w.factory_id AS "factoryId", t.role
@@ -89,22 +82,8 @@ const make = Effect.gen(function* () {
       ORDER BY t.created_at, t.rowid
       LIMIT 1
     `;
-    if (named !== undefined) {
-      return named.role !== null && isRoleName(named.role)
-        ? { factoryId: named.factoryId, role: named.role }
-        : null;
-    }
-    const thread = yield* projections.getThread(threadId);
-    const parentThreadId = thread.lineage.parentThreadId;
-    if (thread.lineage.relationshipToParent !== "subagent" || parentThreadId === null) return null;
-    const [item] = yield* sql<{ readonly factoryId: string; readonly stage: string }>`
-      SELECT w.factory_id AS "factoryId", w.stage
-      FROM fork_factory_work_items w
-      JOIN fork_factory_threads f ON f.thread_id = w.foreman_thread_id AND f.role = 'foreman'
-      WHERE w.foreman_thread_id = ${parentThreadId}
-    `;
-    return item !== undefined && isWorkItemRoleStage(item.stage) && isRoleName(item.stage)
-      ? { factoryId: item.factoryId, role: item.stage }
+    return named !== undefined && named.role !== null && isRoleName(named.role)
+      ? { factoryId: named.factoryId, role: named.role }
       : null;
   });
 

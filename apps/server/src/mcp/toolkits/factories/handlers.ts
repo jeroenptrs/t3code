@@ -5,6 +5,7 @@ import * as FactoryService from "../../../factories/FactoryService.ts";
 import * as FactorySkillStore from "../../../factories/FactorySkillStore.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import { loadCaller } from "../../threadAccess.ts";
 import { FactoriesToolkit } from "./tools.ts";
@@ -57,6 +58,16 @@ const make = Effect.gen(function* () {
     // MCP calls carry no user, so the log records no one, as for the admin dev credential.
     t3_work_item_dismiss_failure: McpToolAccess.writesWithCapability((input) =>
       factories.setWorkItemFailureDismissed(null, input),
+    ),
+    // The delegate_task path, with the role it names; the service checks the caller is the Foreman.
+    t3_factory_delegate: McpToolAccess.actsAsCaller(({ workItemId, role, ...task }) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const orchestrator = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* orchestrator
+          .delegateTask(scope, task)
+          .pipe(Effect.provideService(FactoryService.FactoryDelegationRole, { workItemId, role }));
+      }),
     ),
     t3_work_item_advance: McpToolAccess.actsAsCaller((input) =>
       callerThreadId.pipe(
