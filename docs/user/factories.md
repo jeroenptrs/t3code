@@ -16,7 +16,8 @@ tab you last chose in this browser.
 
 In **Factories**, the chevron beside a factory shows its runs and its triggers. A run is the thread
 that handles one work item. Runs sit in the same sections as threads in **Home**, so a run you
-settle or snooze moves out of the way. The agents a run starts for its roles show inside the run's
+settle or snooze moves out of the way. As in **Home**, **Settled** lists the newest runs first and
+**Show more** reveals older ones. The agents a run starts for its roles show inside the run's
 thread, not as rows of their own. A run opens and acts like any other thread. Click the factory's
 name to open its page.
 
