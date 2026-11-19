@@ -1,11 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import {
-  makeFactoryId,
-  type OrchestrationV2AppThread,
-  ProjectId,
-  ThreadId,
-} from "@t3tools/contracts";
+import { makeFactoryId, ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -14,7 +9,6 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { builtinSkillEntries } from "./factoryFiles.ts";
@@ -30,29 +24,6 @@ const factoryJson = JSON.stringify({
     implement: null,
     review: "roles/strict-review.md",
     docs: "roles/docs.md",
-  },
-});
-
-/** Subagent children and the thread that delegated each; any other thread is not found. */
-const children = [
-  ["t-foreman-implementer", "t-foreman"],
-  ["t-foreman-reviewer", "t-foreman"],
-  ["t-foreman-helper", "t-foreman"],
-  ["t-other-implementer", "t-other"],
-].map(([child, parent]) => ({ child: ThreadId.make(child!), parent: ThreadId.make(parent!) }));
-
-const layerProjections = Layer.mock(ProjectionStore.ProjectionStoreV2)({
-  getThread: (threadId) => {
-    const found = children.find((entry) => entry.child === threadId);
-    return found === undefined
-      ? Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId }))
-      : Effect.succeed({
-          lineage: {
-            parentThreadId: found.parent,
-            relationshipToParent: "subagent",
-            rootThreadId: found.parent,
-          },
-        } as unknown as OrchestrationV2AppThread);
   },
 });
 
@@ -108,20 +79,21 @@ it.effect("gives a factory's threads and its Foreman's children their role body 
           VALUES (${factoryId}, ${threadId}, ${role}, '2026-11-05T00:00:00.000Z')
         `;
       }
-      // The Foreman's item is at review now. Its implementer was named when it was at implement,
-      // the helper with no role, and the reviewer's row is not written yet.
+      // The Foreman's item has an implementer and a reviewer at once, and a helper recorded with
+      // no role.
       yield* sql`
         INSERT INTO fork_factory_work_items (
           work_item_id, factory_id, title, source_json, stage, gate_json,
           foreman_thread_id, foreman_run_id, created_at, updated_at
         ) VALUES (
-          'work-item:1', ${factoryId}, 'Fix', '{"kind":"manual","text":"Fix it."}', 'review',
+          'work-item:1', ${factoryId}, 'Fix', '{"kind":"manual","text":"Fix it."}', 'working',
           '{"state":"none"}', 't-foreman', NULL, '2026-11-05T00:00:00.000Z',
           '2026-11-05T00:00:00.000Z'
         )
       `;
       for (const [threadId, role] of [
         ["t-foreman-implementer", "implement"],
+        ["t-foreman-reviewer", "review"],
         ["t-foreman-helper", null],
       ]) {
         yield* sql`
@@ -158,7 +130,6 @@ it.effect("gives a factory's threads and its Foreman's children their role body 
               get: (id) => Effect.succeed(id === projectId ? Option.some(backend) : Option.none()),
             }),
           ),
-          Layer.provide(layerProjections),
         ),
       ),
     );
@@ -188,7 +159,7 @@ it.effect("gives a factory's threads and its Foreman's children their role body 
       implementRole,
       reviewRole,
       null,
-      // A Foreman's child takes the role its row names, else the stage its item is at.
+      // A Foreman's child takes the role its row names.
       implementRole,
       reviewRole,
       null,

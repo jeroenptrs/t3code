@@ -1,8 +1,10 @@
 import {
   canDropWorkItem,
-  factoryStages,
   isDismissedFailure,
+  runningRoles,
+  runningRolesLabel,
   WORK_ITEM_OUTCOME_LABELS,
+  WORK_ITEM_STAGES,
   workItemActorLabel,
   workItemFailureMessage,
   workItemStageLabel,
@@ -23,6 +25,7 @@ import { useState } from "react";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { factoriesEnvironment } from "../../state/factories";
 import { useEnvironmentQuery } from "../../state/query";
+import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { RelativeTime } from "../RelativeTime";
 import { Badge } from "../ui/badge";
@@ -100,6 +103,28 @@ function WorkItemStageBadge(props: { readonly item: WorkItemSummary }) {
   );
 }
 
+/** The roles a working item has a child running as; only working items read the shells. */
+function WorkItemRunningRoles(props: {
+  readonly environmentId: EnvironmentId;
+  readonly item: WorkItemSummary;
+}) {
+  if (props.item.stage !== "working" || props.item.threads.length === 0) return null;
+  return <RunningRolesLabel environmentId={props.environmentId} item={props.item} />;
+}
+
+function RunningRolesLabel(props: {
+  readonly environmentId: EnvironmentId;
+  readonly item: WorkItemSummary;
+}) {
+  const messages = useMessages();
+  // A string, so a shell tick that changes no running role renders nothing.
+  const label = useAtomValue(environmentThreadShells.threadShellsAtom, (shells) =>
+    runningRolesLabel(runningRoles(props.item, props.environmentId, shells), messages),
+  );
+  if (label === "") return null;
+  return <span className="truncate text-xs text-muted-foreground">{label}</span>;
+}
+
 function WorkItemsSkeleton() {
   const rows = [0, 1, 2, 3];
   return (
@@ -139,7 +164,7 @@ export function FactoryWorkItemsTab(props: FactoryTabProps) {
   const filtered = isWorkItemSearchFiltered(search);
   const setSearch = (next: Partial<FactoryPageSearch>) =>
     void navigate({ search: (current) => ({ ...current, ...next }), replace: true });
-  const stageOptions = factoryStages(factory).map(
+  const stageOptions = WORK_ITEM_STAGES.map(
     (stage) => [stage, workItemStageLabel(stage, messages)] as const,
   );
   const outcomeOptions = WorkItemOutcome.literals.map(
@@ -257,7 +282,10 @@ export function FactoryWorkItemsTab(props: FactoryTabProps) {
                   <span className="block max-w-80 truncate font-medium">{item.title}</span>
                 </TableCell>
                 <TableCell>
-                  <WorkItemStageBadge item={item} />
+                  <span className="flex items-center gap-2">
+                    <WorkItemStageBadge item={item} />
+                    <WorkItemRunningRoles environmentId={environmentId} item={item} />
+                  </span>
                 </TableCell>
                 <TableCell className="max-sm:hidden">
                   <span className="block max-w-48 truncate">
@@ -350,7 +378,10 @@ function WorkItemDetail(props: {
       <SheetHeader>
         <SheetTitle className="me-8">{item.title}</SheetTitle>
         <SheetDescription render={<div />}>
-          <WorkItemStageBadge item={item} />
+          <span className="flex items-center gap-2">
+            <WorkItemStageBadge item={item} />
+            <WorkItemRunningRoles environmentId={environmentId} item={item} />
+          </span>
         </SheetDescription>
       </SheetHeader>
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pb-6">

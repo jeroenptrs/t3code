@@ -58,7 +58,7 @@ function setup() {
       id: WorkItemId.make("work-item:1"),
       title: "Fix the login redirect",
       source: { kind: "manual", text: "" },
-      stage: "implement",
+      stage: "working",
       foremanThreadId: null,
       threads: [{ threadId: implementer, role: "implement" }],
     } satisfies Partial<WorkItemSummary>,

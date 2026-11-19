@@ -4,6 +4,8 @@ import {
   gateAnswerError,
   gateAnswerInput,
   isDismissedFailure,
+  runningRoles,
+  runningRolesLabel,
   workItemActorLabel,
   workItemFailureMessage,
   workItemStageLabel,
@@ -33,6 +35,7 @@ import { ListSection } from "../../components/ui/ListSection";
 import { Sheet } from "../../components/ui/Sheet";
 import { factoriesEnvironment } from "../../state/factories";
 import { useEnvironmentQuery } from "../../state/query";
+import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 const INPUT_CLASS = "rounded-lg bg-background px-3 py-2 text-base text-foreground";
@@ -41,9 +44,31 @@ function Separated({ children }: { readonly children: ReactNode }) {
   return <View className="border-t border-border-subtle">{children}</View>;
 }
 
-/** The item's stage; a failure a person dismissed says so, so it no longer reads as one to act on. */
+/** The roles a working item has a child running as; only working items read the shells. */
+function RunningRolesText(props: {
+  readonly environmentId: EnvironmentId;
+  readonly item: Pick<WorkItem, "threads">;
+}) {
+  const messages = useMessages();
+  // A string, so a shell tick that changes no running role renders nothing.
+  const label = useAtomValue(environmentThreadShells.threadShellsAtom, (shells) =>
+    runningRolesLabel(runningRoles(props.item, props.environmentId, shells), messages),
+  );
+  if (label === "") return null;
+  return (
+    <Text textRole="footnote" className="text-foreground-muted">
+      {label}
+    </Text>
+  );
+}
+
+/**
+ * The item's stage, and the roles running on it while it works. A failure a person dismissed says
+ * so, so it no longer reads as one to act on.
+ */
 export function WorkItemStageText(props: {
-  readonly item: Pick<WorkItem, "stage" | "failureDismissedAt">;
+  readonly environmentId: EnvironmentId;
+  readonly item: Pick<WorkItem, "stage" | "failureDismissedAt" | "threads">;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -63,6 +88,9 @@ export function WorkItemStageText(props: {
         <Text textRole="footnote" className="text-foreground-muted">
           {gt("Dismissed", { $context: "a failed work item a person no longer needs to act on" })}
         </Text>
+      ) : null}
+      {props.item.stage === "working" && props.item.threads.length > 0 ? (
+        <RunningRolesText environmentId={props.environmentId} item={props.item} />
       ) : null}
     </View>
   );
@@ -132,7 +160,7 @@ function WorkItemDetail(props: {
   const { environmentId, item } = props;
   return (
     <>
-      <WorkItemStageText item={item} />
+      <WorkItemStageText environmentId={environmentId} item={item} />
       {item.stage === "waiting" && item.gate.state === "waiting" ? (
         <GateAnswer
           environmentId={environmentId}

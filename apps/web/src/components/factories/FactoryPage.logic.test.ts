@@ -14,8 +14,8 @@ describe("validateFactoryPageSearch", () => {
     // A role page belongs to the Roles tab, and filters to Work items.
     [{ tab: "skills", role: "implement", stage: "new" }, { tab: "skills" }],
     [
-      { tab: "work-items", stage: "triage", outcome: "active", item: "work-item:1" },
-      { tab: "work-items", stage: "triage", outcome: "active", item: "work-item:1" },
+      { tab: "work-items", stage: "working", outcome: "active", item: "work-item:1" },
+      { tab: "work-items", stage: "working", outcome: "active", item: "work-item:1" },
     ],
     [{ tab: "work-items", stage: "Shipped!", outcome: 3 }, { tab: "work-items" }],
     [{ tab: "canvas", role: "Not A Role" }, {}],

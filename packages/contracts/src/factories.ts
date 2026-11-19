@@ -17,6 +17,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { OrchestratorMcpDelegateTaskInput } from "./orchestratorMcp.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import { TriggerEvent } from "./trigger.ts";
 
@@ -65,19 +66,10 @@ export type FactoryRoleName = typeof FactoryRoleName.Type;
 /** Every factory has a Foreman, which no definition can remove or disable. */
 export const FACTORY_FOREMAN_ROLE = "foreman";
 
-/** The stages that are not a role's, which no role may be named. */
-const FIXED_WORK_ITEM_STAGES: ReadonlySet<string> = new Set([
-  "new",
-  "waiting",
-  "done",
-  "failed",
-  "dropped",
-]);
-// `queued` is a stage items once had.
-const RESERVED_FACTORY_ROLE_NAMES: ReadonlySet<string> = new Set([
-  ...FIXED_WORK_ITEM_STAGES,
-  "queued",
-]);
+const WORK_ITEM_STAGES = ["new", "working", "waiting", "done", "failed", "dropped"] as const;
+
+// A role is never named after a stage, `queued` included, which items once had.
+const RESERVED_FACTORY_ROLE_NAMES: ReadonlySet<string> = new Set([...WORK_ITEM_STAGES, "queued"]);
 
 export const isReservedFactoryRoleName = (name: string): boolean =>
   RESERVED_FACTORY_ROLE_NAMES.has(name);
@@ -447,26 +439,15 @@ export const WorkItemId = TrimmedNonEmptyString.pipe(Schema.brand("WorkItemId"))
 export type WorkItemId = typeof WorkItemId.Type;
 
 /**
- * `new`, `waiting`, `done`, `failed`, `dropped`, or the name of the role that runs the item.
- * `waiting`: a gate holds the item for a person. `done`, `failed`, and `dropped` are terminal.
+ * `new` until the Foreman delegates, `working` from its first delegation, and `waiting` while a
+ * gate holds it for a person. `done`, `failed`, and `dropped` are terminal. Roles are not stages:
+ * each child thread carries its own, so several roles can work on one item at once.
  */
-export const WorkItemStage = FactoryRoleName;
+export const WorkItemStage = Schema.Literals(WORK_ITEM_STAGES);
 export type WorkItemStage = typeof WorkItemStage.Type;
 
-/** Whether `stage` is a role's, not one of the fixed stages. The Foreman's is never a stage. */
-export const isWorkItemRoleStage = (stage: string): boolean =>
-  stage !== FACTORY_FOREMAN_ROLE && !RESERVED_FACTORY_ROLE_NAMES.has(stage);
-
-const stageExcept = (excluded: ReadonlyArray<string>, expected: string) =>
-  WorkItemStage.check(
-    Schema.makeFilter((stage: string) => !excluded.includes(stage), { expected }),
-  );
-
-/** Where a gate sends the item when the person approves: a role's stage, or `done`. */
-export const WorkItemResumeStage = stageExcept(
-  ["new", "waiting", "queued", "failed", "dropped"],
-  "a role name or done",
-);
+/** Where a gate sends the item when the person approves. */
+export const WorkItemResumeStage = Schema.Literals(["working", "done"]);
 export type WorkItemResumeStage = typeof WorkItemResumeStage.Type;
 
 /** What a person decides at a gate. */
@@ -545,7 +526,7 @@ export const WorkItemTransition = Schema.Struct({
 });
 export type WorkItemTransition = typeof WorkItemTransition.Type;
 
-/** A thread that worked on the item, with the role it worked as; null when it had none. */
+/** A thread that worked on the item, with the role it ran as; null for one recorded without. */
 export const WorkItemThread = Schema.Struct({
   threadId: ThreadId,
   role: Schema.NullOr(FactoryRoleName),
@@ -587,24 +568,24 @@ const TERMINAL_WORK_ITEM_STAGES: ReadonlySet<string> = new Set(["done", "failed"
 export const isTerminalWorkItemStage = (stage: WorkItemStage): boolean =>
   TERMINAL_WORK_ITEM_STAGES.has(stage);
 
-/**
- * Whether an item at `from` may move to `to`. Whether a role stage names a role the factory has
- * is the service's to check.
- */
+/** Whether an item at `from` may move to `to`. */
 export function canTransitionWorkItem(
   from: WorkItemStage,
   to: WorkItemStage,
   gate: WorkItemGate,
 ): boolean {
-  const toRole = isWorkItemRoleStage(to);
-  if (from === "new") return toRole || ["waiting", "dropped", "failed"].includes(to);
-  if (from === "waiting") {
-    return (
-      (gate.state === "waiting" && to === gate.resumeStage) || ["dropped", "failed"].includes(to)
-    );
+  switch (from) {
+    case "new":
+      return ["working", "waiting", "failed", "dropped"].includes(to);
+    case "working":
+      return ["done", "waiting", "failed", "dropped"].includes(to);
+    case "waiting":
+      return (
+        (gate.state === "waiting" && to === gate.resumeStage) || ["dropped", "failed"].includes(to)
+      );
+    default:
+      return false;
   }
-  if (!isWorkItemRoleStage(from)) return false;
-  return (toRole && to !== from) || ["done", "waiting", "failed", "dropped"].includes(to);
 }
 
 export const WorkItemListInput = Schema.Struct({
@@ -655,20 +636,31 @@ export const WorkItemDropInput = Schema.Struct({
 });
 export type WorkItemDropInput = typeof WorkItemDropInput.Type;
 
-/** Stages the Foreman moves an item to: a role's, `done`, `failed`, or `dropped`. */
-export const WorkItemAdvanceStage = stageExcept(
-  ["new", "waiting", "queued"],
-  "a role name, done, failed, or dropped",
-);
+/** The stages the Foreman ends an item at. Delegating moves it to `working`. */
+export const WorkItemAdvanceStage = Schema.Literals(["done", "failed", "dropped"]);
 export type WorkItemAdvanceStage = typeof WorkItemAdvanceStage.Type;
 
 export const WorkItemAdvanceInput = Schema.Struct({
   workItemId: WorkItemId,
   stage: WorkItemAdvanceStage,
   note: Schema.optionalKey(WorkItemNote),
-  threads: Schema.optionalKey(Schema.Array(WorkItemThread)),
 });
 export type WorkItemAdvanceInput = typeof WorkItemAdvanceInput.Type;
+
+/**
+ * The Foreman starts one child as one of the factory's enabled roles. The role's binding sets the
+ * child's model, modes, checkout, and skills, so the call takes none of them.
+ */
+export const WorkItemDelegateInput = Schema.Struct({
+  workItemId: WorkItemId,
+  role: FactoryRoleName,
+  task: OrchestratorMcpDelegateTaskInput.fields.task,
+  title: OrchestratorMcpDelegateTaskInput.fields.title,
+  mode: OrchestratorMcpDelegateTaskInput.fields.mode,
+  timeoutMs: OrchestratorMcpDelegateTaskInput.fields.timeoutMs,
+  clientRequestId: OrchestratorMcpDelegateTaskInput.fields.clientRequestId,
+});
+export type WorkItemDelegateInput = typeof WorkItemDelegateInput.Type;
 
 export const WorkItemGateInput = Schema.Struct({
   workItemId: WorkItemId,
@@ -678,10 +670,10 @@ export const WorkItemGateInput = Schema.Struct({
 export type WorkItemGateInput = typeof WorkItemGateInput.Type;
 
 /**
- * `not_foreman`: only the item's Foreman may do this. `gate_waiting`: only a person's answer moves
- * the item on. `no_gate`: no gate waits. `not_failed`: only a failed item's failure is dismissed.
- * `unknown_role`, `role_disabled`: the factory has no such role, or has it disabled. `no_role`: the
- * item is at no role's stage. `unavailable`: the database or the Foreman could not be reached.
+ * `not_foreman`: only the item's Foreman may do this. `gate_waiting`: a person's answer moves it.
+ * `no_gate`: no gate waits. `not_failed`: only a failure is dismissed. `unknown_role`,
+ * `role_disabled`: no such role, or it is off. `no_role`: a Foreman delegated naming no role.
+ * `unavailable`: the database or the Foreman could not be reached.
  */
 export const WorkItemErrorCode = Schema.Literals([
   "not_found",

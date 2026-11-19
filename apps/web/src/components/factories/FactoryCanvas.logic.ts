@@ -7,7 +7,6 @@ import {
   FACTORY_FOREMAN_ROLE,
   type FactoryRoleName,
   type FactoryThread,
-  isWorkItemRoleStage,
   type ScheduledTaskId,
   type ThreadId,
   type WorkItemSummary,
@@ -159,9 +158,9 @@ export function factoryGraph(input: FactoryGraphInput): FactoryGraph {
 
 export interface CanvasNodeState {
   readonly lit: boolean;
-  /** The thread a click opens: the lit run. */
+  /** The thread a click opens: the first lit run. */
   readonly threadId: ThreadId | null;
-  /** A second line under the label, for the output node. */
+  /** A second line under the label: the output's branch, or how many of a role's threads run. */
   readonly detail: string | null;
 }
 
@@ -193,14 +192,17 @@ export interface FactoryGraphStateInput {
 }
 
 interface OwnedActivity {
-  /** The first active thread of each role, the Foreman's included. */
-  readonly roles: Map<FactoryRoleName, ThreadId>;
+  /** Each role's running threads, the Foreman's included. */
+  readonly roles: Map<FactoryRoleName, Array<ThreadId>>;
+  /** Every running thread the factory owns. */
+  readonly active: Set<ThreadId>;
   outputBranch: string | null;
   outputPullRequest: number | null;
 }
 
 const emptyActivity = (): OwnedActivity => ({
   roles: new Map(),
+  active: new Set(),
   outputBranch: null,
   outputPullRequest: null,
 });
@@ -220,7 +222,7 @@ function outputThreadOf(items: ReadonlyArray<WorkItemSummary>): ThreadId | null 
   return null;
 }
 
-/** One pass over the shells, writing into `into` so an unchanged scan allocates nothing. */
+/** One pass over the shells, writing into `into` so the selector can compare it with the last. */
 function scanActivity(
   into: OwnedActivity,
   environmentId: EnvironmentId,
@@ -229,6 +231,7 @@ function scanActivity(
   shells: ReadonlyArray<CanvasShell>,
 ) {
   into.roles.clear();
+  into.active.clear();
   into.outputBranch = null;
   into.outputPullRequest = null;
   for (const shell of shells) {
@@ -238,41 +241,61 @@ function scanActivity(
       into.outputPullRequest = (shell.linkedPullRequest ?? shell.branchPullRequest)?.number ?? null;
     }
     const role = roles.get(shell.id);
-    if (role === undefined || into.roles.has(role) || !threadRuntimeIsActive(shell.runtime))
-      continue;
-    into.roles.set(role, shell.id);
+    if (role === undefined || !threadRuntimeIsActive(shell.runtime)) continue;
+    into.active.add(shell.id);
+    const running = into.roles.get(role);
+    if (running === undefined) into.roles.set(role, [shell.id]);
+    else running.push(shell.id);
   }
 }
 
 const sameActivity = (a: OwnedActivity, b: OwnedActivity) =>
-  sameMap(a.roles, b.roles, (x, y) => x === y) &&
+  sameMap(a.roles, b.roles, (x, y) => x.length === y.length && x.every((id, i) => id === y[i])) &&
   a.outputBranch === b.outputBranch &&
   a.outputPullRequest === b.outputPullRequest;
 
-function edgeOfItem(item: WorkItemSummary): string | null {
-  if (isWorkItemRoleStage(item.stage)) return `foreman->${roleNodeId(item.stage)}`;
-  switch (item.stage) {
-    case "new":
-      return `${
-        item.source.kind === "scheduled_task"
-          ? triggerNodeId(item.source.scheduledTaskId)
-          : item.source.kind === "trigger"
-            ? triggerNodeId(item.source.triggerId)
-            : MANUAL_TRIGGER_NODE
-      }->foreman`;
-    case "waiting":
-      return "foreman->gate";
-    default:
-      return null;
-  }
+interface ItemOnEdge {
+  readonly item: WorkItemSummary;
+  /** The thread the edge opens: the role's running child, or the item's run. */
+  readonly threadId: ThreadId | null;
 }
 
-function itemThread(item: WorkItemSummary): ThreadId | null {
-  const role = isWorkItemRoleStage(item.stage) ? item.stage : null;
-  return (
-    (role === null ? undefined : item.threads.find((thread) => thread.role === role)?.threadId) ??
-    item.foremanThreadId
-  );
+/**
+ * The edges an item is on: its trigger's while new, the gate's while waiting, and while working
+ * one per role it has a child running as, since several roles can work on it at once.
+ */
+function edgesOfItem(
+  item: WorkItemSummary,
+  active: ReadonlySet<ThreadId>,
+): ReadonlyArray<readonly [string, ItemOnEdge]> {
+  switch (item.stage) {
+    case "new":
+      return [
+        [
+          `${
+            item.source.kind === "scheduled_task"
+              ? triggerNodeId(item.source.scheduledTaskId)
+              : item.source.kind === "trigger"
+                ? triggerNodeId(item.source.triggerId)
+                : MANUAL_TRIGGER_NODE
+          }->foreman`,
+          { item, threadId: item.foremanThreadId },
+        ],
+      ];
+    case "waiting":
+      return [["foreman->gate", { item, threadId: item.foremanThreadId }]];
+    case "working": {
+      const edges = new Map<string, ItemOnEdge>();
+      for (const thread of item.threads) {
+        if (thread.role === null || !active.has(thread.threadId)) continue;
+        const edgeId = `foreman->${roleNodeId(thread.role)}`;
+        if (!edges.has(edgeId)) edges.set(edgeId, { item, threadId: thread.threadId });
+      }
+      return [...edges];
+    }
+    default:
+      return [];
+  }
 }
 
 function buildState(
@@ -280,13 +303,13 @@ function buildState(
   items: ReadonlyArray<WorkItemSummary>,
   activity: OwnedActivity,
 ): FactoryGraphState {
-  const onEdge = new Map<string, WorkItemSummary[]>();
+  const onEdge = new Map<string, ItemOnEdge[]>();
   for (const item of items) {
-    const edgeId = edgeOfItem(item);
-    if (edgeId === null) continue;
-    const list = onEdge.get(edgeId);
-    if (list === undefined) onEdge.set(edgeId, [item]);
-    else list.push(item);
+    for (const [edgeId, entry] of edgesOfItem(item, activity.active)) {
+      const list = onEdge.get(edgeId);
+      if (list === undefined) onEdge.set(edgeId, [entry]);
+      else list.push(entry);
+    }
   }
   const edges = new Map<string, CanvasEdgeState>();
   for (const edge of graph.edges) {
@@ -296,7 +319,12 @@ function buildState(
       edge.id,
       first === undefined
         ? UNLIT_EDGE
-        : { lit: true, title: first.title, more: list!.length - 1, threadId: itemThread(first) },
+        : {
+            lit: true,
+            title: first.item.title,
+            more: list!.length - 1,
+            threadId: first.threadId,
+          },
     );
   }
   const waiting = items.find((item) => item.stage === "waiting");
@@ -305,11 +333,18 @@ function buildState(
     switch (node.kind) {
       case "foreman":
       case "role": {
-        const threadId =
+        const running =
           activity.roles.get(
             node.kind === "foreman" ? FACTORY_FOREMAN_ROLE : node.id.slice(ROLE_NODE_PREFIX.length),
-          ) ?? null;
-        nodes.set(node.id, { lit: threadId !== null, threadId, detail: null });
+          ) ?? [];
+        nodes.set(node.id, {
+          lit: running.length > 0,
+          threadId: running[0] ?? null,
+          detail:
+            running.length > 1
+              ? m(msg("{count} running", { count: String(running.length) }))
+              : null,
+        });
         break;
       }
       case "gate":
