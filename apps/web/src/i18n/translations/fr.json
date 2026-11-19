@@ -13002,5 +13002,7 @@
   "92c01f25b469c00c": "Masquer ce qui appartient à {factory}",
   "1492a6f4ede26c44": "Afficher ce qui appartient à {factory}",
   "fea5b119aed850fa": "Utilisez des lettres minuscules, des chiffres et des tirets simples, comme nightly-triage.",
-  "b1b794caabbb77aa": "Ce projet a déjà une usine portant ce nom."
+  "b1b794caabbb77aa": "Ce projet a déjà une usine portant ce nom.",
+  "b462588e4e40009c": "En cours",
+  "e197c4963bacc746": "{count} en cours"
 }

@@ -13011,5 +13011,7 @@
   "92c01f25b469c00c": "Hide what {factory} owns",
   "1492a6f4ede26c44": "Show what {factory} owns",
   "fea5b119aed850fa": "Use lowercase letters, digits, and single hyphens, such as nightly-triage.",
-  "b1b794caabbb77aa": "This project already has a factory with this name."
+  "b1b794caabbb77aa": "This project already has a factory with this name.",
+  "b462588e4e40009c": "Working",
+  "e197c4963bacc746": "{count} running"
 }

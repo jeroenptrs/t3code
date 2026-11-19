@@ -16,8 +16,8 @@ describe("workItemListInput", () => {
       raw: { stage: "waiting", outcome: "active" },
       expected: { factoryId, stage: "waiting", outcome: "active" },
     },
-    // Roles are open, so any role name is a stage.
-    { raw: { stage: "triage", role: "triage" }, expected: { factoryId, stage: "triage" } },
+    // A link from when roles were stages shows everything.
+    { raw: { stage: "implement" }, expected: { factoryId } },
     { raw: { stage: "Shipped!", outcome: 3 }, expected: { factoryId } },
     { raw: { outcome: "done", stage: "" }, expected: { factoryId, outcome: "done" } },
   ])("reads $raw from the search params", ({ raw, expected }) => {
@@ -28,8 +28,7 @@ describe("workItemListInput", () => {
 describe("workItemStageBadgeVariant", () => {
   it.each([
     ["new", "default"],
-    ["implement", "default"],
-    ["review", "default"],
+    ["working", "default"],
     ["waiting", "warning"],
     ["done", "outline"],
     ["failed", "destructive"],

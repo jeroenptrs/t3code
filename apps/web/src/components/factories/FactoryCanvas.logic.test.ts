@@ -27,6 +27,7 @@ const webhook = ScheduledTaskId.make("task-webhook");
 const foreman = ThreadId.make("factory-foreman:work-item:1");
 const otherRun = ThreadId.make("factory-foreman:work-item:2");
 const implementer = ThreadId.make("thread-implement");
+const secondImplementer = ThreadId.make("thread-implement-2");
 const reviewer = ThreadId.make("thread-review");
 const unrelated = ThreadId.make("thread-unrelated");
 
@@ -34,6 +35,7 @@ const threads: ReadonlyArray<FactoryThread> = [
   { threadId: foreman, role: "foreman" },
   { threadId: otherRun, role: "foreman" },
   { threadId: implementer, role: "implement" },
+  { threadId: secondImplementer, role: "implement" },
   { threadId: reviewer, role: "review" },
 ];
 
@@ -145,10 +147,8 @@ describe("factoryGraphState", () => {
 
   it.each([
     ["new", [["trigger:manual->foreman", "Item 1", 0]]],
-    ["implement", [["foreman->role:implement", "Item 1", 0]]],
-    ["review", [["foreman->role:review", "Item 1", 0]]],
-    // A disabled role has no node, so an item still at its stage lights nothing.
-    ["analysis", []],
+    // Working with no child running: the Foreman is between children.
+    ["working", []],
     ["waiting", [["foreman->gate", "Item 1", 0]]],
     ["done", []],
     ["failed", []],
@@ -158,13 +158,13 @@ describe("factoryGraphState", () => {
 
   it("lights each item's edge, a trigger's own, and groups items on one edge", () => {
     const result = state(
-      [],
+      [shell(implementer, true), shell(secondImplementer, true)],
       [
         item("1", "new", {
           source: { kind: "scheduled_task", scheduledTaskId: nightly, deliveryId: null, text: "" },
         }),
-        item("2", "implement"),
-        item("3", "implement"),
+        item("2", "working", { threads: [{ threadId: implementer, role: "implement" }] }),
+        item("3", "working", { threads: [{ threadId: secondImplementer, role: "implement" }] }),
         item("4", "new", {
           source: {
             kind: "trigger",
@@ -188,11 +188,38 @@ describe("factoryGraphState", () => {
     ]);
   });
 
+  it("lights a working item's edge for each role it has running, and counts each node's runs", () => {
+    const working = item("1", "working", {
+      threads: [
+        { threadId: implementer, role: "implement" },
+        { threadId: reviewer, role: "review" },
+        { threadId: secondImplementer, role: "implement" },
+      ],
+    });
+    const result = state(
+      [shell(implementer, true), shell(secondImplementer, true), shell(reviewer, true)],
+      [working],
+    );
+    expect(litEdges(result)).toEqual([
+      ["foreman->role:implement", "Item 1", 0],
+      ["foreman->role:review", "Item 1", 0],
+    ]);
+    expect(result.edges.get("foreman->role:review")?.threadId).toBe(reviewer);
+    expect(result.nodes.get("role:implement")).toEqual({
+      lit: true,
+      threadId: implementer,
+      detail: "2 running",
+    });
+    expect(result.nodes.get("role:review")?.detail).toBeNull();
+    // A child that finished takes its role's edge with it.
+    expect(litEdges(state([shell(reviewer, true)], [working]))).toEqual([
+      ["foreman->role:review", "Item 1", 0],
+    ]);
+  });
+
   it("lights the Foreman from whichever run thread is active, and from none when none is", () => {
     const lit = (shells: ReadonlyArray<CanvasShell>) => {
-      const node = state(shells, [item("1", "implement"), item("2", "review")]).nodes.get(
-        "foreman",
-      );
+      const node = state(shells, [item("1", "working"), item("2", "working")]).nodes.get("foreman");
       return [node?.lit, node?.threadId];
     };
     expect(lit([shell(foreman, false), shell(otherRun, true)])).toEqual([true, otherRun]);
@@ -213,7 +240,7 @@ describe("factoryGraphState", () => {
   });
 
   it("shows the active item's implement branch, then its pull request, on the output node", () => {
-    const active = item("1", "implement", {
+    const active = item("1", "working", {
       threads: [{ threadId: implementer, role: "implement" }],
     });
     const output = (shells: ReadonlyArray<CanvasShell>) =>
@@ -239,7 +266,7 @@ describe("factoryGraphState", () => {
 describe("createFactoryCanvasSelector", () => {
   it("keeps the previous state when an unrelated thread changes, and moves when an owned one does", () => {
     const select = createFactoryCanvasSelector();
-    const items = [item("1", "implement")];
+    const items = [item("1", "working")];
     const input = (shells: ReadonlyArray<CanvasShell>): FactoryCanvasInput => ({
       environmentId,
       ...definition,
@@ -250,7 +277,7 @@ describe("createFactoryCanvasSelector", () => {
     const first = select(input([shell(implementer, true), shell(unrelated, false)]));
     expect(select(input([shell(implementer, true), shell(unrelated, true)]))).toBe(first);
     // A refetch that answers the same rows is a new array, not a new state.
-    expect(select({ ...input([shell(implementer, true)]), items: [item("1", "implement")] })).toBe(
+    expect(select({ ...input([shell(implementer, true)]), items: [item("1", "working")] })).toBe(
       first,
     );
     const stopped = select(input([shell(implementer, false)]));

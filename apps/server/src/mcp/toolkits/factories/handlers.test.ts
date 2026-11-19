@@ -3,6 +3,8 @@ import {
   EnvironmentId,
   type Factory,
   FactoryId,
+  NodeId,
+  OrchestratorMcpFailure,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -21,6 +23,7 @@ import { rolePresets } from "../../../factories/roles/index.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
 import * as FactoriesHandlers from "./handlers.ts";
 import { FactoriesToolkit } from "./tools.ts";
@@ -143,6 +146,37 @@ const call = (
       Effect.sync(() => calls.push("setWorkItemFailureDismissed")).pipe(Effect.as(workItem)),
     dropWorkItem: () => Effect.sync(() => calls.push("dropWorkItem")).pipe(Effect.as(workItem)),
   });
+  // Records the role the delegate path reads; only the Foreman's run may delegate.
+  const orchestrator = Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({
+    delegateTask: (callerScope, input) =>
+      Effect.gen(function* () {
+        const named = yield* FactoryService.FactoryDelegationRole;
+        if (callerScope.thread?.threadId !== foremanThreadId) {
+          return yield* new OrchestratorMcpFailure({ code: "parent_not_active", message: "" });
+        }
+        calls.push(`delegateTask:${named?.workItemId}:${named?.role}:${input.task}`);
+        return {
+          taskId: NodeId.make("node-1"),
+          childThreadId: null,
+          childRunId: null,
+          childNodeId: NodeId.make("node-1"),
+          status: "starting",
+          workState: "working",
+          hasPendingChildRuns: false,
+          latestTerminalRunId: null,
+          latestTerminalStatus: null,
+          latestTerminalSummary: null,
+          latestTerminalResultContextTransferId: null,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          model: null,
+          summary: null,
+          resultContextTransferId: null,
+          hasPendingQuestion: false,
+          pendingApproval: null,
+          waitTimedOut: false,
+        } as const;
+      }),
+  });
   const skillStore = Layer.mock(FactorySkillStore.FactorySkillStore)({
     list: () => Effect.sync(() => calls.push("skills.list")).pipe(Effect.as({ skills: [] })),
     save: ({ name, source }) =>
@@ -166,6 +200,7 @@ const call = (
       McpHttpServer.toolkitRegistration(FactoriesToolkit, FactoriesHandlers.layer).pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(Layer.merge(service, skillStore)),
+        Layer.provideMerge(orchestrator),
         Layer.provideMerge(
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getThreadShell: (threadId) => Effect.succeed(shells.get(threadId) ?? null),
@@ -185,7 +220,8 @@ const skillSave = {
 };
 const skillDelete = { name: "run-checks", source: "home", file: null };
 const create = { factoryId: factory.id, title: "Fix the login bug", text: "SSO fails." };
-const advance = { workItemId: workItem.id, stage: "implement" };
+const advance = { workItemId: workItem.id, stage: "done" };
+const delegate = { workItemId: workItem.id, role: "implement", task: "Fix the SSO callback." };
 const gate = { workItemId: workItem.id, question: "Ship it?", resumeStage: "done" };
 const dismiss = { workItemId: workItem.id, dismissed: true };
 
@@ -221,6 +257,12 @@ it.effect.each([
     threadCaller(fullAccessThreadId),
     create,
     ["ran", "read", "createWorkItem"],
+  ],
+  [
+    "t3_factory_delegate",
+    threadCaller(foremanThreadId),
+    delegate,
+    ["ran", "delegateTask:work-item:1:implement:Fix the SSO callback."],
   ],
   ["t3_work_item_advance", threadCaller(foremanThreadId), advance, ["ran", "advanceWorkItem"]],
   ["t3_work_item_advance", threadCaller(supervisedThreadId), advance, ["capability_denied"]],
