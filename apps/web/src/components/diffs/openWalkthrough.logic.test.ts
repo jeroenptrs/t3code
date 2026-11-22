@@ -1,7 +1,13 @@
-import { ProjectId, type ThreadPullRequestLink } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveOpenWalkthroughTarget } from "./openWalkthrough.logic";
+import {
+  readThreadWalkthroughLink,
+  resolveOpenWalkthroughTarget,
+  shownThreadWalkthroughLink,
+  walkthroughShareUrl,
+  withThreadWalkthroughLink,
+} from "./openWalkthrough.logic";
 
 function link(
   number: number,
@@ -64,5 +70,89 @@ describe("resolveOpenWalkthroughTarget", () => {
       }),
     ).toEqual({ kind: "thread-diff" });
     expect(resolveOpenWalkthroughTarget({})).toEqual({ kind: "thread-diff" });
+  });
+});
+
+describe("thread walkthrough links", () => {
+  const prUrl = "https://github.com/acme/web/pull/2";
+
+  it("round-trips a pull request's walkthrough and keeps other params", () => {
+    const search = withThreadWalkthroughLink("?prompt=hi", { walkthrough: prUrl, expanded: true });
+    expect(readThreadWalkthroughLink(search)).toEqual({ walkthrough: prUrl, expanded: true });
+    expect(new URLSearchParams(search).get("prompt")).toBe("hi");
+    expect(withThreadWalkthroughLink(search, null)).toBe("?prompt=hi");
+    expect(withThreadWalkthroughLink("?walkthrough=diff&expanded=true", null)).toBe("");
+  });
+
+  it("reads a bare ?walkthrough as a request for the default target", () => {
+    expect(readThreadWalkthroughLink("?walkthrough")).toEqual({
+      walkthrough: "",
+      expanded: false,
+    });
+    expect(readThreadWalkthroughLink("?expanded=true")).toBeNull();
+  });
+
+  it("names only a walkthrough the panel shows", () => {
+    const base = { diffView: "walkthrough" as const, pullRequestUrl: prUrl, maximized: true };
+    expect(
+      shownThreadWalkthroughLink({ ...base, activeSurface: { id: "diff", kind: "diff" } }),
+    ).toEqual({
+      walkthrough: "diff",
+      expanded: true,
+    });
+    expect(
+      shownThreadWalkthroughLink({
+        ...base,
+        diffView: "diff",
+        activeSurface: { id: "diff", kind: "diff" },
+      }),
+    ).toBeNull();
+    const pullRequest = {
+      id: "pull-request:p:acme%2Fweb:2" as const,
+      kind: "pull-request" as const,
+      projectId: "p",
+      repository: "acme/web",
+      number: 2,
+    };
+    expect(
+      shownThreadWalkthroughLink({
+        ...base,
+        maximized: false,
+        activeSurface: { ...pullRequest, detailTab: "walkthrough" },
+      }),
+    ).toEqual({ walkthrough: prUrl, expanded: false });
+    expect(
+      shownThreadWalkthroughLink({ ...base, activeSurface: { ...pullRequest, detailTab: "code" } }),
+    ).toBeNull();
+    expect(
+      shownThreadWalkthroughLink({
+        ...base,
+        pullRequestUrl: null,
+        activeSurface: { ...pullRequest, detailTab: "walkthrough" },
+      }),
+    ).toBeNull();
+    expect(shownThreadWalkthroughLink({ ...base, activeSurface: null })).toBeNull();
+  });
+
+  it("shares a thread's walkthrough through the hosted thread link", () => {
+    expect(
+      walkthroughShareUrl({
+        href: "/env-1/thread-1?walkthrough=diff&expanded=true",
+        origin: "http://localhost:3000",
+        threadRef: {
+          environmentId: EnvironmentId.make("env-1"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        hostedAppUrl: "https://app.t3.codes",
+      }),
+    ).toBe("https://app.t3.codes/threads/env-1/thread-1?walkthrough=diff&expanded=true");
+    expect(
+      walkthroughShareUrl({
+        href: "/pull-requests?number=2&walkthrough=true",
+        origin: "http://localhost:3000",
+        threadRef: null,
+        hostedAppUrl: "https://app.t3.codes",
+      }),
+    ).toBe("http://localhost:3000/pull-requests?number=2&walkthrough=true");
   });
 });

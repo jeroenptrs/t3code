@@ -108,10 +108,12 @@ import { toastManager } from "../ui/toast";
 import { usePanelAnimationSettings, usePanelPresence } from "~/panelAnimations";
 import {
   PULL_REQUESTS_PANEL_REF,
+  pullRequestSurfaceId,
   selectActiveRightPanelSurface,
   selectSelectedRightPanelSurface,
   selectThreadRightPanelState,
   useRightPanelStore,
+  type PullRequestDetailTab,
   type PullRequestSurface,
 } from "~/rightPanelStore";
 import { useSidebarProjectGroups } from "~/hooks/useSidebarProjectGroups";
@@ -269,6 +271,14 @@ export function PullRequestsPage() {
     void navigate({
       search: (previous: PullRequestsSearch): PullRequestsSearch => {
         const next = { ...previous, ...patch };
+        // The walkthrough belongs to the pull request it was asked for; another selection drops it.
+        const sameSelection =
+          next.repository === previous.repository &&
+          next.number === previous.number &&
+          next.selectedProjectId === previous.selectedProjectId &&
+          next.selectedEnvironmentId === previous.selectedEnvironmentId &&
+          next.selectedHost === previous.selectedHost;
+        const walkthrough = "walkthrough" in patch || sameSelection ? next.walkthrough : undefined;
         return {
           involvement: next.involvement ?? previous.involvement,
           state: next.state ?? previous.state,
@@ -289,6 +299,8 @@ export function PullRequestsPage() {
           ...(next.checks ? { checks: next.checks } : {}),
           ...(next.author ? { author: next.author } : {}),
           ...(next.labels && next.labels.length > 0 ? { labels: next.labels } : {}),
+          ...(walkthrough ? { walkthrough } : {}),
+          ...(next.expanded ? { expanded: next.expanded } : {}),
         };
       },
       replace: true,
@@ -300,6 +312,7 @@ export function PullRequestsPage() {
     selectedProjectId: undefined,
     selectedEnvironmentId: undefined,
     selectedHost: undefined,
+    expanded: undefined,
   };
   const updateListScope = (patch: PullRequestListPreferencePatch) => {
     const currentPreferences = pullRequestListPreferences({
@@ -1115,21 +1128,38 @@ export function PullRequestsPage() {
   );
   const rightPanelAvailable = selectedPullRequestSurface !== null;
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
-  const [maximized, setMaximized] = useState(false);
-  const rightPanelMaximized = rightPanelState.isOpen && maximized;
-  if (!rightPanelState.isOpen && maximized) setMaximized(false);
+  const rightPanelMaximized = rightPanelState.isOpen && search.expanded === true;
   const toggleRightPanelMaximized = () => {
-    if (rightPanelState.isOpen) setMaximized((value) => !value);
+    if (rightPanelState.isOpen) updateSearch({ expanded: rightPanelMaximized ? undefined : true });
   };
-  const onGuideShown = () => setMaximized(true);
+  const onGuideShown = () => updateSearch({ expanded: true });
   // updateSearch leaves selectedUrl out, so a reload does not reveal the link again.
   const consumeLinkedUrl = useEffectEvent(() => updateSearch({}));
+  // The selection whose `?walkthrough` was already handed to the panel, so the URL catching up
+  // with a tab the reader picked does not ask for it again.
+  const askedWalkthroughFor = useRef<string | null>(null);
+  const walkthroughAsked = search.walkthrough === true;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the URL-linked pull request in the right panel store
   useEffect(() => {
     if (!pullRequestsSupported || rightPanelRef === null || linkedSelection === null) return;
-    useRightPanelStore.getState().openPullRequest(rightPanelRef, linkedSelection);
+    const selectionId = pullRequestSurfaceId(linkedSelection);
+    const askWalkthrough = walkthroughAsked && askedWalkthroughFor.current !== selectionId;
+    askedWalkthroughFor.current = walkthroughAsked ? selectionId : null;
+    useRightPanelStore.getState().openPullRequest(rightPanelRef, {
+      ...linkedSelection,
+      ...(askWalkthrough ? { tab: "walkthrough" as const } : {}),
+    });
     if (linkedSelection.revealUrl !== undefined) consumeLinkedUrl();
-  }, [linkedSelection, pullRequestsSupported, rightPanelRef]);
+  }, [linkedSelection, pullRequestsSupported, rightPanelRef, walkthroughAsked]);
+  const onTabShown = (surfaceId: string, tab: PullRequestDetailTab) => {
+    if (activePullRequestSurface?.id !== surfaceId) return;
+    const walkthrough = tab === "walkthrough";
+    if (walkthrough === walkthroughAsked) return;
+    if (walkthrough && linkedSelection !== null) {
+      askedWalkthroughFor.current = pullRequestSurfaceId(linkedSelection);
+    }
+    updateSearch({ walkthrough: walkthrough ? true : undefined });
+  };
 
   const selected =
     rightPanelState.isOpen && activePullRequestSurface !== null
@@ -1649,6 +1679,7 @@ export function PullRequestsPage() {
               }}
               environmentId={panelEnvironmentId}
               onGuideShown={onGuideShown}
+              onTabShown={(tab) => onTabShown(renderedPullRequestSurface.id, tab)}
               onSelectPullRequest={(reference) => {
                 if (rightPanelRef === null) return;
                 useRightPanelStore.getState().openPullRequest(rightPanelRef, {
