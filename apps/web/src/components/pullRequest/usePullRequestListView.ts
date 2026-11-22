@@ -53,6 +53,10 @@ export interface PullRequestsSearch extends PullRequestListPreferences {
   readonly selectedProjectId?: ProjectId | undefined;
   readonly selectedHost?: string | undefined;
   readonly selectedEnvironmentId?: EnvironmentId | undefined;
+  /** The selected pull request shows its Walkthrough tab. */
+  readonly walkthrough?: true | undefined;
+  /** The right panel fills the page. */
+  readonly expanded?: true | undefined;
 }
 
 const SEARCH_DEBOUNCE_MS = 250;
