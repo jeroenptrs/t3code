@@ -364,6 +364,7 @@ export function PullRequestDetailPanel({
   onRevealSettled,
   initialTab = "summary",
   onTabChange,
+  onTabShown,
   requestedTab = null,
 }: {
   environmentId: EnvironmentId;
@@ -395,6 +396,8 @@ export function PullRequestDetailPanel({
   onRevealSettled?: ((revealUrl: string) => void) | undefined;
   initialTab?: PullRequestDetailTab;
   onTabChange?: ((tab: PullRequestDetailTab) => void) | undefined;
+  /** The tab on screen, whatever moved it there. */
+  onTabShown?: ((tab: PullRequestDetailTab) => void) | undefined;
   /**
    * A tab someone outside the panel asked for, such as the Walkthrough from a thread's pull
    * request row. Each new `requestId` switches to it once; the reader is free to move on after.
@@ -472,10 +475,13 @@ export function PullRequestDetailPanel({
   // Applied while rendering rather than from an effect, so the panel never paints the old tab.
   // On the page, a request holds until the page's tab store next changes.
   const [appliedTabRequestId, setAppliedTabRequestId] = useState(requestedTab?.requestId ?? null);
+  // A request the page made before this panel mounted is new too: requests do not survive a reload.
   const [pageTabRequest, setPageTabRequest] = useState<{
     readonly tab: PullRequestDetailTab;
     readonly since: typeof pageDetailTab;
-  } | null>(null);
+  } | null>(() =>
+    tabOnPage && requestedTab !== null ? { tab: requestedTab.tab, since: pageDetailTab } : null,
+  );
   if (requestedTab !== null && requestedTab.requestId !== appliedTabRequestId) {
     setAppliedTabRequestId(requestedTab.requestId);
     if (tabOnPage) setPageTabRequest({ tab: requestedTab.tab, since: pageDetailTab });
@@ -491,6 +497,9 @@ export function PullRequestDetailPanel({
     (value !== "guide" || reviewGuidesEnabled);
   // An unavailable tab falls back without overwriting the saved selection.
   const tab = isTabAvailable(wantedTab) ? wantedTab : "summary";
+  const reportTabShown = useEffectEvent((shown: PullRequestDetailTab) => onTabShown?.(shown));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the page the shown tab, which it mirrors into the router URL
+  useEffect(() => reportTabShown(tab), [tab]);
   const selectTab = (next: PullRequestDetailTab) => {
     if (tabOnPage) useGuideRunStore.getState().showPageDetailTab(guideKey, next);
     else setTab(next);
@@ -668,17 +677,17 @@ export function PullRequestDetailPanel({
       context: { ...getShortcutContext(), editableFocus: isEditableFocused(event.target) },
     });
     if (command === "pullRequest.copyNumber") {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!event.repeat)
-      copyReference(
-        `#${reference.number}`,
-        m(
-          msg("Failed to copy {term, select, mr {MR} cr {change request} other {PR}} number", {
-            term: changeRequestTermKind(terminology),
-          }),
-        ),
-      );
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat)
+        copyReference(
+          `#${reference.number}`,
+          m(
+            msg("Failed to copy {term, select, mr {MR} cr {change request} other {PR}} number", {
+              term: changeRequestTermKind(terminology),
+            }),
+          ),
+        );
       return;
     }
     const step = walkthroughStepForCommand(command);

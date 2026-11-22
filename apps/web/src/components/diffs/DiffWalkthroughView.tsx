@@ -54,6 +54,7 @@ import {
   type DiffWalkthroughSection,
   type DiffWalkthroughSectionNote,
 } from "./diffWalkthroughView.logic";
+import { CopyWalkthroughLinkButton } from "./CopyWalkthroughLinkButton";
 import { StyledDiffCodeView } from "./StyledDiffCodeView";
 import { useScopedCodeViewFileReveal } from "./useScopedCodeViewFileReveal";
 
@@ -367,6 +368,7 @@ function WalkthroughSections({
         >
           <ChevronRightIcon />
         </Button>
+        <CopyWalkthroughLinkButton />
         {/* A stale walkthrough offers this in its notice instead. */}
         {!hasGenerateAction || staleNotice !== null ? null : (
           <GenerateWalkthroughAction {...generateProps} verb="Regenerate" iconOnly />

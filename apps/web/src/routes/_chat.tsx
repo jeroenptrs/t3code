@@ -1,3 +1,4 @@
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 
 import { ThreadRouteView } from "../components/ThreadRouteView";
@@ -7,6 +8,7 @@ import { SidebarInset } from "../components/ui/sidebar";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { retainThreadFindForRoute } from "../components/chat/threadFindStore";
 import { ThreadLinkPrompt } from "../components/promptLinks/ThreadLinkPrompt";
+import { ThreadWalkthroughLink } from "../components/diffs/ThreadWalkthroughLink";
 import { useShownThreadRouteTarget } from "../hooks/useShownThreadRouteTarget";
 import { requiresPairingRedirect } from "../authGate";
 
@@ -16,7 +18,13 @@ function ChatRouteLayout() {
   return (
     <>
       {shownTarget?.kind === "server" && !modalOpen ? (
-        <ThreadLinkPrompt threadRef={shownTarget.threadRef} />
+        <>
+          <ThreadLinkPrompt threadRef={shownTarget.threadRef} />
+          <ThreadWalkthroughLink
+            key={scopedThreadKey(shownTarget.threadRef)}
+            threadRef={shownTarget.threadRef}
+          />
+        </>
       ) : null}
       {shownTarget ? (
         <ThreadRouteView target={shownTarget} background={modalOpen} />
