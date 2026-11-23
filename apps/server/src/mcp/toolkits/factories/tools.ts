@@ -19,12 +19,10 @@ import {
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpFailure,
   WorkItem,
-  WorkItemAdvanceInput,
   WorkItemCreateInput,
   WorkItemDelegateInput,
   WorkItemDismissFailureInput,
   WorkItemError,
-  WorkItemGateInput,
   WorkItemListResult,
   WorkItemReadInput,
   WorkItemStage,
@@ -164,32 +162,12 @@ const FactoryDelegateTool = Tool.make("t3_factory_delegate", {
   failure: OrchestratorMcpFailure,
   dependencies: [...shared.dependencies, OrchestratorMcpService.OrchestratorMcpService],
   description:
-    "Foreman only. Start one child for your work item as one of the factory's enabled roles, with only `task`. The role sets its model, modes, checkout, and skills. Children run at once: call it again for another part or another role. Use it, not delegate_task. Keep `taskId` for `task_status` and `task_cancel`.",
+    "Foreman only. Start one child for your work item as one of the factory's enabled roles, with only `task`. The role sets its model, modes, checkout, skills, and the result it returns. Children run at once: call it again for another part or another role. Use it, not delegate_task. Read a finished child's `output` from `task_status`; `summary` is its prose.",
   parameters: WorkItemDelegateInput,
   success: OrchestratorMcpDelegateTaskResult,
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
-
-const WorkItemAdvanceTool = Tool.make("t3_work_item_advance", {
-  ...workItemShared,
-  description:
-    "Foreman only. End your work item: done, failed, or dropped. Delegating moves it to working.",
-  parameters: WorkItemAdvanceInput,
-  success: WorkItem,
-})
-  .annotate(Tool.Destructive, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
-
-const WorkItemGateTool = Tool.make("t3_work_item_gate", {
-  ...workItemShared,
-  description:
-    "Foreman only. Hold your work item for a person's decision, then end your turn. The answer arrives as your next message: approval resumes at `resumeStage` (working or done), rejection drops the item.",
-  parameters: WorkItemGateInput,
-  success: WorkItem,
-})
-  .annotate(Tool.Destructive, false)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const WorkItemDismissFailureTool = Tool.make("t3_work_item_dismiss_failure", {
@@ -212,7 +190,5 @@ export const FactoriesToolkit = Toolkit.make(
   WorkItemReadTool,
   WorkItemCreateTool,
   FactoryDelegateTool,
-  WorkItemAdvanceTool,
-  WorkItemGateTool,
   WorkItemDismissFailureTool,
 );

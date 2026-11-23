@@ -9,6 +9,8 @@ import {
   CommandId,
   FACTORY_FOREMAN_ROLE,
   FACTORY_FOREMAN_THREAD_ID_PREFIX,
+  FOREMAN_RESULT_OUTPUT_SCHEMA,
+  ForemanResult,
   type Factory,
   type FactoryAttention,
   type FactoryDefinition,
@@ -17,6 +19,7 @@ import {
   FactoryId,
   type FactoryIssue,
   type FactoryListResult,
+  type FactoryOutputSchema,
   FactoryName,
   type FactoryRepository,
   type FactoryRole,
@@ -39,14 +42,12 @@ import {
   type WorkItem,
   type WorkItemActor,
   WorkItemActor as WorkItemActorSchema,
-  type WorkItemAdvanceInput,
   type WorkItemAnswerGateInput,
   type WorkItemCreateInput,
   type WorkItemDismissFailureInput,
   type WorkItemDropInput,
   WorkItemError,
   WorkItemGate,
-  type WorkItemGateInput,
   WorkItemId,
   type WorkItemListResult,
   type WorkItemOutcome,
@@ -62,6 +63,7 @@ import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -71,7 +73,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
 
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -92,6 +96,7 @@ import {
   renderFactoryJson,
   renderRoleFile,
   otherProjectsIssue,
+  outputSchemaIssues,
   resolveRoleSkills,
   roleEnabled,
   type RoleFileEntry,
@@ -150,16 +155,18 @@ export class FactoryService extends Context.Service<
       readonly title: string;
       readonly source: WorkItemTriggerSource;
     }) => Effect.Effect<WorkItem, FactoryError | WorkItemError>;
-    /** The item's Foreman ends it: done, failed, or dropped. */
-    readonly advanceWorkItem: (
-      callerThreadId: ThreadId,
-      input: WorkItemAdvanceInput,
-    ) => Effect.Effect<WorkItem, WorkItemError | WorkItemTransitionError>;
-    /** The item's Foreman holds it for a person. */
-    readonly gateWorkItem: (
-      callerThreadId: ThreadId,
-      input: WorkItemGateInput,
-    ) => Effect.Effect<WorkItem, WorkItemError | WorkItemTransitionError>;
+    /**
+     * Applies what a run's Foreman returned as data: done, failed, or dropped ends the item, and
+     * needs a person holds it at a gate with the questions. A run's result applies once, and a
+     * thread that runs no item is left alone.
+     */
+    readonly recordForemanResult: (input: {
+      readonly threadId: ThreadId;
+      readonly runId: RunId;
+      readonly value: unknown;
+    }) => Effect.Effect<void, WorkItemError>;
+    /** Applies the results Foremen submitted while nothing was listening, such as during a restart. */
+    readonly reconcileForemanResults: Effect.Effect<void, WorkItemError>;
     /** Records a person's answer, then tells the item's Foreman thread. A rejection ends it. */
     readonly answerWorkItemGate: (
       userId: AuthUserId | null,
@@ -202,7 +209,10 @@ export class FactoryService extends Context.Service<
   }
 >()("t3/factories/FactoryService") {}
 
-export type FactoryDelegation = OrchestratorMcpDelegateTaskInput;
+/** A delegation, with the output schema of the role a Foreman's child runs as. */
+export type FactoryDelegation = OrchestratorMcpDelegateTaskInput & {
+  readonly outputSchema?: FactoryOutputSchema;
+};
 
 /**
  * What `t3_factory_delegate` names for the `delegate_task` path it runs: the work item and the
@@ -235,6 +245,8 @@ const WorkItemRow = Schema.Struct({
   dispatchedAt: Schema.NullOr(Schema.String),
   failureDismissedAt: Schema.NullOr(Schema.String),
   failedByUser: Schema.Number,
+  foremanResult: Schema.NullOr(Schema.fromJsonString(ForemanResult)),
+  foremanResultRunId: Schema.NullOr(RunId),
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });
@@ -253,6 +265,20 @@ const decodeTransitionRows = Schema.decodeUnknownEffect(Schema.Array(WorkItemTra
 const encodeSource = Schema.encodeEffect(Schema.fromJsonString(WorkItemSource));
 const encodeGate = Schema.encodeEffect(Schema.fromJsonString(WorkItemGate));
 const encodeActor = Schema.encodeEffect(Schema.fromJsonString(WorkItemActorSchema));
+
+/** JSON text the database already checked; anything else reads as no output. */
+const parseJsonOutput = (text: string): Schema.Json | undefined => {
+  try {
+    return JSON.parse(text) as Schema.Json;
+  } catch {
+    return undefined;
+  }
+};
+
+const withOutput = (output: Schema.Json | undefined) => (output === undefined ? {} : { output });
+
+const decodeForemanResult = Schema.decodeUnknownOption(ForemanResult);
+const encodeForemanResult = Schema.encodeEffect(Schema.fromJsonString(ForemanResult));
 
 const workItemNotFound = (workItemId: WorkItemId) =>
   new WorkItemError({ code: "not_found", message: `No work item ${workItemId} exists here.` });
@@ -365,6 +391,7 @@ function resolveRole(
       ...file.issues,
       ...(enabled.issue === null ? [] : [enabled.issue]),
       ...bindingIssues(role, binding, providers),
+      ...outputSchemaIssues(role, binding),
       ...resolved.issues,
     ],
   };
@@ -823,6 +850,7 @@ const make = Effect.gen(function* () {
       const binding = effectiveBinding(roleDefaults(role).binding, file.binding);
       issues.push(
         ...bindingIssues(role, binding, catalog.providers),
+        ...outputSchemaIssues(role, binding),
         ...resolveRoleSkills(role, binding.skills, savedSkills).issues,
       );
     }
@@ -980,6 +1008,8 @@ const make = Effect.gen(function* () {
           ORDER BY t.at DESC, t.rowid DESC
           LIMIT 1
         ), '') = 'user' AS "failedByUser",
+        w.foreman_result_json AS "foremanResult",
+        w.foreman_result_run_id AS "foremanResultRunId",
         w.created_at AS "createdAt",
         w.updated_at AS "updatedAt"
       FROM fork_factory_work_items w
@@ -1007,6 +1037,7 @@ const make = Effect.gen(function* () {
     `.pipe(NodeSqliteClient.readOnly, Effect.flatMap(decodeWorkItemRows));
     const ids = rows.map((row) => row.id);
     // A child's row lands before its thread does; a delegation that failed leaves one with none.
+    // Each thread's output is its newest run's that has one: a child owes one result per task.
     const threadRows =
       ids.length === 0
         ? []
@@ -1014,14 +1045,23 @@ const make = Effect.gen(function* () {
             readonly workItemId: string;
             readonly threadId: string;
             readonly role: string | null;
+            readonly output: string | null;
           }>`
-            SELECT t.work_item_id AS "workItemId", t.thread_id AS "threadId", t.role
+            SELECT t.work_item_id AS "workItemId", t.thread_id AS "threadId", t.role,
+              (
+                SELECT json_quote(json_extract(r.payload_json, '$.output.value'))
+                FROM orchestration_v2_projection_runs r
+                WHERE r.thread_id = t.thread_id
+                  AND json_extract(r.payload_json, '$.output') IS NOT NULL
+                ORDER BY r.ordinal DESC
+                LIMIT 1
+              ) AS "output"
             FROM fork_factory_work_item_threads t
             JOIN orchestration_v2_projection_threads p ON p.thread_id = t.thread_id
             WHERE t.work_item_id IN ${sql.in(ids)}
             ORDER BY t.created_at, t.rowid
           `.pipe(NodeSqliteClient.readOnly);
-    return rows.map((row): WorkItemSummary => ({
+    return rows.map(({ foremanResultRunId: _runId, ...row }): WorkItemSummary => ({
       ...row,
       failedByUser: row.failedByUser === 1,
       threads: threadRows
@@ -1029,6 +1069,7 @@ const make = Effect.gen(function* () {
         .map((thread): WorkItemThread => ({
           threadId: ThreadId.make(thread.threadId),
           role: isRoleName(thread.role) ? thread.role : null,
+          ...(thread.output === null ? {} : withOutput(parseJsonOutput(thread.output))),
         })),
     }));
   });
@@ -1079,6 +1120,8 @@ const make = Effect.gen(function* () {
     readonly note: string | null;
     readonly gate?: WorkItemGate;
     readonly threads?: ReadonlyArray<WorkItemThread>;
+    /** The Foreman's result this change applies, and the run it came from. */
+    readonly foremanResult?: { readonly json: string; readonly runId: RunId };
   }) {
     const at = yield* nowIso;
     const transitionId = `work-item-transition:${yield* randomUuidV4}`;
@@ -1096,6 +1139,14 @@ const make = Effect.gen(function* () {
               updated_at = ${at}
             WHERE work_item_id = ${input.item.id}
           `;
+          if (input.foremanResult !== undefined) {
+            yield* sql`
+              UPDATE fork_factory_work_items
+              SET foreman_result_json = ${input.foremanResult.json},
+                foreman_result_run_id = ${input.foremanResult.runId}
+              WHERE work_item_id = ${input.item.id}
+            `;
+          }
           if (input.to !== input.item.stage || input.note !== null) {
             yield* sql`
               INSERT INTO fork_factory_work_item_transitions (
@@ -1140,29 +1191,6 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  /** Like `withLedgerItem`, once `callerThreadId` proves to be the item's Foreman. */
-  const withForemanItem = <A, E, R>(
-    callerThreadId: ThreadId,
-    workItemId: WorkItemId,
-    use: (item: WorkItemSummary) => Effect.Effect<A, E, R>,
-  ) =>
-    withLedgerItem(workItemId, (item) =>
-      Effect.gen(function* () {
-        const listed = yield* sql<{ readonly found: number }>`
-          SELECT 1 AS found FROM fork_factory_threads
-          WHERE thread_id = ${callerThreadId} AND factory_id = ${item.factoryId}
-            AND role = 'foreman'
-        `.pipe(Effect.catch(ledgerUnavailable));
-        if (item.foremanThreadId !== callerThreadId || listed.length === 0) {
-          return yield* new WorkItemError({
-            code: "not_foreman",
-            message: `Only work item ${workItemId}'s Foreman thread may change it.`,
-          });
-        }
-        return yield* use(item);
-      }),
-    );
-
   const foremanUnreachable = workItemUnavailable(
     "The Foreman thread could not be sent the work item.",
   );
@@ -1198,6 +1226,7 @@ const make = Effect.gen(function* () {
         workspaceStrategy: launch.workspaceStrategy,
         initialMessage: {
           messageId,
+          outputSchema: FOREMAN_RESULT_OUTPUT_SCHEMA,
           text: renderWorkItemMessage({
             workItemId: item.id,
             factoryName: factory.name,
@@ -1270,64 +1299,112 @@ const make = Effect.gen(function* () {
     Effect.withSpan("FactoryService.dispatchPending"),
   );
 
-  const advanceWorkItem = Effect.fn("FactoryService.advanceWorkItem")(function* (
-    callerThreadId: ThreadId,
-    input: WorkItemAdvanceInput,
-  ) {
-    yield* withForemanItem(callerThreadId, input.workItemId, (item) =>
+  /** The stage a Foreman's result moves its item to, the note its log keeps, and any gate. */
+  const foremanResultChange = (result: ForemanResult, askedAt: string) => {
+    switch (result.outcome) {
+      case "done":
+        return { to: "done" as const, note: result.summary, gate: undefined };
+      case "failed":
+      case "dropped":
+        return { to: result.outcome, note: result.reason, gate: undefined };
+      case "needs_person": {
+        const question =
+          result.questions.length === 1
+            ? result.questions[0]!
+            : result.questions.map((question, index) => `${index + 1}. ${question}`).join("\n");
+        return {
+          to: "waiting" as const,
+          note: question,
+          gate: { state: "waiting" as const, question, resumeStage: "working" as const, askedAt },
+        };
+      }
+    }
+  };
+
+  const recordForemanResult = Effect.fn("FactoryService.recordForemanResult")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly runId: RunId;
+    readonly value: unknown;
+  }) {
+    const [owner] = yield* sql<{ readonly workItemId: string }>`
+      SELECT work_item_id AS "workItemId" FROM fork_factory_work_items
+      WHERE foreman_thread_id = ${input.threadId}
+    `.pipe(Effect.catch(ledgerUnavailable));
+    if (owner === undefined) return;
+    const decoded = decodeForemanResult(input.value);
+    // The server checked the value against the schema it sent, so this is a run asked for another.
+    if (Option.isNone(decoded)) {
+      return yield* Effect.logWarning("Ignored a Foreman result that is not one", {
+        threadId: input.threadId,
+        runId: input.runId,
+      });
+    }
+    const result = decoded.value;
+    const json = yield* encodeForemanResult(result).pipe(Effect.catch(ledgerUnavailable));
+    yield* withLedgerItem(WorkItemId.make(owner.workItemId), (item) =>
       Effect.gen(function* () {
-        if (item.stage === "waiting") {
-          return yield* new WorkItemError({
-            code: "gate_waiting",
-            message: `Work item ${item.id} waits on a person's answer to its gate, which moves it on.`,
+        const [applied] = yield* sql<{ readonly runId: string | null }>`
+          SELECT foreman_result_run_id AS "runId" FROM fork_factory_work_items
+          WHERE work_item_id = ${item.id}
+        `.pipe(Effect.catch(ledgerUnavailable));
+        if (applied?.runId === input.runId) return;
+        const actor: WorkItemActor = { kind: "foreman", threadId: input.threadId };
+        const change = foremanResultChange(result, yield* nowIso);
+        const foremanResult = { json, runId: input.runId };
+        if (!canTransitionWorkItem(item.stage, change.to, item.gate)) {
+          // Kept on the item and its log, though its stage cannot change from where it is.
+          yield* moveWorkItem({
+            item,
+            to: item.stage,
+            actor,
+            note: `The Foreman returned ${result.outcome}, which a ${item.stage} item cannot take. ${change.note}`,
+            foremanResult,
           });
-        }
-        if (!canTransitionWorkItem(item.stage, input.stage, item.gate)) {
-          return yield* new WorkItemTransitionError({
-            workItemId: item.id,
-            from: item.stage,
-            to: input.stage,
-          });
+          return;
         }
         yield* moveWorkItem({
           item,
-          to: input.stage,
-          actor: { kind: "foreman", threadId: callerThreadId },
-          note: input.note ?? null,
+          to: change.to,
+          actor,
+          note: change.note,
+          foremanResult,
+          ...(change.gate === undefined ? {} : { gate: change.gate }),
         });
       }),
     );
-    return yield* readWorkItem(input.workItemId);
   });
 
-  const gateWorkItem = Effect.fn("FactoryService.gateWorkItem")(function* (
-    callerThreadId: ThreadId,
-    input: WorkItemGateInput,
-  ) {
-    yield* withForemanItem(callerThreadId, input.workItemId, (item) =>
-      Effect.gen(function* () {
-        if (!canTransitionWorkItem(item.stage, "waiting", item.gate)) {
-          return yield* new WorkItemTransitionError({
-            workItemId: item.id,
-            from: item.stage,
-            to: "waiting",
-          });
-        }
-        yield* moveWorkItem({
-          item,
-          to: "waiting",
-          actor: { kind: "foreman", threadId: callerThreadId },
-          note: input.question,
-          gate: {
-            state: "waiting",
-            question: input.question,
-            resumeStage: input.resumeStage,
-            askedAt: yield* nowIso,
-          },
-        });
-      }),
-    );
-    return yield* readWorkItem(input.workItemId);
+  /**
+   * Results a Foreman submitted while the server was not listening: each unended item's newest
+   * Foreman run with an output it has not applied.
+   */
+  const reconcileForemanResults = Effect.gen(function* () {
+    const rows = yield* sql<{
+      readonly threadId: string;
+      readonly runId: string;
+      readonly output: string;
+    }>`
+      SELECT w.foreman_thread_id AS "threadId", r.run_id AS "runId",
+        json_quote(json_extract(r.payload_json, '$.output.value')) AS "output"
+      FROM fork_factory_work_items w
+      JOIN orchestration_v2_projection_runs r ON r.run_id = (
+        SELECT r2.run_id FROM orchestration_v2_projection_runs r2
+        WHERE r2.thread_id = w.foreman_thread_id
+          AND json_extract(r2.payload_json, '$.output') IS NOT NULL
+        ORDER BY r2.ordinal DESC
+        LIMIT 1
+      )
+      WHERE w.stage NOT IN ('done', 'failed', 'dropped')
+        AND w.foreman_thread_id IS NOT NULL
+        AND r.run_id IS NOT COALESCE(w.foreman_result_run_id, '')
+    `.pipe(NodeSqliteClient.readOnly, Effect.catch(ledgerUnavailable));
+    for (const row of rows) {
+      yield* recordForemanResult({
+        threadId: ThreadId.make(row.threadId),
+        runId: RunId.make(row.runId),
+        value: parseJsonOutput(row.output),
+      });
+    }
   });
 
   const createWorkItem = (input: WorkItemCreateInput) =>
@@ -1415,6 +1492,8 @@ const make = Effect.gen(function* () {
                   stage: to,
                 }),
                 attachments: [],
+                // An item that goes back to work owes a result again.
+                ...(to === "working" ? { outputSchema: FOREMAN_RESULT_OUTPUT_SCHEMA } : {}),
                 mode: "auto",
                 createdBy: "agent",
                 creationSource: "server",
@@ -1643,6 +1722,7 @@ const make = Effect.gen(function* () {
     const role = factory.roles.find((candidate) => candidate.role === named.role)!;
     yield* requireCommitIdentity(factory, item.id);
     const bound = bindDelegation(role.role, input.delegation, role.binding);
+    const outputSchema = role.binding.outputSchema;
     // The orchestrator derives the child's id from the command the same way.
     const childThreadId = IdAllocator.derive.delegatedTaskThread({ commandId: input.commandId });
     yield* withLedgerItem(item.id, (current) =>
@@ -1662,7 +1742,7 @@ const make = Effect.gen(function* () {
         });
       }),
     );
-    return bound.delegation;
+    return outputSchema === null ? bound.delegation : { ...bound.delegation, outputSchema };
   });
 
   // Items a restart left undispatched; off the startup path, and logged on failure.
@@ -1677,8 +1757,8 @@ const make = Effect.gen(function* () {
     readWorkItem,
     createWorkItem,
     createWorkItemFromTrigger,
-    advanceWorkItem,
-    gateWorkItem,
+    recordForemanResult,
+    reconcileForemanResults,
     answerWorkItemGate,
     setWorkItemFailureDismissed,
     dropWorkItem,
@@ -1688,3 +1768,34 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(FactoryService, make);
+
+/** Applies each Foreman's result as it is submitted, after catching up on any it missed. */
+export const layerForemanResults = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const factories = yield* FactoryService;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const logFailure = (error: WorkItemError) =>
+      Effect.logWarning("Could not apply a Foreman result", { error: error.message });
+    yield* ServerActivation.forkParked(
+      Stream.runForEach(orchestrator.streamDomainEvents, (event) =>
+        event.type === "run.output-submitted" &&
+        event.threadId.startsWith(FACTORY_FOREMAN_THREAD_ID_PREFIX)
+          ? factories
+              .recordForemanResult({
+                threadId: event.threadId,
+                runId: event.payload.runId,
+                value: event.payload.output.value,
+              })
+              .pipe(Effect.catch(logFailure))
+          : Effect.void,
+      ).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Foreman result event stream failed", { cause: Cause.pretty(cause) }),
+        ),
+      ),
+    );
+    yield* ServerActivation.forkParked(
+      factories.reconcileForemanResults.pipe(Effect.catch(logFailure)),
+    );
+  }),
+);

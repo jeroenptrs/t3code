@@ -1433,6 +1433,7 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       creationSource: "web",
     });
     const parentRun = (yield* projections.getThreadProjection(parentThreadId)).runs[0]!;
+    const researchSchema = { type: "object", properties: { sources: { type: "array" } } };
     yield* orchestrator.dispatch({
       type: "delegated_task.request",
       commandId: CommandId.make("delegate-question-task"),
@@ -1444,11 +1445,14 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       modelSelection,
       runtimeMode: "full-access",
       interactionMode: "default",
+      outputSchema: researchSchema,
       createdBy: "agent",
       creationSource: "mcp",
     });
     const task = (yield* projections.getThreadProjection(parentThreadId)).subagents[0]!;
     const childRun = (yield* projections.getThreadRecords(task.childThreadId!, ["runs"])).runs[0]!;
+    // The child's first run is asked for the result the delegation names.
+    assert.deepStrictEqual(childRun.outputSchema, researchSchema);
     const now = yield* DateTime.now;
     const requestEvent = (
       eventId: string,

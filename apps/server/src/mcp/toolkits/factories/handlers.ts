@@ -1,4 +1,3 @@
-import { OrchestratorMcpFailure, type WorkItemError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import * as FactoryService from "../../../factories/FactoryService.ts";
@@ -9,17 +8,6 @@ import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import { loadCaller } from "../../threadAccess.ts";
 import { FactoriesToolkit } from "./tools.ts";
-
-const notForeman = (error: WorkItemError) =>
-  error.code === "not_foreman"
-    ? Effect.fail(new OrchestratorMcpFailure({ code: "capability_denied", message: error.message }))
-    : Effect.fail(error);
-
-/** The calling thread, which the service checks is the item's Foreman. */
-const callerThreadId = McpInvocationContext.McpInvocationContext.pipe(
-  Effect.flatMap((scope) => McpInvocationContext.requireThreadScope(scope, "This tool")),
-  Effect.map((scope) => scope.thread.threadId),
-);
 
 const make = Effect.gen(function* () {
   const factories = yield* FactoryService.FactoryService;
@@ -68,18 +56,6 @@ const make = Effect.gen(function* () {
           .delegateTask(scope, task)
           .pipe(Effect.provideService(FactoryService.FactoryDelegationRole, { workItemId, role }));
       }),
-    ),
-    t3_work_item_advance: McpToolAccess.actsAsCaller((input) =>
-      callerThreadId.pipe(
-        Effect.flatMap((threadId) => factories.advanceWorkItem(threadId, input)),
-        Effect.catchTags({ WorkItemError: notForeman }),
-      ),
-    ),
-    t3_work_item_gate: McpToolAccess.actsAsCaller((input) =>
-      callerThreadId.pipe(
-        Effect.flatMap((threadId) => factories.gateWorkItem(threadId, input)),
-        Effect.catchTags({ WorkItemError: notForeman }),
-      ),
     ),
   } satisfies McpToolAccess.Handlers<typeof FactoriesToolkit.tools>;
 });

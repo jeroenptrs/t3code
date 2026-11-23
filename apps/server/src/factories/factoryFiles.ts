@@ -10,6 +10,7 @@ import {
   FactoryIsolation,
   type FactoryIssue,
   FactoryName,
+  FactoryOutputSchema,
   FactoryRoleBinding,
   FactoryRoleDescription,
   FactoryRoleName,
@@ -33,6 +34,7 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { outputRequestProblem } from "../orchestration-v2/runOutput.ts";
 import { builtinSkills } from "./skills/index.ts";
 
 /** Where factories live in a project's checkout. */
@@ -217,6 +219,10 @@ const bindingFields: Record<
   },
   skills: { decode: decodeNames, expected: "a list of skill names" },
   tools: { decode: decodeNames, expected: "a list of tool names" },
+  outputSchema: {
+    decode: Schema.decodeUnknownOption(Schema.NullOr(FactoryOutputSchema)),
+    expected: "a JSON Schema object, or null for none",
+  },
 };
 
 const isBindingField = (key: string): key is keyof typeof bindingFields =>
@@ -318,7 +324,32 @@ export const effectiveBinding = (
   isolation: file.isolation ?? defaults.isolation,
   skills: file.skills ?? defaults.skills,
   tools: file.tools ?? defaults.tools,
+  outputSchema: file.outputSchema === undefined ? defaults.outputSchema : file.outputSchema,
 });
+
+/**
+ * What is wrong with a role's output schema: one the server cannot check a result against, or
+ * one on the Foreman, whose result is fixed.
+ */
+export function outputSchemaIssues(
+  role: FactoryRoleName,
+  binding: FactoryEffectiveBinding,
+): ReadonlyArray<FactoryIssue> {
+  const schema = binding.outputSchema;
+  if (schema === null) return [];
+  if (role === FACTORY_FOREMAN_ROLE) {
+    return [
+      issue(
+        "invalid_binding",
+        role,
+        "outputSchema",
+        "The Foreman always returns done, failed, dropped, or needs a person, so its outputSchema is ignored.",
+      ),
+    ];
+  }
+  const problem = outputRequestProblem(schema, { text: "result" });
+  return problem === null ? [] : [issue("invalid_binding", role, "outputSchema", problem)];
+}
 
 /**
  * A SKILL.md: the frontmatter's `name` and `description`, and what follows it. `problem` says why

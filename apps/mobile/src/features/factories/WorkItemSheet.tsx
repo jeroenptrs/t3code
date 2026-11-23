@@ -3,7 +3,10 @@ import {
   canDropWorkItem,
   gateAnswerError,
   gateAnswerInput,
+  implementationLabel,
   isDismissedFailure,
+  latestImplementation,
+  latestReview,
   runningRoles,
   runningRolesLabel,
   workItemActorLabel,
@@ -150,6 +153,77 @@ export function WorkItemSheet(props: {
   );
 }
 
+/** What the children returned as data: the latest implementation and the latest review. */
+function WorkItemResults(props: { readonly item: Pick<WorkItem, "threads"> }) {
+  const gt = useGT();
+  const review = latestReview(props.item);
+  const implementation = latestImplementation(props.item);
+  return (
+    <>
+      {implementation === null ? null : (
+        <View className="gap-1">
+          <Text textRole="footnote" className="font-t3-medium text-foreground">
+            <T>Implementation</T>
+          </Text>
+          <Text selectable textRole="footnote" className="font-mono text-foreground">
+            {implementationLabel(implementation)}
+          </Text>
+          <Text
+            textRole="label"
+            className={
+              implementation.checksPassed ? "text-foreground-muted" : "text-danger-foreground"
+            }
+          >
+            {implementation.checksPassed ? gt("Checks passed") : gt("Checks failed")}
+          </Text>
+          <Text selectable textRole="footnote" className="text-foreground-muted">
+            {implementation.summary}
+          </Text>
+        </View>
+      )}
+      {review === null ? null : (
+        <View className="gap-2">
+          <Text textRole="footnote" className="font-t3-medium text-foreground">
+            {review.verdict === "approve"
+              ? gt("Review: approved", { $context: "a review verdict" })
+              : gt("Review: changes requested", { $context: "a review verdict" })}
+          </Text>
+          {review.findings.length === 0 ? (
+            <Text textRole="footnote" className="text-foreground-muted">
+              <T>No findings</T>
+            </Text>
+          ) : (
+            review.findings.map((finding) => (
+              <View
+                key={`${finding.file ?? ""}:${finding.line ?? ""}:${finding.summary}`}
+                className="gap-0.5"
+              >
+                <Text selectable textRole="footnote" className="text-foreground">
+                  {finding.summary}
+                </Text>
+                <Text textRole="label" className="text-foreground-muted">
+                  {[
+                    finding.file === undefined
+                      ? null
+                      : finding.line === undefined
+                        ? finding.file
+                        : `${finding.file}:${finding.line}`,
+                    finding.blocking
+                      ? gt("Blocking", { $context: "a review finding" })
+                      : gt("Not blocking", { $context: "a review finding" }),
+                  ]
+                    .filter((part) => part !== null)
+                    .join(" · ")}
+                </Text>
+              </View>
+            ))
+          )}
+        </View>
+      )}
+    </>
+  );
+}
+
 function WorkItemDetail(props: {
   readonly environmentId: EnvironmentId;
   readonly item: WorkItem;
@@ -173,6 +247,7 @@ function WorkItemDetail(props: {
         item={item}
         onOpenThread={props.onOpenThread}
       />
+      <WorkItemResults item={item} />
       <View className="gap-2">
         <Text textRole="footnote" className="font-t3-medium text-foreground">
           <T>Request</T>

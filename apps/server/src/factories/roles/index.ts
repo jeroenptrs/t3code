@@ -28,7 +28,7 @@ export const rolePresets = {
 
 /** What a role with no preset starts from: the project's model and a worktree of its own. */
 const plainRole: RoleDefaults = {
-  binding: { ...implement.binding, isolation: "worktree", skills: [] },
+  binding: { ...implement.binding, isolation: "worktree", skills: [], outputSchema: null },
   description: "",
   body: "",
 };

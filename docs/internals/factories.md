@@ -97,9 +97,9 @@ with its actor, and only a person's gate answer moves an item out of `waiting`.
 A row whose two stages match changes nothing: it is a note the server keeps on
 the item's log.
 
-- The Foreman is one thread per factory with a `factory-foreman:` id. Its
-  `fork_factory_threads` row lands before the launch, so its first provider
-  session gets the role. An archived or deleted one is replaced next time.
+- Each item runs in its own Foreman thread, `factory-foreman:<work item id>`.
+  Its `fork_factory_threads` row lands before the launch, so its first provider
+  session gets the role. The work item is the launch's initial message.
 - A trigger's `target` is the only link to its factory; `factory.json` lists
   no triggers. A task id is local to one environment, so a list in a file that
   travels with the repository could only drift from the target.
@@ -107,34 +107,27 @@ the item's log.
   title and the event. The Foreman's message names the trigger and its source,
   then the source text: the event's fields as `label: value` lines, each value
   framed as untrusted data by `renderTriggerPrompt`, as a thread run's prompt
-  is. A webhook's text is its filled-in prompt, framed the same way.
-- Each item is a `freshContext` queue send, and that send's run is the item's
-  `foreman_run_id`. A `delegate_task` child joins the item whose fresh run last
-  preceded its parent's run.
-- A factory has one active item: sent, and not yet `done`, `failed`, or
-  `dropped`. A `waiting` item stays active, because the gate answer continues
-  its session. A new item created while one is active or queued starts at `queued`
-  (fork migration 021 moved older waiting rows there), so no child wakes into
-  a later item's session. The stage change that ends an item, and a creation
-  that finds no active item, move the oldest queued one to `new` and send it,
-  under the same per-factory lock. Only the
-  server moves an item out of `queued`. An item the server cannot send fails,
-  and the next one is tried.
-  In M2 nothing sends a queued item when the server starts. The next item
-  created or ended does.
+  is. A webhook's text is its filled-in prompt, framed the same way. The
+  message ends with the repositories the factory's project covers.
 - `FactoryThreads` reads the role body on every session prepare, outside the MCP
   credential, so an edited role file applies from the next session.
-- A Foreman's `delegate_task` with the `implementation` or `review` role takes
-  the matching role's effective binding: isolation, runtime mode, interaction
-  mode, and the model when the binding names one. A call argument that differs
-  loses, and the item's log notes what applied and what it replaced. Other
-  threads' delegations, and a Foreman's other roles, keep their arguments.
+- `t3_factory_delegate` runs `delegate_task`'s path with the role in
+  `FactoryDelegationRole`. `prepareDelegation` lays the role's binding over
+  the call (isolation, modes, the model when the binding names one, and the
+  output schema), names the child on the item with the thread id the
+  orchestrator will derive, and notes on the log what applied and what it
+  replaced. The child's first run is asked for that schema through
+  `delegated_task.request`'s `outputSchema`.
 - Before an item's first child, the same step runs `git var GIT_COMMITTER_IDENT`
   in the project checkout. When Git has no committer identity, the server holds
   the item at a gate that says what is unset, and the delegation fails, so no
   child guesses an identity. The person sets it and approves; the Foreman's next
   delegation checks again.
-- A child the Foreman delegates has no row, since writing one would race its
-  first session. `FactoryThreads` finds it by lineage and gives it the implement
-  or review body its task's role names. The task record keeps that role only as
-  the prompt prefix `taskPrompt` writes, which `taskRoleOfPrompt` reads back.
+- The launch, and a gate answer that sends the item back to work, ask the
+  Foreman's run for `FOREMAN_RESULT_OUTPUT_SCHEMA`. `layerForemanResults`
+  hands each `run.output-submitted` event on a Foreman thread to
+  `recordForemanResult`, and runs `reconcileForemanResults` once at startup for
+  what a restart missed. `foreman_result_run_id` (migration 027) makes a
+  replayed submission a no-op.
+- A work item's threads carry each child's newest run output, read from the
+  run projection, so clients never parse a transcript for a verdict.

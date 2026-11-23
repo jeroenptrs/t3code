@@ -7,6 +7,16 @@ export const binding = {
   isolation: "shared",
   skills: [],
   tools: [],
+  outputSchema: {
+    type: "object",
+    properties: {
+      summary: { type: "string", minLength: 1 },
+      workPackages: { type: "array", items: { type: "string", minLength: 1 } },
+      openQuestions: { type: "array", items: { type: "string", minLength: 1 } },
+    },
+    required: ["summary", "workPackages", "openQuestions"],
+    additionalProperties: false,
+  },
 } satisfies FactoryEffectiveBinding;
 
 export const description =
