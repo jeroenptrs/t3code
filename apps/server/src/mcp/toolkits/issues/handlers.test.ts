@@ -442,4 +442,54 @@ describe("issue toolkit handlers", () => {
       expect(unlinked.wasLinked).toBe(true);
     }),
   );
+
+  // Fork: an agent proposes a Jira write for a user to approve, and never makes one.
+  it.effect("refuses a write to a Jira issue and names the proposal tool, writing nothing", () =>
+    Effect.gen(function* () {
+      const writes = yield* Ref.make<ReadonlyArray<string>>([]);
+      const write = (name: string) => Ref.update(writes, (made) => [...made, name]);
+      const jira = { tracker: IssueTrackerKind.make("jira"), host: "acme.atlassian.net" };
+      const harness = yield* makeHarness(
+        [],
+        Layer.mock(IssueService.IssueService)({
+          projectScope: (projectId) => Effect.succeed({ projectId, ...jira, scope: "ABC" }),
+          resolveUrl: () =>
+            Effect.succeed({
+              projectId: PROJECT_ID,
+              ...jira,
+              scope: "ABC",
+              key: "ABC-12",
+              writable: true,
+            }),
+          comment: () => write("comment"),
+          setState: () => write("setState"),
+          create: () =>
+            write("create").pipe(Effect.as({ key: "ABC-13", url: "", displayKey: "ABC-13" })),
+        }),
+      );
+      const refusals = yield* Effect.all([
+        harness.call("comment_on_issue", { key: "ABC-12", body: "Done." }).pipe(Effect.flip),
+        harness
+          .call("comment_on_issue", {
+            url: "https://acme.atlassian.net/browse/ABC-12",
+            body: "Done.",
+          })
+          .pipe(Effect.flip),
+        harness.call("set_issue_state", { key: "ABC-12", state: "Done" }).pipe(Effect.flip),
+        harness.call("create_issue", { title: "New" }).pipe(Effect.flip),
+      ]);
+      expect(refusals).toMatchObject(
+        [
+          "propose_jira_comment",
+          "propose_jira_comment",
+          "propose_jira_transition",
+          "propose_jira_issues",
+        ].map((tool) => ({
+          _tag: "IssueOperationError",
+          detail: expect.stringContaining(`Call ${tool} instead`),
+        })),
+      );
+      expect(yield* Ref.get(writes)).toEqual([]);
+    }),
+  );
 });

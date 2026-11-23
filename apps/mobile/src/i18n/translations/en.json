@@ -94,6 +94,7 @@
   "1861f909464425a6": "changed the state",
   "bd672d0adf5e6d9a": "Writing to this tracker needs the source-control write scope.",
   "bfe81d615f5f8f75": "This issue is outside every project's own scope, so it is read-only here.",
+  "4f5aa3902d412376": "To comment or change the state as yourself, add your Jira token in the web app under Settings → Account.",
   "8b876f2953338661": "Not known yet whether it is linked",
   "b8c2bbba2243b429": "Already linked",
   "4f1ab8a69f4a85e5": "This app is not connected to it",
