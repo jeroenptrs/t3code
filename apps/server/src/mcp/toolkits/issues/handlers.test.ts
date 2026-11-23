@@ -7,6 +7,7 @@ import {
   type IssueDetail,
   type OrchestrationProjectShell,
   type ThreadIssueLink,
+  type ThreadJiraIssueLink,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -76,7 +77,10 @@ const project: OrchestrationProjectShell = {
   updatedAt: "2026-08-01T00:00:00.000Z",
 };
 
-function makeThread(issues: ReadonlyArray<ThreadIssueLink>) {
+function makeThread(
+  issues: ReadonlyArray<ThreadIssueLink>,
+  jiraIssues: ReadonlyArray<ThreadJiraIssueLink> = [],
+) {
   return {
     ...v2PullRequestThread({
       id: THREAD_ID,
@@ -96,6 +100,7 @@ function makeThread(issues: ReadonlyArray<ThreadIssueLink>) {
       latestUserMessageAt: "2026-08-20T00:00:00.000Z",
     }),
     issues,
+    jiraIssues,
   };
 }
 
@@ -148,12 +153,14 @@ const projectLayer = Layer.mock(ProjectService.ProjectService)({
 const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
   issues: ReadonlyArray<ThreadIssueLink> = [],
   issueLayer?: Layer.Layer<IssueService.IssueService>,
+  jiraIssues: ReadonlyArray<ThreadJiraIssueLink> = [],
 ) {
   const links = yield* Ref.make<ReadonlyArray<ThreadIssueService.LinkThreadIssueInput>>([]);
   const layerDependencies = Layer.mergeAll(
     projectLayer,
     Layer.mock(Orchestrator.OrchestratorV2)({
-      getThreadShell: (id) => Effect.succeed(id === THREAD_ID ? makeThread(issues) : null),
+      getThreadShell: (id) =>
+        Effect.succeed(id === THREAD_ID ? makeThread(issues, jiraIssues) : null),
     }),
     issueLayer ??
       Layer.mock(IssueService.IssueService)({
@@ -440,6 +447,73 @@ describe("issue toolkit handlers", () => {
       expect(result.issues).toMatchObject([{ key: "7", title: "Seven", displayKey: "#7" }]);
       const unlinked = yield* harness.call("unlink_issue", { url: detail.url });
       expect(unlinked.wasLinked).toBe(true);
+    }),
+  );
+
+  // Fork: Jira links are stored apart from `thread.issues`, and the neutral tools still see them.
+  it.effect("lists and unlinks a thread's Jira links, leaving out the ones it dismissed", () =>
+    Effect.gen(function* () {
+      const linkedAt = "2026-08-10T00:00:00.000Z";
+      const jiraLayer = Layer.mock(IssueService.IssueService)({
+        resolveUrl: (url) =>
+          Effect.succeed({
+            projectId: PROJECT_ID,
+            tracker: IssueTrackerKind.make("jira"),
+            host: "acme.atlassian.net",
+            scope: "ABC",
+            key: url.split("/").at(-1)!,
+            writable: false,
+          }),
+      });
+      const harness = yield* makeHarness([], jiraLayer, [
+        {
+          site: "acme.atlassian.net",
+          key: "ABC-1",
+          source: "branch",
+          linkedAt,
+          snapshot: { summary: "Ship it", statusCategory: "todo", syncedAt: linkedAt },
+        },
+        { site: "acme.atlassian.net", key: "ABC-2", source: "agent", linkedAt, snapshot: null },
+        {
+          site: "acme.atlassian.net",
+          key: "ABC-3",
+          source: "branch-dismissed",
+          linkedAt,
+          snapshot: null,
+        },
+      ]);
+      expect((yield* harness.call("list_thread_issues", {})).issues).toEqual([
+        {
+          projectId: PROJECT_ID,
+          tracker: "jira",
+          host: "acme.atlassian.net",
+          scope: "ABC",
+          key: "ABC-1",
+          url: "https://acme.atlassian.net/browse/ABC-1",
+          source: "manual",
+          displayKey: "ABC-1",
+          title: "Ship it",
+        },
+        {
+          projectId: PROJECT_ID,
+          tracker: "jira",
+          host: "acme.atlassian.net",
+          scope: "ABC",
+          key: "ABC-2",
+          url: "https://acme.atlassian.net/browse/ABC-2",
+          source: "agent",
+          displayKey: "ABC-2",
+          title: "ABC-2",
+        },
+      ]);
+      const unlinked = yield* harness.call("unlink_issue", {
+        url: "https://acme.atlassian.net/browse/ABC-2",
+      });
+      expect(unlinked.wasLinked).toBe(true);
+      const dismissed = yield* harness.call("unlink_issue", {
+        url: "https://acme.atlassian.net/browse/ABC-3",
+      });
+      expect(dismissed.wasLinked).toBe(false);
     }),
   );
 
