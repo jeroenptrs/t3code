@@ -84,9 +84,9 @@ export function scheduleLabel(
   }
   if (schedule.type === "webhook") return resolve(msg("On webhook"));
   if (schedule.type === "manual") return SCHEDULE_MODE_LABELS.manual;
-    const count = schedule.filters?.length ?? 0;
-    const label = SCHEDULE_MODE_LABELS[schedule.type];
-    return count === 0 ? label : `${label} · ${count} filter${count === 1 ? "" : "s"}`;
+  const count = schedule.filters?.length ?? 0;
+  const label = SCHEDULE_MODE_LABELS[schedule.type];
+  return count === 0 ? label : `${label} · ${count} filter${count === 1 ? "" : "s"}`;
 }
 
 export function matchesScheduledTaskScope(
@@ -124,7 +124,9 @@ export type ScheduleMode =
   | "slack"
   | "manual"
   | "jira_query"
-  | "gitlab_projects";
+  | "gitlab_projects"
+  | "issues"
+  | "pull_requests";
 
 export const SCHEDULE_MODE_LABELS: Record<ScheduleMode, string> = {
   fixed: "At a time",
@@ -137,6 +139,8 @@ export const SCHEDULE_MODE_LABELS: Record<ScheduleMode, string> = {
   manual: "Manual",
   jira_query: "On Jira query",
   gitlab_projects: "On GitLab projects",
+  issues: "On issues",
+  pull_requests: "On pull requests",
 };
 
 /** Source picker entries: the schedule kinds sit under "Schedule", the event sources beside it. */
@@ -149,6 +153,8 @@ export const TRIGGER_SOURCE_LABELS: Record<Trigger["source"]["kind"], string> = 
   manual: "Manual",
   jira_query: "Jira query",
   gitlab_projects: "GitLab projects",
+  issues: "Issues",
+  pull_requests: "Pull requests",
 };
 
 export const TIME_SCHEDULE_MODES = ["fixed", "once", "interval"] as const;
@@ -227,8 +233,16 @@ function triggerSourceSummary(
     return timeScheduleLabel(source.schedule, timestampFormat, timeZone, runAt);
   }
   const label = TRIGGER_SOURCE_LABELS[source.kind];
-  if (source.kind === "jira_query" || source.kind === "gitlab_projects") {
+  if (
+    source.kind === "jira_query" ||
+    source.kind === "gitlab_projects" ||
+    source.kind === "issues" ||
+    source.kind === "pull_requests"
+  ) {
     const parts = [label];
+    if ((source.kind === "issues" || source.kind === "pull_requests") && source.query) {
+      parts.push(`"${source.query}"`);
+    }
     if (source.kind === "gitlab_projects") {
       const count = source.projects.length;
       if (count > 0) parts.push(`${count} project${count === 1 ? "" : "s"}`);
@@ -253,7 +267,9 @@ export function isTriggerFilterSource(mode: string): mode is TriggerFilterSource
     mode === "gitlab" ||
     mode === "slack" ||
     mode === "jira_query" ||
-    mode === "gitlab_projects"
+    mode === "gitlab_projects" ||
+    mode === "issues" ||
+    mode === "pull_requests"
   );
 }
 
@@ -333,7 +349,11 @@ export interface DraftState {
   readonly gitlabProjects: string;
   readonly gitlabGroup: string;
   readonly gitlabPollMinutes: string;
-  /** Jira query and GitLab projects: what the first poll raises. Chosen when creating. */
+  /** Issues and pull requests modes: free text, labels (issues only), and the interval. */
+  readonly neutralQuery: string;
+  readonly neutralLabels: string;
+  readonly neutralPollMinutes: string;
+  /** Polled modes: what the first poll raises. Chosen when creating. */
   readonly pollStart: PollTriggerStart;
   readonly triage: TriageDraft;
 }
@@ -352,6 +372,25 @@ export const GITLAB_PROJECTS_DRAFT_DEFAULTS = {
   gitlabGroup: "",
   gitlabPollMinutes: String(DEFAULT_POLL_INTERVAL_MS / 60_000),
 } as const;
+
+export const NEUTRAL_POLL_DRAFT_DEFAULTS = {
+  neutralQuery: "",
+  neutralLabels: "",
+  neutralPollMinutes: String(DEFAULT_POLL_INTERVAL_MS / 60_000),
+} as const;
+
+const neutralLabelList = (text: string) =>
+  text
+    .split(/[,\n]/)
+    .map((label) => label.trim())
+    .filter((label) => label.length > 0);
+
+/** Polled sources pick what their first poll raises when they are created. */
+export const isPolledMode = (mode: ScheduleMode) =>
+  mode === "jira_query" ||
+  mode === "gitlab_projects" ||
+  mode === "issues" ||
+  mode === "pull_requests";
 
 const MIN_POLL_MINUTES = MIN_POLL_INTERVAL_MS / 60_000;
 
@@ -413,6 +452,9 @@ export function scheduleDraftErrors(draft: DraftState, resolve: MessageResolver 
         },
       ];
     return invalidPollInterval(draft.gitlabPollMinutes);
+  }
+  if (draft.scheduleMode === "issues" || draft.scheduleMode === "pull_requests") {
+    return invalidPollInterval(draft.neutralPollMinutes);
   }
   if (draft.scheduleMode === "jira_query") {
     if (!draft.jiraSite.trim())
@@ -580,6 +622,21 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
         ...filters,
       };
     }
+    if (draft.scheduleMode === "issues" || draft.scheduleMode === "pull_requests") {
+      const everyMs = Number(draft.neutralPollMinutes) * 60_000;
+      if (!(everyMs >= MIN_POLL_INTERVAL_MS)) return null;
+      const query = draft.neutralQuery.trim();
+      const labels = neutralLabelList(draft.neutralLabels);
+      const common = {
+        everyMs,
+        ...(query ? { query } : {}),
+        ...(draft.pollStart === "current" ? { start: "current" as const } : {}),
+        ...filters,
+      };
+      return draft.scheduleMode === "issues"
+        ? { type: "issues", ...common, ...(labels.length > 0 ? { labels } : {}) }
+        : { type: "pull_requests", ...common };
+    }
     return {
       type: draft.scheduleMode,
       ...filters,
@@ -707,8 +764,18 @@ export function taskToDraft(task: ScheduledTask): DraftState {
           gitlabPollMinutes: String(Math.round(schedule.everyMs / 60_000)),
         }
       : GITLAB_PROJECTS_DRAFT_DEFAULTS),
+    ...(schedule.type === "issues" || schedule.type === "pull_requests"
+      ? {
+          neutralQuery: schedule.query ?? "",
+          neutralLabels: schedule.type === "issues" ? (schedule.labels ?? []).join(", ") : "",
+          neutralPollMinutes: String(Math.round(schedule.everyMs / 60_000)),
+        }
+      : NEUTRAL_POLL_DRAFT_DEFAULTS),
     pollStart:
-      schedule.type === "jira_query" || schedule.type === "gitlab_projects"
+      schedule.type === "jira_query" ||
+      schedule.type === "gitlab_projects" ||
+      schedule.type === "issues" ||
+      schedule.type === "pull_requests"
         ? (schedule.start ?? "changes")
         : "changes",
     triage: triageDraft(task.triage),
