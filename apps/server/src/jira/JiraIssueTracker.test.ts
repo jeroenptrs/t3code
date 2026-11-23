@@ -1,15 +1,30 @@
 import { describe, expect, it } from "@effect/vitest";
-import { JiraError } from "@t3tools/contracts";
+import {
+  AuthUserId,
+  JiraError,
+  ProjectId,
+  type OrchestrationProjectShell,
+} from "@t3tools/contracts";
 import type { StandaloneIssueTrackerApi } from "@t3tools/source-control-core/server/IssueTracker";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 
+import * as IssueService from "../issue/IssueService.ts";
 import * as IssueTrackerRegistry from "../issue/IssueTrackerRegistry.ts";
+import * as IssueTrackerBindings from "../persistence/IssueTrackerBindings.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import { asActingUser, JiraActingUser } from "./JiraActingUser.ts";
 import * as JiraApi from "./JiraApi.ts";
-import type { JiraConfig } from "./JiraConfig.ts";
+import type { JiraConfig, JiraServerIdentity } from "./JiraConfig.ts";
 import * as JiraIdentities from "./JiraIdentities.ts";
 import * as JiraIssueTracker from "./JiraIssueTracker.ts";
+import * as JiraReadCache from "./JiraReadCache.ts";
+import * as JiraService from "./JiraService.ts";
+import * as JiraUserCredentials from "./JiraUserCredentials.ts";
 
 const SITE = "acme.atlassian.net";
 const config: JiraConfig = {
@@ -54,6 +69,55 @@ const rawComment = (id: number): JiraApi.JiraRawComment => ({
   created: new Date(Date.UTC(2026, 9, 1, 10, 0, id)).toISOString(),
 });
 
+const ADA = AuthUserId.make("ada");
+const GRACE = AuthUserId.make("grace");
+/** Signed in, but stored no personal token. */
+const LIN = AuthUserId.make("lin");
+
+const personal = (userId: AuthUserId): JiraServerIdentity => ({
+  name: `user:${userId}:v1`,
+  site: SITE,
+  authMethod: "basic",
+  email: `${userId}@acme.test`,
+  token: Redacted.make(`${userId}-token`),
+  personal: { userId, createdAt: "v1" },
+});
+const TOKENS = new Map([ADA, GRACE].map((userId) => [userId, personal(userId)]));
+
+/** Each identity is a different Jira account, named so a test can tell who a read ran as. */
+const ACCOUNTS: Record<string, string> = {
+  bot: "T3 Bot",
+  [personal(ADA).name]: "Ada",
+  [personal(GRACE).name]: "Grace",
+};
+
+const transitions: ReadonlyArray<JiraApi.JiraRawTransition> = [
+  {
+    id: "11",
+    name: "Start",
+    to: { name: "In Progress", statusCategory: { key: "indeterminate" } },
+  },
+  { id: "21", name: "Resolve", to: { name: "Done", statusCategory: { key: "done" } } },
+  { id: "31", name: "Reject", to: { name: "Done", statusCategory: { key: "done" } } },
+];
+
+/** The real Jira services over a recorded Jira, with ADA's and GRACE's personal tokens stored. */
+const jiraLayer = (mock: Partial<JiraApi.JiraApi["Service"]>, jira: JiraConfig | undefined) =>
+  JiraService.layer.pipe(
+    Layer.provideMerge(
+      Layer.mock(JiraApi.JiraApi)({ getTransitions: () => Effect.succeed([]), ...mock }),
+    ),
+    Layer.provide(JiraReadCache.layer),
+    Layer.provide(
+      Layer.mock(JiraUserCredentials.JiraUserCredentials)({
+        identityFor: (userId) => Effect.succeed(TOKENS.get(userId)),
+        recordRejected: () => Effect.void,
+      }),
+    ),
+    Layer.provideMerge(Layer.succeed(JiraIdentities.JiraIdentities, JiraIdentities.make(jira))),
+    Layer.provide(SqlitePersistence.layerMemory),
+  );
+
 /** The tracker over a recorded Jira, on a server with the reader identity. */
 const withTracker = <A, E>(
   mock: Partial<JiraApi.JiraApi["Service"]>,
@@ -61,14 +125,53 @@ const withTracker = <A, E>(
 ) =>
   JiraIssueTracker.registered.pipe(
     Effect.flatMap((trackers) => use(trackers[0]!)),
+    Effect.provide(jiraLayer(mock, config)),
+  );
+const target = { cwd: "/repo", host: SITE, scope: "ABC" };
+const as = (userId: AuthUserId) => Effect.provideService(JiraActingUser, userId);
+
+const PROJECT_ID = ProjectId.make("project-1");
+const project: OrchestrationProjectShell = {
+  id: PROJECT_ID,
+  title: "Project",
+  workspaceRoot: "/repo",
+  defaultModelSelection: null,
+  scripts: [],
+  repositoryIdentity: null,
+  createdAt: "2026-08-01T00:00:00.000Z",
+  updatedAt: "2026-08-01T00:00:00.000Z",
+};
+
+/** The issue service over the tracker, with the project bound to Jira project ABC. */
+const issueService = (tracker: StandaloneIssueTrackerApi) =>
+  IssueService.IssueService.pipe(
     Effect.provide(
-      Layer.merge(
-        Layer.mock(JiraApi.JiraApi)(mock),
-        Layer.succeed(JiraIdentities.JiraIdentities, JiraIdentities.make(config)),
+      IssueService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ProjectService.ProjectService)({
+              getShell: () => Effect.succeed(Option.some(project)),
+              listShells: () => Effect.succeed([project]),
+            }),
+            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+              resolve: () => Effect.succeed(null),
+            }),
+            Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
+              list: () =>
+                Effect.succeed(
+                  new Map([[PROJECT_ID, { tracker: JiraIssueTracker.KIND, scope: "ABC" }]]),
+                ),
+            }),
+            Layer.succeed(
+              IssueTrackerRegistry.IssueTrackerRegistry,
+              IssueTrackerRegistry.fromTrackers([tracker]),
+            ),
+          ),
+        ),
       ),
     ),
   );
-const target = { cwd: "/repo", host: SITE, scope: "ABC" };
+const ref = { projectId: PROJECT_ID, tracker: JiraIssueTracker.KIND, scope: "ABC", key: "ABC-12" };
 
 describe("JiraIssueTracker", () => {
   it.effect("registers as `jira` only on a server with Jira identities", () =>
@@ -76,12 +179,7 @@ describe("JiraIssueTracker", () => {
       const registry = (jira: JiraConfig | undefined) =>
         JiraIssueTracker.registered.pipe(
           Effect.map(IssueTrackerRegistry.fromTrackers),
-          Effect.provide(
-            Layer.merge(
-              Layer.mock(JiraApi.JiraApi)({}),
-              Layer.succeed(JiraIdentities.JiraIdentities, JiraIdentities.make(jira)),
-            ),
-          ),
+          Effect.provide(jiraLayer({}, jira)),
         );
       const configured = yield* registry(config);
       expect(configured.kinds).toEqual(["jira"]);
@@ -93,7 +191,7 @@ describe("JiraIssueTracker", () => {
       expect(configured.standalone[0]?.capabilities).toEqual({
         create: false,
         edit: false,
-        comment: false,
+        comment: true,
         labels: false,
         assignees: false,
         reactions: false,
@@ -230,8 +328,10 @@ describe("JiraIssueTracker", () => {
           expect(detail).toMatchObject({
             body: "Steps",
             commentCount: total,
-            states: [],
+            // No transition is offered, so the current state is the only one.
+            states: [{ category: "open", name: "Code Review" }],
             viewer: null,
+            viewerPermissions: { comment: false, setState: false },
             commentsCursor: "50",
             events: [],
             linkedPullRequests: [],
@@ -329,4 +429,151 @@ describe("JiraIssueTracker", () => {
         }),
     ),
   );
+
+  it.effect(
+    "reads as each signed-in user's own token, and never serves one user's read to another",
+    () => {
+      const reads: Array<string> = [];
+      const record = (operation: string, identity: JiraServerIdentity) =>
+        Effect.sync(() => void reads.push(`${operation} ${identity.name}`));
+      return withTracker(
+        {
+          myself: (identity) =>
+            record("myself", identity).pipe(
+              Effect.as({ accountId: identity.name, displayName: ACCOUNTS[identity.name]! }),
+            ),
+          searchJql: (identity) =>
+            record("search", identity).pipe(Effect.as({ issues: [rawIssue], nextPageToken: null })),
+          getIssue: (identity) => record("issue", identity).pipe(Effect.as(rawIssue)),
+          getComments: () => Effect.succeed({ comments: [], total: 0 }),
+        },
+        (tracker) =>
+          Effect.gen(function* () {
+            const issues = yield* issueService(tracker);
+            const callers = [ADA, GRACE, LIN, undefined, ADA].map((userId) =>
+              asActingUser(issues, userId),
+            );
+            const seen = yield* Effect.forEach(callers, (caller) =>
+              Effect.gen(function* () {
+                const listing = yield* caller.list({
+                  projectId: PROJECT_ID,
+                  state: "open",
+                  involvement: "assigned",
+                });
+                const detail = yield* caller.detail(ref);
+                return [listing.viewers[SITE], detail.viewer, detail.viewerPermissions.comment];
+              }),
+            );
+            expect(seen).toEqual([
+              ["Ada", "Ada", true],
+              ["Grace", "Grace", true],
+              // No personal token: the reader identity reads, and it is nobody's own account.
+              ["T3 Bot", null, false],
+              ["T3 Bot", null, false],
+              ["Ada", "Ada", true],
+            ]);
+            const ada = personal(ADA).name;
+            const grace = personal(GRACE).name;
+            // An account is asked for once per identity, and reused only for that identity.
+            expect(reads.filter((read) => read.startsWith("myself"))).toEqual([
+              `myself ${ada}`,
+              `myself ${grace}`,
+              "myself bot",
+            ]);
+            expect(reads.filter((read) => !read.startsWith("myself"))).toEqual(
+              [ada, grace, "bot", "bot", ada].flatMap((name) => [
+                `search ${name}`,
+                `issue ${name}`,
+              ]),
+            );
+          }),
+      );
+    },
+  );
+
+  it.effect("comments with the signed-in user's token, and not at all without one", () => {
+    const posted: Array<unknown> = [];
+    return withTracker(
+      {
+        addComment: (identity, key, body) =>
+          Effect.sync(() => {
+            posted.push({ as: identity.name, key, body });
+            return { id: "900" };
+          }),
+      },
+      (tracker) =>
+        Effect.gen(function* () {
+          const issues = yield* issueService(tracker);
+          const comment = { ...ref, body: "Looks **good**" };
+          yield* asActingUser(issues, ADA).comment(comment);
+          expect(posted).toEqual([
+            {
+              as: personal(ADA).name,
+              key: "ABC-12",
+              body: expect.objectContaining({ type: "doc" }),
+            },
+          ]);
+          // A signed-in user without a token, then a call with no user: an agent or a workflow.
+          for (const caller of [asActingUser(issues, LIN), issues]) {
+            expect(yield* Effect.flip(caller.comment(comment))).toMatchObject({
+              _tag: "IssueUnavailableError",
+              reason: "unauthenticated",
+            });
+          }
+          expect(
+            yield* Effect.flip(tracker.comment!({ ...target, key: "ABC-12", body: "Hi" })),
+          ).toMatchObject({
+            reason: "unauthenticated",
+            detail: expect.stringContaining("Settings → Account"),
+          });
+          expect(posted).toHaveLength(1);
+        }),
+    );
+  });
+
+  it.effect("moves an issue by the one transition that leads to the named state", () => {
+    const taken: Array<unknown> = [];
+    const asked: Array<string> = [];
+    return withTracker(
+      {
+        myself: (identity) => Effect.succeed({ displayName: ACCOUNTS[identity.name]! }),
+        getIssue: () => Effect.succeed(rawIssue),
+        getComments: () => Effect.succeed({ comments: [], total: 0 }),
+        getTransitions: (identity) =>
+          Effect.sync(() => {
+            asked.push(identity.name);
+            return transitions;
+          }),
+        transitionIssue: (identity, key, transitionId) =>
+          Effect.sync(() => void taken.push({ as: identity.name, key, transitionId })),
+      },
+      (tracker) =>
+        Effect.gen(function* () {
+          const detail = yield* tracker.getIssue({ ...target, key: "ABC-12" }).pipe(as(ADA));
+          expect(detail.states).toEqual([
+            { category: "open", name: "Code Review" },
+            { category: "open", name: "In Progress" },
+            { category: "closed", name: "Done" },
+          ]);
+          expect(detail.viewerPermissions).toMatchObject({ comment: true, setState: true });
+          const move = (state: string) => tracker.setState!({ ...target, key: "ABC-12", state });
+          yield* move("In Progress").pipe(as(ADA));
+          expect(taken).toEqual([{ as: personal(ADA).name, key: "ABC-12", transitionId: "11" }]);
+          expect(yield* Effect.flip(move("Done").pipe(as(ADA)))).toMatchObject({
+            reason: "failed",
+            detail: expect.stringContaining("More than one"),
+          });
+          expect(yield* Effect.flip(move("Backlog").pipe(as(ADA)))).toMatchObject({
+            reason: "failed",
+            detail: expect.stringContaining("no transition"),
+          });
+          for (const refused of [move("In Progress").pipe(as(LIN)), move("In Progress")]) {
+            expect(yield* Effect.flip(refused)).toMatchObject({ reason: "unauthenticated" });
+          }
+          expect(taken).toHaveLength(1);
+          // The transitions a write chooses from are the ones Jira offers the writer.
+          expect(new Set(asked)).toEqual(new Set([personal(ADA).name]));
+        }),
+    );
+  });
 });

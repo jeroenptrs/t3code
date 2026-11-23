@@ -1,7 +1,8 @@
 /**
- * Jira as a tracker-neutral issue tracker, read-only. A scope is a project key (`ABC`) and an
- * issue key is Jira's own (`ABC-123`). Every read is made as the reader identity on the reader's
- * site, so there is no credential to save and no other site to reach.
+ * Jira as a tracker-neutral issue tracker. A scope is a project key (`ABC`) and an issue key is
+ * Jira's own (`ABC-123`), on the reader identity's site. A call made for a signed-in user who
+ * stored a personal token reads as that user, and only such a call comments or changes state.
+ * Every other call reads as the reader identity and writes nothing.
  */
 import {
   IssueTrackerKind,
@@ -23,6 +24,7 @@ import {
   type TrackerIssueSummary,
 } from "@t3tools/source-control-core/server/IssueTracker";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import { buildIssueListJql } from "./issueListJql.ts";
 import {
@@ -32,17 +34,22 @@ import {
   toIsoDateTime,
   toIssueSummary,
   toJiraUser,
+  toTransition,
 } from "./issueMapping.ts";
+import { JiraActingUser } from "./JiraActingUser.ts";
 import * as JiraApi from "./JiraApi.ts";
 import * as JiraIdentities from "./JiraIdentities.ts";
+import * as JiraReadCache from "./JiraReadCache.ts";
+import * as JiraService from "./JiraService.ts";
+import * as JiraUserCredentials from "./JiraUserCredentials.ts";
 
 export const KIND = IssueTrackerKind.make(JIRA_ISSUE_TRACKER_KIND);
 
-/** Search is the one thing beyond reading; writes wait for the proposal approval gate. */
+/** Comments and state changes are the writes; `setState` has no capability flag of its own. */
 const CAPABILITIES: IssueCapabilities = {
   create: false,
   edit: false,
-  comment: false,
+  comment: true,
   labels: false,
   assignees: false,
   reactions: false,
@@ -52,13 +59,14 @@ const CAPABILITIES: IssueCapabilities = {
   search: true,
 };
 
-const VIEWER_PERMISSIONS: IssueViewerPermissions = {
-  setState: false,
-  comment: false,
+/** A write goes out with the signed-in user's own token, so only its holder may write. */
+const viewerPermissions = (personal: boolean): IssueViewerPermissions => ({
+  setState: personal,
+  comment: personal,
   edit: false,
   labels: false,
   assignees: false,
-};
+});
 
 const NO_CUSTOM_FIELDS = { sprint: null, storyPoints: null };
 const ISSUE_FIELDS = [...summaryFields(NO_CUSTOM_FIELDS), "created", "reporter", "resolutiondate"];
@@ -79,6 +87,22 @@ export function toIssueState(status: string, category: JiraStatusCategory): Issu
     category: category === "done" ? "closed" : "open",
     name: status.trim() || FALLBACK_STATE_NAME[category],
   };
+}
+
+const transitionState = (transition: JiraApi.JiraRawTransition): IssueState => {
+  const { toStatus, toStatusCategory } = toTransition(transition);
+  return toIssueState(toStatus, toStatusCategory);
+};
+
+/** The current state, then each status a transition Jira offers leads to, once per name. */
+function toIssueStates(
+  current: IssueState,
+  offered: ReadonlyArray<JiraApi.JiraRawTransition>,
+): ReadonlyArray<IssueState> {
+  const states = [current, ...offered.map(transitionState)];
+  return states.filter(
+    (state, index) => states.findIndex((other) => other.name === state.name) === index,
+  );
 }
 
 /** The login is the display name: it is what people read and what JQL accepts for an assignee. */
@@ -171,7 +195,7 @@ const notFound = (operation: string) =>
     tracker: KIND,
     operation,
     reason: "not-found",
-    detail: "Jira has no issue by that key, or the reader identity cannot see it.",
+    detail: "Jira has no issue by that key, or the account reading it cannot see it.",
   });
 
 const requireKey = (operation: string, key: string) => {
@@ -188,7 +212,23 @@ const make = Effect.fn("JiraIssueTracker.make")(function* (
   reader: JiraIdentities.JiraIdentities["Service"]["services"][number],
 ) {
   const jira = yield* JiraApi.JiraApi;
+  const service = yield* JiraService.JiraService;
   const site = reader.site;
+
+  /** Who this call reads as: the acting user where they stored a token, else the reader. */
+  const reading = (operation: string) =>
+    Effect.flatMap(JiraActingUser, (userId) =>
+      service.readAs(site, { actingUserId: userId ?? undefined }),
+    ).pipe(Effect.mapError(toTrackerError(operation)));
+
+  /** A write needs an acting user with a personal token: a service identity never writes. */
+  const writing = Effect.fnUntraced(function* (operation: string) {
+    const { identity, guard } = yield* reading(operation);
+    if (identity.personal === undefined) {
+      return yield* toTrackerError(operation)(JiraService.personalTokenRequired);
+    }
+    return { identity, guard, userId: identity.personal.userId };
+  });
 
   const projects = Effect.gen(function* () {
     const all: Array<JiraApi.JiraRawProject> = [];
@@ -213,7 +253,7 @@ const make = Effect.fn("JiraIssueTracker.make")(function* (
     },
     parseIssueUrl: (url) => parseJiraIssueUrl(url, site),
 
-    // The token is ignored: the reader identity is the credential, and it is never stored here.
+    // The token is ignored: the reader identity is the connection, and it is never stored here.
     probeCredential: () =>
       Effect.all([jira.myself(reader), projects], { concurrency: 2 }).pipe(
         Effect.map(([me, found]) => ({
@@ -227,46 +267,50 @@ const make = Effect.fn("JiraIssueTracker.make")(function* (
         Effect.mapError(toTrackerError("probeCredential")),
       ),
 
-    getViewer: () =>
-      jira.myself(reader).pipe(
-        Effect.map((me) => viewerName(me, reader.name)),
-        Effect.mapError(toTrackerError("getViewer")),
-      ),
+    getViewer: Effect.fn("JiraIssueTracker.getViewer")(function* () {
+      const { myself } = yield* reading("getViewer");
+      const me = yield* myself.pipe(Effect.mapError(toTrackerError("getViewer")));
+      return viewerName(me, reader.name);
+    }),
 
-    listIssues: (input) =>
-      jira
-        .searchJql(reader, {
+    listIssues: Effect.fn("JiraIssueTracker.listIssues")(function* (input) {
+      const { identity, guard } = yield* reading("listIssues");
+      const page = yield* jira
+        .searchJql(identity, {
           jql: buildIssueListJql(input),
           fields: ISSUE_FIELDS,
           maxResults: input.limit,
           nextPageToken: input.cursor,
         })
-        .pipe(
-          Effect.map((page) => ({
-            items: (page.issues ?? []).map((issue) => toTrackerIssueSummary(issue, site)),
-            nextCursor: page.nextPageToken || null,
-          })),
-          Effect.mapError(toTrackerError("listIssues")),
-          Effect.withSpan("JiraIssueTracker.listIssues"),
-        ),
+        .pipe(guard, Effect.mapError(toTrackerError("listIssues")));
+      return {
+        items: (page.issues ?? []).map((issue) => toTrackerIssueSummary(issue, site)),
+        nextCursor: page.nextPageToken || null,
+      };
+    }),
 
     getIssue: Effect.fn("JiraIssueTracker.getIssue")(function* (input) {
       const key = yield* requireKey("getIssue", input.key);
-      const [issue, comments] = yield* Effect.all(
+      const { identity, guard, myself } = yield* reading("getIssue");
+      const personal = identity.personal !== undefined;
+      const [issue, comments, transitions, me] = yield* Effect.all(
         [
-          jira.getIssue(reader, key, { fields: [...ISSUE_FIELDS, "description"] }),
-          jira.getComments(reader, key, { maxResults: COMMENTS_PAGE, orderBy: "-created" }),
+          jira.getIssue(identity, key, { fields: [...ISSUE_FIELDS, "description"] }),
+          jira.getComments(identity, key, { maxResults: COMMENTS_PAGE, orderBy: "-created" }),
+          jira.getTransitions(identity, key),
+          // The reader identity is a server account, not the person looking at the issue.
+          personal ? myself : Effect.succeed(null),
         ],
-        { concurrency: 2 },
-      ).pipe(Effect.mapError(toTrackerError("getIssue")));
+        { concurrency: 4 },
+      ).pipe(guard, Effect.mapError(toTrackerError("getIssue")));
       const count = comments.total ?? (comments.comments ?? []).length;
+      const summary = toTrackerIssueSummary(issue, site, count);
       return {
-        ...toTrackerIssueSummary(issue, site, count),
+        ...summary,
         body: toDescription(issue) ?? "",
-        viewer: null,
-        viewerPermissions: VIEWER_PERMISSIONS,
-        // Empty until writes exist, so no surface offers a state change.
-        states: [],
+        viewer: me === null ? null : viewerName(me, reader.name),
+        viewerPermissions: viewerPermissions(personal),
+        states: toIssueStates(summary.state, transitions),
         // A key that moved projects answers under its new key, which is what the links name.
         comments: toComments(comments, site, issue.key),
         commentsCursor: olderCommentsCursor(comments, 0),
@@ -277,9 +321,10 @@ const make = Effect.fn("JiraIssueTracker.make")(function* (
 
     getIssueLink: Effect.fn("JiraIssueTracker.getIssueLink")(function* (input) {
       const key = yield* requireKey("getIssueLink", input.key);
+      const { identity, guard } = yield* reading("getIssueLink");
       const issue = yield* jira
-        .getIssue(reader, key, { fields: ISSUE_FIELDS })
-        .pipe(Effect.mapError(toTrackerError("getIssueLink")));
+        .getIssue(identity, key, { fields: ISSUE_FIELDS })
+        .pipe(guard, Effect.mapError(toTrackerError("getIssueLink")));
       const { title, url, displayKey } = toTrackerIssueSummary(issue, site);
       return { title, url, displayKey };
     }),
@@ -295,23 +340,69 @@ const make = Effect.fn("JiraIssueTracker.make")(function* (
           detail: "This is not a comment cursor Jira handed out.",
         });
       }
+      const { identity, guard } = yield* reading("getComments");
       const page = yield* jira
-        .getComments(reader, key, { maxResults: COMMENTS_PAGE, orderBy: "-created", startAt })
-        .pipe(Effect.mapError(toTrackerError("getComments")));
+        .getComments(identity, key, { maxResults: COMMENTS_PAGE, orderBy: "-created", startAt })
+        .pipe(guard, Effect.mapError(toTrackerError("getComments")));
       return {
         comments: toComments(page, site, key),
         nextCursor: olderCommentsCursor(page, startAt),
       };
     }),
+
+    comment: Effect.fn("JiraIssueTracker.comment")(function* (input) {
+      const key = yield* requireKey("comment", input.key);
+      const { userId } = yield* writing("comment");
+      yield* service
+        .addComment(userId, { site, key, body: input.body })
+        .pipe(Effect.mapError(toTrackerError("comment")));
+    }),
+
+    setState: Effect.fn("JiraIssueTracker.setState")(function* (input) {
+      const key = yield* requireKey("setState", input.key);
+      const { identity, guard, userId } = yield* writing("setState");
+      const offered = yield* jira
+        .getTransitions(identity, key)
+        .pipe(guard, Effect.mapError(toTrackerError("setState")));
+      const wanted = input.state.trim();
+      const [transition, ...others] = offered.filter(
+        (candidate) => transitionState(candidate).name === wanted,
+      );
+      if (transition === undefined || others.length > 0) {
+        return yield* new IssueTrackerError({
+          tracker: KIND,
+          operation: "setState",
+          reason: "failed",
+          detail:
+            transition === undefined
+              ? `Jira offers you no transition that moves ${key} to "${wanted}".`
+              : `More than one Jira transition moves ${key} to "${wanted}". Take the one you want in Jira.`,
+        });
+      }
+      yield* service
+        .transitionIssue(userId, { site, key, transitionId: transition.id })
+        .pipe(Effect.mapError(toTrackerError("setState")));
+    }),
   };
   return api;
 });
+
+/**
+ * What the tracker is built from. These are the instances the Jira services build, by layer
+ * memoization, so a comment posted here is one a Jira watch knows T3 Code posted.
+ */
+export const layerDependencies = JiraService.layer.pipe(
+  Layer.provideMerge(JiraUserCredentials.layer),
+  Layer.provideMerge(JiraApi.layer),
+  Layer.provide(JiraReadCache.layer),
+  Layer.provideMerge(JiraIdentities.layer),
+);
 
 /** The Jira tracker on a server with Jira identities; none at all on a server without. */
 export const registered: Effect.Effect<
   ReadonlyArray<StandaloneIssueTrackerApi>,
   never,
-  JiraApi.JiraApi | JiraIdentities.JiraIdentities
+  JiraApi.JiraApi | JiraIdentities.JiraIdentities | JiraService.JiraService
 > = Effect.gen(function* () {
   const identities = yield* JiraIdentities.JiraIdentities;
   if (!identities.configured) return [];
