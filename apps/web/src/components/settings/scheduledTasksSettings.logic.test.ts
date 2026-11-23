@@ -312,6 +312,21 @@ describe("Jira query triggers", () => {
     expect(scheduleFromDraft({ ...draft, gitlabProjects: "" })).toBeNull();
     expect(scheduleFromDraft({ ...draft, gitlabPollMinutes: "4" })).toBeNull();
   });
+
+  it("round-trips an issues trigger's search and labels, and refuses short intervals", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "issues", everyMs: 900_000, labels: ["bug", "agent"], query: "login" },
+    });
+    expect(draft).toMatchObject({ neutralLabels: "bug, agent", neutralPollMinutes: "15" });
+    expect(scheduleFromDraft({ ...draft, neutralLabels: " bug ,\n" })).toEqual({
+      type: "issues",
+      everyMs: 900_000,
+      query: "login",
+      labels: ["bug"],
+    });
+    expect(scheduleFromDraft({ ...draft, neutralPollMinutes: "4" })).toBeNull();
+  });
 });
 
 describe("webhook scheduled tasks", () => {

@@ -277,6 +277,31 @@ describe("scheduleFromDraft", () => {
     expect(scheduleFromDraft({ ...draft, gitlabPollMinutes: "4" })).toBeNull();
   });
 
+  it("round-trips an issues trigger's search and labels, and refuses short intervals", () => {
+    const draft = scheduleDraftForTask({
+      schedule: { type: "issues", everyMs: 900_000, labels: ["bug", "agent"], query: "login" },
+    });
+    expect(draft).toMatchObject({ mode: "issues", neutralLabels: "bug, agent" });
+    expect(
+      scheduleFromDraft({ ...draft, neutralLabels: " bug ,\n", pollStart: "current" }),
+    ).toEqual({
+      type: "issues",
+      everyMs: 900_000,
+      query: "login",
+      labels: ["bug"],
+      start: "current",
+    });
+    const pullRequests = scheduleDraftForTask({
+      schedule: { type: "pull_requests", everyMs: 900_000, query: "login" },
+    });
+    expect(scheduleFromDraft({ ...pullRequests, neutralLabels: "bug" })).toEqual({
+      type: "pull_requests",
+      everyMs: 900_000,
+      query: "login",
+    });
+    expect(scheduleFromDraft({ ...draft, neutralPollMinutes: "4" })).toBeNull();
+  });
+
   it.each(["0,5", "2,5,0", "Infinity", "150119987580", ""])(
     "rejects invalid interval minutes: %s",
     (intervalMinutes) => {

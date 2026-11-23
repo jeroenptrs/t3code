@@ -232,6 +232,8 @@ function storedTriggerFilters(
     case "slack":
     case "jira_query":
     case "gitlab_projects":
+    case "issues":
+    case "pull_requests":
       return schedule.filters;
     default:
       return undefined;
@@ -984,7 +986,7 @@ export const layer = Layer.effect(
     const deleteQueryObservations = (id: ScheduledTaskId) =>
       sql`
         DELETE FROM fork_trigger_observations
-        WHERE source IN ('jira_query', 'gitlab_projects')
+        WHERE source IN ('jira_query', 'gitlab_projects', 'issues', 'pull_requests')
           AND key >= ${`${id}\u0000`} AND key < ${`${id}\u0001`}
       `;
 
@@ -1413,39 +1415,39 @@ export const layer = Layer.effect(
                 }).pipe(Effect.as(null)),
               )
             : active.threadId === null
-            ? yield* Effect.exit(
-                threadLaunch
-                  .launch({
-                    commandId,
-                    projectId: active.projectId,
-                    title: active.title,
-                    modelSelection: active.modelSelection,
-                    runtimeMode: active.runtimeMode,
-                    interactionMode: active.interactionMode,
-                    workspaceStrategy: active.workspaceStrategy,
-                    initialMessage: {
-                      messageId,
-                      scheduledTaskId: active.id,
-                      text: prompt,
-                      attachments: [],
-                    },
-                    createdBy: active.createdBy,
-                    creationSource: active.creationSource,
-                  })
-                  .pipe(
-                    Effect.map((launched) => launched.threadId),
-                    Effect.tap((threadId) =>
-                      threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
+              ? yield* Effect.exit(
+                  threadLaunch
+                    .launch({
+                      commandId,
+                      projectId: active.projectId,
+                      title: active.title,
+                      modelSelection: active.modelSelection,
+                      runtimeMode: active.runtimeMode,
+                      interactionMode: active.interactionMode,
+                      workspaceStrategy: active.workspaceStrategy,
+                      initialMessage: {
+                        messageId,
+                        scheduledTaskId: active.id,
+                        text: prompt,
+                        attachments: [],
+                      },
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    })
+                    .pipe(
+                      Effect.map((launched) => launched.threadId),
+                      Effect.tap((threadId) =>
+                        threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
+                      ),
                     ),
+                )
+              : yield* Effect.exit(
+                  // The stored selection only seeds fresh threads. A bound run
+                  // follows the thread's current provider, so it passes none.
+                  sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
+                    Effect.as(ThreadId.make(active.threadId)),
                   ),
-              )
-            : yield* Effect.exit(
-                // The stored selection only seeds fresh threads. A bound run
-                // follows the thread's current provider, so it passes none.
-                sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
-                  Effect.as(ThreadId.make(active.threadId)),
-                ),
-              );
+                );
 
         const runSucceeded = result._tag === "Success";
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
@@ -1471,9 +1473,9 @@ export const layer = Layer.effect(
               trigger === "event"
                 ? scheduleSource.nextRunAt
                 : nextRunAt(
-              scheduleSource,
-              scheduleSource.schedule.type === "once" ? startedAt : completedAt,
-            ),
+                    scheduleSource,
+                    scheduleSource.schedule.type === "once" ? startedAt : completedAt,
+                  ),
             lastRunStatus,
             lastRunError,
             runCount: scheduleSource.runCount + 1,
@@ -1699,7 +1701,7 @@ export const layer = Layer.effect(
                 )
               : isPollSchedule(task.schedule)
                 ? pollTask(task)
-              : runTask(task, "scheduled"),
+                : runTask(task, "scheduled"),
           ).pipe(
             Effect.catch((cause) =>
               Effect.logWarning("Scheduled task run failed", { taskId: task.id, cause }),
@@ -1938,7 +1940,7 @@ export const layer = Layer.effect(
                         storedTriggerFilters(existingTask?.schedule, input.schedule.type),
                     ),
                   }
-            : input.schedule;
+                : input.schedule;
       const webhook =
         input.schedule.type === "webhook"
           ? yield* Effect.gen(function* () {
@@ -2010,8 +2012,8 @@ export const layer = Layer.effect(
         nextRunAt: seedsPoll({ enabled: input.enabled, schedule }, existingTask)
           ? iso(now)
           : scheduleUnchanged
-          ? existingTask.nextRunAt
-          : nextRunAt({ enabled: input.enabled, schedule }, now),
+            ? existingTask.nextRunAt
+            : nextRunAt({ enabled: input.enabled, schedule }, now),
         lastRunAt: existingTask?.lastRunAt ?? null,
         lastRunStatus: existingTask?.lastRunStatus ?? "never",
         lastRunError: existingTask?.lastRunError ?? null,
@@ -2627,34 +2629,34 @@ export const layer = Layer.effect(
         Effect.catchCauseIf(
           (cause) => !Cause.hasInterruptsOnly(cause),
           (cause) =>
-          Effect.gen(function* () {
-            const started = yield* Ref.get(dispatched);
-            yield* Effect.logWarning("Webhook dispatch failed", { taskId: task.id, cause });
-            yield* runOutcome(started ? "started" : "failed");
-            yield* markDeliveryFailed(
-              deliveryId,
-              started
-                ? "The run started, but completion could not be recorded."
-                : "The run failed to start.",
-            );
-            if (!started) {
-              yield* sql
-                .withTransaction(
-                  Effect.gen(function* () {
-                    const counted =
-                      yield* sql`UPDATE scheduled_task_webhook_pending SET state = 'failed'
+            Effect.gen(function* () {
+              const started = yield* Ref.get(dispatched);
+              yield* Effect.logWarning("Webhook dispatch failed", { taskId: task.id, cause });
+              yield* runOutcome(started ? "started" : "failed");
+              yield* markDeliveryFailed(
+                deliveryId,
+                started
+                  ? "The run started, but completion could not be recorded."
+                  : "The run failed to start.",
+              );
+              if (!started) {
+                yield* sql
+                  .withTransaction(
+                    Effect.gen(function* () {
+                      const counted =
+                        yield* sql`UPDATE scheduled_task_webhook_pending SET state = 'failed'
                 WHERE delivery_id = ${deliveryId} AND state = 'running' RETURNING delivery_id`;
-                    if (counted.length > 0)
-                      yield* sql`UPDATE scheduled_tasks SET run_count = run_count + 1
+                      if (counted.length > 0)
+                        yield* sql`UPDATE scheduled_tasks SET run_count = run_count + 1
                 WHERE task_id = ${task.id} AND created_at = ${task.createdAt}`;
-                  }),
-                )
-                .pipe(Effect.mapError(dedupeError));
-              yield* releaseFailedDelivery(deliveryId);
-            }
-            // Pending windows retry the same command id to finish bookkeeping.
-            return !started;
-          }),
+                    }),
+                  )
+                  .pipe(Effect.mapError(dedupeError));
+                yield* releaseFailedDelivery(deliveryId);
+              }
+              // Pending windows retry the same command id to finish bookkeeping.
+              return !started;
+            }),
         ),
       );
     });

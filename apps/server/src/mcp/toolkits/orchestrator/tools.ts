@@ -213,7 +213,7 @@ const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
 
 const TriggerSaveTool = Tool.make("t3_trigger_save", {
   description:
-    "Save a trigger that runs `prompt` in `target` when its `source` fires and every filter matches: a schedule, a webhook, or a Jira, GitLab, or Slack event. Pass `id` to replace a trigger.",
+    "Save a trigger that runs `prompt` in `target` when its `source` fires and every filter matches: a schedule, a webhook, a Jira, GitLab, or Slack event, or a change to an issue or pull request in the target project's trackers and repositories. Pass `id` to replace a trigger.",
   parameters: TriggerSaveInput,
   success: Trigger,
   failure: OrchestratorMcpFailure,

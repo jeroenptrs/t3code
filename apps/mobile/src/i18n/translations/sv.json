@@ -5699,5 +5699,13 @@
   "5d1a5b5b5dd1fa27": "Implementering",
   "b74dbfef93591e1e": "Inga anmärkningar",
   "f27dfe23ebe57670": "Granskning: godkänd",
-  "6ce25c253cc09a3f": "Granskning: ändringar begärda"
+  "6ce25c253cc09a3f": "Granskning: ändringar begärda",
+  "4c62a8ec583cbf93": "Sökning (valfritt)",
+  "e45656c4a16e1f5e": "Fritext, till exempel login",
+  "c07c75f32a650579": "Etiketter som krävs (valfritt)",
+  "23b465883ba86dba": "bug, agent",
+  "8646761d1a59996a": "Minuter mellan kontroller",
+  "ac39dff324bc4e45": "Kontrollera var 5:e minut eller mer, i hela minuter.",
+  "883ba0f230de14f3": "Kontrollerar ärendehanterarna som projektet är kopplat till. Jira läses med webbplatsens tjänstekonto.",
+  "51c99b144c9577d5": "Kontrollerar pull requests i projektets repon."
 }

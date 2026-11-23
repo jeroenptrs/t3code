@@ -15,6 +15,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import type { GitLabPipelineState } from "./gitlabTriggerSource.ts";
 import type { JiraQueryRoundTrip } from "./jiraTriggerSource.ts";
+import type { IssueTriggerState } from "./neutralTriggerSource.ts";
 import { triggerEventId } from "./triggerPrompt.ts";
 import * as TriggerSources from "./TriggerSources.ts";
 
@@ -468,6 +469,82 @@ it.effect(
             ["merge_request.opened", "52", null],
           ]);
           assert.deepEqual(described(collected[3]!), ["merge_request.opened", "54", null]);
+        }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "seeds an issues trigger silently, raises each change once, and re-seeds on a scope change",
+  () =>
+    Effect.gen(function* () {
+      const triggerId = ScheduledTaskId.make("task:issues");
+      const tracked = (
+        key: string,
+        overrides: Partial<IssueTriggerState> = {},
+      ): IssueTriggerState => ({
+        tracker: "github",
+        host: "github.com",
+        scope: "acme/app",
+        key,
+        displayKey: `#${key}`,
+        url: `https://github.com/acme/app/issues/${key}`,
+        title: `Issue ${key}`,
+        state: "Open",
+        stateCategory: "open",
+        author: "ada",
+        assignees: [],
+        labels: [],
+        updatedAt: "2026-11-05T09:00:00.000Z",
+        ...overrides,
+      });
+      const observe = (
+        sources: TriggerSources.TriggerSources["Service"],
+        items: ReadonlyArray<IssueTriggerState>,
+        options: { readonly scope?: string; readonly fireCurrent?: boolean } = {},
+      ) =>
+        sources.observeNeutral({
+          source: "issues",
+          triggerId,
+          start: "changes",
+          fireCurrent: options.fireCurrent ?? false,
+          scope: options.scope ?? "project-a",
+          items,
+        });
+      yield* withSources((sources) =>
+        Effect.gen(function* () {
+          const events = yield* collect(sources, 3);
+          yield* observe(sources, [tracked("1"), tracked("2")]);
+          // Unchanged, and missing from a capped listing: neither is a change.
+          yield* observe(sources, [tracked("1")]);
+          yield* observe(sources, [
+            tracked("1", { labels: ["agent"], updatedAt: "2026-11-05T10:00:00.000Z" }),
+            tracked("2", { state: "Closed", stateCategory: "closed" }),
+            tracked("3"),
+          ]);
+          const collected = yield* Fiber.join(events);
+          assert.deepEqual(
+            collected.map((event) => [
+              event.type,
+              event.triggerId,
+              "title" in event.payload ? event.payload.title : null,
+            ]),
+            [
+              ["issue.labels_changed", triggerId, "Issue 1"],
+              ["issue.closed", triggerId, "Issue 2"],
+              ["issue.opened", triggerId, "Issue 3"],
+            ],
+          );
+        }),
+      );
+      // After a restart the stored set holds; a new scope re-seeds without raising.
+      yield* withSources((sources) =>
+        Effect.gen(function* () {
+          const events = yield* collect(sources, 1);
+          yield* observe(sources, [tracked("4")], { scope: "project-b" });
+          yield* observe(sources, [tracked("4", { assignees: ["ada"] })], { scope: "project-b" });
+          const [event] = yield* Fiber.join(events);
+          assert.equal(event?.type, "issue.assignee_changed");
         }),
       );
     }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),

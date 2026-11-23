@@ -235,7 +235,7 @@ const SubmitOutputTool = Tool.make("t3_submit_output", {
 const TriggerFireCurrentTool = Tool.make("t3_trigger_fire_current", {
   ...commandTool,
   description:
-    "Fire a Jira query or GitLab projects trigger on everything it matches now: one check that raises issue.entered or merge_request.opened per item, through its filters, to its target. Needs a full-access or default caller.",
+    "Fire a polled trigger (Jira query, GitLab projects, issues, or pull requests) on everything open it matches now: one check that raises an entered or opened event per item, through its filters, to its target. Needs a full-access or default caller.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     triggerId: ScheduledTaskId,
