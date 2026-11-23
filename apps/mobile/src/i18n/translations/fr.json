@@ -753,6 +753,7 @@
   "8471c4c5a50ffde3": "Les tickets de cet hôte ne peuvent pas encore être consultés.",
   "2f4a47129f89fe22": "Non connecté. Ajoutez une clé d’API personnelle pour lister ses tickets.",
   "024baab60525a419": "L’identifiant enregistré a été refusé.",
+  "0c22d3c84d52a9e9": "Connecté en tant que {account} · aucun projet associé pour l’instant. Choisissez un projet {tracker} pour chaque projet afin de lister ses tickets.",
   "2613c232516f3c72": "Connecté en tant que {account} · aucun projet associé pour l’instant. Choisissez une équipe pour un projet afin de lister ses tickets.",
   "77d07bfe2f8ee19d": "{count, plural, one {Connecté en tant que {account} · {count} projet associé} other {Connecté en tant que {account} · {count} projets associés}}",
   "3eb9a01099aaf799": "{count} s",

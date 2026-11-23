@@ -185,6 +185,8 @@ export function SettingsIssueTrackerRouteScreen({
   const usable = tracker?.connected === true && tracker.account !== null;
   const canAddAccount =
     tracker !== undefined &&
+    // Fork: a server-managed tracker has the one account the server signs in as.
+    tracker.serverManaged !== true &&
     route.params.accountId === undefined &&
     (tracker.connected ||
       (query.data?.accounts ?? []).some((account) => account.tracker === tracker.tracker)) &&
@@ -198,13 +200,16 @@ export function SettingsIssueTrackerRouteScreen({
           <Text selectable className="px-2 text-sm text-foreground-muted">
             {issueTrackerSummary(tracker, issueTrackerBindings(query.data), messages)}
           </Text>
-          <SettingsSection title={tracker.credential.label}>
-            <IssueTrackerCredentialForm
-              environmentId={environmentId}
-              tracker={tracker}
-              disabled={disabled}
-            />
-          </SettingsSection>
+          {/* Fork: the server's configuration signs a server-managed tracker in. */}
+          {tracker.serverManaged === true ? null : (
+            <SettingsSection title={tracker.credential.label}>
+              <IssueTrackerCredentialForm
+                environmentId={environmentId}
+                tracker={tracker}
+                disabled={disabled}
+              />
+            </SettingsSection>
+          )}
           {usable && hasIssueTrackerTeams(tracker, issueTrackerBindings(query.data)) ? (
             <SettingsSection
               title={gt("Projects")}

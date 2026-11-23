@@ -140,6 +140,12 @@ const make = Effect.gen(function* () {
     );
 
   const current = (api: StandaloneIssueTrackerApi, accountId: IssueTrackerAccountId | null) =>
+    // Fork: a server-managed tracker has no stored credential; it is asked directly.
+    api.standalone.serverManaged === true
+      ? status(api, accountId, "")
+      : currentStored(api, accountId);
+
+  const currentStored = (api: StandaloneIssueTrackerApi, accountId: IssueTrackerAccountId | null) =>
     secrets.get(issueTrackerSecretName(api.kind, accountId)).pipe(
       Effect.mapError(secretFailure(api.kind, "The stored credential could not be read.")),
       Effect.flatMap((stored) =>
@@ -224,6 +230,14 @@ const make = Effect.gen(function* () {
     "IssueTrackerConnections.connect",
   )(function* (input) {
     const api = yield* requireTracker(input.tracker);
+    // Fork: nothing to save or remove, and a removal must not clear the tracker's bindings.
+    if (api.standalone.serverManaged === true) {
+      return yield* new IssueTrackerConnectionError({
+        tracker: input.tracker,
+        reason: "failed",
+        detail: `${api.standalone.displayName} is connected through the server's configuration.`,
+      });
+    }
     const addAccount = input.addAccount === true;
     const token = input.token;
     if (token === null) {

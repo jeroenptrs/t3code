@@ -753,6 +753,7 @@
   "8471c4c5a50ffde3": "Det går inte att bläddra bland ärenden för den här värden än.",
   "2f4a47129f89fe22": "Inte ansluten. Lägg till en personlig API-nyckel för att lista dess ärenden.",
   "024baab60525a419": "Den sparade autentiseringsuppgiften avvisades.",
+  "0c22d3c84d52a9e9": "Ansluten som {account} · inga projekt länkade än. Välj ett {tracker}-projekt för varje projekt för att lista dess ärenden.",
   "2613c232516f3c72": "Ansluten som {account} · inga projekt länkade än. Välj ett team för ett projekt för att lista dess ärenden.",
   "77d07bfe2f8ee19d": "{count, plural, one {Ansluten som {account} · {count} projekt länkat} other {Ansluten som {account} · {count} projekt länkade}}",
   "3eb9a01099aaf799": "{count} s",
