@@ -66,6 +66,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import * as ProviderContinuationService from "../orchestration-v2/ProviderContinuationService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as TaskFolders from "../workspace/TaskFolders.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
@@ -88,6 +89,7 @@ const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+  Layer.provide(Layer.mock(TaskFolders.TaskFolders)({})),
 );
 
 describe("OrchestratorMcpService", () => {
@@ -3358,6 +3360,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             }),
           ),
           Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+          Layer.provide(Layer.mock(TaskFolders.TaskFolders)({})),
         );
 
         yield* Effect.gen(function* () {
@@ -3499,6 +3502,126 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.equal(retryCommand.modelSelection.instanceId, codexInstanceId);
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
       }),
+  );
+
+  it.effect("a worktree task in a plain project folder starts on the parent's branch", () =>
+    Effect.gen(function* () {
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Walk through the change.",
+        title: null,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      const onBranch = (subagents: ReadonlyArray<unknown>) => {
+        const parent = parentProjection(subagents);
+        return {
+          ...parent,
+          thread: { ...parent.thread, worktreePath: null, branch: "review/vic-6477" },
+        } as OrchestrationV2ThreadProjection;
+      };
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Ref.get(dispatched).pipe(
+              Effect.map((commands) =>
+                threadId === parentThreadId
+                  ? onBranch(commands.length === 0 ? [] : [task])
+                  : childProjection,
+              ),
+            ),
+          hasReceipt: () => Effect.succeed(false),
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          assertProviderInstanceEnabled: () => Effect.void,
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.as({
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: null,
+                    event: { type: "subagent.updated", payload: task },
+                  },
+                ],
+              } as never),
+            ),
+        }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) =>
+            Effect.succeedSome({ id, title: "Workspace", workspaceRoot: "/workspace" } as Project),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        ServerSettings.layerTest(),
+      );
+      const layerService = OrchestratorMcpService.layer.pipe(
+        Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+        // The plain folder has no commit, so reading one would fail the delegation.
+        Layer.provide(
+          Layer.mock(GitVcsDriver.GitVcsDriver)({
+            resolveCommit: () => Effect.die("the plain folder has no commit"),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(TaskFolders.TaskFolders)({
+            plan: ({ projectId: planned }) =>
+              Effect.succeed({
+                projectId: planned,
+                projectRoot: "/workspace",
+                projectIsRepository: false,
+                anchor: "/workspace",
+                repositories: [{ name: "app", path: "/workspace/app" }],
+                trackedRepositories: ["/workspace/app"],
+              }),
+          }),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.delegateTask(scope, {
+          task: "Walk through the change.",
+          target: { driverKind: ProviderDriverKind.make("codex") },
+          isolation: "worktree",
+          mode: "async",
+          clientRequestId: "delegate-plain-folder-worktree",
+        });
+        const [command] = (yield* Ref.get(dispatched)) as ReadonlyArray<{
+          readonly workspaceStrategy?: unknown;
+        }>;
+        assert.deepEqual(command?.workspaceStrategy, {
+          type: "worktree",
+          baseRef: "review/vic-6477",
+          startFromOrigin: false,
+        });
+      }).pipe(Effect.provide(layerService.pipe(Layer.provide(layerDependencies))));
+    }),
   );
 
   it.effect.each([
@@ -4164,6 +4287,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
           }),
         ),
+        Layer.provide(Layer.mock(TaskFolders.TaskFolders)({})),
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
@@ -4393,6 +4517,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
         Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)(git)),
+        Layer.provide(Layer.mock(TaskFolders.TaskFolders)({})),
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,

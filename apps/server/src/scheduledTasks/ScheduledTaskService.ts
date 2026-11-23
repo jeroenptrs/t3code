@@ -24,6 +24,7 @@ import {
   type ScheduledTaskRunNowInput,
   type ScheduledTaskRunNowResult,
   type ScheduledTaskSetEnabledInput,
+  type ScheduledTaskSetTargetInput,
   type ScheduledTaskThreadMode,
   type ScheduledTaskUpsertInput,
   TRIGGER_SOURCE_FIELDS,
@@ -342,6 +343,17 @@ export class ScheduledTaskService extends Context.Service<
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
     readonly setEnabled: (
       input: ScheduledTaskSetEnabledInput,
+    ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
+    /**
+     * The only link between a trigger and a factory. Clearing it also turns the trigger off, so a
+     * prompt written for a factory never starts running in threads unasked.
+     */
+    /** One poll of a Jira query or GitLab projects trigger now, on or off; it raises what changed. */
+    readonly checkNow: (
+      input: ScheduledTaskRunNowInput,
+    ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
+    readonly setTarget: (
+      input: ScheduledTaskSetTargetInput,
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
     readonly delete: (
       input: ScheduledTaskDeleteInput,
@@ -2065,6 +2077,58 @@ export const layer = Layer.effect(
       };
     });
 
+    const setTarget: ScheduledTaskService["Service"]["setTarget"] = Effect.fn(
+      "ScheduledTaskService.setTarget",
+    )(function* (input) {
+      const existing = yield* loadTask(input.id);
+      const target: TriggerWorkItemTarget | undefined =
+        input.factoryId === null
+          ? undefined
+          : { type: "work_item", projectId: existing.projectId, factoryId: input.factoryId };
+      if (
+        target !== undefined &&
+        parseFactoryId(target.factoryId)?.projectId !== existing.projectId
+      ) {
+        return yield* taskError("A work item trigger's factory must be in the trigger's project.", {
+          taskId: input.id,
+        });
+      }
+      if (existing.target?.factoryId === target?.factoryId) return { task: existing };
+      const enabled = target === undefined ? false : existing.enabled;
+      const now = yield* localNow;
+      const nextRun =
+        enabled === existing.enabled
+          ? existing.nextRunAt
+          : nextRunAt({ enabled, schedule: existing.schedule }, now);
+      const updated = yield* sql<{ task_id: string }>`
+          UPDATE scheduled_tasks
+          SET fork_target_json = ${target === undefined ? null : JSON.stringify(target)},
+              enabled = ${enabled ? 1 : 0},
+              next_run_at = ${nextRun},
+              updated_at = ${iso(now)}
+          WHERE task_id = ${input.id}
+          RETURNING task_id
+        `.pipe(
+        Effect.mapError((cause) =>
+          taskError("Could not update schedule task.", { taskId: input.id, cause }),
+        ),
+      );
+      if (updated.length === 0) {
+        return yield* taskError("Schedule task not found.", { taskId: input.id });
+      }
+      yield* notifyChanged;
+      const { target: _previous, ...rest } = existing;
+      return {
+        task: {
+          ...rest,
+          ...(target === undefined ? {} : { target }),
+          enabled,
+          nextRunAt: nextRun,
+          updatedAt: iso(now),
+        },
+      };
+    });
+
     const forgetWebhookTask = (id: ScheduledTaskId) =>
       Effect.all(
         [
@@ -2170,6 +2234,20 @@ export const layer = Layer.effect(
         });
       }
       const error = yield* pollTask(task, { fireCurrent: true });
+      if (error !== null) return yield* taskError(error, { taskId: input.id });
+      return { task: yield* loadTask(input.id) };
+    });
+
+    const checkNow: ScheduledTaskService["Service"]["checkNow"] = Effect.fn(
+      "ScheduledTaskService.checkNow",
+    )(function* (input: ScheduledTaskRunNowInput) {
+      const task = yield* loadTask(input.id);
+      if (!isPollSchedule(task.schedule)) {
+        return yield* taskError("Only Jira query and GitLab projects triggers are checked.", {
+          taskId: input.id,
+        });
+      }
+      const error = yield* pollTask(task);
       if (error !== null) return yield* taskError(error, { taskId: input.id });
       return { task: yield* loadTask(input.id) };
     });
@@ -3215,6 +3293,8 @@ export const layer = Layer.effect(
       subscribeList,
       upsert,
       setEnabled,
+      setTarget,
+      checkNow,
       delete: deleteTask,
       deleteForThread,
       moveThreadTasks,

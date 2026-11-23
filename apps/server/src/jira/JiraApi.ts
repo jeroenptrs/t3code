@@ -1,5 +1,6 @@
 import { JiraError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -50,6 +51,60 @@ export type JiraRawSearchPage = typeof RawSearchPage.Type;
 const RawBulkFetch = Schema.Struct({
   issues: Schema.optional(Schema.Array(RawIssue)),
 });
+
+const RawChangeItem = Schema.Struct({
+  field: Schema.optional(Schema.String),
+  fieldId: Schema.optional(Schema.String),
+  to: Schema.optional(Schema.NullOr(Schema.String)),
+  toString: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+/** Jira documents `created` as a date-time but its example shows an epoch number. */
+const RawChangeHistory = Schema.Struct({
+  id: Schema.String,
+  created: Schema.Union([Schema.String, Schema.Number]),
+  items: Schema.optional(Schema.Array(RawChangeItem)),
+});
+
+const RawBulkChangelog = Schema.Struct({
+  issueChangeLogs: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        issueId: Schema.String,
+        changeHistories: Schema.optional(Schema.Array(RawChangeHistory)),
+      }),
+    ),
+  ),
+  nextPageToken: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+export interface JiraChangelogPage {
+  readonly issueChangeLogs: ReadonlyArray<{
+    /** The issue's numeric id, not its key. */
+    readonly issueId: string;
+    readonly changeHistories: ReadonlyArray<{
+      readonly id: string;
+      /** ISO timestamp. */
+      readonly created: string;
+      readonly items: ReadonlyArray<typeof RawChangeItem.Type>;
+    }>;
+  }>;
+  readonly nextPageToken: string | null;
+}
+
+// Below this an epoch number is read as seconds: as milliseconds it would be before 1973.
+const EPOCH_SECONDS_BELOW = 100_000_000_000;
+
+/** An epoch number (seconds or milliseconds) or a Jira timestamp as ISO; null when unreadable. */
+const changelogTime = (value: string | number) =>
+  Option.getOrNull(
+    Option.map(
+      DateTime.make(
+        typeof value === "number" && value < EPOCH_SECONDS_BELOW ? value * 1000 : value,
+      ),
+      DateTime.formatIso,
+    ),
+  );
 
 const RawTransition = Schema.Struct({
   id: Schema.String,
@@ -141,6 +196,7 @@ const decodeRawTenantInfo = Schema.decodeUnknownEffect(RawTenantInfo);
 const decodeRawUser = Schema.decodeUnknownEffect(RawUser);
 const decodeRawSearchPage = Schema.decodeUnknownEffect(RawSearchPage);
 const decodeRawBulkFetch = Schema.decodeUnknownEffect(RawBulkFetch);
+const decodeRawBulkChangelog = Schema.decodeUnknownEffect(RawBulkChangelog);
 const decodeRawIssue = Schema.decodeUnknownEffect(RawIssue);
 const decodeRawTransitions = Schema.decodeUnknownEffect(RawTransitions);
 const decodeRawComments = Schema.decodeUnknownEffect(RawComments);
@@ -177,6 +233,18 @@ export class JiraApi extends Context.Service<
       identity: JiraServerIdentity,
       input: { readonly keys: ReadonlyArray<string>; readonly fields: ReadonlyArray<string> },
     ) => Effect.Effect<ReadonlyArray<JiraRawIssue>, JiraError>;
+    /**
+     * `POST /rest/api/3/changelog/bulkfetch`: one page of the changelogs of up to 1000 issues,
+     * oldest first, limited to at most 10 field ids.
+     */
+    readonly bulkChangelog: (
+      identity: JiraServerIdentity,
+      input: {
+        readonly issueIdsOrKeys: ReadonlyArray<string>;
+        readonly fieldIds: ReadonlyArray<string>;
+        readonly nextPageToken?: string | undefined;
+      },
+    ) => Effect.Effect<JiraChangelogPage, JiraError>;
     readonly getIssue: (
       identity: JiraServerIdentity,
       key: string,
@@ -463,6 +531,33 @@ const make = Effect.gen(function* () {
       ).pipe(
         Effect.map((result) => result.issues ?? []),
         Effect.withSpan("JiraApi.bulkFetch"),
+      ),
+    bulkChangelog: (identity, input) =>
+      read(
+        identity,
+        HttpClientRequest.post("/rest/api/3/changelog/bulkfetch").pipe(
+          HttpClientRequest.bodyJsonUnsafe({
+            issueIdsOrKeys: input.issueIdsOrKeys,
+            fieldIds: input.fieldIds,
+            maxResults: 1000,
+            ...(input.nextPageToken === undefined ? {} : { nextPageToken: input.nextPageToken }),
+          }),
+        ),
+        decodeRawBulkChangelog,
+      ).pipe(
+        Effect.map((page): JiraChangelogPage => ({
+          issueChangeLogs: (page.issueChangeLogs ?? []).map((log) => ({
+            issueId: log.issueId,
+            changeHistories: (log.changeHistories ?? []).flatMap((history) => {
+              const created = changelogTime(history.created);
+              return created === null
+                ? []
+                : [{ id: history.id, created, items: history.items ?? [] }];
+            }),
+          })),
+          nextPageToken: page.nextPageToken ?? null,
+        })),
+        Effect.withSpan("JiraApi.bulkChangelog"),
       ),
     getIssue: (identity, key, options) =>
       read(

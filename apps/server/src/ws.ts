@@ -2547,6 +2547,20 @@ export const layerWsRpc = (
             Effect.andThen(scheduledTasks.runNow(input)),
             Effect.map(({ task }) => ({ trigger: scheduledTaskTrigger(task) })),
           ),
+        [WS_METHODS.triggersSetTarget]: (input) =>
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(scheduledTasks.setTarget(input)),
+            Effect.map(({ task }) => ({ trigger: scheduledTaskTrigger(task) })),
+          ),
+        [WS_METHODS.triggersCheckNow]: (input) =>
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(scheduledTasks.checkNow(input)),
+            Effect.map(({ task }) => ({ trigger: scheduledTaskTrigger(task) })),
+          ),
+        [WS_METHODS.triggersJiraQueryIssues]: (input) =>
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(triggers.jiraQueryIssues(input.id)),
+          ),
         [WS_METHODS.triggersFireCurrent]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.fireCurrent(input)),

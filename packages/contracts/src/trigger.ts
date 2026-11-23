@@ -10,6 +10,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { JiraIssueSummary } from "./jira.ts";
 import { DEFAULT_MODEL } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { OrchestrationV2ThreadLaunchWorkspaceStrategy } from "./orchestrationV2.ts";
@@ -522,6 +523,15 @@ export type TriggerListResult = typeof TriggerListResult.Type;
 
 export const TriggerMutationResult = Schema.Struct({ trigger: Trigger });
 export type TriggerMutationResult = typeof TriggerMutationResult.Type;
+
+/** The issues a Jira query trigger's last check found, as stored; reading it calls no Jira. */
+export const TriggerJiraQueryIssuesResult = Schema.Struct({
+  /** The JQL, or the saved filter's name, the set was read with; null before the first check. */
+  query: Schema.NullOr(Schema.String),
+  checkedAt: Schema.NullOr(IsoDateTime),
+  issues: Schema.Array(JiraIssueSummary),
+});
+export type TriggerJiraQueryIssuesResult = typeof TriggerJiraQueryIssuesResult.Type;
 
 /** The one mapping from a stored scheduled task to the trigger clients and agents see. */
 export function scheduledTaskTrigger(task: ScheduledTask): Trigger {

@@ -18,7 +18,6 @@ import {
   type FactorySkill,
   FactorySkillName,
   type FactorySkillSource,
-  FactoryTrigger,
   isReservedFactoryRoleName,
   ModelSelection,
   type ProjectId,
@@ -60,7 +59,6 @@ const issue = (
 const decodeName = Schema.decodeUnknownOption(FactoryName);
 const isSkillName = Schema.is(FactorySkillName);
 const decodeNames = Schema.decodeUnknownOption(Schema.Array(TrimmedNonEmptyString));
-const decodeTriggers = Schema.decodeUnknownOption(Schema.Array(FactoryTrigger));
 const isRoleName = Schema.is(FactoryRoleName);
 const decodeRolePath = Schema.decodeUnknownOption(FactoryRolePath);
 
@@ -74,7 +72,6 @@ const emptyDefinition = (name: string): FactoryDefinition => ({
   version: 2,
   name,
   projects: [],
-  triggers: [],
   roles: {},
 });
 
@@ -197,12 +194,6 @@ export function parseFactoryJson(
       version: 2,
       name: directoryName,
       projects: field("projects", decodeNames, [], "a list of project names"),
-      triggers: field(
-        "triggers",
-        decodeTriggers,
-        [],
-        'a list of { "kind": "scheduled_task", "scheduledTaskId": "..." }',
-      ),
       roles,
     },
     issues,

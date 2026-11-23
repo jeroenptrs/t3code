@@ -215,7 +215,10 @@ shows the error, and it tries again at the next interval.
 The event types are:
 
 - `issue.entered` when an issue starts matching the query, and `issue.left`
-  when it stops matching.
+  when it stops matching. An issue that stops matching and matches again
+  between two checks raises both too, if the label, status, or assignee that
+  went away and came back is named in the query. T3 Code reads that from the
+  issue's history in Jira.
 - `issue.status_changed`, `issue.labels_changed`, and `issue.assignee_changed`.
 - `issue.updated` when the priority, issue type, or summary changes, for each
   of those that a filter names.

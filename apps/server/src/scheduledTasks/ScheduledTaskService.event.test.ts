@@ -241,3 +241,34 @@ it.effect("records a work item target's run as failed when the factory refuses i
     { create: () => Effect.fail({ message: "Factory not found." }) },
   ),
 );
+
+it.effect("points a trigger at a factory and back, turning it off when it leaves", () =>
+  withService(({ service }) =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project:trigger");
+      const factoryId = FactoryId.make("factory:project:trigger:triage");
+      const { task } = yield* service.upsert(taskInput({}));
+      const stored = () =>
+        service.list().pipe(Effect.map(({ tasks }) => tasks.find(({ id }) => id === task.id)));
+
+      yield* service.setTarget({ id: task.id, factoryId });
+      const attached = yield* stored();
+      assert.deepEqual(attached?.target, { type: "work_item", projectId, factoryId });
+      assert.isTrue(attached?.enabled);
+
+      yield* service.setTarget({ id: task.id, factoryId: null });
+      const detached = yield* stored();
+      assert.isUndefined(detached?.target);
+      assert.isFalse(detached?.enabled);
+      assert.isNull(detached?.nextRunAt);
+
+      const refused = yield* service
+        .setTarget({ id: task.id, factoryId: FactoryId.make("factory:project:other:triage") })
+        .pipe(Effect.flip);
+      assert.equal(
+        refused.message,
+        "A work item trigger's factory must be in the trigger's project.",
+      );
+    }),
+  ),
+);

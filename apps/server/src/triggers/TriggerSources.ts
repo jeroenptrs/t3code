@@ -33,6 +33,7 @@ import {
 import {
   diffJiraIssue,
   diffJiraQueryIssue,
+  type JiraQueryRoundTrip,
   type JiraQueryWatchedField,
   jiraTriggerKey,
 } from "./jiraTriggerSource.ts";
@@ -67,9 +68,22 @@ export class TriggerSources extends Context.Service<
       snapshot: ThreadPullRequestSnapshot,
     ) => Effect.Effect<void, TriggerObservationError>;
     /**
-     * One poll of a Jira query trigger, its observations keyed by the trigger id. The first poll
-     * raises `issue.entered` for the set only with `start: "current"`; a query change re-seeds
-     * silently. A capped set raises no `issue.left`. `fireCurrent` raises entered for the set.
+     * The query a Jira query trigger's stored set was read with, null before its first poll, and
+     * that set by `jiraTriggerKey`. Undecodable rows are left out.
+     */
+    readonly jiraQueryObservations: (triggerId: ScheduledTaskId) => Effect.Effect<
+      {
+        readonly query: string | null;
+        /** When the last poll stored the set; null before the first. */
+        readonly checkedAt: string | null;
+        readonly issues: ReadonlyMap<string, JiraIssueSummary>;
+      },
+      TriggerObservationError
+    >;
+    /**
+     * One Jira query poll, keyed by trigger id. The first raises entered only with `start:
+     * "current"`; a query change re-seeds silently; a capped set raises no left. `fireCurrent`
+     * raises entered for the set. `roundTrips` (by issue key) raise left then entered per trip.
      */
     readonly observeJiraQuery: (input: {
       readonly triggerId: ScheduledTaskId;
@@ -79,6 +93,7 @@ export class TriggerSources extends Context.Service<
       readonly issues: ReadonlyArray<JiraIssueSummary>;
       readonly watchedFields: ReadonlySet<JiraQueryWatchedField>;
       readonly complete: boolean;
+      readonly roundTrips?: ReadonlyMap<string, ReadonlyArray<JiraQueryRoundTrip>> | undefined;
     }) => Effect.Effect<void, TriggerObservationError>;
     /** Where the last poll of a GitLab projects trigger left off; null before its first. */
     readonly gitLabProjectsMarker: (
@@ -264,7 +279,8 @@ const make = Effect.gen(function* () {
         storedQuery === undefined ? input.start === "changes" : storedQuery !== input.query;
       const events: Array<TriggerEvent> = [];
       const writes: Array<readonly [string, string]> = [];
-      if (storedQuery !== input.query) writes.push([marker, input.query]);
+      // Rewritten every poll: its observed_at is when the set was last checked.
+      writes.push([marker, input.query]);
       const context = { triggerId: input.triggerId, query: input.query, occurredAt };
       const current = new Set<string>();
       for (const issue of input.issues) {
@@ -279,6 +295,20 @@ const make = Effect.gen(function* () {
           previousJson === undefined ? null : Option.getOrNull(decodeJiraState(previousJson));
         // An undecodable row is re-seeded rather than read as an entry.
         if (previousJson !== undefined && previous === null) continue;
+        if (previous !== null) {
+          for (const trip of input.roundTrips?.get(issue.key) ?? []) {
+            events.push(
+              ...diffJiraQueryIssue(previous, null, input.watchedFields, {
+                ...context,
+                occurredAt: trip.leftAt,
+              }),
+              ...diffJiraQueryIssue(null, issue, input.watchedFields, {
+                ...context,
+                occurredAt: trip.enteredAt,
+              }),
+            );
+          }
+        }
         events.push(...diffJiraQueryIssue(previous, issue, input.watchedFields, context));
       }
       const left =
@@ -326,6 +356,35 @@ const make = Effect.gen(function* () {
       return [events];
     });
     yield* commit("jira_query", work);
+  });
+
+  const jiraQueryObservations: TriggerSources["Service"]["jiraQueryObservations"] = Effect.fn(
+    "TriggerSources.jiraQueryObservations",
+  )(function* (triggerId) {
+    const marker = `${triggerId}\u0000`;
+    const rows = yield* sql<{
+      readonly key: string;
+      readonly state_json: string;
+      readonly observed_at: string;
+    }>`
+      SELECT key, state_json, observed_at FROM fork_trigger_observations
+      WHERE source = 'jira_query' AND key >= ${marker} AND key < ${`${triggerId}\u0001`}
+    `.pipe(
+      Effect.mapError((cause) => new TriggerObservationError({ source: "jira_query", cause })),
+    );
+    let query: string | null = null;
+    let checkedAt: string | null = null;
+    const issues = new Map<string, JiraIssueSummary>();
+    for (const row of rows) {
+      if (row.key === marker) {
+        query = row.state_json;
+        checkedAt = row.observed_at;
+        continue;
+      }
+      const issue = Option.getOrNull(decodeJiraState(row.state_json));
+      if (issue !== null) issues.set(row.key.slice(marker.length), issue);
+    }
+    return { query, checkedAt, issues };
   });
 
   const gitLabProjectsMarker: TriggerSources["Service"]["gitLabProjectsMarker"] = Effect.fn(
@@ -491,6 +550,7 @@ const make = Effect.gen(function* () {
 
   return TriggerSources.of({
     observeJiraIssues,
+    jiraQueryObservations,
     observeJiraQuery,
     gitLabProjectsMarker,
     observeGitLabProjects,

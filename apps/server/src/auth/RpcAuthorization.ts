@@ -136,6 +136,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.workflowsGet]: AuthOrchestrationReadScope,
   [WS_METHODS.workflowsGetDefinition]: AuthFilesystemReadScope,
   [WS_METHODS.triggersList]: AuthOrchestrationReadScope,
+  [WS_METHODS.triggersJiraQueryIssues]: AuthOrchestrationReadScope,
   [WS_METHODS.triggersSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.secretsAnswerRequest]: AuthOrchestrationOperateScope,
   [WS_METHODS.agentFeedbackAnswerRequest]: AuthOrchestrationOperateScope,
