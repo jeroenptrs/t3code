@@ -94,6 +94,7 @@
   "1861f909464425a6": "a modifié l’état",
   "bd672d0adf5e6d9a": "L’écriture dans ce gestionnaire de tickets nécessite l’autorisation d’écriture sur la gestion de versions.",
   "bfe81d615f5f8f75": "Ce ticket est hors du périmètre de chaque projet ; il est donc en lecture seule ici.",
+  "4f5aa3902d412376": "Pour commenter ou changer l'état en votre nom, ajoutez votre jeton Jira dans l'application web, sous Paramètres → Compte.",
   "8b876f2953338661": "On ne sait pas encore si elle est associée",
   "b8c2bbba2243b429": "Déjà associée",
   "4f1ab8a69f4a85e5": "Cette app n’y est pas connectée",
