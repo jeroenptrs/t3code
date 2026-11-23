@@ -3583,6 +3583,8 @@ export const OrchestrationV2Command = Schema.Union([
     displayKey: TrimmedNonEmptyString,
     title: TrimmedNonEmptyString,
     source: ThreadIssueLinkSource,
+    /** Fork-only. The portal user a Jira link is recorded for; other trackers ignore it. */
+    linkedByUserId: Schema.optional(AuthUserId),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.issue.unlink"),

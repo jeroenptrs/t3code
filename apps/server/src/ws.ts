@@ -856,8 +856,8 @@ export function visibleScheduledTasks(
 
 /**
  * Records the session's portal user on commands that carry one: the creator of a thread it
- * creates and who linked a Jira issue, also by watching it. The server owns these audit fields,
- * so a value the client sent is replaced.
+ * creates and who linked a Jira issue, also by watching it or through the neutral issue link.
+ * The server owns these audit fields, so a value the client sent is replaced.
  */
 export function withSessionUserAttribution(
   command: OrchestrationV2Command,
@@ -867,7 +867,11 @@ export function withSessionUserAttribution(
     const { createdByUserId: _clientValue, ...rest } = command;
     return userId === null ? rest : { ...rest, createdByUserId: userId };
   }
-  if (command.type === "thread.jira-issue.link" || command.type === "thread.jira-issue.watch") {
+  if (
+    command.type === "thread.jira-issue.link" ||
+    command.type === "thread.jira-issue.watch" ||
+    command.type === "thread.issue.link"
+  ) {
     const { linkedByUserId: _clientValue, ...rest } = command;
     return userId === null ? rest : { ...rest, linkedByUserId: userId };
   }

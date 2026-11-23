@@ -31,6 +31,8 @@ import {
   isDeliveredProviderTurn,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
+  JIRA_ISSUE_KEY_PATTERN,
+  JIRA_ISSUE_TRACKER_KIND,
   MessageId,
   type NodeId,
   type ModelSelection,
@@ -666,6 +668,35 @@ function withoutJiraIssueWatches<T extends Pick<OrchestrationV2AppThread, "jiraI
 /** Fork-only. The site and key a Jira command names, as links store them. */
 function jiraIssueKeyOf(command: { readonly site: string; readonly key: string }) {
   return { site: command.site.trim().toLowerCase(), key: command.key.trim().toUpperCase() };
+}
+
+/**
+ * Fork-only. A tracker-neutral link or unlink that names a Jira issue, as the Jira command that
+ * stores it: `thread.jiraIssues` is the only store the Jira reactors, watches and triggers read.
+ * Null for any other tracker.
+ */
+function jiraIssueCommandOf(
+  command: Extract<
+    OrchestrationV2ServerCommand,
+    { readonly type: "thread.issue.link" | "thread.issue.unlink" }
+  >,
+) {
+  if (command.tracker !== JIRA_ISSUE_TRACKER_KIND) return null;
+  const target = {
+    commandId: command.commandId,
+    threadId: command.threadId,
+    site: command.host,
+    key: command.key,
+  };
+  if (command.type === "thread.issue.unlink") {
+    return { ...target, type: "thread.jira-issue.unlink" as const };
+  }
+  return {
+    ...target,
+    type: "thread.jira-issue.link" as const,
+    source: command.source,
+    ...(command.linkedByUserId === undefined ? {} : { linkedByUserId: command.linkedByUserId }),
+  };
 }
 
 /**
@@ -16469,8 +16500,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":
       case "thread.pull-request-link.sync":
-      case "thread.issue.link":
-      case "thread.issue.unlink":
       case "thread.jira-issue.link":
       case "thread.jira-issue.unlink":
       case "thread.jira-issue.sync":
@@ -16492,6 +16521,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cancelUnsettledEffects = yield* dispatchMessage(continuation, events, effects);
           yield* recordSubagentFollowup(continuation, events).pipe(mapDispatchError(command));
         }
+        break;
+      }
+      case "thread.issue.link":
+      case "thread.issue.unlink": {
+        const jiraCommand = jiraIssueCommandOf(command);
+        // Fork-only. The Jira link's key is typed, so a key Jira cannot issue is refused here.
+        if (jiraCommand !== null && !JIRA_ISSUE_KEY_PATTERN.test(jiraIssueKeyOf(jiraCommand).key)) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `${command.key} is not a Jira issue key.`,
+          });
+        }
+        // A neutral Jira link stored before this routing is still removed where it is.
+        const storedNeutral =
+          jiraCommand !== null &&
+          command.type === "thread.issue.unlink" &&
+          (yield* findThread(command.threadId))?.issues?.some((link) =>
+            threadIssueKeysEqual(link, command),
+          ) === true;
+        yield* dispatchThreadMutation(
+          storedNeutral ? command : (jiraCommand ?? command),
+          events,
+          effects,
+        );
         break;
       }
       case "thread.pull-request-watch.checks-reopen":

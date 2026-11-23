@@ -22,6 +22,7 @@ import {
   EnvironmentId,
   EventId,
   GitManagerError,
+  IssueTrackerKind,
   VcsProcessSpawnError,
   MessageId,
   ProjectId,
@@ -274,6 +275,25 @@ it("records the session's user as who linked a Jira issue, never the client's cl
   };
   assert.propertyVal(withSessionUserAttribution(watch, ada), "linkedByUserId", ada);
   assert.notProperty(withSessionUserAttribution(watch, null), "linkedByUserId");
+
+  // A neutral link to a Jira issue is stored as a Jira link, so it records the user too.
+  const neutral: OrchestrationV2Command = {
+    type: "thread.issue.link",
+    commandId: CommandId.make("neutral-link"),
+    threadId: ThreadId.make("thread:new"),
+    tracker: IssueTrackerKind.make("jira"),
+    host: "acme.atlassian.net",
+    scope: "ABC",
+    key: "ABC-1",
+    projectId: ProjectId.make("project-1"),
+    url: "https://acme.atlassian.net/browse/ABC-1",
+    displayKey: "ABC-1",
+    title: "Ship it",
+    source: "manual",
+    linkedByUserId: AuthUserId.make("user-spoofed"),
+  };
+  assert.propertyVal(withSessionUserAttribution(neutral, ada), "linkedByUserId", ada);
+  assert.notProperty(withSessionUserAttribution(neutral, null), "linkedByUserId");
 });
 
 const decodeScheduledTaskList = Schema.decodeSync(ScheduledTaskListResult);
