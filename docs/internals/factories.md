@@ -9,7 +9,7 @@ state and never a prompt. The design and milestones are in
 
 ```
 <project root>/.t3/factories/<name>/
-  factory.json        name, projects, triggers, roles
+  factory.json        name, projects, roles
   roles/<role>.md     YAML frontmatter with bindings, then the instructions
   skills/<skill>/     SKILL.md and its supporting files, in the Agent Skills format
 
@@ -100,6 +100,9 @@ the item's log.
 - The Foreman is one thread per factory with a `factory-foreman:` id. Its
   `fork_factory_threads` row lands before the launch, so its first provider
   session gets the role. An archived or deleted one is replaced next time.
+- A trigger's `target` is the only link to its factory; `factory.json` lists
+  no triggers. A task id is local to one environment, so a list in a file that
+  travels with the repository could only drift from the target.
 - A work item a trigger creates has a `trigger` source with the trigger's
   title and the event. The Foreman's message names the trigger and its source,
   then the source text: the event's fields as `label: value` lines, each value

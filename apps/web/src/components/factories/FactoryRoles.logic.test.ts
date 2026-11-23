@@ -74,7 +74,6 @@ const factory: Factory = {
     version: 2,
     name: "nightly-triage",
     projects: ["web"],
-    triggers: [{ kind: "scheduled_task", scheduledTaskId: taskId }],
     roles: { review: "roles/review.md", implement: null },
   },
   projects: [{ name: "web", projectId: ProjectId.make("project-web") }],

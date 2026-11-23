@@ -19,6 +19,12 @@ describe("validateFactoryPageSearch", () => {
     ],
     [{ tab: "work-items", stage: "Shipped!", outcome: 3 }, { tab: "work-items" }],
     [{ tab: "canvas", role: "Not A Role" }, {}],
+    [
+      { tab: "triggers", trigger: "scheduled-task:review" },
+      { tab: "triggers", trigger: "scheduled-task:review" },
+    ],
+    // A trigger page belongs to the Triggers tab.
+    [{ tab: "roles", trigger: "scheduled-task:review" }, { tab: "roles" }],
   ])("reads %j", (raw, expected) => {
     expect(validateFactoryPageSearch(raw)).toEqual(expected);
   });
@@ -28,13 +34,12 @@ const issue = (role: string | null, field: string | null, code = "unknown_model"
   ({ code, role, field, message: "" }) as FactoryIssue;
 
 describe("issueCountByTab", () => {
-  it("counts a role's issues on Roles, triggers on Triggers, and factory.json on Settings", () => {
+  it("counts a role's issues on Roles and factory.json's on Settings", () => {
     const counts = issueCountByTab([
       issue("implement", "model"),
       issue("foreman", null),
-      issue(null, "triggers", "unknown_scheduled_task"),
       issue(null, "projects", "unknown_project"),
     ]);
-    expect(Object.fromEntries(counts)).toEqual({ roles: 2, triggers: 1, settings: 1 });
+    expect(Object.fromEntries(counts)).toEqual({ roles: 2, settings: 1 });
   });
 });

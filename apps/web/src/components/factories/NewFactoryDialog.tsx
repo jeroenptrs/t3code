@@ -71,7 +71,6 @@ export function NewFactoryDialog(props: {
           version: 2,
           name: name.trim(),
           projects: [],
-          triggers: [],
           roles: { implement: null, review: null },
         },
       },

@@ -47,6 +47,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
+import * as TaskFolders from "../../workspace/TaskFolders.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import type * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
@@ -74,6 +75,7 @@ const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(notHomeLayer),
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+  Layer.provide(Layer.mock(TaskFolders.TaskFolders)({})),
 );
 
 const declaredFailure = (result: McpSchema.CallToolResult) => {

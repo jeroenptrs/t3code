@@ -112,13 +112,6 @@ export const FactoryEffectiveBinding = Schema.Struct({
 });
 export type FactoryEffectiveBinding = typeof FactoryEffectiveBinding.Type;
 
-/** Webhook triggers are scheduled tasks too, so this one kind covers both. */
-export const FactoryTrigger = Schema.Struct({
-  kind: Schema.Literal("scheduled_task"),
-  scheduledTaskId: ScheduledTaskId,
-});
-export type FactoryTrigger = typeof FactoryTrigger.Type;
-
 /** Relative to the factory directory, such as `roles/foreman.md`. No segment starts with a dot. */
 export const FactoryRolePath = TrimmedNonEmptyString.check(
   Schema.isPattern(/^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.md$/),
@@ -135,7 +128,6 @@ export const FactoryDefinition = Schema.Struct({
   name: FactoryName,
   /** T3 project names the factory may work in. The owning project is implied. */
   projects: Schema.Array(TrimmedNonEmptyString),
-  triggers: Schema.Array(FactoryTrigger),
   /**
    * The factory's roles besides the Foreman, which it always has, in order: each to its file, or
    * null for none. Keys are checked as role names when read and saved.
@@ -206,7 +198,6 @@ export const FactoryIssueCode = Schema.Literals([
   "name_mismatch",
   "unknown_project",
   "ambiguous_project",
-  "unknown_scheduled_task",
   "missing_role_file",
   "invalid_role_file",
   "invalid_binding",
@@ -285,6 +276,7 @@ export const Factory = Schema.Struct({
   /** Every skill a role here can name, by name: the factory's, then home, then built-in. */
   skills: Schema.Array(FactorySkill),
   issues: Schema.Array(FactoryIssue),
+  /** The triggers whose target is this factory. */
   scheduledTaskIds: Schema.Array(ScheduledTaskId),
   threads: Schema.Array(FactoryThread),
   attention: FactoryAttention,

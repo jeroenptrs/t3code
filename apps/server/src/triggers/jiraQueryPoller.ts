@@ -7,11 +7,19 @@ import * as JiraApi from "../jira/JiraApi.ts";
 import * as JiraIdentities from "../jira/JiraIdentities.ts";
 import { summaryFields, toIssueSummary } from "../jira/issueMapping.ts";
 import * as ScheduledTaskPoller from "../scheduledTasks/ScheduledTaskPoller.ts";
-import { jiraQueryWatchedFields } from "./jiraTriggerSource.ts";
+import {
+  type JiraChangeHistory,
+  JIRA_ROUND_TRIP_FIELDS,
+  type JiraQueryRoundTrip,
+  jiraQueryRoundTrips,
+  jiraQueryWatchedFields,
+  jiraTriggerKey,
+} from "./jiraTriggerSource.ts";
 import * as TriggerSources from "./TriggerSources.ts";
 
 const PAGE_SIZE = 100;
 const MAX_ISSUES = 500;
+const MAX_CHANGELOG_PAGES = 10;
 // Sprints and story points are not watched, so the poll skips the field lookup they need.
 const NO_CUSTOM_FIELDS = { sprint: null, storyPoints: null };
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
@@ -22,8 +30,9 @@ export const make = Effect.gen(function* () {
   const sources = yield* TriggerSources.TriggerSources;
 
   /**
-   * One poll of a Jira query trigger, always as the site's configured service identity and never
-   * through the read cache. A saved filter's JQL is read on every poll, so edits to it apply.
+   * One poll of a Jira query trigger, as the site's service identity, uncached. A saved filter's
+   * JQL is read every poll. Issues in both polls whose `updated` moved get their changelog read,
+   * to catch a leave and return in between; a failed read fails the poll before anything is stored.
    */
   const pollJiraQuery = Effect.fn("jiraQueryPoller.pollJiraQuery")(
     function* (task: ScheduledTask, options?: { readonly fireCurrent?: boolean }) {
@@ -45,6 +54,7 @@ export const make = Effect.gen(function* () {
       }
       if (jql === undefined) return;
       const issues: Array<JiraIssueSummary> = [];
+      const idsByKey = new Map<string, string>();
       let nextPageToken: string | undefined;
       let complete = false;
       for (let page = 0; page < MAX_ISSUES / PAGE_SIZE; page += 1) {
@@ -56,6 +66,7 @@ export const make = Effect.gen(function* () {
         });
         for (const issue of result.issues ?? []) {
           issues.push(toIssueSummary(issue, { site: identity.site, fieldIds: NO_CUSTOM_FIELDS }));
+          idsByKey.set(issue.key, issue.id);
         }
         nextPageToken = result.nextPageToken ?? undefined;
         if (nextPageToken === undefined) {
@@ -63,20 +74,60 @@ export const make = Effect.gen(function* () {
           break;
         }
       }
+      const observed = issues.slice(0, MAX_ISSUES);
+      const stored = yield* sources.jiraQueryObservations(task.id);
+      const moved =
+        stored.query === query
+          ? observed.flatMap((issue) => {
+              const previous = stored.issues.get(jiraTriggerKey(issue.site, issue.key));
+              const id = idsByKey.get(issue.key);
+              return previous === undefined ||
+                id === undefined ||
+                previous.updated === null ||
+                previous.updated === issue.updated
+                ? []
+                : [{ id, previous, issue }];
+            })
+          : [];
+      const roundTrips = new Map<string, ReadonlyArray<JiraQueryRoundTrip>>();
+      if (moved.length > 0) {
+        const histories = new Map<string, Array<JiraChangeHistory>>();
+        let changelogToken: string | undefined;
+        for (let page = 0; page < MAX_CHANGELOG_PAGES; page += 1) {
+          const result = yield* api.bulkChangelog(identity, {
+            issueIdsOrKeys: moved.map(({ id }) => id),
+            fieldIds: JIRA_ROUND_TRIP_FIELDS,
+            nextPageToken: changelogToken,
+          });
+          for (const log of result.issueChangeLogs) {
+            const list = histories.get(log.issueId) ?? [];
+            list.push(...log.changeHistories);
+            histories.set(log.issueId, list);
+          }
+          changelogToken = result.nextPageToken ?? undefined;
+          if (changelogToken === undefined) break;
+        }
+        for (const { id, previous, issue } of moved) {
+          const trips = jiraQueryRoundTrips(previous, issue, histories.get(id) ?? [], jql);
+          if (trips.length > 0) roundTrips.set(issue.key, trips);
+        }
+      }
       yield* Effect.annotateCurrentSpan({
         "scheduled_task.id": task.id,
         "jira.site": identity.site,
         "jira.issues": issues.length,
         "jira.complete": complete,
+        "jira.changelogs": moved.length,
       });
       yield* sources.observeJiraQuery({
         triggerId: task.id,
         start: schedule.start ?? "changes",
         fireCurrent: options?.fireCurrent === true,
         query,
-        issues: issues.slice(0, MAX_ISSUES),
+        issues: observed,
         watchedFields: jiraQueryWatchedFields(schedule.filters ?? []),
         complete,
+        roundTrips,
       });
     },
     (effect, task, _options?: { readonly fireCurrent?: boolean }) =>
