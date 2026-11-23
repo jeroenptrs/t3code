@@ -10,8 +10,6 @@ import {
   type StandaloneIssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
-import * as JiraApi from "../jira/JiraApi.ts";
-import * as JiraIdentities from "../jira/JiraIdentities.ts";
 import * as JiraIssueTracker from "../jira/JiraIssueTracker.ts";
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
 import * as IssueTrackerHostLive from "./IssueTrackerHostLive.ts";
@@ -45,7 +43,7 @@ const STANDALONE_TRACKERS = [LinearDriver.make, JiraDriver.make];
 const make = Effect.gen(function* () {
   const drivers = yield* BuiltInDrivers.SourceControlDrivers;
   const standalone = yield* Effect.all(STANDALONE_TRACKERS);
-  // Fork: Jira reads as the server's reader identity, so it registers only where one is configured,
+  // Fork: Jira needs the server's reader identity, so it registers only where one is configured,
   // and then replaces upstream's per-user Jira tracker, which shares its kind.
   const jira = yield* JiraIssueTracker.registered;
   const forkKinds = new Set(jira.map((tracker) => tracker.kind));
@@ -62,8 +60,7 @@ export const layer = Layer.effect(IssueTrackerRegistry, make).pipe(
       BuiltInDrivers.layer,
       IssueTrackerHostLive.layer,
       // Fork: the same instances the Jira services build, by layer memoization.
-      JiraApi.layer,
-      JiraIdentities.layer,
+      JiraIssueTracker.layerDependencies,
     ),
   ),
 );

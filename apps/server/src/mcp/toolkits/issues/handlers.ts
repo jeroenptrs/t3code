@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as IssueService from "../../../issue/IssueService.ts";
+import { refuseAgentJiraWrite } from "../../../jira/agentWriteRefusal.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -235,6 +236,8 @@ const make = Effect.gen(function* () {
     create_issue: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
         const scope = yield* requireProjectScope(input.projectId, { scope: input.scope });
+        // Fork: a Jira write is a proposal a user approves, never a direct call.
+        yield* refuseAgentJiraWrite(scope.tracker, "create");
         const created = yield* issues.create({
           ...scope,
           title: input.title,
@@ -253,6 +256,7 @@ const make = Effect.gen(function* () {
     comment_on_issue: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
         const target = yield* resolveTarget(input);
+        yield* refuseAgentJiraWrite(target.tracker, "comment");
         yield* issues.comment({ ...refOf(target), body: input.body, audience: input.audience });
         return identityOf(target);
       }),
@@ -260,6 +264,7 @@ const make = Effect.gen(function* () {
     set_issue_state: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
         const target = yield* resolveTarget(input);
+        yield* refuseAgentJiraWrite(target.tracker, "setState");
         yield* issues.setState({
           ...refOf(target),
           state: input.state,
