@@ -198,9 +198,7 @@ export function IssueThreadLinks({
             <ThreadLinkPicker
               environmentId={environmentId}
               pending={pending}
-              isLinked={(candidate) =>
-                (candidate.issues ?? []).some((existing) => threadIssueKeysEqual(existing, key))
-              }
+              isLinked={(candidate) => threadLinksIssue(candidate, key)}
               onSelect={(threadId) => void changeLink(threadId, false)}
             />
           </DialogPopup>
