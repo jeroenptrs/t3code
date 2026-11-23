@@ -362,7 +362,6 @@ describe("FactoryService", () => {
         version: 2 as const,
         name: "triage",
         projects: ["backend"],
-        triggers: [],
         roles: { implement: null, review: null },
       };
 
@@ -434,7 +433,6 @@ describe("FactoryService", () => {
             version: 2,
             name: "triage",
             projects: [],
-            triggers: [],
             roles: { review: null },
           },
           roles: [
@@ -489,7 +487,6 @@ describe("FactoryService", () => {
           version: 2,
           name: "triage",
           projects: [],
-          triggers: [],
           roles,
         });
         assert.deepStrictEqual(
@@ -503,7 +500,7 @@ describe("FactoryService", () => {
         assert.deepStrictEqual(factory.issues, []);
         assert.deepStrictEqual(
           JSON.parse(yield* fileSystem.readFileString(`${root}/.t3/factories/triage/factory.json`)),
-          { version: 2, name: "triage", projects: [], triggers: [], roles },
+          { version: 2, name: "triage", projects: [], roles },
         );
         assert.deepStrictEqual(saved.roles, factory.roles);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -579,7 +576,6 @@ describe("FactoryService", () => {
             version: 2,
             name: "triage",
             projects: [],
-            triggers: [],
             roles: {
               waiting: null,
               "Bad Name": null,
@@ -612,18 +608,17 @@ describe("FactoryService", () => {
     "owns its role threads and its scheduled tasks' threads and counts what needs a person",
     () =>
       Effect.gen(function* () {
-        const nightly = task("scheduled-task:nightly");
         const root = yield* checkout({
-          ".t3/factories/triage/factory.json": factoryJson({
-            name: "triage",
-            triggers: [
-              { kind: "scheduled_task", scheduledTaskId: nightly.id },
-              { kind: "scheduled_task", scheduledTaskId: "scheduled-task:deleted" },
-            ],
-          }),
+          ".t3/factories/triage/factory.json": factoryJson({ name: "triage" }),
         });
         const backend = project("project-backend", "backend", root);
         const factoryId = makeFactoryId(backend.projectId, "triage");
+        const nightly: ScheduledTask = {
+          ...task("scheduled-task:nightly"),
+          target: { type: "work_item", projectId: backend.projectId, factoryId },
+        };
+        // A task in the project without a target is not the factory's.
+        const untargeted = task("scheduled-task:untargeted");
 
         const result = yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
@@ -653,7 +648,7 @@ describe("FactoryService", () => {
           yield* message("m-2", "t-run", nightly.id);
           yield* message("m-3", "t-run-deleted", nightly.id);
           yield* message("m-4", "t-mine", null);
-          yield* message("m-5", "t-mine", "scheduled-task:someone-elses");
+          yield* message("m-5", "t-mine", untargeted.id);
           yield* sql`
           INSERT INTO fork_factory_threads (factory_id, thread_id, role, created_at)
           VALUES (${factoryId}, 't-foreman', 'foreman', '2026-11-01T00:00:00.000Z')
@@ -722,7 +717,7 @@ describe("FactoryService", () => {
           Effect.provide(
             layerFor({
               projects: [backend],
-              tasks: [nightly],
+              tasks: [nightly, untargeted],
               shells: [
                 shell("t-foreman", { status: "failed" }),
                 shell("t-run", {
@@ -759,10 +754,7 @@ describe("FactoryService", () => {
           questions: 1,
           total: 5,
         });
-        assert.deepStrictEqual(
-          result.factory.issues.map((issue) => issue.code),
-          ["unknown_scheduled_task"],
-        );
+        assert.deepStrictEqual(result.factory.issues, []);
         assert.deepStrictEqual(result.list.factories[0]?.threadIds, [
           ThreadId.make("t-foreman"),
           ThreadId.make("t-child"),
@@ -778,7 +770,6 @@ describe("FactoryService", () => {
       const root = yield* checkout({
         ".t3/factories/triage/factory.json": factoryJson({
           name: "triage",
-          triggers: [{ kind: "scheduled_task", scheduledTaskId: nightly.id }],
         }),
         ".t3/factories/triage/roles/review.md": "---\n---\n\nReview it.\n",
         ".t3/factories/other/factory.json": factoryJson({ name: "other" }),

@@ -631,7 +631,7 @@ describe("Factories authorization", () => {
     id: FactoryId.make("factory:project-1:triage"),
     projectId: ProjectId.make("project-1"),
     name: "triage",
-    definition: { version: 2 as const, name: "triage", projects: [], triggers: [], roles: {} },
+    definition: { version: 2 as const, name: "triage", projects: [], roles: {} },
     projects: [],
     roles: [],
     rolePresets: [],

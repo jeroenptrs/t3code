@@ -1,7 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
 import { type JiraIssueSummary, ScheduledTaskId } from "@t3tools/contracts";
 
-import { diffJiraIssue, diffJiraQueryIssue, jiraQueryWatchedFields } from "./jiraTriggerSource.ts";
+import {
+  diffJiraIssue,
+  diffJiraQueryIssue,
+  jiraQueryRoundTrips,
+  jiraQueryWatchedFields,
+} from "./jiraTriggerSource.ts";
 
 const AT = "2026-11-05T10:00:00.000Z";
 
@@ -188,6 +193,81 @@ describe("diffJiraQueryIssue", () => {
         context,
       ),
       [],
+    );
+  });
+});
+
+describe("jiraQueryRoundTrips", () => {
+  const before = issue({ labels: ["backend", "needs-review"], updated: AT });
+  const after = issue({ labels: ["backend", "needs-review"], updated: "2026-11-05T10:20:00.000Z" });
+  const labels = (created: string, toString: string) => ({
+    created,
+    items: [{ fieldId: "labels", toString }],
+  });
+  const status = (created: string, toString: string) => ({
+    created,
+    items: [{ fieldId: "status", toString }],
+  });
+  const cases: ReadonlyArray<{
+    readonly name: string;
+    readonly jql: string;
+    readonly histories: Parameters<typeof jiraQueryRoundTrips>[2];
+    readonly previous?: JiraIssueSummary;
+    readonly expected: ReturnType<typeof jiraQueryRoundTrips>;
+  }> = [
+    {
+      name: "a label the JQL names, removed and added back",
+      jql: "labels = Needs-Review",
+      histories: [
+        labels("2026-11-05T10:15:00.000Z", "backend needs-review"),
+        labels("2026-11-05T10:05:00.000Z", "backend"),
+      ],
+      expected: [{ leftAt: "2026-11-05T10:05:00.000Z", enteredAt: "2026-11-05T10:15:00.000Z" }],
+    },
+    {
+      name: "a label the JQL does not name",
+      jql: "labels = needs-review",
+      histories: [
+        labels("2026-11-05T10:05:00.000Z", "needs-review"),
+        labels("2026-11-05T10:15:00.000Z", "backend needs-review"),
+      ],
+      expected: [],
+    },
+    {
+      name: "a status the JQL names, left and returned to",
+      jql: 'status = "To Do"',
+      histories: [
+        status("2026-11-05T10:05:00.000Z", "In Progress"),
+        status("2026-11-05T10:10:00.000Z", "Review"),
+        status("2026-11-05T10:15:00.000Z", "To Do"),
+      ],
+      expected: [{ leftAt: "2026-11-05T10:05:00.000Z", enteredAt: "2026-11-05T10:15:00.000Z" }],
+    },
+    {
+      name: "history at or before the stored update",
+      jql: "labels = needs-review",
+      histories: [
+        labels("2026-11-05T09:55:00.000Z", "backend"),
+        labels(AT, "backend needs-review"),
+      ],
+      expected: [],
+    },
+    {
+      name: "a stored state without an update time",
+      jql: "labels = needs-review",
+      previous: issue({ labels: ["backend", "needs-review"] }),
+      histories: [
+        labels("2026-11-05T10:05:00.000Z", "backend"),
+        labels("2026-11-05T10:15:00.000Z", "backend needs-review"),
+      ],
+      expected: [],
+    },
+  ];
+
+  it.each(cases)("$name", (testCase) => {
+    assert.deepEqual(
+      jiraQueryRoundTrips(testCase.previous ?? before, after, testCase.histories, testCase.jql),
+      testCase.expected,
     );
   });
 });

@@ -279,7 +279,8 @@ interface LoadedFactory {
 interface Catalog {
   readonly projects: ReadonlyArray<ProjectRow>;
   readonly providers: ReadonlyArray<ServerProvider>;
-  readonly scheduledTaskIds: ReadonlySet<ScheduledTaskId>;
+  /** Each factory's triggers: the tasks whose target is it, in list order. */
+  readonly tasksByFactory: ReadonlyMap<FactoryId, ReadonlyArray<ScheduledTaskId>>;
 }
 
 interface OwnedView {
@@ -438,11 +439,13 @@ const make = Effect.gen(function* () {
     const projects = yield* projectStore.list();
     const providers = yield* providerRegistry.getProviders;
     const { tasks } = yield* scheduledTasks.list();
-    return {
-      projects,
-      providers,
-      scheduledTaskIds: new Set(tasks.map((task) => task.id)),
-    } satisfies Catalog;
+    const tasksByFactory = new Map<FactoryId, Array<ScheduledTaskId>>();
+    for (const task of tasks) {
+      if (task.target === undefined) continue;
+      const { factoryId } = task.target;
+      tasksByFactory.set(factoryId, [...(tasksByFactory.get(factoryId) ?? []), task.id]);
+    }
+    return { projects, providers, tasksByFactory } satisfies Catalog;
   }).pipe(Effect.catch(unavailable("read")));
 
   const loadFactory = Effect.fn("FactoryService.loadFactory")(function* (
@@ -505,13 +508,7 @@ const make = Effect.gen(function* () {
     factories: ReadonlyArray<LoadedFactory>,
     catalog: Catalog,
   ) {
-    const taskIdsOf = (factory: LoadedFactory) => [
-      ...new Set(
-        factory.definition.triggers
-          .map((trigger) => trigger.scheduledTaskId)
-          .filter((taskId) => catalog.scheduledTaskIds.has(taskId)),
-      ),
-    ];
+    const taskIdsOf = (factory: LoadedFactory) => catalog.tasksByFactory.get(factory.id) ?? [];
     const factoryIds = factories.map((factory) => factory.id);
     const taskIds = [...new Set(factories.flatMap(taskIdsOf))];
     const roleRows =
@@ -650,22 +647,10 @@ const make = Effect.gen(function* () {
         if (shell.pendingRuntimeRequest?.kind === "user_input") questions += 1;
       }
       const resolved = resolveProjects(factory.definition.projects, catalog.projects);
-      const unknownTasks = factory.definition.triggers.filter(
-        (trigger) => !catalog.scheduledTaskIds.has(trigger.scheduledTaskId),
-      );
       return {
         factory,
         projects: resolved.projects,
-        issues: [
-          ...factory.issues,
-          ...resolved.issues,
-          ...unknownTasks.map((trigger): FactoryIssue => ({
-            code: "unknown_scheduled_task",
-            role: null,
-            field: "triggers",
-            message: `No scheduled task ${trigger.scheduledTaskId} exists here.`,
-          })),
-        ],
+        issues: [...factory.issues, ...resolved.issues],
         scheduledTaskIds,
         threads,
         attention: {
