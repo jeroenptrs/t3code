@@ -7,7 +7,7 @@
  */
 import {
   CommandId,
-  threadIssueKeysEqual,
+  threadLinksIssue,
   type IssueLinkedThreadsResult,
   type IssueOperationError,
   type IssueRef,
@@ -69,11 +69,7 @@ const make = Effect.gen(function* () {
   const isLinked = (threadId: ThreadId, key: ThreadIssueKey) =>
     orchestrator
       .getThreadShell(threadId)
-      .pipe(
-        Effect.map(
-          (thread) => thread?.issues?.some((link) => threadIssueKeysEqual(link, key)) === true,
-        ),
-      );
+      .pipe(Effect.map((thread) => thread !== null && threadLinksIssue(thread, key)));
 
   const link: ThreadIssueService["Service"]["link"] = Effect.fn("ThreadIssueService.link")(
     function* (input) {

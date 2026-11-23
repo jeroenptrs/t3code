@@ -862,18 +862,22 @@ export function visibleScheduledTasks(
 
 /**
  * Records the session's portal user on commands that carry one: the creator of a thread it
- * creates and who linked a Jira issue, also by watching it. The server owns these audit fields,
- * so a value the client sent is replaced.
+ * creates and who linked a Jira issue, also by watching it or through the neutral issue link.
+ * The server owns these audit fields, so a value the client sent is replaced.
  */
 export function withSessionUserAttribution(
   command: OrchestrationV2Command,
   userId: AuthUserId | null,
 ): OrchestrationV2Command {
   if (command.type === "thread.create") {
-  const { createdByUserId: _clientValue, ...rest } = command;
-  return userId === null ? rest : { ...rest, createdByUserId: userId };
+    const { createdByUserId: _clientValue, ...rest } = command;
+    return userId === null ? rest : { ...rest, createdByUserId: userId };
   }
-  if (command.type === "thread.jira-issue.link" || command.type === "thread.jira-issue.watch") {
+  if (
+    command.type === "thread.jira-issue.link" ||
+    command.type === "thread.jira-issue.watch" ||
+    command.type === "thread.issue.link"
+  ) {
     const { linkedByUserId: _clientValue, ...rest } = command;
     return userId === null ? rest : { ...rest, linkedByUserId: userId };
   }
@@ -2173,11 +2177,11 @@ export const layerWsRpc = (
                     ? threadLaunch.retryPreparation(command)
                     : ThreadMessageIntake.dispatchCommand(
                         withSessionUserAttribution(
-                        ThreadManagementService.withCreationProvenance(command, {
-                          createdBy: "user",
-                          creationSource:
-                            "creationSource" in command ? command.creationSource : "web",
-                        }),
+                          ThreadManagementService.withCreationProvenance(command, {
+                            createdBy: "user",
+                            creationSource:
+                              "creationSource" in command ? command.creationSource : "web",
+                          }),
                           currentSession.userId ?? null,
                         ),
                         {
@@ -3193,7 +3197,7 @@ export const layerWsRpc = (
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           Effect.andThen(
             input.cwd === undefined ? Effect.void : ensureReadable(input.cwd),
-          sourceControlRepositories.lookupRepository(input),
+            sourceControlRepositories.lookupRepository(input),
           ),
         [WS_METHODS.sourceControlCloneRepository]: (input) =>
           sourceControlRepositories.cloneRepository(input),
@@ -3280,76 +3284,76 @@ export const layerWsRpc = (
         [WS_METHODS.projectsSearchEntries]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd),
-          workspaceEntries.search(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectSearchEntriesError({
-                  cwd: input.cwd,
-                  queryLength: input.query.length,
-                  limit: input.limit,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
+            workspaceEntries.search(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectSearchEntriesError({
+                    cwd: input.cwd,
+                    queryLength: input.query.length,
+                    limit: input.limit,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsSearchContents]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd),
-          workspaceEntries.searchContents(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectSearchContentsError({
-                  cwd: input.cwd,
-                  queryLength: input.query.length,
-                  limit: input.limit,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
+            workspaceEntries.searchContents(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectSearchContentsError({
+                    cwd: input.cwd,
+                    queryLength: input.query.length,
+                    limit: input.limit,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsListEntries]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd, path.resolve(input.cwd, input.directoryPath ?? "")),
-          workspaceEntries.list(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectListEntriesError({
-                  ...input,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
+            workspaceEntries.list(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectListEntriesError({
+                    ...input,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsListIgnoredFiles]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd),
-          workspaceEntries.listIgnoredFiles(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectListEntriesError({
-                  ...input,
-                  ...projectEntriesFailureContext(cause),
-                  cause,
-                }),
+            workspaceEntries.listIgnoredFiles(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectListEntriesError({
+                    ...input,
+                    ...projectEntriesFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsReadFile]: (input) =>
           Effect.andThen(
             ensureReadable(path.resolve(input.cwd, input.relativePath)),
-          workspaceFileSystem.readFile(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectReadFileError({
-                  ...input,
-                  ...projectFileFailureContext(cause),
-                  cause,
-                }),
+            workspaceFileSystem.readFile(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectReadFileError({
+                    ...input,
+                    ...projectFileFailureContext(cause),
+                    cause,
+                  }),
+              ),
             ),
-          ),
           ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           workspaceFileSystem.writeFile(input).pipe(
@@ -3381,27 +3385,27 @@ export const layerWsRpc = (
         [WS_METHODS.filesystemGetMetadata]: Effect.fn("ws.filesystemGetMetadata")(function* (
           input: FilesystemGetMetadataInput,
         ) {
-            // Paths a confined session cannot read report no metadata, like a missing file,
-            // so one outside path does not fail the whole batch.
-            const readable = yield* Effect.forEach(
-              input.paths,
-              (targetPath) =>
-                workspaceReadAccess.ensureReadable(currentSession.scopes, targetPath).pipe(
-                  Effect.as(true),
-                  Effect.orElseSucceed(() => false),
-                ),
-              { concurrency: 8 },
-            );
-            const paths = input.paths.filter((_, index) => readable[index]);
-            const { entries } =
-              paths.length === 0
-                ? { entries: [] }
-                : yield* workspaceFileSystem.getMetadata({ paths });
-            let next = 0;
-            return {
-              entries: readable.map((allowed) => (allowed ? (entries[next++] ?? null) : null)),
-            };
-          }),
+          // Paths a confined session cannot read report no metadata, like a missing file,
+          // so one outside path does not fail the whole batch.
+          const readable = yield* Effect.forEach(
+            input.paths,
+            (targetPath) =>
+              workspaceReadAccess.ensureReadable(currentSession.scopes, targetPath).pipe(
+                Effect.as(true),
+                Effect.orElseSucceed(() => false),
+              ),
+            { concurrency: 8 },
+          );
+          const paths = input.paths.filter((_, index) => readable[index]);
+          const { entries } =
+            paths.length === 0
+              ? { entries: [] }
+              : yield* workspaceFileSystem.getMetadata({ paths });
+          let next = 0;
+          return {
+            entries: readable.map((allowed) => (allowed ? (entries[next++] ?? null) : null)),
+          };
+        }),
         [WS_METHODS.filesystemBrowse]: (input) =>
           workspaceEntries.browse(input).pipe(
             Effect.mapError(
@@ -3419,7 +3423,7 @@ export const layerWsRpc = (
         [WS_METHODS.workspaceTaskFolder]: (input) =>
           Effect.andThen(
             ensureReadable(input.worktreePath),
-          taskFolders.find(input.worktreePath).pipe(Effect.map((taskFolder) => ({ taskFolder }))),
+            taskFolders.find(input.worktreePath).pipe(Effect.map((taskFolder) => ({ taskFolder }))),
           ),
         [WS_METHODS.workspaceAddTaskFolderRepository]: (input) => taskFolders.addRepository(input),
         [WS_METHODS.workspaceLayoutCommands]: (input) =>
@@ -3550,7 +3554,7 @@ export const layerWsRpc = (
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           Effect.andThen(
             ensureReadable(input.cwd),
-          vcsStatusBroadcaster.refreshStatus(input.cwd, { localOnly: input.localOnly ?? false }),
+            vcsStatusBroadcaster.refreshStatus(input.cwd, { localOnly: input.localOnly ?? false }),
           ),
         [WS_METHODS.vcsPull]: (input) =>
           gitWorkflow.pullCurrentBranch(input.cwd).pipe(
@@ -4104,13 +4108,13 @@ const layerWsInsightsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession
 
 const layerWsFactoriesRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
   ServerWsFactoriesRpcGroup.toLayer(
-  Effect.gen(function* () {
-    const factories = yield* FactoryService.FactoryService;
+    Effect.gen(function* () {
+      const factories = yield* FactoryService.FactoryService;
       const skills = yield* FactorySkillStore.FactorySkillStore;
-    return ServerWsFactoriesRpcGroup.of({
-      [WS_METHODS.factoriesList]: (input) => factories.list(input.projectId),
-      [WS_METHODS.factoriesRead]: (input) => factories.read(input.factoryId),
-      [WS_METHODS.factoriesSave]: (input) => factories.save(input),
+      return ServerWsFactoriesRpcGroup.of({
+        [WS_METHODS.factoriesList]: (input) => factories.list(input.projectId),
+        [WS_METHODS.factoriesRead]: (input) => factories.read(input.factoryId),
+        [WS_METHODS.factoriesSave]: (input) => factories.save(input),
         [WS_METHODS.factoriesDelete]: (input) => factories.delete(input.factoryId),
         [WS_METHODS.factoriesSkillsList]: (input) => skills.list(input),
         [WS_METHODS.factoriesSkillsRead]: (input) => skills.read(input),
@@ -4126,8 +4130,8 @@ const layerWsFactoriesRpc = (currentSession: EnvironmentAuth.AuthenticatedSessio
           factories.setWorkItemFailureDismissed(currentSession.userId ?? null, input),
         [WS_METHODS.factoriesWorkItemsDrop]: (input) =>
           factories.dropWorkItem(currentSession.userId ?? null, input),
-    });
-  }),
+      });
+    }),
   );
 
 // Default socket-level Defect frames end every pending client request.
@@ -4242,70 +4246,70 @@ export const layer = Layer.unwrap(
               readSettingsClient(url.value),
             )
               .pipe(
-              Layer.merge(layerWsJiraRpc(session)),
+                Layer.merge(layerWsJiraRpc(session)),
                 Layer.merge(layerWsInsightsRpc(session)),
                 Layer.merge(layerWsFactoriesRpc(session)),
-              Layer.provideMerge(RpcSerialization.layerJson),
-              // Handler-context reporters see only request defects, not server-wide defects.
-              Layer.provide(DefectReporter.layer),
-              Layer.provide(AcpRegistrySessions.layer),
-              Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
-              // Installs outlive the connection that started them and lock across clients.
-              Layer.provide(
-                Layer.succeed(
-                  ProviderMaintenanceRunner.ProviderMaintenanceRunner,
-                  providerMaintenanceRunner,
+                Layer.provideMerge(RpcSerialization.layerJson),
+                // Handler-context reporters see only request defects, not server-wide defects.
+                Layer.provide(DefectReporter.layer),
+                Layer.provide(AcpRegistrySessions.layer),
+                Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
+                // Installs outlive the connection that started them and lock across clients.
+                Layer.provide(
+                  Layer.succeed(
+                    ProviderMaintenanceRunner.ProviderMaintenanceRunner,
+                    providerMaintenanceRunner,
+                  ),
                 ),
-              ),
-              Layer.provide(Layer.succeed(NpmRelease.NpmRelease, npmRelease)),
-              Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
-              // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.
-              Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
-              Layer.provide(Layer.succeed(IssueService.IssueService, issues)),
-              Layer.provide(Layer.succeed(ThreadIssueService.ThreadIssueService, threadIssues)),
-              Layer.provide(
-                Layer.succeed(IssueTrackerConnections.IssueTrackerConnections, issueTrackers),
-              ),
-              Layer.provide(OtlpEndpointCheck.layer),
+                Layer.provide(Layer.succeed(NpmRelease.NpmRelease, npmRelease)),
+                Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
+                // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.
+                Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
+                Layer.provide(Layer.succeed(IssueService.IssueService, issues)),
+                Layer.provide(Layer.succeed(ThreadIssueService.ThreadIssueService, threadIssues)),
+                Layer.provide(
+                  Layer.succeed(IssueTrackerConnections.IssueTrackerConnections, issueTrackers),
+                ),
+                Layer.provide(OtlpEndpointCheck.layer),
               )
               .pipe(
-              Layer.provide(
-                Layer.succeed(
-                  PullRequestReviewGuideService.PullRequestReviewGuideService,
-                  reviewGuides,
+                Layer.provide(
+                  Layer.succeed(
+                    PullRequestReviewGuideService.PullRequestReviewGuideService,
+                    reviewGuides,
+                  ),
                 ),
-              ),
-              Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
-              Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
-              Layer.provide(Layer.succeed(PeerThreadRelay.PeerThreadRelay, peerThreadRelay)),
+                Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
+                Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
+                Layer.provide(Layer.succeed(PeerThreadRelay.PeerThreadRelay, peerThreadRelay)),
                 Layer.provide(
                   Layer.succeed(PeerClientPairing.PeerClientPairing, peerClientPairing),
                 ),
-              // Shared with MCP, so an agent's write reaches every subscribed client.
-              Layer.provide(
-                Layer.succeed(DiffWalkthroughService.DiffWalkthroughService, diffWalkthroughs),
-              ),
-              // Shared, so a run started by one client is the one every subscriber sees.
-              Layer.provide(
-                Layer.succeed(
-                  DiffWalkthroughRunService.DiffWalkthroughRunService,
-                  diffWalkthroughRuns,
+                // Shared with MCP, so an agent's write reaches every subscribed client.
+                Layer.provide(
+                  Layer.succeed(DiffWalkthroughService.DiffWalkthroughService, diffWalkthroughs),
                 ),
-              ),
-              Layer.provide(
-                Layer.succeed(DiffWalkthroughWriter.DiffWalkthroughWriter, diffWalkthroughWriter),
-              ),
-              // Shared, so every client reads through the same Jira caches.
-              Layer.provide(Layer.succeed(JiraService.JiraService, jira)),
-              Layer.provide(
-                Layer.succeed(JiraUserCredentials.JiraUserCredentials, jiraCredentials),
-              ),
-              // Shared, so decisions on one proposal from several clients run one at a time.
-              Layer.provide(Layer.succeed(JiraProposals.JiraProposals, jiraProposals)),
-              // Shared, so two clients pressing at once start one breakdown between them.
-              Layer.provide(
-                Layer.succeed(JiraBreakdownService.JiraBreakdownService, jiraBreakdowns),
-              ),
+                // Shared, so a run started by one client is the one every subscriber sees.
+                Layer.provide(
+                  Layer.succeed(
+                    DiffWalkthroughRunService.DiffWalkthroughRunService,
+                    diffWalkthroughRuns,
+                  ),
+                ),
+                Layer.provide(
+                  Layer.succeed(DiffWalkthroughWriter.DiffWalkthroughWriter, diffWalkthroughWriter),
+                ),
+                // Shared, so every client reads through the same Jira caches.
+                Layer.provide(Layer.succeed(JiraService.JiraService, jira)),
+                Layer.provide(
+                  Layer.succeed(JiraUserCredentials.JiraUserCredentials, jiraCredentials),
+                ),
+                // Shared, so decisions on one proposal from several clients run one at a time.
+                Layer.provide(Layer.succeed(JiraProposals.JiraProposals, jiraProposals)),
+                // Shared, so two clients pressing at once start one breakdown between them.
+                Layer.provide(
+                  Layer.succeed(JiraBreakdownService.JiraBreakdownService, jiraBreakdowns),
+                ),
                 // Reads and writes one project's `.t3/triggers/` files, shared across clients.
                 Layer.provide(
                   Layer.succeed(TriggerTemplates.TriggerTemplateService, triggerTemplates),
@@ -4318,20 +4322,20 @@ export const layer = Layer.unwrap(
                 Layer.provide(Layer.succeed(HomeService.HomeService, home)),
                 Layer.provide(Layer.succeed(FleetService.FleetService, fleet)),
                 Layer.provide(Layer.succeed(FleetBroker.FleetBroker, fleetBroker)),
-              Layer.provide(
-                SourceControlDiscovery.layer.pipe(
-                  Layer.provide(
-                    SourceControlProviderRegistry.layer.pipe(
-                      Layer.provide(SourceControlBuiltInDrivers.layer),
-                      Layer.provideMerge(GitVcsDriver.layer),
-                      Layer.provide(
-                        VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer)),
+                Layer.provide(
+                  SourceControlDiscovery.layer.pipe(
+                    Layer.provide(
+                      SourceControlProviderRegistry.layer.pipe(
+                        Layer.provide(SourceControlBuiltInDrivers.layer),
+                        Layer.provideMerge(GitVcsDriver.layer),
+                        Layer.provide(
+                          VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer)),
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
           ),
         );
         const splitFrames = url.value.searchParams.has(SOCKET_FRAME_PARTS_QUERY_PARAM);
