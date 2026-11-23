@@ -160,6 +160,19 @@ project = ABC AND sprint in futureSprints()
 project = ABC AND sprint in closedSprints()
 ```
 
+## List a Jira project with a project's other issues
+
+A project can also list a Jira project's issues in the tracker-neutral issue list, the
+one that shows GitHub, GitLab, and Linear issues. Under Settings → Source control &
+issues, expand **Jira** and pick one or more Jira projects for the project. There is no
+key to enter: the server's reader identity reads Jira, so the row offers no connect or
+disconnect control. Only projects on the reader identity's site are offered.
+
+The Jira group in that list is read-only. You can search it, filter it by state, label,
+and assignee, and open an issue to read its description and comments. A Jira issue URL
+in a message opens the same panel. To comment, change status, or use a saved filter,
+use the Jira Issues page described above.
+
 ## Plan a sprint
 
 The sprint planning page shows one Jira project at a time. It lists the average

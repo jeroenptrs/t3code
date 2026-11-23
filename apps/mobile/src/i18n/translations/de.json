@@ -753,6 +753,7 @@
   "8471c4c5a50ffde3": "Issues dieses Hosts können noch nicht angezeigt werden.",
   "2f4a47129f89fe22": "Nicht verbunden. Füge einen persönlichen API-Schlüssel hinzu, um die Issues aufzulisten.",
   "024baab60525a419": "Die gespeicherten Anmeldedaten wurden abgelehnt.",
+  "0c22d3c84d52a9e9": "Verbunden als {account} · noch keine Projekte verknüpft. Wähle für jedes Projekt ein {tracker}-Projekt, um seine Issues aufzulisten.",
   "2613c232516f3c72": "Verbunden als {account} · noch keine Projekte verknüpft. Wähle für ein Projekt ein Team, um seine Issues aufzulisten.",
   "77d07bfe2f8ee19d": "{count, plural, one {Verbunden als {account} · {count} Projekt verknüpft} other {Verbunden als {account} · {count} Projekte verknüpft}}",
   "3eb9a01099aaf799": "{count} s",

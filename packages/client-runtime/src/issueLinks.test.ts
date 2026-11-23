@@ -7,7 +7,11 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveIssueLinkTarget } from "./issueLinks.ts";
+import {
+  isStandaloneIssueLink,
+  mayContainStandaloneIssueLink,
+  resolveIssueLinkTarget,
+} from "./issueLinks.ts";
 
 const project = (id: string, repository: string, origin?: string) =>
   ({
@@ -158,6 +162,51 @@ describe("resolveIssueLinkTarget", () => {
       both("https://linear.app/othercorp/issue/WEB-17"),
       both("https://linear.app/acme/issue/WEB-17"),
     ]).toEqual(["p2", "p1"]);
+  });
+
+  // Fork: a Jira link is one on the site the server's Jira tracker reports.
+  it("reads a Jira link on the server's site through the project bound to its Jira project", () => {
+    const jira = IssueTrackerKind.make("jira");
+    const site = "acme.atlassian.net";
+    const trackers = {
+      trackers: [
+        {
+          tracker: jira,
+          displayName: "Jira",
+          host: site,
+          scopeNoun: "project",
+          credential: { label: "Server identity", helpUrl: null },
+          serverManaged: true,
+          connected: true,
+          account: "T3 Bot",
+          detail: null,
+          workspace: site,
+          scopes: [],
+        },
+      ],
+      bindings: { [ProjectId.make("p1")]: { tracker: jira, scope: "ABC" } },
+    };
+    const resolve = (url: string) => resolveIssueLinkTarget({ url, projects, trackers })?.ref;
+    expect(resolve("https://acme.atlassian.net/browse/ABC-12?focusedCommentId=3")).toEqual({
+      projectId: "p1",
+      tracker: "jira",
+      host: site,
+      scope: "ABC",
+      key: "ABC-12",
+    });
+    // Another Jira project on the site reads through the bound project, as its own scope.
+    expect(resolve("https://acme.atlassian.net/browse/OPS-3")).toMatchObject({
+      projectId: "p1",
+      scope: "OPS",
+    });
+    expect(resolve("https://beta.atlassian.net/browse/ABC-12")).toBeUndefined();
+    expect(resolve("https://acme.atlassian.net/jira/software/projects/ABC")).toBeUndefined();
+    expect([
+      isStandaloneIssueLink("https://beta.atlassian.net/browse/ABC-12"),
+      isStandaloneIssueLink("https://acme.atlassian.net/wiki/spaces/ABC"),
+      mayContainStandaloneIssueLink("see https://acme.atlassian.net/browse/ABC-12"),
+      mayContainStandaloneIssueLink("see https://github.com/acme/web/issues/7"),
+    ]).toEqual([true, false, true, false]);
   });
 
   it.each([

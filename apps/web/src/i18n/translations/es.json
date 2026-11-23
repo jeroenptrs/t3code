@@ -753,6 +753,7 @@
   "8471c4c5a50ffde3": "Todavía no se pueden explorar las issues de este host.",
   "2f4a47129f89fe22": "Sin conexión. Añade una clave de API personal para listar sus issues.",
   "024baab60525a419": "Se rechazó la credencial guardada.",
+  "0c22d3c84d52a9e9": "Conectado como {account} · aún no hay proyectos vinculados. Elige un proyecto de {tracker} para cada proyecto para listar sus issues.",
   "2613c232516f3c72": "Conectado como {account} · aún no hay proyectos vinculados. Elige un equipo para un proyecto para listar sus issues.",
   "77d07bfe2f8ee19d": "{count, plural, one {Conectado como {account} · {count} proyecto vinculado} other {Conectado como {account} · {count} proyectos vinculados}}",
   "3eb9a01099aaf799": "{count} s",
