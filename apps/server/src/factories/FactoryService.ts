@@ -472,7 +472,10 @@ const make = Effect.gen(function* () {
     const rootIsRepository = yield* fileSystem
       .exists(path.join(project.workspaceRoot, ".git"))
       .pipe(Effect.orElseSucceed(() => false));
-    const folders = yield* projectFolders(project);
+    const folders = yield* projectFolders(project).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
     return [
       ...(rootIsRepository ? [{ name: project.title, path: project.workspaceRoot }] : []),
       ...folders.map((folder) => ({ name: folder.name, path: folder.path })),
