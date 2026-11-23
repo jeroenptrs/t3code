@@ -10,9 +10,13 @@ Check it before every upstream sync: query each listed PR and issue, graduate
 what merged (drop the cherry-pick, keep the adapter, move the row below), and
 re-hash the branch commits afterwards, since a rebuild changes every SHA.
 
-| Upstream PR                                              | Head SHA when pulled                       | Commit on this branch | What the factory work builds on it                                                                                                    |
-| -------------------------------------------------------- | ------------------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| [#15975](https://github.com/pingdotgg/t3code/pull/15975) | `b5d05a6ebf3c0b99a097f2a197983cb1203669c6` | `4b17768001`          | The thread-management toolkit and the watch reports that wake the Foreman. Closed unmerged on 2026-11-20; the fork keeps carrying it. |
+No pinned PR is open. Factories once built on Home
+([#15975](https://github.com/pingdotgg/t3code/pull/15975), head
+`b5d05a6ebf3c0b99a097f2a197983cb1203669c6`) for its thread-management toolkit
+and watch reports, but nothing used them: the Foreman delegates through
+`t3_factory_delegate`, and upstream's delegated tasks wake their parent. The
+adapter is gone. #15975 closed unmerged on 2026-11-20, and the fork may still
+carry it for the Home feature itself.
 
 Commits on this branch are re-hashed whenever `jeroen/dev` is rebuilt on a
 newer upstream base, so find them by subject when a SHA here is gone.

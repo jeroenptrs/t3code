@@ -126,8 +126,6 @@ export type FactoryRolePath = typeof FactoryRolePath.Type;
 export const FactoryDefinition = Schema.Struct({
   version: Schema.Literal(2),
   name: FactoryName,
-  /** T3 project names the factory may work in. The owning project is implied. */
-  projects: Schema.Array(TrimmedNonEmptyString),
   /**
    * The factory's roles besides the Foreman, which it always has, in order: each to its file, or
    * null for none. Keys are checked as role names when read and saved.
@@ -196,8 +194,7 @@ export type FactoryRolePreset = typeof FactoryRolePreset.Type;
 export const FactoryIssueCode = Schema.Literals([
   "invalid_definition",
   "name_mismatch",
-  "unknown_project",
-  "ambiguous_project",
+  "other_projects",
   "missing_role_file",
   "invalid_role_file",
   "invalid_binding",
@@ -242,12 +239,13 @@ export const FactoryThread = Schema.Struct({
 });
 export type FactoryThread = typeof FactoryThread.Type;
 
-export const FactoryProject = Schema.Struct({
+/** A repository the factory's project covers: its folder, the repositories inside it, and added ones. */
+export const FactoryRepository = Schema.Struct({
   name: TrimmedNonEmptyString,
-  /** Null when no project here has that name, or more than one does. */
-  projectId: Schema.NullOr(ProjectId),
+  /** Absolute, on the factory's own environment. */
+  path: TrimmedNonEmptyString,
 });
-export type FactoryProject = typeof FactoryProject.Type;
+export type FactoryRepository = typeof FactoryRepository.Type;
 
 export const FactorySummary = Schema.Struct({
   id: FactoryId,
@@ -267,8 +265,8 @@ export const Factory = Schema.Struct({
   name: FactoryName,
   /** As read. Empty lists when `factory.json` is invalid; `issues` says why. */
   definition: FactoryDefinition,
-  /** `definition.projects`, each with the project it names here. */
-  projects: Schema.Array(FactoryProject),
+  /** What the project covers now, read from disk. Its Repositories settings change it. */
+  repositories: Schema.Array(FactoryRepository),
   /** The Foreman, then `definition.roles` in order. */
   roles: Schema.Array(FactoryRole),
   /** The presets a role can start from, the Foreman's included. */

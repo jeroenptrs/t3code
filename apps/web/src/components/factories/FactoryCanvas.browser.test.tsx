@@ -50,6 +50,7 @@ function setup() {
       { role: "implement", enabled: true },
       { role: "review", enabled: true },
     ] as unknown as Factory["roles"],
+    repositories: [{ name: "api", path: "/work/api" }],
     scheduledTaskIds: [],
     threads: [{ threadId: implementer, role: "implement" }],
   } satisfies Partial<Factory>;

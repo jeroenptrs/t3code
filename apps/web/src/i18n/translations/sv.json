@@ -13049,5 +13049,15 @@
   "1ba0cdfa1c3ba253": "Beskrivning",
   "cea36f763037eace": "Tomt behåller förinställningens beskrivning, eller ingen för en ny roll.",
   "0b5384b1aa2f8a80": "En rad om vad rollen gör.",
-  "a5dffbc7710c75bc": "En rad om vad rollen gör. Foreman läser den för att avgöra vad som ska skickas hit."
+  "a5dffbc7710c75bc": "En rad om vad rollen gör. Foreman läser den för att avgöra vad som ska skickas hit.",
+  "f9fcc101bd2845a3": "Redigera i projektinställningarna",
+  "c320f2739e41aaac": "Lägg till en mapp i projektets inställningar för repon.",
+  "e10ed6effe778b8e": "Projektet omfattar inga repon än.",
+  "b8b75331cacbc11d": "Arbetar i {repositories}",
+  "0b1a8752b2688bbd": "Factoryn kunde inte skapas.",
+  "79ccb5919e5e1541": "Inga projekt här",
+  "4e240ec5d72ebfd4": "Gemener, siffror och bindestreck. Det blir mappens namn.",
+  "067007b4fd5f1b5b": "Skapa Factory",
+  "d430c9ca053aa271": "Definitionen finns i projektet under .t3/factories. Den börjar med de inbyggda rollerna foreman, implement och review.",
+  "cc5d2f5ce8ee576e": "Miljö"
 }
