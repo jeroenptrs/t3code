@@ -5,6 +5,7 @@
 import type {
   FactoryEffectiveBinding,
   FactoryName,
+  FactoryRepository,
   FactoryRoleName,
   OrchestratorMcpDelegateTaskInput,
   WorkItemGateDecision,
@@ -19,8 +20,15 @@ export function renderWorkItemMessage(input: {
   readonly factoryName: FactoryName;
   readonly title: string;
   readonly source: WorkItemSource;
+  readonly repositories: ReadonlyArray<FactoryRepository>;
 }): string {
   const { source } = input;
+  const repositories =
+    input.repositories.length === 0
+      ? "The project covers no repository yet."
+      : `Repositories the project covers. Name the one a child works in by name; the server picks its checkout:\n${input.repositories
+          .map((repository) => `- ${repository.name}`)
+          .join("\n")}`;
   const from =
     source.kind === "manual"
       ? "a person's request"
@@ -32,6 +40,8 @@ export function renderWorkItemMessage(input: {
 Title: ${input.title}
 
 ${source.text.trim()}
+
+${repositories}
 
 Delegate each task with t3_factory_delegate, naming the role. Hold the item for a person with t3_work_item_gate, and end it with t3_work_item_advance.`;
 }

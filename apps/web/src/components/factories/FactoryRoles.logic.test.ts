@@ -73,10 +73,9 @@ const factory: Factory = {
   definition: {
     version: 2,
     name: "nightly-triage",
-    projects: ["web"],
     roles: { review: "roles/review.md", implement: null },
   },
-  projects: [{ name: "web", projectId: ProjectId.make("project-web") }],
+  repositories: [],
   roles: [builtinRole("foreman"), review, builtinRole("implement")],
   rolePresets: [],
   skills: [],

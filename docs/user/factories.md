@@ -65,8 +65,10 @@ The tab is part of the page's address, so a reload or a shared link keeps it.
   attaching it here, or picking the factory in its settings, is the same thing. **Detach** sends
   its work back to threads and turns it off. A Jira query trigger has **Issues**, the issues its
   last check found, with **Check now** to check again.
-- **Settings** holds the other projects the factory may work in, the Foreman's model and where it
-  works, and **Delete factory**.
+- **Settings** lists the repositories the factory works in, holds the Foreman's model and where
+  it works, and has **Delete factory**. A factory works in every repository its project covers.
+  To change that list, click **Edit in project settings**, which opens the project's
+  **Repositories** settings. See [Projects with several repositories](multi-repo-projects.md).
 
 If the server refuses a save, such as for a model the provider does not offer or a skill that does
 not exist, the reason appears beside the field and nothing is written.
