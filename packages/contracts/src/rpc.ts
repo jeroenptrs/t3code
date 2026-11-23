@@ -543,12 +543,14 @@ import {
   ScheduledTaskGetWebhookDeliveryResult,
   ScheduledTaskRunNowResult,
   ScheduledTaskSetEnabledInput,
+  ScheduledTaskSetTargetInput,
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
 import {
   TriggerListInput,
   TriggerListResult,
+  TriggerJiraQueryIssuesResult,
   TriggerMutationResult,
   TriggerSaveInput,
   TriggerRaiseInput,
@@ -781,6 +783,9 @@ export const WS_METHODS = {
   triggersSubscribe: "triggers.subscribe",
   triggersSave: "triggers.save",
   triggersSetEnabled: "triggers.setEnabled",
+  triggersSetTarget: "triggers.setTarget",
+  triggersCheckNow: "triggers.checkNow",
+  triggersJiraQueryIssues: "triggers.jiraQueryIssues",
   triggersDelete: "triggers.delete",
   triggersRunNow: "triggers.runNow",
   triggersFireCurrent: "triggers.fireCurrent",
@@ -2970,6 +2975,24 @@ const WsTriggersSetEnabledRpc = Rpc.make(WS_METHODS.triggersSetEnabled, {
   error: TriggerRpcError,
 });
 
+const WsTriggersSetTargetRpc = Rpc.make(WS_METHODS.triggersSetTarget, {
+  payload: ScheduledTaskSetTargetInput,
+  success: TriggerMutationResult,
+  error: TriggerRpcError,
+});
+
+const WsTriggersCheckNowRpc = Rpc.make(WS_METHODS.triggersCheckNow, {
+  payload: ScheduledTaskRunNowInput,
+  success: TriggerMutationResult,
+  error: TriggerRpcError,
+});
+
+const WsTriggersJiraQueryIssuesRpc = Rpc.make(WS_METHODS.triggersJiraQueryIssues, {
+  payload: ScheduledTaskRunNowInput,
+  success: TriggerJiraQueryIssuesResult,
+  error: TriggerRpcError,
+});
+
 const WsTriggersDeleteRpc = Rpc.make(WS_METHODS.triggersDelete, {
   payload: ScheduledTaskDeleteInput,
   success: ScheduledTaskDeleteResult,
@@ -3208,6 +3231,9 @@ export const WsCoreRpcGroup = RpcGroup.make(
   WsTriggersDeleteRpc,
   WsTriggersRunNowRpc,
   WsTriggersFireCurrentRpc,
+  WsTriggersSetTargetRpc,
+  WsTriggersCheckNowRpc,
+  WsTriggersJiraQueryIssuesRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

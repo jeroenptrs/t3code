@@ -1,4 +1,10 @@
-import type { ScheduledTask, ScheduledTaskError, TriggerEvent } from "@t3tools/contracts";
+import {
+  ScheduledTaskError,
+  type ScheduledTask,
+  type ScheduledTaskId,
+  type TriggerEvent,
+  type TriggerJiraQueryIssuesResult,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -24,6 +30,10 @@ export class TriggerService extends Context.Service<
     readonly raise: (
       event: TriggerEvent,
     ) => Effect.Effect<{ readonly matched: number }, ScheduledTaskError>;
+    /** A Jira query trigger's issues as its last poll stored them. */
+    readonly jiraQueryIssues: (
+      id: ScheduledTaskId,
+    ) => Effect.Effect<TriggerJiraQueryIssuesResult, ScheduledTaskError>;
     /** Raises every event the trigger sources observe. */
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
@@ -105,7 +115,37 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return TriggerService.of({ raise, start });
+  const jiraQueryIssues: TriggerService["Service"]["jiraQueryIssues"] = Effect.fn(
+    "TriggerService.jiraQueryIssues",
+  )(function* (id) {
+    const { tasks } = yield* scheduledTasks.list();
+    const task = tasks.find((candidate) => candidate.id === id);
+    if (task?.schedule.type !== "jira_query") {
+      return yield* new ScheduledTaskError({
+        message: "Only a Jira query trigger has a set of issues.",
+        taskId: id,
+      });
+    }
+    const stored = yield* sources.jiraQueryObservations(id).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ScheduledTaskError({
+            message: "Could not read the trigger's issues.",
+            taskId: id,
+            cause,
+          }),
+      ),
+    );
+    return {
+      query: stored.query,
+      checkedAt: stored.checkedAt,
+      issues: [...stored.issues.values()].toSorted((a, b) =>
+        (b.updated ?? "").localeCompare(a.updated ?? ""),
+      ),
+    };
+  });
+
+  return TriggerService.of({ raise, start, jiraQueryIssues });
 });
 
 export const layer = Layer.effect(TriggerService, make);

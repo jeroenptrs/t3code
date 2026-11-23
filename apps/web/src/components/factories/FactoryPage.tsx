@@ -38,6 +38,7 @@ import {
   type StatusTone,
 } from "./FactoryPageParts";
 import { FactoryRolePage } from "./FactoryRolePage";
+import { FactoryTriggerIssuesPage } from "./FactoryTriggerIssuesPage";
 import { FactoryRolesTab } from "./FactoryRolesTab";
 import { FactorySettingsTab } from "./FactorySettingsTab";
 import { FactorySkillsTab } from "./FactorySkillsTab";
@@ -199,7 +200,15 @@ export function FactoryPage(props: {
             ) : tab === "skills" ? (
               <FactorySkillsTab {...tabProps} />
             ) : tab === "triggers" ? (
-              <FactoryTriggersTab {...tabProps} />
+              search.trigger === undefined ? (
+                <FactoryTriggersTab {...tabProps} />
+              ) : (
+                <FactoryTriggerIssuesPage
+                  key={search.trigger}
+                  {...tabProps}
+                  triggerId={search.trigger}
+                />
+              )
             ) : (
               <FactorySettingsTab {...tabProps} />
             )}

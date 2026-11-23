@@ -14,6 +14,8 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import type { GitLabPipelineState } from "./gitlabTriggerSource.ts";
+import type { JiraQueryRoundTrip } from "./jiraTriggerSource.ts";
+import { triggerEventId } from "./triggerPrompt.ts";
 import * as TriggerSources from "./TriggerSources.ts";
 
 const SITE = "acme.atlassian.net";
@@ -155,9 +157,11 @@ it.effect("seeds a Jira query's result set silently, then raises entered, left, 
         readonly complete?: boolean;
         readonly start?: "changes" | "current";
         readonly fireCurrent?: boolean;
+        readonly roundTrips?: ReadonlyMap<string, ReadonlyArray<JiraQueryRoundTrip>>;
       } = {},
     ) =>
       sources.observeJiraQuery({
+        roundTrips: input.roundTrips,
         triggerId: input.triggerId ?? triggerId,
         query: "project = PROJ",
         issues,
@@ -234,6 +238,36 @@ it.effect("seeds a Jira query's result set silently, then raises entered, left, 
           ],
         );
         assert.deepEqual(yield* observed(triggerId), ["", "PROJ-1", "PROJ-3", "PROJ-4"]);
+      }),
+    );
+    yield* withSources((sources) =>
+      Effect.gen(function* () {
+        // An issue that left and came back between polls raises left then entered, at the
+        // changelog's times, though its stored and current states match but for `updated`.
+        const events = yield* collect(sources, 2);
+        const trip = { leftAt: "2026-11-05T10:05:00.000Z", enteredAt: "2026-11-05T10:15:00.000Z" };
+        yield* poll(
+          sources,
+          [
+            issue({ status: "Done", updated: "2026-11-05T10:15:00.000Z" }),
+            issue({ key: "PROJ-3" }),
+            issue({ key: "PROJ-4" }),
+          ],
+          { roundTrips: new Map([["PROJ-1", [trip]]]) },
+        );
+        const collected = yield* Fiber.join(events);
+        assert.deepEqual(
+          collected.map((event) => [
+            event.type,
+            event.source === "jira_query" ? event.payload.key : null,
+            event.occurredAt,
+          ]),
+          [
+            ["issue.left", "PROJ-1", trip.leftAt],
+            ["issue.entered", "PROJ-1", trip.enteredAt],
+          ],
+        );
+        assert.equal(new Set(collected.map(triggerEventId)).size, 2);
       }),
     );
   }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),

@@ -68,6 +68,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProviderContinuationService from "../orchestration-v2/ProviderContinuationService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as TaskFolders from "../workspace/TaskFolders.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
@@ -90,6 +91,7 @@ const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+  Layer.provide(Layer.mock(TaskFolders.TaskFolders)({})),
 );
 
 describe("OrchestratorMcpService", () => {
@@ -3570,6 +3572,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             }),
           ),
           Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+          Layer.provide(Layer.mock(TaskFolders.TaskFolders)({})),
         );
 
         yield* Effect.gen(function* () {
@@ -4378,6 +4381,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
           }),
         ),
+        Layer.provide(Layer.mock(TaskFolders.TaskFolders)({})),
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
@@ -4655,6 +4659,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
         Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)(git)),
+        Layer.provide(Layer.mock(TaskFolders.TaskFolders)({})),
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,

@@ -2048,10 +2048,25 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    setTriggerTarget: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:trigger:set-target",
+      tag: WS_METHODS.triggersSetTarget,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     // Off the config lane for the same reason as runScheduledTaskNow.
     runTriggerNow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:trigger:run-now",
       tag: WS_METHODS.triggersRunNow,
+    }),
+    // Off the config lane: a check waits for the poll.
+    checkTriggerNow: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:trigger:check-now",
+      tag: WS_METHODS.triggersCheckNow,
+    }),
+    triggerJiraQueryIssues: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:trigger:jira-query-issues",
+      tag: WS_METHODS.triggersJiraQueryIssues,
     }),
     // Off the config lane too: a fire waits for the poll to read the whole set.
     fireTriggerCurrentSet: createEnvironmentRpcCommand(runtime, {

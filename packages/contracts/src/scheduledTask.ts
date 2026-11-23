@@ -515,6 +515,13 @@ export const ScheduledTaskSetEnabledInput = Schema.Struct({
 });
 export type ScheduledTaskSetEnabledInput = typeof ScheduledTaskSetEnabledInput.Type;
 
+/** Points a trigger at a factory of its project, or with null back at threads, which turns it off. */
+export const ScheduledTaskSetTargetInput = Schema.Struct({
+  id: ScheduledTaskId,
+  factoryId: Schema.NullOr(FactoryId),
+});
+export type ScheduledTaskSetTargetInput = typeof ScheduledTaskSetTargetInput.Type;
+
 export const ScheduledTaskDeleteInput = Schema.Struct({
   id: ScheduledTaskId,
 });

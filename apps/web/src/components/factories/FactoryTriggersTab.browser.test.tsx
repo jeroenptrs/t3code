@@ -20,7 +20,7 @@ const factory = {
   id: FactoryId.make("factory:project-api:nightly-triage"),
   projectId,
   name: "nightly-triage",
-  definition: { version: 2, name: "nightly-triage", projects: [], triggers: [], roles: {} },
+  definition: { version: 2, name: "nightly-triage", projects: [], roles: {} },
   issues: [],
 } as unknown as Factory;
 
@@ -57,6 +57,10 @@ vi.mock(import("../../state/server"), async (original) => {
       ...actual.serverEnvironment,
       upsertScheduledTask: {
         ...actual.serverEnvironment.upsertScheduledTask,
+        permissionAtom: () => allowed,
+      },
+      setTriggerTarget: {
+        ...actual.serverEnvironment.setTriggerTarget,
         permissionAtom: () => allowed,
       },
       providersValueAtom: (() => providers) as never,

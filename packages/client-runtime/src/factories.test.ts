@@ -145,7 +145,6 @@ const factory: Pick<Factory, "projectId" | "definition"> = {
     version: 2,
     name: "nightly-triage",
     projects: ["web"],
-    triggers: [],
     roles: { review: "roles/review.md", implement: null },
   },
 };
