@@ -1,4 +1,4 @@
-import type { IssueDetail, IssueEvent } from "@t3tools/contracts";
+import { JIRA_ISSUE_TRACKER_KIND, type IssueDetail, type IssueEvent } from "@t3tools/contracts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
@@ -64,7 +64,14 @@ export function issueWriteAccess(
     ? resolve(msg("Writing to this tracker needs the source-control write scope."))
     : !detail.writable
       ? resolve(msg("This issue is outside every project's own scope, so it is read-only here."))
-      : null;
+      : // Fork: Jira grants its two writes together, to a signed-in user who stored a token.
+        detail.tracker === JIRA_ISSUE_TRACKER_KIND && !detail.viewerPermissions.comment
+        ? resolve(
+            msg(
+              "To comment or change the state as yourself, add your Jira token in the web app under Settings → Account.",
+            ),
+          )
+        : null;
   const may = (capability: boolean, permission: boolean) =>
     blocked === null && capability && permission;
   return {

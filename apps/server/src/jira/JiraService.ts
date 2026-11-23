@@ -77,6 +77,15 @@ export interface JiraRequestOptions {
   readonly actingUserId?: AuthUserId | undefined;
 }
 
+/** Who a read runs as, for a caller that reads Jira itself instead of through this service. */
+export interface JiraReadAs {
+  readonly identity: JiraServerIdentity;
+  /** Wraps the caller's reads: a personal token Jira rejects is recorded and reported. */
+  readonly guard: <A>(effect: Effect.Effect<A, JiraError>) => Effect.Effect<A, JiraError>;
+  /** The account behind the identity, cached per identity. */
+  readonly myself: Effect.Effect<JiraApi.JiraRawUser, JiraError>;
+}
+
 const DEFAULT_SEARCH_PAGE_SIZE = 100;
 const BULK_FETCH_CHUNK = 100;
 const COMMENT_LIMIT = 50;
@@ -107,7 +116,7 @@ const signInRequired = new JiraError({
   message: "Sign in to T3 Code with your organisation account to comment or move Jira issues.",
 });
 
-const personalTokenRequired = new JiraError({
+export const personalTokenRequired = new JiraError({
   reason: "personal-token-required",
   message: "Add your Jira token in Settings → Account to comment or move issues as yourself.",
 });
@@ -115,6 +124,14 @@ const personalTokenRequired = new JiraError({
 export class JiraService extends Context.Service<
   JiraService,
   {
+    /**
+     * The identity a read of `site` (the reader's when absent) runs as: the acting user's personal
+     * token when they stored one for that site, else the service identity.
+     */
+    readonly readAs: (
+      site: string | undefined,
+      options?: JiraRequestOptions,
+    ) => Effect.Effect<JiraReadAs, JiraError>;
     /** Never fails: a reader Jira refuses is reported as `readerError`. */
     readonly capabilities: (options?: JiraRequestOptions) => Effect.Effect<JiraCapabilities>;
     /** With a query, filters whose name matches; without, the reader's favourites and own filters. */
@@ -305,6 +322,15 @@ const make = Effect.gen(function* () {
 
   const myself = (identity: JiraServerIdentity) =>
     cache.get("myself", cacheKey(identity), api.myself(identity));
+
+  const readAs: JiraService["Service"]["readAs"] = Effect.fn("JiraService.readAs")(
+    function* (site, options) {
+      yield* annotateActingUser(options);
+      const identity = yield* readIdentity(site, options);
+      const guard = asIdentity(identity);
+      return { identity, guard, myself: guard(myself(identity)) };
+    },
+  );
 
   // In insertion order, which with one TTL is also expiry order.
   const postedComments = new Map<string, number>();
@@ -967,6 +993,7 @@ const make = Effect.gen(function* () {
   });
 
   return JiraService.of({
+    readAs,
     capabilities,
     filters,
     filter,
