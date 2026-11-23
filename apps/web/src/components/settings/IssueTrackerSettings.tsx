@@ -23,7 +23,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { issueTrackerEnvironment } from "../../state/issueTrackers";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { LinearIcon } from "../Icons";
+import { JiraIcon, LinearIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
@@ -41,6 +41,8 @@ type TrackerIcon = ElementType<{ className?: string }>;
 /** Web art per tracker kind; the server supplies everything else about a tracker. */
 const TRACKER_ICONS: Partial<Record<string, TrackerIcon>> = {
   linear: LinearIcon,
+  // Fork: Jira is a standalone tracker on a server with Jira identities.
+  jira: JiraIcon,
 };
 
 /**
@@ -90,7 +92,11 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
       {trackers.flatMap((tracker) => {
         const added = accounts.filter((account) => account.tracker === tracker.tracker);
         // Another account is added from the first one's row, which stays while any is connected.
-        const canAddAccount = canAddAccounts && (tracker.connected || added.length > 0);
+        // Fork: a server-managed tracker has the one account the server signs in as.
+        const canAddAccount =
+          canAddAccounts &&
+          tracker.serverManaged !== true &&
+          (tracker.connected || added.length > 0);
         return [tracker, ...added].map((account) => (
           <TrackerRow
             // Drafts belong to one environment; switching must not carry them over.
@@ -201,57 +207,60 @@ function TrackerRow({
           {/* Locked while saving, so an edit made mid-request is not overwritten by the saved value. */}
           <fieldset disabled={!canEdit || busy} className="contents">
             <div className="px-3 pb-4 pt-1 sm:px-4">
-              <SettingsRow
-                title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
-                description={
-                  <>
-                    <T>Stored on the server.</T>
-                    {tracker.credential.helpUrl ? (
-                      <>
-                        {" "}
-                        <InlineButton
-                          render={
-                            <a
-                              href={tracker.credential.helpUrl}
-                              target="_blank"
-                              rel="noreferrer noopener"
-                            />
-                          }
+              {/* Fork: the server's configuration signs a server-managed tracker in. */}
+              {tracker.serverManaged === true ? null : (
+                <SettingsRow
+                  title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
+                  description={
+                    <>
+                      <T>Stored on the server.</T>
+                      {tracker.credential.helpUrl ? (
+                        <>
+                          {" "}
+                          <InlineButton
+                            render={
+                              <a
+                                href={tracker.credential.helpUrl}
+                                target="_blank"
+                                rel="noreferrer noopener"
+                              />
+                            }
+                          >
+                            <T>Create one</T>
+                            <ExternalLinkIcon aria-hidden className="size-3" />
+                          </InlineButton>
+                        </>
+                      ) : null}
+                      {failure ? <span className="block text-destructive">{failure}</span> : null}
+                    </>
+                  }
+                  control={
+                    <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
+                      <SecretInput
+                        id={inputId}
+                        size="sm"
+                        className="min-w-0 flex-1"
+                        configured={tracker.connected}
+                        value=""
+                        onCommit={(next) => {
+                          if (next.trim()) void submit(next.trim());
+                        }}
+                      />
+                      {tracker.connected ? (
+                        <Button
+                          type="button"
+                          size="icon-sm"
+                          variant="ghost-destructive"
+                          onClick={() => void submit(null)}
+                          aria-label={gt("Disconnect {tracker}", { tracker: tracker.displayName })}
                         >
-                          <T>Create one</T>
-                          <ExternalLinkIcon aria-hidden className="size-3" />
-                        </InlineButton>
-                      </>
-                    ) : null}
-                    {failure ? <span className="block text-destructive">{failure}</span> : null}
-                  </>
-                }
-                control={
-                  <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
-                    <SecretInput
-                      id={inputId}
-                      size="sm"
-                      className="min-w-0 flex-1"
-                      configured={tracker.connected}
-                      value=""
-                      onCommit={(next) => {
-                        if (next.trim()) void submit(next.trim());
-                      }}
-                    />
-                    {tracker.connected ? (
-                      <Button
-                        type="button"
-                        size="icon-sm"
-                        variant="ghost-destructive"
-                        onClick={() => void submit(null)}
-                        aria-label={gt("Disconnect {tracker}", { tracker: tracker.displayName })}
-                      >
-                        <XIcon className="size-3.5" />
-                      </Button>
-                    ) : null}
-                  </div>
-                }
-              />
+                          <XIcon className="size-3.5" />
+                        </Button>
+                      ) : null}
+                    </div>
+                  }
+                />
+              )}
               {usable ? (
                 <ProjectBindings
                   environmentId={environmentId}

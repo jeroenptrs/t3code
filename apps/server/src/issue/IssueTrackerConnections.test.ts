@@ -141,4 +141,79 @@ describe("IssueTrackerConnections", () => {
       expect(secrets.size).toBe(1);
     }).pipe(Effect.provide(layer));
   });
+
+  // Fork: Jira signs in with the server's reader identity, not a credential saved in Settings.
+  it.effect("reports a server-managed tracker as connected without a stored credential", () => {
+    const JIRA = IssueTrackerKind.make("jira");
+    const secrets: Array<string> = [];
+    const tracker = {
+      kind: JIRA,
+      standalone: {
+        tracker: JIRA,
+        displayName: "Jira",
+        host: "acme.atlassian.net",
+        serverManaged: true,
+      },
+      probeCredential: () =>
+        Effect.succeed({
+          account: "T3 Bot",
+          workspace: "acme.atlassian.net",
+          scopes: [{ key: "ABC", name: "Alphabet" }],
+        }),
+    } as unknown as StandaloneIssueTrackerApi;
+    const layer = IssueTrackerConnections.layer.pipe(
+      Layer.provideMerge(IssueTrackerBindings.layer),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          SqlitePersistence.layerMemory,
+          Layer.succeed(
+            IssueTrackerRegistry.IssueTrackerRegistry,
+            IssueTrackerRegistry.fromTrackers([tracker]),
+          ),
+          Layer.mock(ServerSecretStore.ServerSecretStore)({
+            get: (name) => Effect.sync(() => (secrets.push(name), Option.none())),
+            set: (name) => Effect.sync(() => void secrets.push(name)),
+            remove: (name) => Effect.sync(() => void secrets.push(name)),
+          }),
+          Layer.succeed(
+            SecureRandom.SecureRandom,
+            SecureRandom.make((size) => new Uint8Array(size)),
+          ),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const connections = yield* IssueTrackerConnections.IssueTrackerConnections;
+      yield* connections.bindProject({
+        projectId: "work" as ProjectId,
+        binding: { tracker: JIRA, scope: "ABC" },
+      });
+      for (const input of [
+        { tracker: JIRA, token: "mine" },
+        { tracker: JIRA, token: "mine", addAccount: true },
+        { tracker: JIRA, token: null },
+      ]) {
+        expect(yield* Effect.flip(connections.connect(input))).toMatchObject({
+          reason: "failed",
+          detail: "Jira is connected through the server's configuration.",
+        });
+      }
+      // The refused disconnect left the binding, and nothing touched the secret store.
+      expect(yield* connections.list).toMatchObject({
+        trackers: [
+          {
+            tracker: JIRA,
+            serverManaged: true,
+            connected: true,
+            account: "T3 Bot",
+            workspace: "acme.atlassian.net",
+            scopes: [{ key: "ABC", name: "Alphabet" }],
+          },
+        ],
+        accounts: [],
+        bindings: { work: { tracker: JIRA, scope: "ABC" } },
+      });
+      expect(secrets).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
 });
