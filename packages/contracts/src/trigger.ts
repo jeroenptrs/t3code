@@ -25,9 +25,11 @@ import {
   gitlabProjectsFields,
   hasGitLabProjects,
   isOneJiraQuery,
+  issuesPollFields,
   jiraQueryFields,
   MAX_WEBHOOK_FILTERS,
   makeFilterSchema,
+  pullRequestsPollFields,
   ScheduledTask,
   ScheduledTaskThreadMode,
   ScheduledTaskTimeSchedule,
@@ -51,6 +53,8 @@ export const TriggerSourceKind = Schema.Literals([
   "manual",
   "jira_query",
   "gitlab_projects",
+  "issues",
+  "pull_requests",
 ]);
 export type TriggerSourceKind = typeof TriggerSourceKind.Type;
 
@@ -61,6 +65,8 @@ export const TriggerFilterSourceKind = Schema.Literals([
   "slack",
   "jira_query",
   "gitlab_projects",
+  "issues",
+  "pull_requests",
 ]);
 export type TriggerFilterSourceKind = typeof TriggerFilterSourceKind.Type;
 
@@ -90,6 +96,23 @@ export const TRIGGER_EVENT_TYPES = {
     "merge_request.merged",
     "merge_request.closed",
     "pipeline.finished",
+  ],
+  issues: [
+    "issue.opened",
+    "issue.closed",
+    "issue.reopened",
+    "issue.state_changed",
+    "issue.labels_changed",
+    "issue.assignee_changed",
+    "issue.updated",
+  ],
+  pull_requests: [
+    "pull_request.opened",
+    "pull_request.updated",
+    "pull_request.merged",
+    "pull_request.closed",
+    "pull_request.reopened",
+    "pull_request.checks_changed",
   ],
 } as const;
 
@@ -205,6 +228,106 @@ const GITLAB_SOURCE_FIELDS = [
   { path: "event.author", label: "Author", description: "Author's username." },
 ] as const satisfies ReadonlyArray<TriggerSourceField>;
 
+const ISSUES_SOURCE_FIELDS = [
+  { path: "event.type", label: "Event type", description: "What changed on the issue." },
+  {
+    path: "event.tracker",
+    label: "Tracker",
+    description: "Such as github, gitlab, linear, or jira.",
+  },
+  { path: "event.host", label: "Host", description: "Tracker host, such as github.com." },
+  {
+    path: "event.scope",
+    label: "Scope",
+    description: "Repository, team, or project the issue belongs to.",
+  },
+  { path: "event.key", label: "Key", description: "Issue key as the tracker stores it." },
+  { path: "event.displayKey", label: "Display key", description: "Such as #12 or ENG-12." },
+  { path: "event.url", label: "URL", description: "Link to the issue." },
+  { path: "event.title", label: "Title", description: "Issue title." },
+  { path: "event.state", label: "State", description: "The tracker's name for the state." },
+  { path: "event.stateCategory", label: "State category", description: "open or closed." },
+  {
+    path: "event.previousState",
+    label: "Previous state",
+    description: "State before this change. Empty the first time the issue is seen.",
+  },
+  {
+    path: "event.previousStateCategory",
+    label: "Previous state category",
+    description: "open or closed, before this change.",
+  },
+  { path: "event.author", label: "Author", description: "Author's login." },
+  {
+    path: "event.assignees",
+    label: "Assignees",
+    description: "Assignee logins.",
+    array: true,
+  },
+  { path: "event.labels", label: "Labels", description: "Labels on the issue.", array: true },
+  {
+    path: "event.addedLabels",
+    label: "Added labels",
+    description: "Labels this change added.",
+    array: true,
+  },
+  {
+    path: "event.removedLabels",
+    label: "Removed labels",
+    description: "Labels this change removed.",
+    array: true,
+  },
+] as const satisfies ReadonlyArray<TriggerSourceField>;
+
+const PULL_REQUESTS_SOURCE_FIELDS = [
+  { path: "event.type", label: "Event type", description: "What changed on the pull request." },
+  { path: "event.provider", label: "Host kind", description: "Such as github or gitlab." },
+  { path: "event.host", label: "Host", description: "Such as github.com." },
+  {
+    path: "event.repository",
+    label: "Repository",
+    description: "Repository path, such as acme/app.",
+  },
+  { path: "event.number", label: "Number", description: "Pull request number." },
+  { path: "event.url", label: "URL", description: "Link to the pull request." },
+  { path: "event.title", label: "Title", description: "Pull request title." },
+  { path: "event.state", label: "State", description: "open, merged, or closed." },
+  {
+    path: "event.previousState",
+    label: "Previous state",
+    description: "State before this change.",
+  },
+  { path: "event.isDraft", label: "Draft", description: "true or false." },
+  {
+    path: "event.headBranch",
+    label: "Source branch",
+    description: "Branch the changes come from.",
+  },
+  {
+    path: "event.baseBranch",
+    label: "Target branch",
+    description: "Branch the changes merge into.",
+  },
+  { path: "event.checksState", label: "Checks", description: "passing, failing, or pending." },
+  {
+    path: "event.previousChecksState",
+    label: "Previous checks",
+    description: "Checks state before this change.",
+  },
+  {
+    path: "event.reviewDecision",
+    label: "Review decision",
+    description: "approved, changes-requested, or review-required.",
+  },
+  { path: "event.author", label: "Author", description: "Author's login." },
+  {
+    path: "event.labels",
+    label: "Labels",
+    description: "Labels on the pull request.",
+    array: true,
+  },
+] as const satisfies ReadonlyArray<TriggerSourceField>;
+
 export const TRIGGER_SOURCE_FIELDS = {
   jira: JIRA_SOURCE_FIELDS,
   jira_query: [
@@ -244,6 +367,8 @@ export const TRIGGER_SOURCE_FIELDS = {
     },
     { path: "event.prompt", label: "Message", description: "The message text sent to T3 Code." },
   ],
+  issues: ISSUES_SOURCE_FIELDS,
+  pull_requests: PULL_REQUESTS_SOURCE_FIELDS,
 } as const satisfies Record<TriggerFilterSourceKind, ReadonlyArray<TriggerSourceField>>;
 
 const NullableString = Schema.NullOr(Schema.String);
@@ -321,6 +446,54 @@ export const TriggerGitLabProjectsEventPayload = Schema.Struct({
 });
 export type TriggerGitLabProjectsEventPayload = typeof TriggerGitLabProjectsEventPayload.Type;
 
+export const TriggerIssuesEventType = Schema.Literals(TRIGGER_EVENT_TYPES.issues);
+export type TriggerIssuesEventType = typeof TriggerIssuesEventType.Type;
+
+export const TriggerIssuesEventPayload = Schema.Struct({
+  type: TriggerIssuesEventType,
+  tracker: Schema.String,
+  host: Schema.String,
+  scope: Schema.String,
+  key: Schema.String,
+  displayKey: Schema.String,
+  url: Schema.String,
+  title: Schema.String,
+  state: Schema.String,
+  stateCategory: Schema.String,
+  previousState: NullableString,
+  previousStateCategory: NullableString,
+  author: NullableString,
+  assignees: StringList,
+  labels: StringList,
+  addedLabels: StringList,
+  removedLabels: StringList,
+});
+export type TriggerIssuesEventPayload = typeof TriggerIssuesEventPayload.Type;
+
+export const TriggerPullRequestsEventType = Schema.Literals(TRIGGER_EVENT_TYPES.pull_requests);
+export type TriggerPullRequestsEventType = typeof TriggerPullRequestsEventType.Type;
+
+export const TriggerPullRequestsEventPayload = Schema.Struct({
+  type: TriggerPullRequestsEventType,
+  provider: Schema.String,
+  host: Schema.String,
+  repository: Schema.String,
+  number: Schema.String,
+  url: Schema.String,
+  title: Schema.String,
+  state: Schema.String,
+  previousState: NullableString,
+  isDraft: Schema.Literals(["true", "false"]),
+  headBranch: Schema.String,
+  baseBranch: Schema.String,
+  checksState: NullableString,
+  previousChecksState: NullableString,
+  reviewDecision: NullableString,
+  author: NullableString,
+  labels: StringList,
+});
+export type TriggerPullRequestsEventPayload = typeof TriggerPullRequestsEventPayload.Type;
+
 export const TriggerSlackEventPayload = Schema.Struct({
   type: Schema.Literal("message"),
   tenantId: Schema.String,
@@ -364,6 +537,20 @@ export const TriggerEvent = Schema.Union([
     triggerId,
     occurredAt: IsoDateTime,
     payload: TriggerGitLabProjectsEventPayload,
+  }),
+  Schema.Struct({
+    source: Schema.Literal("issues"),
+    type: TriggerIssuesEventType,
+    triggerId,
+    occurredAt: IsoDateTime,
+    payload: TriggerIssuesEventPayload,
+  }),
+  Schema.Struct({
+    source: Schema.Literal("pull_requests"),
+    type: TriggerPullRequestsEventType,
+    triggerId,
+    occurredAt: IsoDateTime,
+    payload: TriggerPullRequestsEventPayload,
   }),
   Schema.Struct({
     source: Schema.Literal("slack"),
@@ -422,12 +609,21 @@ const TriggerGitLabProjectsSource = Schema.Struct({
   ...gitlabProjectsFields,
 }).check(hasGitLabProjects);
 
+const TriggerIssuesSource = Schema.Struct({ kind: Schema.Literal("issues"), ...issuesPollFields });
+
+const TriggerPullRequestsSource = Schema.Struct({
+  kind: Schema.Literal("pull_requests"),
+  ...pullRequestsPollFields,
+});
+
 export const TriggerSource = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("schedule"), schedule: ScheduledTaskTimeSchedule }),
   Schema.Struct({ kind: Schema.Literal("webhook"), ...webhookSourceFields }),
   Schema.Struct({ kind: TriggerEventSourceKind }),
   TriggerJiraQuerySource,
   TriggerGitLabProjectsSource,
+  TriggerIssuesSource,
+  TriggerPullRequestsSource,
 ]);
 export type TriggerSource = typeof TriggerSource.Type;
 
@@ -447,6 +643,13 @@ export const TriggerSaveSource = Schema.Union([
   }),
   TriggerGitLabProjectsSource.annotate({
     description: "Poll GitLab projects or a group for merge request and pipeline changes.",
+  }),
+  TriggerIssuesSource.annotate({
+    description:
+      "Poll the issue trackers the trigger's project is connected to, per issue change. Jira reads as the site's service identity.",
+  }),
+  TriggerPullRequestsSource.annotate({
+    description: "Poll the pull requests of the trigger's project's repositories, per change.",
   }),
 ]);
 export type TriggerSaveSource = typeof TriggerSaveSource.Type;
@@ -559,6 +762,9 @@ export function scheduledTaskTrigger(task: ScheduledTask): Trigger {
   } else if (schedule.type === "gitlab_projects") {
     const { type: _type, filters: _filters, ...projects } = schedule;
     source = { kind: "gitlab_projects", ...projects };
+  } else if (schedule.type === "issues" || schedule.type === "pull_requests") {
+    const { type, filters: _filters, ...poll } = schedule;
+    source = type === "issues" ? { kind: type, ...poll } : { kind: type, ...poll };
   } else {
     source = { kind: schedule.type };
   }
@@ -608,6 +814,12 @@ export function triggerUpsertToScheduledTaskUpsert(
   } else if (source.kind === "gitlab_projects") {
     const { kind: _kind, ...projects } = source;
     schedule = { type: "gitlab_projects", ...projects, filters };
+  } else if (source.kind === "issues") {
+    const { kind: _kind, ...poll } = source;
+    schedule = { type: "issues", ...poll, filters };
+  } else if (source.kind === "pull_requests") {
+    const { kind: _kind, ...poll } = source;
+    schedule = { type: "pull_requests", ...poll, filters };
   } else {
     schedule = { type: source.kind, filters };
   }

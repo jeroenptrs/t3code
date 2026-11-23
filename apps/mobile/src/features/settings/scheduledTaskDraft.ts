@@ -80,6 +80,8 @@ const TRIGGER_FILTER_MODES: ReadonlySet<string> = new Set([
   "slack",
   "jira_query",
   "gitlab_projects",
+  "issues",
+  "pull_requests",
 ]);
 
 export function isTriggerFilterMode(mode: string): mode is TriggerFilterSourceKind {
@@ -125,7 +127,11 @@ export type ScheduleDraft = {
   readonly gitlabProjects: string;
   readonly gitlabGroup: string;
   readonly gitlabPollMinutes: string;
-  /** Jira query and GitLab projects: what the first poll raises. Chosen when creating. */
+  /** Issues and pull requests modes: free text, labels (issues only), and the interval. */
+  readonly neutralQuery: string;
+  readonly neutralLabels: string;
+  readonly neutralPollMinutes: string;
+  /** Polled modes: what the first poll raises. Chosen when creating. */
   readonly pollStart: PollTriggerStart;
 };
 
@@ -155,6 +161,9 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   gitlabProjects: "",
   gitlabGroup: "",
   gitlabPollMinutes: String(DEFAULT_POLL_INTERVAL_MS / 60_000),
+  neutralQuery: "",
+  neutralLabels: "",
+  neutralPollMinutes: String(DEFAULT_POLL_INTERVAL_MS / 60_000),
   pollStart: "changes",
 };
 
@@ -240,6 +249,18 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
         gitlabPollMinutes: String(Math.round(task.schedule.everyMs / 60_000)),
         pollStart: task.schedule.start ?? "changes",
       };
+    case "issues":
+    case "pull_requests":
+      return {
+        ...DEFAULT_SCHEDULE,
+        mode: task.schedule.type,
+        ...triggerFilterDraft(task.schedule.type, task.schedule.filters),
+        neutralQuery: task.schedule.query ?? "",
+        neutralLabels:
+          task.schedule.type === "issues" ? (task.schedule.labels ?? []).join(", ") : "",
+        neutralPollMinutes: String(Math.round(task.schedule.everyMs / 60_000)),
+        pollStart: task.schedule.start ?? "changes",
+      };
   }
 }
 
@@ -298,6 +319,24 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
         ...(draft.pollStart === "current" ? { start: "current" } : {}),
         ...filters,
       };
+    }
+    if (draft.mode === "issues" || draft.mode === "pull_requests") {
+      const everyMs = parseJiraPollMinutes(draft.neutralPollMinutes) * 60_000;
+      if (!(everyMs >= MIN_POLL_INTERVAL_MS)) return null;
+      const query = draft.neutralQuery.trim();
+      const labels = draft.neutralLabels
+        .split(/[,\n]/)
+        .map((label) => label.trim())
+        .filter((label) => label.length > 0);
+      const common = {
+        everyMs,
+        ...(query ? { query } : {}),
+        ...(draft.pollStart === "current" ? { start: "current" as const } : {}),
+        ...filters,
+      };
+      return draft.mode === "issues"
+        ? { type: "issues", ...common, ...(labels.length > 0 ? { labels } : {}) }
+        : { type: "pull_requests", ...common };
     }
     return {
       type: draft.mode,
@@ -427,6 +466,9 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.schedule.jiraSite,
     draft.schedule.jql,
     draft.schedule.jiraPollMinutes,
+    draft.schedule.neutralQuery,
+    draft.schedule.neutralLabels,
+    draft.schedule.neutralPollMinutes,
     draft.workspace,
     draft.baseRef,
     draft.checkoutPath,

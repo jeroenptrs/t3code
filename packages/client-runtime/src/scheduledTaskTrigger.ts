@@ -21,6 +21,9 @@ export const DEFAULT_TRIGGER_PROMPT = {
   jira_query: JIRA_TRIGGER_PROMPT,
   gitlab: GITLAB_TRIGGER_PROMPT,
   gitlab_projects: GITLAB_TRIGGER_PROMPT,
+  issues: "Look at issue {{event.displayKey}} in {{event.scope}}: {{event.title}} ({{event.url}}).",
+  pull_requests:
+    "Look at pull request {{event.number}} in {{event.repository}}: {{event.title}} ({{event.url}}).",
   slack: "{{event.prompt}}",
   manual: "",
 } as const;
@@ -163,7 +166,9 @@ export function triggerEventTypes(source: string): ReadonlyArray<string> | null 
   return source === "jira" ||
     source === "gitlab" ||
     source === "jira_query" ||
-    source === "gitlab_projects"
+    source === "gitlab_projects" ||
+    source === "issues" ||
+    source === "pull_requests"
     ? TRIGGER_EVENT_TYPES[source]
     : null;
 }
