@@ -71,20 +71,31 @@ keeps that shape and binds it to what T3 Code already has.
   turn in the project checkout, and binding the worktree then interrupts it.
 - **The Foreman is not Home.** Upstream's Home agent is a per-user assistant
   that acts as the user across machines. A Foreman runs one work item for one
-  factory, is server-owned, and runs under the factory's scope. We take Home's
-  thread-management toolkit and its wake-on-completion reports, and leave its
-  opt-in setting, user attribution, and "do what the user can do" scope.
+  factory, is server-owned, and runs under the factory's scope. It starts
+  children with `t3_factory_delegate`, which runs upstream's `delegate_task`
+  path, and a child's completion wakes it the way it wakes any parent of a
+  delegated task. An earlier design borrowed Home's thread-management toolkit
+  and watch reports (#15975), but no factory code used them, so the adapter is
+  gone and factories do not depend on Home.
 - **A work item is its own entity.** It spans its run thread and the children
   that thread delegates, and carries a source reference, a stage, and gate
   state. Threads stay what they are.
 - **Stages start as skills.** Implement and review behaviour, including "checks
   must pass before handing back", ships first as instructions. A rule that fails
   twice in real use becomes a server-enforced gate.
-- **Factories compose from parts referenced by name.** Projects (one or
-  several, so a workspace project can span backend and frontend repos),
-  triggers, and skills are referenced by name. A skill comes from the factory,
-  from T3 home, or from the built-in set. The factory itself is the wiring plus
-  its roles.
+- **A factory works in what its project covers.** Upstream's multi-repo
+  projects (#35925) make one project cover its folder, the repositories inside
+  it, and folders added to it, read from disk each time. A factory reports
+  those repositories, the Foreman's work item message names them, and the
+  project's Repositories settings are the only place to change them.
+  `factory.json` once listed other projects by name, though no agent ever read
+  the list. A list that names only the factory's own project means nothing. One
+  that names another project raises an `other_projects` issue that says to add
+  that project's folder under Repositories instead. Either way the next save
+  drops the field, so no factory stops working when it goes.
+- **Triggers and skills are referenced by name.** A skill comes from the
+  factory, from T3 home, or from the built-in set. The factory itself is the
+  wiring plus its roles.
 - **Role prompts live on disk, with presets and the app as editor.** Three
   layers, lowest precedence first. The server ships a body and a binding per
   preset, so a factory with no role files works. `factory.json` has
@@ -139,17 +150,16 @@ block on it.
 - When upstream merges, the fork feature graduates: drop the pinned PR, rebase
   the adapter onto the merged version, and re-apply what the feature needs.
 
-Current experimental dependencies, as of 2026-11-14. Fresh sessions on send
-(#30323) and one thread per scheduled task (#30326) merged upstream on
-2026-11-05, and follow-ups that wait for nested work (#34958 and #36411, which
-superseded the pulled #21877) merged on 2026-11-13. None of them is
-experimental any more; the ledger lists them as graduated.
+Current experimental dependencies, as of 2026-11-23. Factories build on no
+unmerged upstream PR. Fresh sessions on send (#30323), one thread per scheduled
+task (#30326), and the follow-ups that wait for nested work (#34958 and
+#36411) merged upstream and are graduated in the ledger. Multi-repo projects
+merged as #35925 and need no adapter. Home (#15975) closed unmerged; the fork
+may carry it for the Home feature, but factories do not use it.
 
-| Upstream PR                                                                            | What we build on it                                 |
+| Upstream PR                                                                            | What we would build on it                           |
 | -------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| [#15975](https://github.com/pingdotgg/t3code/pull/15975) Home agent                    | Thread-management toolkit and wake reports          |
-| [#31129](https://github.com/pingdotgg/t3code/pull/31129) delivery modes on bound tasks | Steer or restart on trigger delivery (M4)           |
-| [#26254](https://github.com/pingdotgg/t3code/pull/26254) multi-repo projects           | Factories spanning several repos                    |
+| [#31129](https://github.com/pingdotgg/t3code/pull/31129) delivery modes on bound tasks | Not pulled: steer or restart on trigger delivery    |
 | [#15350](https://github.com/pingdotgg/t3code/pull/15350) Docker sandboxes              | Not pulled: a per-role `isolation: sandbox` binding |
 
 The pinned head SHAs and the commits that carry them are in the

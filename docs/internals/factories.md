@@ -9,7 +9,7 @@ state and never a prompt. The design and milestones are in
 
 ```
 <project root>/.t3/factories/<name>/
-  factory.json        name, projects, roles
+  factory.json        name, roles
   roles/<role>.md     YAML frontmatter with bindings, then the instructions
   skills/<skill>/     SKILL.md and its supporting files, in the Agent Skills format
 

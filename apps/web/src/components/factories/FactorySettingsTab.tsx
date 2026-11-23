@@ -1,19 +1,22 @@
 import { factorySaveInput } from "@t3tools/client-runtime/factories";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  selectProjectGroupingSettings,
+} from "@t3tools/client-runtime/state/project-grouping";
 import { useAtomValue } from "@effect/atom-react";
 import { FACTORY_FOREMAN_ROLE, type FactoryRole } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
-import { ChevronDownIcon } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
+import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { useProjects } from "../../state/entities";
 import { factoriesEnvironment } from "../../state/factories";
 import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
-import { InlineButton } from "../ui/button";
-import { Menu, MenuCheckboxItem, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
 import { DeleteFactoryDialog } from "./DeleteFactoryDialog";
-import { FactoryFieldIssues, FactoryIssuesList } from "./FactoryIssues";
-import { issueTab, issuesFor } from "./FactoryPage.logic";
+import { FactoryIssuesList } from "./FactoryIssues";
+import { issueTab } from "./FactoryPage.logic";
 import type { FactoryTabProps } from "./FactoryPage";
 import {
   FactorySaveActions,
@@ -30,120 +33,47 @@ import {
   type RoleBindingDraft,
 } from "./FactoryRoles.logic";
 
-const toggled = <T,>(list: ReadonlyArray<T>, value: T, checked: boolean): ReadonlyArray<T> =>
-  checked
-    ? [...list.filter((entry) => entry !== value), value]
-    : list.filter((entry) => entry !== value);
-
-/** `definition.projects`: the other projects the factory may work in, saved to factory.json. */
-function ProjectsCard(props: FactoryTabProps) {
+/** What the factory's project covers, read-only: the project's Repositories settings change it. */
+function RepositoriesCard(props: FactoryTabProps) {
   const gt = useGT();
   const { environmentId, factory } = props;
-  const { editable, blockedReason } = useFactoryEditable(environmentId, factory, props.canManage);
-  const { saving, save } = useFactorySave(environmentId);
-  const [draft, setDraft] = useState<ReadonlyArray<string> | null>(null);
-  const [refusal, setRefusal] = useState<FactorySaveRefusal | null>(null);
-  const projects = draft ?? factory.definition.projects;
-  const dirty = draft !== null && draft.join("\n") !== factory.definition.projects.join("\n");
-  const here = useProjects().filter((project) => project.environmentId === environmentId);
-  const titleCounts = new Map<string, number>();
-  for (const project of here)
-    titleCounts.set(project.title, (titleCounts.get(project.title) ?? 0) + 1);
-  // The owning project is implied, so it is not offered.
-  const choices = [
-    ...new Set([
-      ...here
-        .filter((project) => project.id !== factory.projectId && project.archivedAt == null)
-        .map((project) => project.title)
-        .toSorted((left, right) => left.localeCompare(right)),
-      ...projects,
-    ]),
-  ];
-  const problem = (name: string) => {
-    const count = titleCounts.get(name) ?? 0;
-    if (count === 1) return null;
-    return count === 0 ? gt("Not found here") : gt("More than one project has this name");
-  };
-
-  const submit = async () => {
-    if (draft === null) return;
-    setRefusal(null);
-    const result = await save(factorySaveInput(factory, { definition: { projects: draft } }));
-    if ("refusal" in result) {
-      setRefusal(result.refusal);
-      return;
-    }
-    props.onSaved(result.saved);
-    setDraft(null);
-    toastManager.add({ type: "success", title: gt("Projects saved") });
-  };
-
+  const settings = useEnvironmentSettings(environmentId);
+  const project = useProjects().find(
+    (candidate) => candidate.environmentId === environmentId && candidate.id === factory.projectId,
+  );
+  const projectKey =
+    project === undefined
+      ? null
+      : deriveLogicalProjectKeyFromSettings(project, selectProjectGroupingSettings(settings));
   return (
     <SettingsSection
-      title={gt("Projects")}
+      title={gt("Repositories")}
       headerAction={
-        editable ? (
-          <FactorySaveActions
-            dirty={dirty}
-            saving={saving}
-            disabledReason={blockedReason}
-            onDiscard={() => {
-              setDraft(null);
-              setRefusal(null);
-            }}
-            onSave={() => void submit()}
-          />
-        ) : null
+        projectKey === null ? null : (
+          <Link
+            to="/settings/projects"
+            search={{ project: projectKey, machine: undefined }}
+            hash="project-repositories"
+            className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+          >
+            <T>Edit in project settings</T>
+          </Link>
+        )
       }
     >
-      <SettingsRow
-        title={gt("Other projects")}
-        description={gt("The factory always works in its own project.")}
-        control={
-          editable ? (
-            <Menu>
-              <MenuTrigger
-                render={<InlineButton tone="picker" disabled={saving} />}
-                aria-label={gt("Choose projects")}
-              >
-                {projects.length === 0
-                  ? gt("None", { $context: "no other projects" })
-                  : gt("{count, plural, =1 {One project} other {{count} projects}}", {
-                      count: projects.length,
-                    })}
-                <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
-              </MenuTrigger>
-              <MenuPopup align="end" className="max-h-80">
-                {choices.length === 0 ? (
-                  <MenuItem disabled>
-                    <T>No other projects here</T>
-                  </MenuItem>
-                ) : null}
-                {choices.map((name) => (
-                  <MenuCheckboxItem
-                    key={name}
-                    checked={projects.includes(name)}
-                    closeOnClick={false}
-                    onCheckedChange={(checked) => setDraft(toggled(projects, name, checked))}
-                  >
-                    {name}
-                  </MenuCheckboxItem>
-                ))}
-              </MenuPopup>
-            </Menu>
-          ) : null
-        }
-      />
-      {projects.map((name) => (
-        <SettingsRow key={name} title={name} status={problem(name)} />
-      ))}
-      {refusal === null && issuesFor(factory.issues, null, "projects").length === 0 ? null : (
-        <div className="px-3 py-3 sm:px-4">
-          <FactorySaveError refusal={refusal} />
-          <FactoryFieldIssues
-            issues={issuesFor([...factory.issues, ...(refusal?.issues ?? [])], null, "projects")}
+      {factory.repositories.length === 0 ? (
+        <SettingsRow
+          title={gt("No repositories")}
+          description={gt("Add a folder in the project's Repositories settings.")}
+        />
+      ) : (
+        factory.repositories.map((repository) => (
+          <SettingsRow
+            key={repository.path}
+            title={repository.name}
+            description={repository.path}
           />
-        </div>
+        ))
       )}
     </SettingsSection>
   );
@@ -219,13 +149,11 @@ export function FactorySettingsTab(props: FactoryTabProps) {
   const canDelete =
     useAtomValue(factoriesEnvironment.delete.permissionAtom(environmentId)) && props.canManage;
   const foreman = factory.roles.find((role) => role.role === FACTORY_FOREMAN_ROLE);
-  const fileIssues = factory.issues.filter(
-    (issue) => issueTab(issue) === "settings" && issue.field !== "projects",
-  );
+  const fileIssues = factory.issues.filter((issue) => issueTab(issue) === "settings");
   return (
     <>
       <FactoryIssuesList issues={fileIssues} />
-      <ProjectsCard {...props} />
+      <RepositoriesCard {...props} />
       {foreman === undefined ? null : <ForemanCard {...props} foreman={foreman} />}
       {canDelete ? (
         <SettingsSection title={gt("Danger zone")}>

@@ -144,7 +144,6 @@ const factory: Pick<Factory, "projectId" | "definition"> = {
   definition: {
     version: 2,
     name: "nightly-triage",
-    projects: ["web"],
     roles: { review: "roles/review.md", implement: null },
   },
 };
@@ -170,9 +169,9 @@ describe("factorySaveInput", () => {
   });
 
   it("replaces only the definition fields a view owns", () => {
-    expect(factorySaveInput(factory, { definition: { projects: [] } })).toEqual({
+    expect(factorySaveInput(factory, { definition: { roles: {} } })).toEqual({
       projectId,
-      definition: { ...factory.definition, projects: [] },
+      definition: { ...factory.definition, roles: {} },
     });
   });
 });

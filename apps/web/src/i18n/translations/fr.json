@@ -13010,5 +13010,15 @@
   "1ba0cdfa1c3ba253": "Description",
   "cea36f763037eace": "Vide conserve la description du modèle, ou aucune pour un nouveau rôle.",
   "0b5384b1aa2f8a80": "Une ligne sur ce que fait ce rôle.",
-  "a5dffbc7710c75bc": "Une ligne sur ce que fait ce rôle. Le Foreman la lit pour décider quoi envoyer ici."
+  "a5dffbc7710c75bc": "Une ligne sur ce que fait ce rôle. Le Foreman la lit pour décider quoi envoyer ici.",
+  "f9fcc101bd2845a3": "Modifier dans les paramètres du projet",
+  "c320f2739e41aaac": "Ajoutez un dossier dans les paramètres Dépôts du projet.",
+  "e10ed6effe778b8e": "Le projet ne couvre encore aucun dépôt.",
+  "b8b75331cacbc11d": "Travaille dans {repositories}",
+  "0b1a8752b2688bbd": "La Factory n'a pas pu être créée.",
+  "79ccb5919e5e1541": "Aucun projet ici",
+  "4e240ec5d72ebfd4": "Lettres minuscules, chiffres et traits d'union. Il nomme le dossier.",
+  "067007b4fd5f1b5b": "Créer la Factory",
+  "d430c9ca053aa271": "La définition se trouve dans le projet, sous .t3/factories. Elle commence avec les rôles intégrés foreman, implement et review.",
+  "cc5d2f5ce8ee576e": "Environnement"
 }
