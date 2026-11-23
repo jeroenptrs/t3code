@@ -753,6 +753,7 @@
   "8471c4c5a50ffde3": "Issues cannot be browsed for this host yet.",
   "2f4a47129f89fe22": "Not connected. Add a personal api key to list its issues.",
   "024baab60525a419": "The saved credential was rejected.",
+  "0c22d3c84d52a9e9": "Connected as {account} · no projects linked yet. Pick a {tracker} project for each project to list its issues.",
   "2613c232516f3c72": "Connected as {account} · no projects linked yet. Pick a team for a project to list its issues.",
   "77d07bfe2f8ee19d": "{count, plural, one {Connected as {account} · {count} project linked} other {Connected as {account} · {count} projects linked}}",
   "3eb9a01099aaf799": "{count}s",
