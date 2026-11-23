@@ -14,6 +14,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { AuthUserId } from "./authUser.ts";
+import { threadIssueKeysEqual, type ThreadIssueKey } from "./issue.ts";
 import { PullRequestState } from "./pullRequest.ts";
 import { ThreadPullRequestKey } from "./threadPullRequest.ts";
 
@@ -372,6 +373,37 @@ export function parseJiraIssueUrl(url: URL, site: string) {
     return null;
   if (!JIRA_ISSUE_KEY_PATTERN.test(key)) return null;
   return { host, workspace: host, scope: jiraProjectKeyOf(key), key };
+}
+
+/** The Jira link a tracker-neutral issue key names, or null when its tracker is not Jira. */
+export function jiraIssueKeyOfThreadIssue(key: ThreadIssueKey): JiraIssueKey | null {
+  return key.tracker === JIRA_ISSUE_TRACKER_KIND
+    ? { site: key.host.trim().toLowerCase(), key: key.key.trim().toUpperCase() }
+    : null;
+}
+
+/**
+ * Whether a thread links the issue. A Jira issue is linked in `jiraIssues`, where a
+ * `branch-dismissed` tombstone is not a link; every other tracker's links are in `issues`.
+ */
+export function threadLinksIssue(
+  thread: {
+    readonly issues?: ReadonlyArray<ThreadIssueKey> | undefined;
+    readonly jiraIssues?: ReadonlyArray<ThreadJiraIssueLink> | undefined;
+  },
+  key: ThreadIssueKey,
+): boolean {
+  const jiraKey = jiraIssueKeyOfThreadIssue(key);
+  return (
+    thread.issues?.some((link) => threadIssueKeysEqual(link, key)) === true ||
+    (jiraKey !== null &&
+      thread.jiraIssues?.some(
+        (link) =>
+          link.source !== "branch-dismissed" &&
+          link.site === jiraKey.site &&
+          link.key === jiraKey.key,
+      ) === true)
+  );
 }
 
 // Proposals: Jira writes an agent asks for and a user approves. The server performs an approved

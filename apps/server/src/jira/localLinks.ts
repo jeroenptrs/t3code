@@ -72,6 +72,36 @@ export const listJiraIssueLinkedThreads = Effect.fn("listJiraIssueLinkedThreads"
 );
 
 /**
+ * The rows and filters `listLinkedIssueThreads` uses, for a Jira issue: settled state included
+ * and side chats left out. Fails with the SQL error, which that caller maps.
+ */
+export const listThreadsLinkingJiraIssue = Effect.fn("listThreadsLinkingJiraIssue")(function* (
+  input: JiraIssueKey,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* sql<{
+    id: string;
+    projectId: string;
+    title: string;
+    archivedAt: string | null;
+    settled: number;
+  }>`
+    SELECT t.thread_id AS id, t.project_id AS "projectId", t.title,
+      t.archived_at AS "archivedAt",
+      (json_extract(t.payload_json, '$.settledAt') IS NOT NULL
+        OR json_extract(t.payload_json, '$.settledOverride') IS 'settled') AS settled
+    FROM fork_projection_thread_jira_issues AS link
+    JOIN orchestration_v2_projection_threads AS t ON t.thread_id = link.thread_id
+    WHERE link.site = ${input.site}
+      AND link.issue_key = ${input.key}
+      AND link.source != 'branch-dismissed'
+      AND t.deleted_at IS NULL
+      AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
+    ORDER BY t.updated_at DESC, t.thread_id ASC
+  `;
+});
+
+/**
  * Branches of threads that are neither archived nor deleted, one thread or all of them, each with
  * the keys it already links on `site`. Dismissed links count, so the branch detector skips them.
  */

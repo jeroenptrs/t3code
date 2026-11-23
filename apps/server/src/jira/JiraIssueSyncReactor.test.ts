@@ -2,7 +2,10 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  IssueTrackerKind,
+  JIRA_ISSUE_TRACKER_KIND,
   JiraError,
+  ProjectId,
   ThreadId,
   type JiraComment,
   type JiraIssueSummary,
@@ -116,6 +119,7 @@ it.effect("reads each site once per sweep and records only snapshots that change
   jira.issues.set(`${SITE}/ABC-1`, { summary: "Ship it", statusCategory: "in-progress" });
   jira.issues.set(`${SITE}/ABC-3`, { summary: "Archived", statusCategory: "todo" });
   jira.issues.set(`${SITE}/ABC-4`, { summary: "Dismissed", statusCategory: "todo" });
+  jira.issues.set(`${SITE}/ABC-5`, { summary: "Neutral", statusCategory: "todo" });
   jira.issues.set(`${OTHER_SITE}/XYZ-1`, { summary: "Elsewhere", statusCategory: "todo" });
   return Effect.gen(function* () {
     const reactor = yield* JiraIssueSyncReactor.JiraIssueSyncReactor;
@@ -140,10 +144,27 @@ it.effect("reads each site once per sweep and records only snapshots that change
     yield* createThread(dismissed);
     yield* linkIssue(dismissed, "ABC-4", "branch");
     yield* unlinkIssue(dismissed, "ABC-4");
+    // Linked through the tracker-neutral command, as `link_issue` and the neutral panel do.
+    const neutral = ThreadId.make("thread:neutral");
+    yield* createThread(neutral);
+    yield* (yield* Orchestrator.OrchestratorV2).dispatch({
+      type: "thread.issue.link",
+      commandId: CommandId.make("test:neutral-link"),
+      threadId: neutral,
+      tracker: IssueTrackerKind.make(JIRA_ISSUE_TRACKER_KIND),
+      host: SITE,
+      scope: "ABC",
+      key: "ABC-5",
+      projectId: ProjectId.make("project:jira"),
+      url: `https://${SITE}/browse/ABC-5`,
+      displayKey: "ABC-5",
+      title: "Neutral",
+      source: "agent",
+    });
 
     yield* reactor.sweep;
     assert.deepStrictEqual(callsSince(jira, 0), [
-      { site: SITE, keys: ["ABC-1", "ABC-2"] },
+      { site: SITE, keys: ["ABC-1", "ABC-2", "ABC-5"] },
       { site: OTHER_SITE, keys: ["XYZ-1"] },
     ]);
     assert.deepStrictEqual(yield* snapshots(one), [["ABC-1", ["Ship it", "in-progress"]]]);
@@ -157,17 +178,18 @@ it.effect("reads each site once per sweep and records only snapshots that change
     ]);
     assert.deepStrictEqual(yield* snapshots(archived), [["ABC-3", null]]);
     assert.deepStrictEqual(yield* snapshots(dismissed), [["ABC-4", null]]);
-    assert.lengthOf(yield* jiraCommandIds("server:jira-sync:"), 3);
+    assert.deepStrictEqual(yield* snapshots(neutral), [["ABC-5", ["Neutral", "todo"]]]);
+    assert.lengthOf(yield* jiraCommandIds("server:jira-sync:"), 4);
 
     // Nothing changed in Jira: the sweep reads again but records nothing.
     yield* reactor.sweep;
     assert.lengthOf(jira.calls, 4);
-    assert.lengthOf(yield* jiraCommandIds("server:jira-sync:"), 3);
+    assert.lengthOf(yield* jiraCommandIds("server:jira-sync:"), 4);
 
     jira.issues.set(`${SITE}/ABC-1`, { summary: "Ship it", statusCategory: "done" });
     yield* reactor.sweep;
     assert.deepStrictEqual(yield* snapshots(one), [["ABC-1", ["Ship it", "done"]]]);
-    assert.lengthOf(yield* jiraCommandIds("server:jira-sync:"), 5);
+    assert.lengthOf(yield* jiraCommandIds("server:jira-sync:"), 6);
   }).pipe(Effect.provide(layerTest(jira)));
 });
 
