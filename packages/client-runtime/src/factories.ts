@@ -123,7 +123,7 @@ export function roleEnabledChange(role: FactoryRole, enabled: boolean): FactoryR
 export function factorySaveInput(
   factory: Pick<Factory, "projectId" | "definition">,
   changes: {
-    readonly definition?: Partial<Pick<FactoryDefinition, "projects" | "triggers" | "roles">>;
+    readonly definition?: Partial<Pick<FactoryDefinition, "projects" | "roles">>;
     readonly roles?: ReadonlyArray<FactoryRoleChange>;
   },
 ): FactorySaveInput {
