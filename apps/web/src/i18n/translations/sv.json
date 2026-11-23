@@ -13138,5 +13138,13 @@
   "4e240ec5d72ebfd4": "Gemener, siffror och bindestreck. Det blir mappens namn.",
   "067007b4fd5f1b5b": "Skapa Factory",
   "d430c9ca053aa271": "Definitionen finns i projektet under .t3/factories. Den börjar med de inbyggda rollerna foreman, implement och review.",
-  "cc5d2f5ce8ee576e": "Miljö"
+  "cc5d2f5ce8ee576e": "Miljö",
+  "ed6de08d060de82d": "Kontrollerna godkändes",
+  "83919488c0173782": "Kontrollerna misslyckades",
+  "878a0531229ed067": "Godkänd",
+  "862ffea0d0d90d51": "Ändringar begärda",
+  "390cd0e62326e8bb": "Blockerande",
+  "ab571ece47715cfe": "Inte blockerande",
+  "5d1a5b5b5dd1fa27": "Implementering",
+  "b74dbfef93591e1e": "Inga anmärkningar"
 }

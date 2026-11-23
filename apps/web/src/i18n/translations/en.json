@@ -13140,5 +13140,13 @@
   "4e240ec5d72ebfd4": "Lowercase letters, digits, and hyphens. It names the folder.",
   "067007b4fd5f1b5b": "Create factory",
   "d430c9ca053aa271": "The definition lives in the project under .t3/factories. It starts with the built-in foreman, implement, and review roles.",
-  "cc5d2f5ce8ee576e": "Environment"
+  "cc5d2f5ce8ee576e": "Environment",
+  "ed6de08d060de82d": "Checks passed",
+  "83919488c0173782": "Checks failed",
+  "878a0531229ed067": "Approved",
+  "862ffea0d0d90d51": "Changes requested",
+  "390cd0e62326e8bb": "Blocking",
+  "ab571ece47715cfe": "Not blocking",
+  "5d1a5b5b5dd1fa27": "Implementation",
+  "b74dbfef93591e1e": "No findings"
 }

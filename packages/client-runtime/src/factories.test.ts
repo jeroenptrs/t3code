@@ -21,6 +21,9 @@ import {
   factorySaveInput,
   gateAnswerError,
   gateAnswerInput,
+  implementationLabel,
+  latestImplementation,
+  latestReview,
   needsYouRows,
   roleEnabledChange,
   runningRoles,
@@ -44,6 +47,7 @@ const item = (overrides: Partial<WorkItemSummary>): WorkItemSummary => ({
   dispatchedAt: null,
   failureDismissedAt: null,
   failedByUser: false,
+  foremanResult: null,
   threads: [],
   createdAt: "2026-11-18T10:00:00.000Z",
   updatedAt: "2026-11-18T10:00:00.000Z",
@@ -131,6 +135,7 @@ const review: FactoryRole = {
     isolation: "worktree",
     skills: ["review-checklist"],
     tools: ["Read"],
+    outputSchema: null,
   },
   description: "",
   enabled: false,
@@ -265,5 +270,46 @@ describe("runningRoles", () => {
     expect(runningRoles(working, environmentId, shells)).toEqual([
       { role: "implement", threadIds: [thread("t-api"), thread("t-ui")] },
     ]);
+  });
+});
+
+describe("latestReview and latestImplementation", () => {
+  const thread = (id: string, role: string, output?: unknown) => ({
+    threadId: ThreadId.make(id),
+    role,
+    ...(output === undefined ? {} : { output }),
+  });
+
+  it("reads the newest output of each shape, whatever role returned it", () => {
+    const item = {
+      threads: [
+        thread("implement-1", "implement", {
+          branch: "t3/fix",
+          commit: "abc1234def",
+          checksPassed: false,
+          summary: "First try.",
+        }),
+        thread("review-1", "review", {
+          verdict: "changes",
+          findings: [{ summary: "x", blocking: true }],
+        }),
+        thread("implement-2", "implement", {
+          branch: "t3/fix",
+          commit: "fedcba9876",
+          checksPassed: true,
+          summary: "Fixed.",
+        }),
+        // A custom role with the review schema counts; a child still running has no output.
+        thread("qa-1", "qa", { verdict: "approve", findings: [] }),
+        thread("review-2", "review"),
+        thread("notes-1", "notes", { anything: true }),
+      ],
+    } as unknown as Pick<WorkItemSummary, "threads">;
+    expect(latestReview(item)).toEqual({ verdict: "approve", findings: [] });
+    const implementation = latestImplementation(item);
+    expect(implementation?.commit).toBe("fedcba9876");
+    expect(implementationLabel(implementation!)).toBe("t3/fix @ fedcba9");
+    expect(implementationLabel({ ...implementation!, commit: null })).toBe("t3/fix");
+    expect(latestReview({ threads: [] })).toBeNull();
   });
 });

@@ -5713,5 +5713,13 @@
   "3ec58a971b514f70": "Aún no hay cambios de etapa",
   "2be440682069ca88": "El Foreman pregunta",
   "19be644bc942c37f": "Factory",
-  "b462588e4e40009c": "En curso"
+  "b462588e4e40009c": "En curso",
+  "ed6de08d060de82d": "Comprobaciones superadas",
+  "83919488c0173782": "Comprobaciones fallidas",
+  "390cd0e62326e8bb": "Bloqueante",
+  "ab571ece47715cfe": "No bloqueante",
+  "5d1a5b5b5dd1fa27": "Implementación",
+  "b74dbfef93591e1e": "Sin hallazgos",
+  "f27dfe23ebe57670": "Revisión: aprobada",
+  "6ce25c253cc09a3f": "Revisión: cambios solicitados"
 }

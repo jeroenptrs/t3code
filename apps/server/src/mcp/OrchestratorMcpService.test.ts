@@ -134,6 +134,7 @@ describe("OrchestratorMcpService", () => {
             ...(followup ? { delegatedTaskId: taskId } : {}),
             ordinal: 1,
             status: "completed",
+            output: { value: { verdict: "approve" }, submittedAt: "2026-10-03T10:09:00.000Z" },
             startedAt: DateTime.makeUnsafe("2026-10-03T10:00:00Z"),
             ...(failedBeforeStart || queued
               ? { ordinal: 3, status: failedBeforeStart ? "failed" : "queued", startedAt: null }
@@ -258,21 +259,21 @@ describe("OrchestratorMcpService", () => {
           return;
         }
         if (!failedBeforeStart) {
-        const pending = yield* service.taskStatus(scope, taskId);
-        assert.equal(pending.status, "running");
-        assert.equal(pending.workState, "waiting_for_children");
-        assert.isNull(pending.summary);
-        assert.isNull(pending.resultContextTransferId);
-        assert.equal(yield* Ref.get(acknowledgementAttempts), 0);
-        hasNestedWork = false;
+          const pending = yield* service.taskStatus(scope, taskId);
+          assert.equal(pending.status, "running");
+          assert.equal(pending.workState, "waiting_for_children");
+          assert.isNull(pending.summary);
+          assert.isNull(pending.resultContextTransferId);
+          assert.equal(yield* Ref.get(acknowledgementAttempts), 0);
+          hasNestedWork = false;
         }
         const error = yield* service.taskStatus(scope, taskId).pipe(Effect.flip);
         assert.equal(error.code, "orchestration_error");
 
         if (!failedBeforeStart) {
-        // Completion lands after task selection, before the remaining parent/child reads.
-        hasNestedWork = true;
-        settleAfterTaskRead = true;
+          // Completion lands after task selection, before the remaining parent/child reads.
+          hasNestedWork = true;
+          settleAfterTaskRead = true;
         }
         const result = yield* service.taskStatus(scope, taskId);
         if (failedBeforeStart) {
@@ -282,6 +283,8 @@ describe("OrchestratorMcpService", () => {
         }
         assert.equal(result.status, "completed");
         assert.equal(result.summary, "terminal result");
+        // A child asked for a result as data reports it beside its prose.
+        assert.deepStrictEqual(result.output, { verdict: "approve" });
         assert.equal(result.latestTerminalRunId, childRunId);
         assert.equal(result.latestTerminalStatus, "completed");
         assert.equal(result.resultContextTransferId, resultTransferId);

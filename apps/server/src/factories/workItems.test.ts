@@ -37,6 +37,6 @@ Repositories the project covers. Name the one a child works in by name; the serv
 - api
 - web
 
-Delegate each task with t3_factory_delegate, naming the role. Hold the item for a person with t3_work_item_gate, and end it with t3_work_item_advance.`);
+Delegate each task with t3_factory_delegate, naming the role. Submit your result once the item ends or needs a person.`);
   });
 });

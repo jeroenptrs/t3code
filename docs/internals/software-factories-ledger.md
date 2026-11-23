@@ -40,11 +40,21 @@ a pinned cherry-pick. The adapter modules stay as the single import point.
 | [#31129](https://github.com/pingdotgg/t3code/pull/31129) | Open on 2026-11-05 when M4 shipped, so triggers have no delivery mode. Pull it behind an adapter in `apps/server/src/factories/upstream/` and add queue, steer, and restart per trigger.                                  |
 | [#15350](https://github.com/pingdotgg/t3code/pull/15350) | Open on 2026-11-06, by t3dotgg: threads run in Docker sandboxes with their own ports and services. Pull it behind an adapter in `apps/server/src/factories/upstream/` and add `isolation: sandbox` as a per-role binding. |
 
+## Fork changes to upstream code
+
+Typed results for factory children change two upstream files. Offer both
+upstream; when one lands, drop the fork's version and keep its test.
+
+| Change                                                                                                    | Where                                                       | Test                                                                                        |
+| --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `delegated_task.request` takes `outputSchema` and asks the child's first run for it                       | `Orchestrator.ts` `dispatchDelegatedTaskRequest`, contracts | `Orchestrator.control-reads.test.ts`, "wakes the parent once when its delegated task asks…" |
+| `task_status` and `delegate_task` return the child's `output`; `delegateTask` passes `outputSchema` along | `OrchestratorMcpService.ts` `readTask` and `delegateTask`   | `OrchestratorMcpService.test.ts`, "retries terminal acknowledgement…"                       |
+
 ## Fork fixes waiting on upstream
 
 These fork commits fix upstream issues that no pulled PR covers yet.
 
 | Upstream issue                                                                                                                                                              | Commit on this branch      | When upstream fixes it                                                                               |
 | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------- |
-| [#16565](https://github.com/pingdotgg/t3code/issues/16565), closed as a duplicate of merged [#23198](https://github.com/pingdotgg/t3code/pull/23198), which does not fix it | `d6da715823`               | Drop the fork commit's source change and keep its test in `ProviderSessionManager.test.ts`.          |
-| [#23006](https://github.com/pingdotgg/t3code/issues/23006), now tracked by [#33272](https://github.com/pingdotgg/t3code/issues/33272)                                       | `038145eab4`, `036c0cba21` | Drop both fork commits' source changes and keep their tests and the reproductions from `4e40435d0b`. |
+| [#16565](https://github.com/pingdotgg/t3code/issues/16565), closed as a duplicate of merged [#23198](https://github.com/pingdotgg/t3code/pull/23198), which does not fix it | `0b626d1217`               | Drop the fork commit's source change and keep its test in `ProviderSessionManager.test.ts`.          |
+| [#23006](https://github.com/pingdotgg/t3code/issues/23006), now tracked by [#33272](https://github.com/pingdotgg/t3code/issues/33272)                                       | `3fef687418`, `2b5748b774` | Drop both fork commits' source changes and keep their tests and the reproductions from `ccc112c6d5`. |

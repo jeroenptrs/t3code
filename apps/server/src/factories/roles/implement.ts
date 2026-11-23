@@ -7,6 +7,17 @@ export const binding = {
   isolation: "worktree",
   skills: ["implement"],
   tools: [],
+  outputSchema: {
+    type: "object",
+    properties: {
+      branch: { type: "string", minLength: 1 },
+      commit: { anyOf: [{ type: "string", minLength: 7, maxLength: 40 }, { type: "null" }] },
+      checksPassed: { type: "boolean" },
+      summary: { type: "string", minLength: 1 },
+    },
+    required: ["branch", "commit", "checksPassed", "summary"],
+    additionalProperties: false,
+  },
 } satisfies FactoryEffectiveBinding;
 
 export const description =

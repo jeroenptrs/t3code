@@ -5719,5 +5719,13 @@
   "3ec58a971b514f70": "Noch keine Phasenwechsel",
   "2be440682069ca88": "Der Foreman fragt",
   "19be644bc942c37f": "Factory",
-  "b462588e4e40009c": "In Arbeit"
+  "b462588e4e40009c": "In Arbeit",
+  "ed6de08d060de82d": "Prüfungen bestanden",
+  "83919488c0173782": "Prüfungen fehlgeschlagen",
+  "390cd0e62326e8bb": "Blockierend",
+  "ab571ece47715cfe": "Nicht blockierend",
+  "5d1a5b5b5dd1fa27": "Umsetzung",
+  "b74dbfef93591e1e": "Keine Befunde",
+  "f27dfe23ebe57670": "Review: genehmigt",
+  "6ce25c253cc09a3f": "Review: Änderungen angefordert"
 }
