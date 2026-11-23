@@ -234,6 +234,8 @@ function storedTriggerFilters(
     case "slack":
     case "jira_query":
     case "gitlab_projects":
+    case "issues":
+    case "pull_requests":
       return schedule.filters;
     default:
       return undefined;
@@ -986,7 +988,7 @@ export const layer = Layer.effect(
     const deleteQueryObservations = (id: ScheduledTaskId) =>
       sql`
         DELETE FROM fork_trigger_observations
-        WHERE source IN ('jira_query', 'gitlab_projects')
+        WHERE source IN ('jira_query', 'gitlab_projects', 'issues', 'pull_requests')
           AND key >= ${`${id}\u0000`} AND key < ${`${id}\u0001`}
       `;
 
@@ -1415,40 +1417,40 @@ export const layer = Layer.effect(
                 }).pipe(Effect.as(null)),
               )
             : active.threadId === null
-            ? yield* Effect.exit(
-                threadLaunch
-                  .launch({
-                    commandId,
-                    projectId: active.projectId,
-                    title: active.title,
-                    titleRenamed: true,
-                    modelSelection: active.modelSelection,
-                    runtimeMode: active.runtimeMode,
-                    interactionMode: active.interactionMode,
-                    workspaceStrategy: active.workspaceStrategy,
-                    initialMessage: {
-                      messageId,
-                      scheduledTaskId: active.id,
-                      text: prompt,
-                      attachments: [],
-                    },
-                    createdBy: active.createdBy,
-                    creationSource: active.creationSource,
-                  })
-                  .pipe(
-                    Effect.map((launched) => launched.threadId),
-                    Effect.tap((threadId) =>
-                      threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
+              ? yield* Effect.exit(
+                  threadLaunch
+                    .launch({
+                      commandId,
+                      projectId: active.projectId,
+                      title: active.title,
+                      titleRenamed: true,
+                      modelSelection: active.modelSelection,
+                      runtimeMode: active.runtimeMode,
+                      interactionMode: active.interactionMode,
+                      workspaceStrategy: active.workspaceStrategy,
+                      initialMessage: {
+                        messageId,
+                        scheduledTaskId: active.id,
+                        text: prompt,
+                        attachments: [],
+                      },
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    })
+                    .pipe(
+                      Effect.map((launched) => launched.threadId),
+                      Effect.tap((threadId) =>
+                        threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
+                      ),
                     ),
+                )
+              : yield* Effect.exit(
+                  // The stored selection only seeds fresh threads. A bound run
+                  // follows the thread's current provider, so it passes none.
+                  sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
+                    Effect.as(ThreadId.make(active.threadId)),
                   ),
-              )
-            : yield* Effect.exit(
-                // The stored selection only seeds fresh threads. A bound run
-                // follows the thread's current provider, so it passes none.
-                sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
-                  Effect.as(ThreadId.make(active.threadId)),
-                ),
-              );
+                );
 
         const runSucceeded = result._tag === "Success";
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
@@ -1701,7 +1703,7 @@ export const layer = Layer.effect(
                     "missed",
                     "Missed a scheduled run because the server was not running at that time.",
                   )
-              : isPollSchedule(task.schedule)
+                : isPollSchedule(task.schedule)
                   ? pollTask(task)
                   : runTask(task, "scheduled"),
             ).pipe(
@@ -2015,8 +2017,8 @@ export const layer = Layer.effect(
         nextRunAt: seedsPoll({ enabled: input.enabled, schedule }, existingTask)
           ? iso(now)
           : scheduleUnchanged
-          ? existingTask.nextRunAt
-          : nextRunAt({ enabled: input.enabled, schedule }, now),
+            ? existingTask.nextRunAt
+            : nextRunAt({ enabled: input.enabled, schedule }, now),
         lastRunAt: existingTask?.lastRunAt ?? null,
         lastRunStatus: existingTask?.lastRunStatus ?? "never",
         lastRunError: existingTask?.lastRunError ?? null,

@@ -318,6 +318,49 @@ export const ScheduledTaskGitLabProjectsSchedule = Schema.Struct({
   });
 export type ScheduledTaskGitLabProjectsSchedule = typeof ScheduledTaskGitLabProjectsSchedule.Type;
 
+const NeutralPollQuery = TrimmedNonEmptyString.check(Schema.isMaxLength(200));
+
+/** The project's issue trackers, polled through the Issues service with its connections. */
+export const issuesPollFields = {
+  everyMs: jiraQueryFields.everyMs,
+  start: jiraQueryFields.start,
+  query: Schema.optional(NeutralPollQuery).annotate({
+    description: "Free text each tracker is asked to match.",
+  }),
+  labels: Schema.optional(Schema.Array(NeutralPollQuery).check(Schema.isMaxLength(20))).annotate({
+    description: "Labels an issue must carry, every one of them.",
+  }),
+};
+
+export const ScheduledTaskIssuesSchedule = Schema.Struct({
+  type: Schema.Literal("issues"),
+  ...issuesPollFields,
+  filters: Schema.optional(TriggerFilters),
+}).annotate({
+  description:
+    "Poll the issue trackers the project is connected to. Prompt can use {{event.field}} and {{event}}.",
+});
+export type ScheduledTaskIssuesSchedule = typeof ScheduledTaskIssuesSchedule.Type;
+
+/** The project's repositories, polled through the Pull requests service with its hosts. */
+export const pullRequestsPollFields = {
+  everyMs: jiraQueryFields.everyMs,
+  start: jiraQueryFields.start,
+  query: Schema.optional(NeutralPollQuery).annotate({
+    description: "Free text each host is asked to match.",
+  }),
+};
+
+export const ScheduledTaskPullRequestsSchedule = Schema.Struct({
+  type: Schema.Literal("pull_requests"),
+  ...pullRequestsPollFields,
+  filters: Schema.optional(TriggerFilters),
+}).annotate({
+  description:
+    "Poll the pull requests of the project's repositories. Prompt can use {{event.field}} and {{event}}.",
+});
+export type ScheduledTaskPullRequestsSchedule = typeof ScheduledTaskPullRequestsSchedule.Type;
+
 export const ScheduledTaskManualSchedule = Schema.Struct({
   type: Schema.Literal("manual"),
 }).annotate({ description: "Run only when started by hand." });
@@ -342,6 +385,8 @@ export const ScheduledTaskSchedule = Schema.Union([
   ScheduledTaskManualSchedule,
   ScheduledTaskJiraQuerySchedule,
   ScheduledTaskGitLabProjectsSchedule,
+  ScheduledTaskIssuesSchedule,
+  ScheduledTaskPullRequestsSchedule,
 ]);
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
@@ -374,6 +419,8 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
   ScheduledTaskManualSchedule,
   ScheduledTaskJiraQuerySchedule,
   ScheduledTaskGitLabProjectsSchedule,
+  ScheduledTaskIssuesSchedule,
+  ScheduledTaskPullRequestsSchedule,
 ]);
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
 

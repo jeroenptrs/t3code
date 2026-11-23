@@ -53,6 +53,8 @@ const SOURCE_LABELS: Record<Trigger["source"]["kind"], string> = {
   manual: msg("Started by hand"),
   jira_query: msg("Jira query"),
   gitlab_projects: msg("GitLab projects"),
+  issues: msg("Issues", { $context: "trigger source" }),
+  pull_requests: msg("Pull requests", { $context: "trigger source" }),
 };
 
 /** Where a trigger's work comes from, what it filters on, and what a polled one acts on first. */
@@ -69,7 +71,12 @@ function triggerFacts(trigger: Trigger, resolve: MessageResolver): ReadonlyArray
     // Field names and values, as the trigger form writes them.
     facts.push(triggerFiltersSummary(source.kind, filters));
   }
-  if (source.kind === "jira_query" || source.kind === "gitlab_projects") {
+  if (
+    source.kind === "jira_query" ||
+    source.kind === "gitlab_projects" ||
+    source.kind === "issues" ||
+    source.kind === "pull_requests"
+  ) {
     facts.push(
       (source.start ?? "changes") === "current"
         ? resolve(msg("First check acts on everything it finds"))

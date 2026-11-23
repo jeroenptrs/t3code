@@ -55,6 +55,8 @@ const PROMPT_EXAMPLES: Record<TriggerFilterSourceKind, readonly [string, string]
   gitlab_projects: ["{{event.title}}", "{{event.pipelineStatus}}"],
   gitlab: ["{{event.title}}", "{{event.url}}"],
   slack: ["{{event.prompt}}", "{{event.surface}}"],
+  issues: ["{{event.displayKey}}", "{{event.title}}"],
+  pull_requests: ["{{event.title}}", "{{event.checksState}}"],
 };
 
 /** Shown under the prompt for event sources. */

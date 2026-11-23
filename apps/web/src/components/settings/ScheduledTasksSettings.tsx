@@ -109,6 +109,7 @@ import {
   WebhookFiltersField,
 } from "./scheduledTaskFields";
 import { TriggerTemplatesSection } from "./TriggerTemplatesSettings";
+import { NeutralPollTriggerFields } from "./NeutralPollTriggerFields";
 import { GitLabProjectsTriggerFields } from "./GitLabProjectsTriggerFields";
 import { JiraQueryTriggerFields } from "./JiraQueryTriggerFields";
 import {
@@ -120,7 +121,8 @@ import {
   moveDraftToThread,
   JIRA_QUERY_DRAFT_DEFAULTS,
   GITLAB_PROJECTS_DRAFT_DEFAULTS,
-  timeScheduleLabel,
+  isPolledMode,
+  NEUTRAL_POLL_DRAFT_DEFAULTS,
   triggerSourceOfMode,
   triggerSummary,
   isTriggerFilterSource,
@@ -225,6 +227,10 @@ const TRIGGER_SOURCE_DESCRIPTIONS: Record<TriggerFilterSourceKind, string> = {
   slack: "Runs when the Slack integration passes a message to this environment.",
   gitlab_projects:
     "Checks GitLab projects or a group as the host's glab sign-in on this environment and runs when a merge request opens, changes, merges, or closes, or a pipeline finishes. The first check runs for the open merge requests it finds; a later change to the projects only records them.",
+  issues:
+    "Checks the issue trackers this project is connected to, as the Issues page reads them, and runs when an issue opens, closes, or changes state, labels, or assignees. Jira is read as the site's service account.",
+  pull_requests:
+    "Checks the pull requests of this project's repositories, as the Pull requests page reads them, and runs when one opens, changes, merges, closes, or its checks change.",
 };
 
 const EMPTY_DRAFT: DraftState = {
@@ -266,6 +272,7 @@ const EMPTY_DRAFT: DraftState = {
   pollStart: "changes",
   ...JIRA_QUERY_DRAFT_DEFAULTS,
   ...GITLAB_PROJECTS_DRAFT_DEFAULTS,
+  ...NEUTRAL_POLL_DRAFT_DEFAULTS,
   triage: triageDraft(undefined),
 };
 
@@ -718,11 +725,7 @@ const SKELETON_ROWS = [0, 1] as const;
 function ScheduledTaskRowsSkeleton() {
   const gt = useGT();
   return (
-    <div
-      role="status"
-      aria-label={gt("Loading triggers…")}
-      className="divide-y divide-border/50"
-    >
+    <div role="status" aria-label={gt("Loading triggers…")} className="divide-y divide-border/50">
       {SKELETON_ROWS.map((row) => (
         <div
           key={row}
@@ -778,7 +781,11 @@ function ScheduledTaskRow({
   const remove = useAtomCommand(serverEnvironment.deleteScheduledTask, {
     label: "scheduled task delete",
   });
-  const polled = task.schedule.type === "jira_query" || task.schedule.type === "gitlab_projects";
+  const polled =
+    task.schedule.type === "jira_query" ||
+    task.schedule.type === "gitlab_projects" ||
+    task.schedule.type === "issues" ||
+    task.schedule.type === "pull_requests";
   const act = async (action: "toggle" | "run" | "fire" | "delete") => {
     if (busy || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
     if (action === "delete") {
@@ -796,7 +803,7 @@ function ScheduledTaskRow({
           ? await run({ environmentId, input: { id: task.id } })
           : action === "fire"
             ? await fire({ environmentId, input: { id: task.id } })
-          : await remove({ environmentId, input: { id: task.id } });
+            : await remove({ environmentId, input: { id: task.id } });
     setBusy(false);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       toastManager.add(
@@ -1430,76 +1437,76 @@ function ScheduledTaskDestination({
         </>
       ) : (
         <>
-      {!onThreadModeChange || threadMode !== "new_thread" ? (
-        <Combobox
-          items={items}
-          filteredItems={items}
-          filter={null}
-          autoHighlight
-          open={open && !disabled}
-          onOpenChange={handleOpenChange}
-          value={threadId ?? (threadMode === "new_thread" ? NEW_THREAD_DESTINATION : null)}
-          onValueChange={(value) => {
-            if (value === NEW_THREAD_DESTINATION) {
-              onSelect(null);
-              handleOpenChange(false);
-              return;
-            }
-            const picked = threads.find((row) => row.id === value);
-            if (picked) onSelect(picked);
-            handleOpenChange(false);
-          }}
-        >
-          <ComboboxTrigger
-            id={
-              onThreadModeChange
-                ? "scheduled-task-destination-thread"
-                : "scheduled-task-destination"
-            }
-            aria-label={onThreadModeChange ? gt("Destination thread") : undefined}
-            disabled={disabled}
-            render={<Button variant="outline" size="sm" />}
-            className="w-full justify-between"
-          >
-            <MessageSquareIcon className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate text-left">{currentLabel}</span>
-            <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
-          </ComboboxTrigger>
-          <ComboboxPopup align="start" side="bottom" className="w-80">
-            <ComboboxSearchInput
-              aria-label={gt("Search threads")}
-              placeholder={gt("Search all threads...")}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            <ComboboxEmpty>
-              <T>No threads found.</T>
-            </ComboboxEmpty>
-            <ComboboxList scrollAreaClassName="max-h-72">
-              {items.map((value, index) => (
-                <ComboboxItem key={value} index={index} value={value}>
-                  <span className="block truncate">
-                    {value === NEW_THREAD_DESTINATION
-                      ? gt("New thread each run")
-                      : value === threadId
-                        ? currentLabel
+          {!onThreadModeChange || threadMode !== "new_thread" ? (
+            <Combobox
+              items={items}
+              filteredItems={items}
+              filter={null}
+              autoHighlight
+              open={open && !disabled}
+              onOpenChange={handleOpenChange}
+              value={threadId ?? (threadMode === "new_thread" ? NEW_THREAD_DESTINATION : null)}
+              onValueChange={(value) => {
+                if (value === NEW_THREAD_DESTINATION) {
+                  onSelect(null);
+                  handleOpenChange(false);
+                  return;
+                }
+                const picked = threads.find((row) => row.id === value);
+                if (picked) onSelect(picked);
+                handleOpenChange(false);
+              }}
+            >
+              <ComboboxTrigger
+                id={
+                  onThreadModeChange
+                    ? "scheduled-task-destination-thread"
+                    : "scheduled-task-destination"
+                }
+                aria-label={onThreadModeChange ? gt("Destination thread") : undefined}
+                disabled={disabled}
+                render={<Button variant="outline" size="sm" />}
+                className="w-full justify-between"
+              >
+                <MessageSquareIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate text-left">{currentLabel}</span>
+                <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+              </ComboboxTrigger>
+              <ComboboxPopup align="start" side="bottom" className="w-80">
+                <ComboboxSearchInput
+                  aria-label={gt("Search threads")}
+                  placeholder={gt("Search all threads...")}
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+                <ComboboxEmpty>
+                  <T>No threads found.</T>
+                </ComboboxEmpty>
+                <ComboboxList scrollAreaClassName="max-h-72">
+                  {items.map((value, index) => (
+                    <ComboboxItem key={value} index={index} value={value}>
+                      <span className="block truncate">
+                        {value === NEW_THREAD_DESTINATION
+                          ? gt("New thread each run")
+                          : value === threadId
+                            ? currentLabel
                             : threads.find((row) => row.id === value)?.title ||
                               gt("Untitled thread")}
-                  </span>
-                </ComboboxItem>
-              ))}
-            </ComboboxList>
-          </ComboboxPopup>
-        </Combobox>
-      ) : null}
-      <div className="space-y-1 text-sm">
-        <p className="text-muted-foreground">{detail}</p>
-        {threadMode !== "new_thread" ? (
-          <p className="text-muted-foreground">
-            <T>Deleting the thread also deletes this task.</T>
-          </p>
-        ) : null}
-      </div>
+                      </span>
+                    </ComboboxItem>
+                  ))}
+                </ComboboxList>
+              </ComboboxPopup>
+            </Combobox>
+          ) : null}
+          <div className="space-y-1 text-sm">
+            <p className="text-muted-foreground">{detail}</p>
+            {threadMode !== "new_thread" ? (
+              <p className="text-muted-foreground">
+                <T>Deleting the thread also deletes this task.</T>
+              </p>
+            ) : null}
+          </div>
         </>
       )}
     </Field>
@@ -1968,28 +1975,28 @@ function ScheduledTaskEditorForm({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <Label>Schedule</Label>
                 <Select
-                value={draft.scheduleMode}
-                onValueChange={(value) => {
+                  value={draft.scheduleMode}
+                  onValueChange={(value) => {
                     const mode = TIME_SCHEDULE_MODES.find((entry) => entry === value);
                     if (mode !== undefined) selectMode(mode);
-                }}
-              >
-                <div className="grid w-48 grid-cols-1">
-                  <SelectTrigger size="sm" aria-label={gt("Schedule type")}>
-                    <SelectValue>{SCHEDULE_MODE_LABELS[draft.scheduleMode]}</SelectValue>
-                  </SelectTrigger>
-                </div>
-                <SelectPopup>
+                  }}
+                >
+                  <div className="grid w-48 grid-cols-1">
+                    <SelectTrigger size="sm" aria-label={gt("Schedule type")}>
+                      <SelectValue>{SCHEDULE_MODE_LABELS[draft.scheduleMode]}</SelectValue>
+                    </SelectTrigger>
+                  </div>
+                  <SelectPopup>
                     {TIME_SCHEDULE_MODES.filter(
-                    (mode) => mode !== "once" || offersOnce || draft.scheduleMode === "once",
-                  ).map((mode) => (
+                      (mode) => mode !== "once" || offersOnce || draft.scheduleMode === "once",
+                    ).map((mode) => (
                       <SelectItem key={mode} value={mode}>
-                      {SCHEDULE_MODE_LABELS[mode]}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            </div>
+                        {SCHEDULE_MODE_LABELS[mode]}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </div>
             ) : null}
 
             {webhookDenial !== undefined ? (
@@ -2207,9 +2214,14 @@ function ScheduledTaskEditorForm({
                     onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
                   />
                 ) : null}
-                {draft.editingId === null &&
-                (draft.scheduleMode === "jira_query" ||
-                  draft.scheduleMode === "gitlab_projects") ? (
+                {draft.scheduleMode === "issues" || draft.scheduleMode === "pull_requests" ? (
+                  <NeutralPollTriggerFields
+                    kind={draft.scheduleMode}
+                    draft={draft}
+                    onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
+                  />
+                ) : null}
+                {draft.editingId === null && isPolledMode(draft.scheduleMode) ? (
                   <PollStartField
                     value={draft.pollStart}
                     onChange={(pollStart) => setDraft((current) => ({ ...current, pollStart }))}
@@ -2406,23 +2418,23 @@ function ScheduledTaskEditorForm({
             </Field>
 
             {workItemTarget ? null : (
-            <Field label="Workspace" htmlFor="scheduled-task-workspace">
-              <Select
-                value={draft.workspaceMode}
-                onValueChange={(value) =>
-                  setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
-                }
-              >
-                <SelectTrigger size="sm" id="scheduled-task-workspace">
-                  <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  <SelectItem value="worktree">Create a new worktree</SelectItem>
-                  <SelectItem value="root">Use the project checkout</SelectItem>
-                  <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
-                </SelectPopup>
-              </Select>
-            </Field>
+              <Field label="Workspace" htmlFor="scheduled-task-workspace">
+                <Select
+                  value={draft.workspaceMode}
+                  onValueChange={(value) =>
+                    setDraft((current) => ({ ...current, workspaceMode: value as WorkspaceMode }))
+                  }
+                >
+                  <SelectTrigger size="sm" id="scheduled-task-workspace">
+                    <SelectValue>{WORKSPACE_MODE_LABELS[draft.workspaceMode]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value="worktree">Create a new worktree</SelectItem>
+                    <SelectItem value="root">Use the project checkout</SelectItem>
+                    <SelectItem value="existing_worktree">Use a specific checkout</SelectItem>
+                  </SelectPopup>
+                </Select>
+              </Field>
             )}
           </div>
 
@@ -2463,55 +2475,55 @@ function ScheduledTaskEditorForm({
           ) : null}
 
           {workItemTarget ? null : (
-          <Field label={gt("Model")}>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <ProviderModelPicker
-                environmentId={environmentId}
-                // The saved selection only seeds new threads; bound runs ignore it.
-                disabled={saving || !connected || draft.threadId !== ""}
-                activeInstanceId={shownInstanceId}
-                model={shownModel}
-                lockedProvider={null}
-                instanceEntries={instanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                isComposerOwned={false}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) => {
+            <Field label={gt("Model")}>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <ProviderModelPicker
+                  environmentId={environmentId}
+                  // The saved selection only seeds new threads; bound runs ignore it.
+                  disabled={saving || !connected || draft.threadId !== ""}
+                  activeInstanceId={shownInstanceId}
+                  model={shownModel}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  isComposerOwned={false}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onInstanceModelChange={(instanceId, model) => {
                     if (
                       instanceId === activeSelection?.instanceId &&
                       model === activeSelection.model
                     )
-                    return;
-                  setDraft((current) => ({
-                    ...current,
-                    modelSelection: createModelSelection(instanceId, model),
-                  }));
-                }}
-              />
-              {!draft.threadId && activeSelection && activeEntry ? (
-                <TraitsPicker
-                  provider={activeEntry.driverKind}
-                  models={activeEntry.models}
-                  model={activeModel}
-                  modelOptions={activeSelection.options ?? []}
-                  allowPromptInjectedEffort={false}
-                  includePlanAgent={selectsPlanAgent(activeSelection.options)}
-                  disabled={saving || !connected}
-                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                  onModelOptionsChange={(options) =>
+                      return;
                     setDraft((current) => ({
                       ...current,
+                      modelSelection: createModelSelection(instanceId, model),
+                    }));
+                  }}
+                />
+                {!draft.threadId && activeSelection && activeEntry ? (
+                  <TraitsPicker
+                    provider={activeEntry.driverKind}
+                    models={activeEntry.models}
+                    model={activeModel}
+                    modelOptions={activeSelection.options ?? []}
+                    allowPromptInjectedEffort={false}
+                    includePlanAgent={selectsPlanAgent(activeSelection.options)}
+                    disabled={saving || !connected}
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    onModelOptionsChange={(options) =>
+                      setDraft((current) => ({
+                        ...current,
                         modelSelection: createModelSelection(
                           activeInstanceId,
                           activeModel,
                           options,
                         ),
-                    }))
-                  }
-                />
-              ) : null}
-            </div>
-          </Field>
+                      }))
+                    }
+                  />
+                ) : null}
+              </div>
+            </Field>
           )}
 
           <TriageField

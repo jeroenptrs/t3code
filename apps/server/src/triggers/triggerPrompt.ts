@@ -6,6 +6,7 @@ import { TRIGGER_SOURCE_FIELDS, type TriggerEvent } from "@t3tools/contracts";
 import { type RenderedWebhookPrompt, renderTemplate } from "../scheduledTasks/webhookTemplate.ts";
 import { gitlabPipelineKey, gitlabTriggerKey } from "./gitlabTriggerSource.ts";
 import { jiraTriggerKey } from "./jiraTriggerSource.ts";
+import { issueTriggerKey, pullRequestTriggerKey } from "./neutralTriggerSource.ts";
 import { triggerFieldResolver } from "./triggerFilter.ts";
 
 /** The thing an event is about, keyed as its source observes it. */
@@ -28,6 +29,10 @@ function triggerEventKey(event: TriggerEvent): string {
             number: Number(event.payload.number),
           })
         : gitlabPipelineKey(event.payload.host, event.payload.repository, event.payload.pipelineId);
+    case "issues":
+      return issueTriggerKey(event.payload);
+    case "pull_requests":
+      return pullRequestTriggerKey({ ...event.payload, number: Number(event.payload.number) });
     case "slack":
       return event.payload.invocationId;
     case "manual":
@@ -87,7 +92,10 @@ export function triggerEventTitle(event: TriggerEvent): string | null {
       return `${event.type} ${event.payload.key}: ${event.payload.summary}`;
     case "gitlab":
     case "gitlab_projects":
+    case "pull_requests":
       return `${event.type} ${event.payload.number}: ${event.payload.title}`;
+    case "issues":
+      return `${event.type} ${event.payload.displayKey}: ${event.payload.title}`;
     case "slack":
     case "manual":
       return null;
