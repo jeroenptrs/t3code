@@ -117,6 +117,14 @@ export function issueTrackerSummary(
   const linked = Object.values(bindings).filter((binding) =>
     issueTrackerBindingIsFor(binding, tracker),
   ).length;
+  // Fork: Jira calls its scope a project too, so its sentence names the tracker.
+  if (linked === 0 && tracker.scopeNoun === "project")
+    return resolve(
+      msg(
+        "Connected as {account} · no projects linked yet. Pick a {tracker} project for each project to list its issues.",
+        { account: tracker.account, tracker: tracker.displayName },
+      ),
+    );
   return linked === 0
     ? knownTrackerSentence(
         `Connected as ${tracker.account} · no projects linked yet. Pick a ${tracker.scopeNoun} for a project to list its issues.`,
