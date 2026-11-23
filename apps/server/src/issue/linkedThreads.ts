@@ -1,6 +1,7 @@
 import {
   IssueLinkedThreadsResult,
   IssueOperationError,
+  jiraIssueKeyOfThreadIssue,
   threadIssueKeysEqual,
   type ThreadIssueKey,
 } from "@t3tools/contracts";
@@ -9,11 +10,21 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { listThreadsLinkingJiraIssue } from "../jira/localLinks.ts";
+
 const decodeLinkedThreads = Schema.decodeUnknownEffect(IssueLinkedThreadsResult);
 
 /** The threads an issue is linked to; the rows and filters `linkedThreads` uses for pull requests. */
 export const listLinkedIssueThreads = Effect.fn("listLinkedIssueThreads")(
   function* (key: ThreadIssueKey) {
+    // Fork-only. A Jira issue's links are in the fork's own table, not in `$.issues`.
+    const jiraKey = jiraIssueKeyOfThreadIssue(key);
+    if (jiraKey !== null) {
+      const linked = yield* listThreadsLinkingJiraIssue(jiraKey);
+      return yield* decodeLinkedThreads({
+        threads: linked.map((row) => ({ ...row, settled: row.settled === 1 })),
+      });
+    }
     const sql = yield* SqlClient.SqlClient;
     // The CASE stops SQLite hoisting the side-chat check out of the link loop,
     // where it would re-parse every thread's payload, not just matching ones.

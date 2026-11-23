@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
-import { AuthOrchestrationOperateScope, threadIssueKeysEqual } from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, threadLinksIssue } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   IssueDetail,
@@ -76,7 +76,7 @@ export function IssueThreadLinks({
   const [pending, setPending] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  const linkedHere = (thread?.issues ?? []).some((existing) => threadIssueKeysEqual(existing, key));
+  const linkedHere = thread !== null && thread !== undefined && threadLinksIssue(thread, key);
   const changeLink = async (threadId: ThreadId, remove: boolean) => {
     if (pending) return;
     setPending(true);
