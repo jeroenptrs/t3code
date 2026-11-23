@@ -753,6 +753,7 @@
   "8471c4c5a50ffde3": "Ainda não é possível navegar pelas issues deste host.",
   "2f4a47129f89fe22": "Não conectado. Adicione uma chave de API pessoal para listar as issues.",
   "024baab60525a419": "A credencial salva foi recusada.",
+  "0c22d3c84d52a9e9": "Conectado como {account} · nenhum projeto vinculado ainda. Escolha um projeto do {tracker} para cada projeto para listar as issues dele.",
   "2613c232516f3c72": "Conectado como {account} · nenhum projeto vinculado ainda. Escolha uma equipe para um projeto para listar as issues dele.",
   "77d07bfe2f8ee19d": "{count, plural, one {Conectado como {account} · {count} projeto vinculado} other {Conectado como {account} · {count} projetos vinculados}}",
   "3eb9a01099aaf799": "{count}s",

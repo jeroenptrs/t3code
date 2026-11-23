@@ -753,6 +753,7 @@
   "8471c4c5a50ffde3": "暂时无法浏览此托管平台的 issue。",
   "2f4a47129f89fe22": "未连接。添加个人 API 密钥即可列出其 issue。",
   "024baab60525a419": "保存的凭据被拒绝。",
+  "0c22d3c84d52a9e9": "已连接为 {account} · 尚未关联项目。为每个项目选择 {tracker} 项目即可列出其 issue。",
   "2613c232516f3c72": "已连接为 {account} · 尚未关联项目。为项目选择团队即可列出其 issue。",
   "77d07bfe2f8ee19d": "{count, plural, other {已连接为 {account} · 已关联 {count} 个项目}}",
   "3eb9a01099aaf799": "{count} 秒",

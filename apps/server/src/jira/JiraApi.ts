@@ -138,6 +138,14 @@ const RawComments = Schema.Struct({
 });
 export type JiraRawComments = typeof RawComments.Type;
 
+const RawProject = Schema.Struct({ key: Schema.String, name: Schema.optional(Schema.String) });
+export type JiraRawProject = typeof RawProject.Type;
+
+const RawProjectPage = Schema.Struct({
+  values: Schema.optional(Schema.Array(RawProject)),
+  isLast: Schema.optional(Schema.Boolean),
+});
+
 const RawFilter = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
@@ -200,6 +208,7 @@ const decodeRawBulkChangelog = Schema.decodeUnknownEffect(RawBulkChangelog);
 const decodeRawIssue = Schema.decodeUnknownEffect(RawIssue);
 const decodeRawTransitions = Schema.decodeUnknownEffect(RawTransitions);
 const decodeRawComments = Schema.decodeUnknownEffect(RawComments);
+const decodeRawProjectPage = Schema.decodeUnknownEffect(RawProjectPage);
 const decodeRawFilterPage = Schema.decodeUnknownEffect(RawFilterPage);
 const decodeRawFilter = Schema.decodeUnknownEffect(RawFilter);
 const decodeRawFilters = Schema.decodeUnknownEffect(Schema.Array(RawFilter));
@@ -257,8 +266,20 @@ export class JiraApi extends Context.Service<
     readonly getComments: (
       identity: JiraServerIdentity,
       key: string,
-      options: { readonly maxResults: number; readonly orderBy: "-created" | "created" },
+      options: {
+        readonly maxResults: number;
+        readonly orderBy: "-created" | "created";
+        readonly startAt?: number | undefined;
+      },
     ) => Effect.Effect<JiraRawComments, JiraError>;
+    /** `GET /rest/api/3/project/search`: one page of the projects the identity can browse, by key. */
+    readonly searchProjects: (
+      identity: JiraServerIdentity,
+      input: { readonly startAt: number; readonly maxResults: number },
+    ) => Effect.Effect<
+      { readonly projects: ReadonlyArray<JiraRawProject>; readonly isLast: boolean },
+      JiraError
+    >;
     /** `GET /rest/api/3/filter/search`: filters visible to the identity, by name or owner. */
     readonly searchFilters: (
       identity: JiraServerIdentity,
@@ -586,10 +607,26 @@ const make = Effect.gen(function* () {
           HttpClientRequest.setUrlParams({
             maxResults: String(options.maxResults),
             orderBy: options.orderBy,
+            ...(options.startAt === undefined ? {} : { startAt: String(options.startAt) }),
           }),
         ),
         decodeRawComments,
       ).pipe(Effect.withSpan("JiraApi.getComments")),
+    searchProjects: (identity, input) =>
+      read(
+        identity,
+        HttpClientRequest.get("/rest/api/3/project/search").pipe(
+          HttpClientRequest.setUrlParams({
+            startAt: String(input.startAt),
+            maxResults: String(input.maxResults),
+            orderBy: "key",
+          }),
+        ),
+        decodeRawProjectPage,
+      ).pipe(
+        Effect.map((page) => ({ projects: page.values ?? [], isLast: page.isLast ?? true })),
+        Effect.withSpan("JiraApi.searchProjects"),
+      ),
     searchFilters: (identity, input) =>
       read(
         identity,

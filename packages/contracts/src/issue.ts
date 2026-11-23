@@ -589,6 +589,9 @@ export const StandaloneIssueTrackerDescriptor = Schema.Struct({
     /** Where to mint one, or null when the tracker has no stable page for it. */
     helpUrl: Schema.NullOr(TrimmedNonEmptyString),
   }),
+  // Fork: the server's own configuration signs the tracker in (Jira's reader identity), so a
+  // client offers no connect, disconnect or add-account control and the server refuses them.
+  serverManaged: Schema.optional(Schema.Boolean),
 });
 export type StandaloneIssueTrackerDescriptor = typeof StandaloneIssueTrackerDescriptor.Type;
 
