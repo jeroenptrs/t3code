@@ -13121,5 +13121,15 @@
   "1ba0cdfa1c3ba253": "Descrição",
   "cea36f763037eace": "Em branco mantém a descrição da predefinição, ou nenhuma para uma função nova.",
   "0b5384b1aa2f8a80": "Uma linha sobre o que esta função faz.",
-  "a5dffbc7710c75bc": "Uma linha sobre o que esta função faz. O Foreman a lê para decidir o que enviar para cá."
+  "a5dffbc7710c75bc": "Uma linha sobre o que esta função faz. O Foreman a lê para decidir o que enviar para cá.",
+  "f9fcc101bd2845a3": "Editar nas configurações do projeto",
+  "c320f2739e41aaac": "Adicione uma pasta nas configurações de Repositórios do projeto.",
+  "e10ed6effe778b8e": "O projeto ainda não abrange nenhum repositório.",
+  "b8b75331cacbc11d": "Trabalha em {repositories}",
+  "0b1a8752b2688bbd": "Não foi possível criar a Factory.",
+  "79ccb5919e5e1541": "Nenhum projeto aqui",
+  "4e240ec5d72ebfd4": "Letras minúsculas, dígitos e hifens. Ele dá nome à pasta.",
+  "067007b4fd5f1b5b": "Criar Factory",
+  "d430c9ca053aa271": "A definição fica no projeto, em .t3/factories. Ela começa com os papéis integrados foreman, implement e review.",
+  "cc5d2f5ce8ee576e": "Ambiente"
 }

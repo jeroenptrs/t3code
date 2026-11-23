@@ -21,6 +21,10 @@ describe("renderWorkItemMessage", () => {
         },
         text: "Look over the open merge requests.\n",
       },
+      repositories: [
+        { name: "api", path: "/work/shop/api" },
+        { name: "web", path: "/work/shop/web" },
+      ],
     });
     expect(message)
       .toBe(`Work item work-item:1 for the triage factory, from trigger Nightly sweep (manual).
@@ -28,6 +32,10 @@ describe("renderWorkItemMessage", () => {
 Title: Nightly sweep
 
 Look over the open merge requests.
+
+Repositories the project covers. Name the one a child works in by name; the server picks its checkout:
+- api
+- web
 
 Delegate each task with t3_factory_delegate, naming the role. Hold the item for a person with t3_work_item_gate, and end it with t3_work_item_advance.`);
   });

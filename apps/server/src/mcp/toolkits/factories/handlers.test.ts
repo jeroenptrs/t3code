@@ -61,8 +61,8 @@ const factory: Factory = {
   id: FactoryId.make("factory:project-1:triage"),
   projectId: ProjectId.make("project-1"),
   name: "triage",
-  definition: { version: 2, name: "triage", projects: [], roles: {} },
-  projects: [],
+  definition: { version: 2, name: "triage", roles: {} },
+  repositories: [],
   roles: [
     {
       role: "foreman",

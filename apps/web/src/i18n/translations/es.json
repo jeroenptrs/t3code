@@ -13116,5 +13116,15 @@
   "1ba0cdfa1c3ba253": "Descripción",
   "cea36f763037eace": "En blanco mantiene la descripción de la plantilla, o ninguna para un rol nuevo.",
   "0b5384b1aa2f8a80": "Una línea sobre lo que hace este rol.",
-  "a5dffbc7710c75bc": "Una línea sobre lo que hace este rol. El Foreman la lee para decidir qué enviar aquí."
+  "a5dffbc7710c75bc": "Una línea sobre lo que hace este rol. El Foreman la lee para decidir qué enviar aquí.",
+  "f9fcc101bd2845a3": "Editar en los ajustes del proyecto",
+  "c320f2739e41aaac": "Añade una carpeta en los ajustes de Repositorios del proyecto.",
+  "e10ed6effe778b8e": "El proyecto aún no abarca ningún repositorio.",
+  "b8b75331cacbc11d": "Trabaja en {repositories}",
+  "0b1a8752b2688bbd": "No se pudo crear la Factory.",
+  "79ccb5919e5e1541": "No hay proyectos aquí",
+  "4e240ec5d72ebfd4": "Letras minúsculas, dígitos y guiones. Da nombre a la carpeta.",
+  "067007b4fd5f1b5b": "Crear Factory",
+  "d430c9ca053aa271": "La definición está en el proyecto, en .t3/factories. Empieza con los roles integrados foreman, implement y review.",
+  "cc5d2f5ce8ee576e": "Entorno"
 }

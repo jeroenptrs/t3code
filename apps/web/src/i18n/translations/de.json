@@ -13121,5 +13121,15 @@
   "1ba0cdfa1c3ba253": "Beschreibung",
   "cea36f763037eace": "Leer übernimmt die Beschreibung der Vorlage, bei einer neuen Rolle keine.",
   "0b5384b1aa2f8a80": "Eine Zeile dazu, was diese Rolle tut.",
-  "a5dffbc7710c75bc": "Eine Zeile dazu, was diese Rolle tut. Der Foreman liest sie, um zu entscheiden, was er hierher schickt."
+  "a5dffbc7710c75bc": "Eine Zeile dazu, was diese Rolle tut. Der Foreman liest sie, um zu entscheiden, was er hierher schickt.",
+  "f9fcc101bd2845a3": "In den Projekteinstellungen bearbeiten",
+  "c320f2739e41aaac": "Füge einen Ordner in den Repository-Einstellungen des Projekts hinzu.",
+  "e10ed6effe778b8e": "Das Projekt umfasst noch keine Repositorys.",
+  "b8b75331cacbc11d": "Arbeitet in {repositories}",
+  "0b1a8752b2688bbd": "Die Factory konnte nicht erstellt werden.",
+  "79ccb5919e5e1541": "Hier gibt es keine Projekte",
+  "4e240ec5d72ebfd4": "Kleinbuchstaben, Ziffern und Bindestriche. Er benennt den Ordner.",
+  "067007b4fd5f1b5b": "Factory erstellen",
+  "d430c9ca053aa271": "Die Definition liegt im Projekt unter .t3/factories. Sie beginnt mit den eingebauten Rollen foreman, implement und review.",
+  "cc5d2f5ce8ee576e": "Umgebung"
 }

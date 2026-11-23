@@ -10,7 +10,6 @@ import {
   FactoryIsolation,
   type FactoryIssue,
   FactoryName,
-  type FactoryProject,
   FactoryRoleBinding,
   FactoryRoleDescription,
   FactoryRoleName,
@@ -20,7 +19,6 @@ import {
   type FactorySkillSource,
   isReservedFactoryRoleName,
   ModelSelection,
-  type ProjectId,
   ProviderInteractionMode,
   type ProviderOptionDescriptor,
   RuntimeMode,
@@ -68,12 +66,7 @@ const LEGACY_ROLES = [FACTORY_FOREMAN_ROLE, "implement", "review"] as const;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const emptyDefinition = (name: string): FactoryDefinition => ({
-  version: 2,
-  name,
-  projects: [],
-  roles: {},
-});
+const emptyDefinition = (name: string): FactoryDefinition => ({ version: 2, name, roles: {} });
 
 /** Why `name` cannot name a role, or null when it can. */
 export function roleNameProblem(name: string): string | null {
@@ -102,7 +95,12 @@ export function parseFactoryJson(
   directoryName: string,
   text: string,
   hasDefaultRoleFile: (role: string) => boolean = () => false,
-): { readonly definition: FactoryDefinition; readonly issues: ReadonlyArray<FactoryIssue> } {
+): {
+  readonly definition: FactoryDefinition;
+  readonly issues: ReadonlyArray<FactoryIssue>;
+  /** What the retired `projects` field names, for the service to compare with its own project. */
+  readonly listedProjects: ReadonlyArray<string>;
+} {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -110,12 +108,14 @@ export function parseFactoryJson(
     return {
       definition: emptyDefinition(directoryName),
       issues: [issue("invalid_definition", null, null, `${FACTORY_FILE_NAME} is not valid JSON.`)],
+      listedProjects: [],
     };
   }
   if (!isRecord(raw)) {
     return {
       definition: emptyDefinition(directoryName),
       issues: [issue("invalid_definition", null, null, `${FACTORY_FILE_NAME} must be an object.`)],
+      listedProjects: [],
     };
   }
   const issues: Array<FactoryIssue> = [];
@@ -129,18 +129,6 @@ export function parseFactoryJson(
       ),
     );
   }
-  const field = <A>(
-    key: string,
-    decode: (value: unknown) => Option.Option<A>,
-    empty: A,
-    expected: string,
-  ): A => {
-    if (raw[key] === undefined) return empty;
-    return Option.getOrElse(decode(raw[key]), () => {
-      issues.push(issue("invalid_definition", null, key, `"${key}" must be ${expected}.`));
-      return empty;
-    });
-  };
   const legacy = raw.version === undefined;
   if (!legacy && raw.version !== 2) {
     issues.push(issue("invalid_definition", null, "version", `"version" must be 2.`));
@@ -190,13 +178,9 @@ export function parseFactoryJson(
     }
   }
   return {
-    definition: {
-      version: 2,
-      name: directoryName,
-      projects: field("projects", decodeNames, [], "a list of project names"),
-      roles,
-    },
+    definition: { version: 2, name: directoryName, roles },
     issues,
+    listedProjects: Option.getOrElse(decodeNames(raw.projects), () => []),
   };
 }
 
@@ -419,7 +403,7 @@ export const readFactoryFiles = Effect.fn("factoryFiles.readFactoryFiles")(funct
     yield* ifExists(fileSystem.readDirectory(path.join(directory, "roles"))),
     (): ReadonlyArray<string> => [],
   );
-  const { definition, issues } = parseFactoryJson(name, text.value, (role) =>
+  const { definition, issues, listedProjects } = parseFactoryJson(name, text.value, (role) =>
     defaultFiles.includes(`${role}.md`),
   );
   const roles = yield* Effect.forEach(factoryRoleNames(definition), (role) =>
@@ -434,7 +418,7 @@ export const readFactoryFiles = Effect.fn("factoryFiles.readFactoryFiles")(funct
       } satisfies RoleFileEntry;
     }),
   );
-  return Option.some({ definition, issues, roles });
+  return Option.some({ definition, issues, listedProjects, roles });
 });
 
 /** The skill directories under `skillsDirectory` that hold a SKILL.md, sorted. */
@@ -604,29 +588,21 @@ export function bindingIssues(
   return issues;
 }
 
-/** Resolves project names against this environment's projects, by exact title. */
-export function resolveProjects(
-  names: ReadonlyArray<string>,
-  projects: ReadonlyArray<{ readonly projectId: ProjectId; readonly title: string }>,
-): {
-  readonly projects: ReadonlyArray<FactoryProject>;
-  readonly issues: ReadonlyArray<FactoryIssue>;
-} {
-  const issues: Array<FactoryIssue> = [];
-  const resolved = names.map((name): FactoryProject => {
-    const matches = projects.filter((project) => project.title === name);
-    if (matches.length === 1) return { name, projectId: matches[0]!.projectId };
-    issues.push(
-      matches.length === 0
-        ? issue("unknown_project", null, "projects", `No project here is named "${name}".`)
-        : issue(
-            "ambiguous_project",
-            null,
-            "projects",
-            `${matches.length} projects here are named "${name}". Rename one to use it.`,
-          ),
-    );
-    return { name, projectId: null };
-  });
-  return { projects: resolved, issues };
+/**
+ * `projects` once named other projects a factory could work in, though no agent ever read it. A
+ * factory now works in what its own project covers, so a list that names another project gets
+ * this issue, and the next save drops the field.
+ */
+export function otherProjectsIssue(
+  listed: ReadonlyArray<string>,
+  ownProjectTitle: string,
+): FactoryIssue | null {
+  const others = listed.filter((name) => name !== ownProjectTitle);
+  if (others.length === 0) return null;
+  return issue(
+    "other_projects",
+    null,
+    "projects",
+    `${FACTORY_FILE_NAME} lists ${others.map((name) => `"${name}"`).join(", ")} under "projects", which factories no longer read. A factory works in the repositories its own project covers: add another repository's folder under the project's Repositories settings. The next save drops the field.`,
+  );
 }

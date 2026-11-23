@@ -38,7 +38,7 @@ describe("issueCountByTab", () => {
     const counts = issueCountByTab([
       issue("implement", "model"),
       issue("foreman", null),
-      issue(null, "projects", "unknown_project"),
+      issue(null, "projects", "other_projects"),
     ]);
     expect(Object.fromEntries(counts)).toEqual({ roles: 2, settings: 1 });
   });
