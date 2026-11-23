@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 
 import * as IssueService from "../../../issue/IssueService.ts";
 import { refuseAgentJiraWrite } from "../../../jira/agentWriteRefusal.ts";
+import { jiraLinksAsThreadIssues } from "../../../jira/neutralThreadLinks.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -37,12 +38,17 @@ interface ResolvedTarget extends IssueRef {
   readonly issue?: IssueDetail;
 }
 
+/** Fork-only. Every issue the thread links: Jira links are stored apart from `issues`. */
+const linksOf = (
+  thread: Pick<OrchestrationV2ThreadShell, "projectId" | "issues" | "jiraIssues">,
+) => [...(thread.issues ?? []), ...jiraLinksAsThreadIssues(thread)];
+
 /** What the tools report from a thread shell; exported so the shape is testable without a layer. */
 function listThreadIssues(
-  thread: Pick<OrchestrationV2ThreadShell, "issues">,
+  thread: Pick<OrchestrationV2ThreadShell, "projectId" | "issues" | "jiraIssues">,
 ): ListThreadIssuesResult {
   return {
-    issues: (thread.issues ?? []).map((link) => ({
+    issues: linksOf(thread).map((link) => ({
       projectId: link.projectId,
       tracker: link.tracker,
       host: link.host,
@@ -301,7 +307,7 @@ const make = Effect.gen(function* () {
           ...input,
           projectId: input.projectId ?? thread.projectId,
         });
-        const existing = (thread.issues ?? []).find((link) => threadIssueKeysEqual(link, target));
+        const existing = linksOf(thread).find((link) => threadIssueKeysEqual(link, target));
         if (existing === undefined) return { ...identityOf(target), wasLinked: false };
         const { wasLinked } = yield* threadIssues
           .unlink({ threadId: thread.id, key: target })
