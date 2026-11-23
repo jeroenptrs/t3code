@@ -356,6 +356,24 @@ export const ThreadJiraIssueLink = Schema.Struct({
 });
 export type ThreadJiraIssueLink = typeof ThreadJiraIssueLink.Type;
 
+/** The kind Jira's issues carry in the tracker-neutral issue contracts. */
+export const JIRA_ISSUE_TRACKER_KIND = "jira";
+
+/**
+ * `https://<site>/browse/<KEY>-<n>` on `site`, as the neutral issue links name it: the scope is
+ * the project key and the workspace is the site. Null for any other URL.
+ */
+export function parseJiraIssueUrl(url: URL, site: string) {
+  const host = site.toLowerCase();
+  if (url.protocol !== "https:" || url.host.toLowerCase() !== host) return null;
+  const [, resource, rawKey, ...rest] = url.pathname.split("/");
+  const key = rawKey?.toUpperCase();
+  if (resource !== "browse" || key === undefined || rest.some((segment) => segment !== ""))
+    return null;
+  if (!JIRA_ISSUE_KEY_PATTERN.test(key)) return null;
+  return { host, workspace: host, scope: jiraProjectKeyOf(key), key };
+}
+
 // Proposals: Jira writes an agent asks for and a user approves. The server performs an approved
 // write with the approver's personal token, never a service account's, and records who approved.
 

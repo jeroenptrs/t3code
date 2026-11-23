@@ -1,6 +1,8 @@
 import {
   IssueTrackerKind,
+  JIRA_ISSUE_TRACKER_KIND,
   issueTrackerBindingScopes,
+  parseJiraIssueUrl,
   type IssueRef,
   type IssueTrackerConnectionList,
   type RepositoryIdentity,
@@ -61,18 +63,36 @@ function parseIssueLink(
   return null;
 }
 
-function parseStandaloneIssueLink(url: string) {
+function parseStandaloneIssueLink(url: string, trackers?: IssueTrackerConnectionList) {
   try {
-    const link = parseLinearIssueUrl(new URL(url));
-    return link === null ? null : { tracker: LINEAR_KIND, link };
+    const parsed = new URL(url);
+    const link = parseLinearIssueUrl(parsed);
+    if (link !== null) return { tracker: LINEAR_KIND, link };
+    // Fork: Jira's site differs per server, so the tracker the server reports names it.
+    for (const connection of trackers?.trackers ?? []) {
+      if (connection.tracker !== JIRA_ISSUE_TRACKER_KIND) continue;
+      const jira = parseJiraIssueUrl(parsed, connection.host);
+      if (jira !== null) return { tracker: connection.tracker, link: jira };
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
+/** Fork: a Jira issue URL on any site; which site is the server's is known only from its trackers. */
+function looksLikeJiraIssueLink(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parseJiraIssueUrl(parsed, parsed.host) !== null;
+  } catch {
+    return false;
+  }
+}
+
 /** Whether `url` is a standalone tracker's issue link, which only bindings can resolve. */
 export function isStandaloneIssueLink(url: string): boolean {
-  return parseStandaloneIssueLink(url) !== null;
+  return parseStandaloneIssueLink(url) !== null || looksLikeJiraIssueLink(url);
 }
 
 const LINEAR_LINK_HINT_PATTERN = new RegExp(
@@ -82,7 +102,8 @@ const LINEAR_LINK_HINT_PATTERN = new RegExp(
 
 /** A cheap pre-check, so text without such a link never asks for the bindings. */
 export function mayContainStandaloneIssueLink(text: string): boolean {
-  return LINEAR_LINK_HINT_PATTERN.test(text);
+  // Fork: `/browse/` is the path of every Jira issue URL.
+  return LINEAR_LINK_HINT_PATTERN.test(text) || text.includes("/browse/");
 }
 
 /**
@@ -96,7 +117,7 @@ function resolveStandaloneIssueLink<Project extends LinkProject>(
   trackers: IssueTrackerConnectionList | undefined,
   preferredProjectId: string | undefined,
 ): { readonly project: Project; readonly ref: IssueRef } | null {
-  const parsed = trackers === undefined ? null : parseStandaloneIssueLink(url);
+  const parsed = trackers === undefined ? null : parseStandaloneIssueLink(url, trackers);
   if (parsed === null || trackers === undefined) return null;
   const { tracker, link } = parsed;
   const accounts = new Set(
