@@ -291,6 +291,7 @@ import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewG
 import * as DiffWalkthroughRunService from "./diffWalkthrough/DiffWalkthroughRunService.ts";
 import * as DiffWalkthroughService from "./diffWalkthrough/DiffWalkthroughService.ts";
 import * as DiffWalkthroughWriter from "./diffWalkthrough/DiffWalkthroughWriter.ts";
+import * as JiraActingUser from "./jira/JiraActingUser.ts";
 import * as JiraService from "./jira/JiraService.ts";
 import * as JiraProposals from "./jira/JiraProposals.ts";
 import * as JiraBreakdownService from "./jira/JiraBreakdownService.ts";
@@ -1592,7 +1593,11 @@ export const layerWsRpc = (
       const feedbackStore = yield* FeedbackStore.FeedbackStore;
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
-      const issues = yield* IssueService.IssueService;
+      // Fork: the Jira tracker reads and writes as this session's user where they stored a token.
+      const issues = JiraActingUser.asActingUser(
+        yield* IssueService.IssueService,
+        currentSession.userId,
+      );
       const threadIssues = yield* ThreadIssueService.ThreadIssueService;
       const issueTrackers = yield* IssueTrackerConnections.IssueTrackerConnections;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;

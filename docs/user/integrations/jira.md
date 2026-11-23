@@ -168,10 +168,22 @@ issues, expand **Jira** and pick one or more Jira projects for the project. Ther
 key to enter: the server's reader identity reads Jira, so the row offers no connect or
 disconnect control. Only projects on the reader identity's site are offered.
 
-The Jira group in that list is read-only. You can search it, filter it by state, label,
-and assignee, and open an issue to read its description and comments. A Jira issue URL
-in a message opens the same panel. To comment, change status, or use a saved filter,
-use the Jira Issues page described above.
+In that list you can search the Jira group, filter it by state, label, and assignee,
+and open an issue to read its description and comments. A Jira issue URL in a message
+opens the same panel.
+
+With [your own Jira token](#use-your-own-jira-token) stored, the list and the panel
+read Jira as you, so the **Assigned to me**, **Opened by me**, and **Mentioning me**
+filters mean your own account. For Jira, **Mentioning me** lists the issues you watch. You can also comment and change the status from the panel, and both are made
+as you. The status menu offers the statuses your Jira workflow lets you move the issue
+to from where it is. If two workflow transitions lead to the same status, T3 Code
+cannot tell which one you mean, so make that move in Jira.
+
+Without a token the Jira group is read-only and reads as the reader identity. The
+panel says so where the comment box would be. Agents cannot comment or change the
+status this way either. See [Agents that write to Jira](#agents-that-write-to-jira).
+To use a saved filter, plan a sprint, or edit story points, use the Jira Issues page
+described above.
 
 ## Plan a sprint
 
