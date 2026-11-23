@@ -1,6 +1,9 @@
 import {
   canDropWorkItem,
+  implementationLabel,
   isDismissedFailure,
+  latestImplementation,
+  latestReview,
   runningRoles,
   runningRolesLabel,
   WORK_ITEM_OUTCOME_LABELS,
@@ -410,6 +413,7 @@ function WorkItemDetail(props: {
             question={item.gate.question}
           />
         ) : null}
+        <WorkItemResults item={item} />
         <section className="flex flex-col gap-2">
           <h3 className="text-sm font-medium">
             <T>Request</T>
@@ -453,6 +457,76 @@ function WorkItemDetail(props: {
           )}
         </section>
       </div>
+    </>
+  );
+}
+
+/** What the children returned as data: the latest review and the latest implementation. */
+function WorkItemResults(props: { readonly item: WorkItemSummary }) {
+  const gt = useGT();
+  const review = latestReview(props.item);
+  const implementation = latestImplementation(props.item);
+  if (review === null && implementation === null) return null;
+  return (
+    <>
+      {implementation === null ? null : (
+        <section className="flex flex-col gap-2">
+          <h3 className="text-sm font-medium">
+            <T>Implementation</T>
+          </h3>
+          <p className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-mono text-xs">{implementationLabel(implementation)}</span>
+            <Badge variant={implementation.checksPassed ? "success" : "warning"}>
+              {implementation.checksPassed ? gt("Checks passed") : gt("Checks failed")}
+            </Badge>
+          </p>
+          <p className="text-sm whitespace-pre-wrap text-muted-foreground">
+            {implementation.summary}
+          </p>
+        </section>
+      )}
+      {review === null ? null : (
+        <section className="flex flex-col gap-2">
+          <h3 className="flex items-center gap-2 text-sm font-medium">
+            <T>Review</T>
+            <Badge variant={review.verdict === "approve" ? "success" : "warning"}>
+              {review.verdict === "approve"
+                ? gt("Approved", { $context: "a review verdict" })
+                : gt("Changes requested", { $context: "a review verdict" })}
+            </Badge>
+          </h3>
+          {review.findings.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              <T>No findings</T>
+            </p>
+          ) : (
+            <ol className="flex flex-col gap-2">
+              {review.findings.map((finding) => (
+                <li
+                  key={`${finding.file ?? ""}:${finding.line ?? ""}:${finding.summary}`}
+                  className="flex flex-col gap-0.5 text-sm"
+                >
+                  <span className="whitespace-pre-wrap">{finding.summary}</span>
+                  <span className="flex gap-2 text-xs text-muted-foreground">
+                    {finding.file === undefined ? null : (
+                      <span className="font-mono">
+                        {finding.line === undefined
+                          ? finding.file
+                          : `${finding.file}:${finding.line}`}
+                      </span>
+                    )}
+                    <span>
+                      {finding.blocking
+                        ? gt("Blocking", { $context: "a review finding" })
+                        : gt("Not blocking", { $context: "a review finding" })}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
     </>
   );
 }

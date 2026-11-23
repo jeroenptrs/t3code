@@ -260,6 +260,26 @@ describe("factoryGraphState", () => {
         }),
       ]),
     ).toBe("PR #12");
+
+    // The implementer's returned branch and commit beat the branch its thread is on.
+    const returned = item("1", "working", {
+      threads: [
+        {
+          threadId: implementer,
+          role: "implement",
+          output: {
+            branch: "t3/fix-login-2",
+            commit: "abc1234def",
+            checksPassed: true,
+            summary: "Fixed.",
+          },
+        },
+      ],
+    });
+    expect(
+      state([shell(implementer, true, { branch: "t3/fix-login" })], [returned]).nodes.get("output")
+        ?.detail,
+    ).toBe("t3/fix-login-2 @ abc1234");
   });
 });
 

@@ -701,6 +701,7 @@ describe("Factories authorization", () => {
     dispatchedAt: null,
     failureDismissedAt: null,
     failedByUser: false,
+    foremanResult: null,
     threads: [],
     createdAt: "2026-11-05T00:00:00.000Z",
     updatedAt: "2026-11-05T00:00:00.000Z",
@@ -764,12 +765,12 @@ describe("Factories authorization", () => {
   it.effect(
     "lets an administrator save a factory and its skills, create work items, answer gates, dismiss failures, and drop items",
     () =>
-    Effect.gen(function* () {
-      const handled: Array<string> = [];
-      const client = yield* clientWith(AuthUserRoleScopes.administrator, handled);
-      yield* client[WS_METHODS.factoriesSave](save);
-      yield* client[WS_METHODS.factoriesWorkItemsCreate](create);
-      yield* client[WS_METHODS.factoriesWorkItemsAnswerGate](answer);
+      Effect.gen(function* () {
+        const handled: Array<string> = [];
+        const client = yield* clientWith(AuthUserRoleScopes.administrator, handled);
+        yield* client[WS_METHODS.factoriesSave](save);
+        yield* client[WS_METHODS.factoriesWorkItemsCreate](create);
+        yield* client[WS_METHODS.factoriesWorkItemsAnswerGate](answer);
         yield* client[WS_METHODS.factoriesWorkItemsDismissFailure](dismiss);
         yield* client[WS_METHODS.factoriesWorkItemsDrop](drop);
         yield* client[WS_METHODS.factoriesSkillsSave](skillSave);
@@ -783,7 +784,7 @@ describe("Factories authorization", () => {
           "skills.save",
           "skills.delete",
         ]);
-    }).pipe(Effect.scoped),
+      }).pipe(Effect.scoped),
   );
 });
 

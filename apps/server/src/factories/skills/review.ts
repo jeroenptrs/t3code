@@ -26,17 +26,9 @@ Leave style to the formatter and the linter.
 
 ## Hand back
 
-Put Approved or Changes requested alone on the first line.
+Submit your result with t3_submit_output. The verdict is approve or changes. List your findings most severe first, each with its file and line, and a summary of what goes wrong and the input or state that makes it go wrong. Set blocking to false for a finding that does not block the change.
 
-Then list your findings, most severe first. Give each one:
-
-- The file and line.
-- What goes wrong.
-- The input or state that makes it go wrong.
-
-Mark a finding that does not block the change as not blocking.
-
-Then list each check you ran, its command, and its result.
+Then reply with each check you ran, its command, and its result.
 
 Approve only when every check passes and no finding blocks the change. A check that fails the same way on the base does not count against it.
 `;

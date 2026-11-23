@@ -9,7 +9,6 @@ import {
   ProviderInstanceId,
   ThreadId,
   type WorkItem,
-  WorkItemError,
   WorkItemId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -99,15 +98,12 @@ const workItem: WorkItem = {
   dispatchedAt: null,
   failureDismissedAt: null,
   failedByUser: false,
+  foremanResult: null,
   threads: [],
   createdAt: "2026-11-05T00:00:00.000Z",
   updatedAt: "2026-11-05T00:00:00.000Z",
   transitions: [],
 };
-const foremanOnly = (threadId: ThreadId, call: string, calls: Array<string>) =>
-  threadId === foremanThreadId
-    ? Effect.sync(() => calls.push(call)).pipe(Effect.as(workItem))
-    : Effect.fail(new WorkItemError({ code: "not_foreman", message: "Not this item's Foreman." }));
 
 const mcpClient = McpSchema.McpServerClient.of({
   clientId: 1,
@@ -141,8 +137,6 @@ const call = (
     listWorkItems: () =>
       Effect.sync(() => calls.push("listWorkItems")).pipe(Effect.as({ workItems: [] })),
     createWorkItem: () => Effect.sync(() => calls.push("createWorkItem")).pipe(Effect.as(workItem)),
-    advanceWorkItem: (threadId) => foremanOnly(threadId, "advanceWorkItem", calls),
-    gateWorkItem: (threadId) => foremanOnly(threadId, "gateWorkItem", calls),
     setWorkItemFailureDismissed: () =>
       Effect.sync(() => calls.push("setWorkItemFailureDismissed")).pipe(Effect.as(workItem)),
     dropWorkItem: () => Effect.sync(() => calls.push("dropWorkItem")).pipe(Effect.as(workItem)),
@@ -221,9 +215,7 @@ const skillSave = {
 };
 const skillDelete = { name: "run-checks", source: "home", file: null };
 const create = { factoryId: factory.id, title: "Fix the login bug", text: "SSO fails." };
-const advance = { workItemId: workItem.id, stage: "done" };
 const delegate = { workItemId: workItem.id, role: "implement", task: "Fix the SSO callback." };
-const gate = { workItemId: workItem.id, question: "Ship it?", resumeStage: "done" };
 const dismiss = { workItemId: workItem.id, dismissed: true };
 
 it.effect.each([
@@ -265,9 +257,6 @@ it.effect.each([
     delegate,
     ["ran", "delegateTask:work-item:1:implement:Fix the SSO callback."],
   ],
-  ["t3_work_item_advance", threadCaller(foremanThreadId), advance, ["ran", "advanceWorkItem"]],
-  ["t3_work_item_advance", threadCaller(supervisedThreadId), advance, ["capability_denied"]],
-  ["t3_work_item_gate", threadCaller(supervisedThreadId), gate, ["capability_denied"]],
   ["t3_work_item_dismiss_failure", readOnlyClient, dismiss, ["capability_denied"]],
   [
     "t3_work_item_dismiss_failure",

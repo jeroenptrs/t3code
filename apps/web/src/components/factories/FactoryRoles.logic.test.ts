@@ -34,6 +34,7 @@ const builtinRole = (role: FactoryRole["role"]): FactoryRole => ({
     isolation: "worktree",
     skills: role === "implement" ? ["implement"] : [],
     tools: [],
+    outputSchema: null,
   },
   description: `Built-in ${role} description.`,
   enabled: true,
