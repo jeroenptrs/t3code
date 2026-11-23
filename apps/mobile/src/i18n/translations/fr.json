@@ -5685,5 +5685,13 @@
   "3ec58a971b514f70": "Aucun changement d’étape pour l’instant",
   "2be440682069ca88": "Le Foreman demande",
   "19be644bc942c37f": "Factory",
-  "b462588e4e40009c": "En cours"
+  "b462588e4e40009c": "En cours",
+  "ed6de08d060de82d": "Vérifications réussies",
+  "83919488c0173782": "Vérifications échouées",
+  "390cd0e62326e8bb": "Bloquant",
+  "ab571ece47715cfe": "Non bloquant",
+  "5d1a5b5b5dd1fa27": "Implémentation",
+  "b74dbfef93591e1e": "Aucune remarque",
+  "f27dfe23ebe57670": "Revue : approuvée",
+  "6ce25c253cc09a3f": "Revue : modifications demandées"
 }

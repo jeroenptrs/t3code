@@ -1086,6 +1086,8 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
   // The work item sink the scheduled task runner was given reaches this FactoryService.
   FactoryWorkItemSink.layerRegister.pipe(Layer.provide(FactoryWorkItemSink.layer)),
+  // A Foreman's typed result ends or holds its work item.
+  FactoryService.layerForemanResults,
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),

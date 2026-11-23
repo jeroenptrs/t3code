@@ -196,6 +196,8 @@ const assertFactoryThreadsSchema = Effect.gen(function* () {
       "updated_at",
       "dispatched_at",
       "failure_dismissed_at",
+      "foreman_result_json",
+      "foreman_result_run_id",
     ],
     ["work_item_id*1", "thread_id*2", "role", "created_at"],
     ["transition_id*1", "work_item_id", "from_stage", "to_stage", "actor_json", "note", "at"],
@@ -247,6 +249,7 @@ it.effect("adds fork migrations to a database already at upstream's latest", () 
       [24, "FactoryWorkItemRuns"],
       [25, "FactoryStaleWorkItems"],
       [26, "FactoryWorkItemWorking"],
+      [27, "FactoryForemanResult"],
     ]);
     assert.deepStrictEqual(yield* readLedger("effect_sql_migrations"), migrationManifest);
     yield* assertEntraSchema;

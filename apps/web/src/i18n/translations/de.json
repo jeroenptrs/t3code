@@ -13052,5 +13052,13 @@
   "4e240ec5d72ebfd4": "Kleinbuchstaben, Ziffern und Bindestriche. Er benennt den Ordner.",
   "067007b4fd5f1b5b": "Factory erstellen",
   "d430c9ca053aa271": "Die Definition liegt im Projekt unter .t3/factories. Sie beginnt mit den eingebauten Rollen foreman, implement und review.",
-  "cc5d2f5ce8ee576e": "Umgebung"
+  "cc5d2f5ce8ee576e": "Umgebung",
+  "ed6de08d060de82d": "Prüfungen bestanden",
+  "83919488c0173782": "Prüfungen fehlgeschlagen",
+  "878a0531229ed067": "Genehmigt",
+  "862ffea0d0d90d51": "Änderungen angefordert",
+  "390cd0e62326e8bb": "Blockierend",
+  "ab571ece47715cfe": "Nicht blockierend",
+  "5d1a5b5b5dd1fa27": "Umsetzung",
+  "b74dbfef93591e1e": "Keine Befunde"
 }

@@ -4749,7 +4749,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return yield* refuse(
           `Thread ${command.threadId} is settled or archived and cannot watch ${subject}.`,
-      );
+        );
       }
       // A subagent or delegated task reports to its parent thread, which owns the work. Its own
       // watch would wake it on every change of something it was not asked to babysit.
@@ -10594,6 +10594,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         text: command.task,
         attachments: [],
         modelSelection: command.modelSelection,
+        ...(command.outputSchema === undefined ? {} : { outputSchema: command.outputSchema }),
         dispatchMode:
           command.workspaceStrategy === undefined
             ? { type: "start_immediately" }
@@ -14164,28 +14165,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerInstanceId: thread.providerInstanceId,
         occurredAt: input.now,
         payload: {
-            ...withoutJiraIssueWatches(thread),
+          ...withoutJiraIssueWatches(thread),
           pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
         },
       });
     }
-      // Fork-only. Jira watches end in their own event, which keeps the reverse lookup in step.
-      if (thread.jiraIssues?.some((link) => link.watch !== undefined)) {
-        yield* emitEvent({
-          type: "thread.jira-issues-synced",
-          threadId: thread.id,
-          providerInstanceId: thread.providerInstanceId,
-          occurredAt: input.now,
-          payload: {
-            ...withoutJiraIssueWatches(thread),
-            ...(thread.pullRequests === undefined
-              ? {}
-              : {
-                  pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
-                }),
-          },
-        });
-      }
+    // Fork-only. Jira watches end in their own event, which keeps the reverse lookup in step.
+    if (thread.jiraIssues?.some((link) => link.watch !== undefined)) {
+      yield* emitEvent({
+        type: "thread.jira-issues-synced",
+        threadId: thread.id,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: input.now,
+        payload: {
+          ...withoutJiraIssueWatches(thread),
+          ...(thread.pullRequests === undefined
+            ? {}
+            : {
+                pullRequests: pullRequests.map((link) => withPullRequestWatch(link, undefined)),
+              }),
+        },
+      });
+    }
     const cohortRunIds = new Set(input.cohortRunIds);
     for (const run of runs) {
       if (run.delegatedCompletion?.delivery != null) cohortRunIds.add(run.id);

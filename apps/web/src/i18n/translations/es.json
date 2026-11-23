@@ -13047,5 +13047,13 @@
   "4e240ec5d72ebfd4": "Letras minúsculas, dígitos y guiones. Da nombre a la carpeta.",
   "067007b4fd5f1b5b": "Crear Factory",
   "d430c9ca053aa271": "La definición está en el proyecto, en .t3/factories. Empieza con los roles integrados foreman, implement y review.",
-  "cc5d2f5ce8ee576e": "Entorno"
+  "cc5d2f5ce8ee576e": "Entorno",
+  "ed6de08d060de82d": "Comprobaciones superadas",
+  "83919488c0173782": "Comprobaciones fallidas",
+  "878a0531229ed067": "Aprobado",
+  "862ffea0d0d90d51": "Cambios solicitados",
+  "390cd0e62326e8bb": "Bloqueante",
+  "ab571ece47715cfe": "No bloqueante",
+  "5d1a5b5b5dd1fa27": "Implementación",
+  "b74dbfef93591e1e": "Sin hallazgos"
 }

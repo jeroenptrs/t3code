@@ -46,11 +46,33 @@ keeps that shape and binds it to what T3 Code already has.
   `dropped`. No role takes a stage's name. An earlier design made the stage
   name the one role that ran the item, so only one role worked on an item at a
   time. Fork migration 026 moved items at a role's stage to `working`.
+- **Children and the Foreman return data, not prose.** Upstream asks a run for
+  a result matching a JSON Schema and takes it through `t3_submit_output`
+  (#38874). A role can declare `outputSchema` in its role file. Review ships
+  `{ verdict, findings }`, implement `{ branch, commit, checksPassed, summary }`,
+  and analysis `{ summary, workPackages, openQuestions }`. The server checks a
+  schema when it reads the role, because upstream's converter refuses some
+  keywords, such as `pattern`. `t3_factory_delegate` asks the child's first
+  run for its role's result, and `task_status` returns it as `output`, which
+  the Foreman reads instead of the summary. Both hooks are fork changes to
+  upstream's delegation (see the ledger). The work item reports each child's
+  latest output, which the canvas and the item's sheet show.
+- **The Foreman's result ends or holds its item.** Every message the server
+  sends a Foreman that leaves the item open asks for a `ForemanResult`: done
+  with a summary, failed or dropped with a reason, or needs a person with up
+  to five questions. A submission arrives as a `run.output-submitted` event,
+  and the ledger applies it once per run: it moves the item, writes the note,
+  and opens a gate for the questions. A restart catches up on results it
+  missed. A result the item's stage cannot take is kept on its log. This
+  replaced `t3_work_item_advance` and `t3_work_item_gate`, so a Foreman that
+  forgets a tool call no longer leaves its item open. The server's own gate,
+  for a missing Git identity, stays.
 - **The Foreman is a prompt, not a pipeline.** Code owns intake, the work item
   ledger, and gates. Triggers and the ledger decide what becomes a run. The
   Foreman decides routing among the enabled roles it is told of, composes each
   child's task, holds the revision loop between implementer and reviewer, and
-  talks to the human at gates. It does not write code.
+  says through its result when the item ends or needs a person. It does not
+  write code.
 - **Each work item is a run in its own Foreman thread.** Every item, from a
   trigger or created by hand, launches a Foreman thread titled after the item.
   That thread owns the item to the end, and a gate answer continues in it.

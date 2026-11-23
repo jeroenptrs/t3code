@@ -5693,5 +5693,13 @@
   "3ec58a971b514f70": "No stage changes yet",
   "2be440682069ca88": "The Foreman asks",
   "19be644bc942c37f": "Factory",
-  "b462588e4e40009c": "Working"
+  "b462588e4e40009c": "Working",
+  "ed6de08d060de82d": "Checks passed",
+  "83919488c0173782": "Checks failed",
+  "390cd0e62326e8bb": "Blocking",
+  "ab571ece47715cfe": "Not blocking",
+  "5d1a5b5b5dd1fa27": "Implementation",
+  "b74dbfef93591e1e": "No findings",
+  "f27dfe23ebe57670": "Review: approved",
+  "6ce25c253cc09a3f": "Review: changes requested"
 }

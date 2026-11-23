@@ -43,7 +43,7 @@ ${source.text.trim()}
 
 ${repositories}
 
-Delegate each task with t3_factory_delegate, naming the role. Hold the item for a person with t3_work_item_gate, and end it with t3_work_item_advance.`;
+Delegate each task with t3_factory_delegate, naming the role. Submit your result once the item ends or needs a person.`;
 }
 
 /** The follow-up the Foreman gets once a person answers its gate. */
@@ -58,8 +58,8 @@ export function renderGateAnswerMessage(input: {
   const next =
     input.decision === "approved"
       ? input.stage === "done"
-        ? "The item is done. Hand back your report."
-        : "Carry on from there."
+        ? "The item is done. Hand back a short report."
+        : "Carry on from there, and submit your result once the item ends or needs a person again."
       : `The item is ${input.stage}. Stop work on it and hand back a short report.`;
   return `The person ${input.decision} the gate on work item ${input.workItemId}.
 

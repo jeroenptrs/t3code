@@ -58,6 +58,9 @@ The tab is part of the page's address, so a reload or a shared link keeps it.
   mode, and where it works, then click **Save changes**. The description is one line on what the
   role is for. The Foreman reads it to decide which role gets which work, so give a role you add,
   such as `checks`, a description that says when to use it. A role you change gets its own file at `roles/<role>.md`.
+- A role file can set `outputSchema`, a JSON Schema for what the role's agents return to the
+  Foreman. The implement, review, and analysis presets have one. Set it to `null` for none. The
+  Foreman's own result is fixed.
 - **Remove role**, at the bottom of a role's page, takes the role out of the factory and deletes
   its file. The Foreman cannot be removed.
 - **Triggers** lists the triggers that send the factory work, with their source, filters, and what
@@ -158,7 +161,10 @@ The **Work items** tab lists the factory's items, newest first. Filter them by s
 beside **New work item** reads it again.
 
 Beside a working item's stage, the list names the roles it has agents running as. Click an item to
-see its request and its stage history with who made each change. The history notes the role each
+see its request, what its agents returned, and its stage history with who made each change. The
+item shows the latest implementation, with its branch, commit, and whether the checks passed, and
+the latest review, with its verdict and findings. The canvas's **Output** shows the same branch
+and commit. The history notes the role each
 agent was started as. **Open run
 thread** opens its run. From there you can also:
 
@@ -168,12 +174,10 @@ thread** opens its run. From there you can also:
 
 ### Answer a gate
 
-When the Foreman needs a decision, it holds the work item at **Waiting** with a question, and the
-item shows under **Needs you** on the Overview. Open the item on the **Work items** tab, read the
+When the Foreman needs a decision, it holds the work item at **Waiting** with its questions, and
+the item shows under **Needs you** on the Overview. Open the item on the **Work items** tab, read the
 question, then click **Approve** or **Reject**. A rejection needs a note that says why. An approval
-takes an optional note. Approving sends the item back to work, or marks it done when that is what
-the Foreman asked.
-Rejecting drops it. The Foreman reads your answer and note in the item's thread.
+takes an optional note. Approving sends the item back to work. Rejecting drops it. The Foreman reads your answer and note in the item's thread.
 
 Only administrators can answer a gate, drop an item, or dismiss a failure. Operators see the
 question.
