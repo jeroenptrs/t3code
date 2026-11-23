@@ -31,6 +31,8 @@ export const TRIGGER_SOURCE_LABELS: Record<TriggerSourceKind, string> = {
   manual: "Manual",
   jira_query: "Jira query",
   gitlab_projects: "GitLab projects",
+  issues: "Issues",
+  pull_requests: "Pull requests",
 };
 
 interface PlaceholderDraft {

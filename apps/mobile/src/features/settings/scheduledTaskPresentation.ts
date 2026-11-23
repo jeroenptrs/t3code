@@ -119,6 +119,8 @@ export const TRIGGER_SOURCE_LABELS = {
   manual: "Manual",
   jira_query: "Jira query",
   gitlab_projects: "GitLab projects",
+  issues: "Issues",
+  pull_requests: "Pull requests",
 } as const satisfies Record<TriggerSourceKind, string>;
 
 /**
@@ -142,8 +144,16 @@ function formatTriggerSource(
   const { source, filters } = trigger;
   if (source.kind === "schedule") return formatSchedule(source.schedule);
   const label = TRIGGER_SOURCE_LABELS[source.kind];
-  if (source.kind === "jira_query" || source.kind === "gitlab_projects") {
+  if (
+    source.kind === "jira_query" ||
+    source.kind === "gitlab_projects" ||
+    source.kind === "issues" ||
+    source.kind === "pull_requests"
+  ) {
     const parts: Array<string> = [label];
+    if ((source.kind === "issues" || source.kind === "pull_requests") && source.query) {
+      parts.push(`"${source.query}"`);
+    }
     if (source.kind === "gitlab_projects") {
       const count = source.projects.length;
       if (count > 0) parts.push(`${count} project${count === 1 ? "" : "s"}`);
