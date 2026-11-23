@@ -2,7 +2,6 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  ScheduledTaskId,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -53,7 +52,7 @@ const provider: ServerProvider = {
 };
 
 describe("parseFactoryJson", () => {
-  it("reads a complete definition", () => {
+  it("reads a complete definition and ignores the trigger list older files have", () => {
     const text = JSON.stringify({
       version: 2,
       name: "triage",
@@ -66,12 +65,6 @@ describe("parseFactoryJson", () => {
         version: 2,
         name: "triage",
         projects: ["backend", "frontend"],
-        triggers: [
-          {
-            kind: "scheduled_task",
-            scheduledTaskId: ScheduledTaskId.make("scheduled-task:nightly"),
-          },
-        ],
         roles: { foreman: "roles/foreman.md", review: "prompts/reviewer.md", analysis: null },
       },
       issues: [],
@@ -80,7 +73,7 @@ describe("parseFactoryJson", () => {
 
   it("reads missing lists as empty", () => {
     expect(parseFactoryJson("triage", '{ "version": 2, "name": "triage" }')).toEqual({
-      definition: { version: 2, name: "triage", projects: [], triggers: [], roles: {} },
+      definition: { version: 2, name: "triage", projects: [], roles: {} },
       issues: [],
     });
   });
@@ -91,7 +84,6 @@ describe("parseFactoryJson", () => {
       version: 2,
       name: "triage",
       projects: [],
-      triggers: [],
       roles: {
         review: "prompts/reviewer.md",
         foreman: "roles/foreman.md",
@@ -125,11 +117,6 @@ describe("parseFactoryJson", () => {
     ["another factory's name", '{ "name": "other" }', [["name_mismatch", "name"]]],
     ["an invalid name", '{ "name": "Bad Name" }', [["name_mismatch", "name"]]],
     [
-      "a trigger of the wrong shape",
-      '{ "name": "triage", "triggers": [{ "kind": "cron" }] }',
-      [["invalid_definition", "triggers"]],
-    ],
-    [
       "a role path outside the factory directory",
       '{ "name": "triage", "roles": { "foreman": "../../AGENTS.md" } }',
       [["invalid_definition", "roles"]],
@@ -138,7 +125,6 @@ describe("parseFactoryJson", () => {
     const parsed = parseFactoryJson("triage", text);
     expect(parsed.definition.name).toBe("triage");
     expect(Object.values(parsed.definition.roles)).not.toContainEqual(expect.any(String));
-    expect(parsed.definition.triggers).toEqual([]);
     expect(parsed.issues.map((issue) => [issue.code, issue.field])).toEqual(expected);
   });
 
@@ -147,7 +133,6 @@ describe("parseFactoryJson", () => {
       version: 2 as const,
       name: "triage",
       projects: ["backend"],
-      triggers: [{ kind: "scheduled_task" as const, scheduledTaskId: ScheduledTaskId.make("t-1") }],
       roles: { implement: "roles/implement.md", docs: null },
     };
     expect(parseFactoryJson("triage", renderFactoryJson(definition))).toEqual({

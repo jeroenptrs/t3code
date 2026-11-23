@@ -61,7 +61,10 @@ The tab is part of the page's address, so a reload or a shared link keeps it.
 - **Remove role**, at the bottom of a role's page, takes the role out of the factory and deletes
   its file. The Foreman cannot be removed.
 - **Triggers** lists the triggers that send the factory work, with their source, filters, and what
-  a polled trigger acts on first. Click a trigger to edit it.
+  a polled trigger acts on first. Click a trigger to edit it. A trigger sends work to one factory:
+  attaching it here, or picking the factory in its settings, is the same thing. **Detach** sends
+  its work back to threads and turns it off. A Jira query trigger has **Issues**, the issues its
+  last check found, with **Check now** to check again.
 - **Settings** holds the other projects the factory may work in, the Foreman's model and where it
   works, and **Delete factory**.
 

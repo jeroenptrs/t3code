@@ -93,6 +93,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.triggersDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.triggersRunNow]: AuthOrchestrationOperateScope,
   [WS_METHODS.triggersFireCurrent]: AuthOrchestrationOperateScope,
+  [WS_METHODS.triggersSetTarget]: AuthOrchestrationOperateScope,
+  [WS_METHODS.triggersCheckNow]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   // An answer, a resume and a cancel each decide what a run's agents do next.
   [WS_METHODS.workflowsAnswer]: AuthOrchestrationOperateScope,

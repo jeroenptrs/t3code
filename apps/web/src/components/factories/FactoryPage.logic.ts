@@ -1,5 +1,6 @@
 import {
   FactoryRoleName,
+  ScheduledTaskId,
   WorkItemId,
   type Factory,
   type FactoryIssue,
@@ -25,12 +26,15 @@ export interface FactoryPageSearch extends WorkItemSearch {
   readonly tab?: Exclude<FactoryTab, "overview"> | undefined;
   readonly role?: FactoryRoleName | undefined;
   readonly item?: WorkItemId | undefined;
+  /** A Jira query trigger whose matching issues the Triggers tab shows. */
+  readonly trigger?: ScheduledTaskId | undefined;
 }
 
 const isTab = (value: unknown): value is Exclude<FactoryTab, "overview"> =>
   typeof value === "string" && value !== "overview" && FACTORY_TABS.some((tab) => tab === value);
 const isRole = Schema.is(FactoryRoleName);
 const isWorkItemId = Schema.is(WorkItemId);
+const isScheduledTaskId = Schema.is(ScheduledTaskId);
 
 /** Drops any param that is not a known value, so a stale link still opens the factory. */
 export function validateFactoryPageSearch(raw: Record<string, unknown>): FactoryPageSearch {
@@ -40,13 +44,13 @@ export function validateFactoryPageSearch(raw: Record<string, unknown>): Factory
     ...(tab === "roles" && isRole(raw.role) ? { role: raw.role } : {}),
     ...(tab === "work-items" ? validateWorkItemSearch(raw) : {}),
     ...(tab === "work-items" && isWorkItemId(raw.item) ? { item: raw.item } : {}),
+    ...(tab === "triggers" && isScheduledTaskId(raw.trigger) ? { trigger: raw.trigger } : {}),
   };
 }
 
-/** Where an issue shows: a role's on the Roles tab, a trigger's on Triggers, the rest on Settings. */
+/** Where an issue shows: a role's on the Roles tab, the rest on Settings. */
 export function issueTab(issue: FactoryIssue): FactoryTab {
-  if (issue.role !== null) return "roles";
-  return issue.field === "triggers" ? "triggers" : "settings";
+  return issue.role !== null ? "roles" : "settings";
 }
 
 export function issueCountByTab(issues: ReadonlyArray<FactoryIssue>): Map<FactoryTab, number> {
