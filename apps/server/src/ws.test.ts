@@ -25,6 +25,7 @@ import {
   EnvironmentId,
   EventId,
   GitManagerError,
+  IssueTrackerKind,
   VcsProcessSpawnError,
   MessageId,
   mcpClientScopes,
@@ -279,6 +280,25 @@ it("records the session's user as who linked a Jira issue, never the client's cl
   };
   assert.propertyVal(withSessionUserAttribution(watch, ada), "linkedByUserId", ada);
   assert.notProperty(withSessionUserAttribution(watch, null), "linkedByUserId");
+
+  // A neutral link to a Jira issue is stored as a Jira link, so it records the user too.
+  const neutral: OrchestrationV2Command = {
+    type: "thread.issue.link",
+    commandId: CommandId.make("neutral-link"),
+    threadId: ThreadId.make("thread:new"),
+    tracker: IssueTrackerKind.make("jira"),
+    host: "acme.atlassian.net",
+    scope: "ABC",
+    key: "ABC-1",
+    projectId: ProjectId.make("project-1"),
+    url: "https://acme.atlassian.net/browse/ABC-1",
+    displayKey: "ABC-1",
+    title: "Ship it",
+    source: "manual",
+    linkedByUserId: AuthUserId.make("user-spoofed"),
+  };
+  assert.propertyVal(withSessionUserAttribution(neutral, ada), "linkedByUserId", ada);
+  assert.notProperty(withSessionUserAttribution(neutral, null), "linkedByUserId");
 });
 
 const decodeScheduledTaskList = Schema.decodeSync(ScheduledTaskListResult);
@@ -2119,8 +2139,11 @@ it.effect(
           Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
           Layer.mock(ServerEnvironment.ServerEnvironment)({}),
           Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+          Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+          Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+          Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
         );
-        const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+        const server = yield* RpcServer.makeNoSerialization(WsCoreRpcGroup, {
           ...WS_RPC_SERVER_OPTIONS,
           onFromServer: (response) =>
             response._tag === "Exit" ? Queue.offer(exits, response.exit._tag) : Effect.void,
@@ -2210,8 +2233,11 @@ it.effect(
           Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
           Layer.mock(ServerEnvironment.ServerEnvironment)({}),
           Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+          Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+          Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+          Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
         );
-        const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+        const server = yield* RpcServer.makeNoSerialization(WsCoreRpcGroup, {
           ...WS_RPC_SERVER_OPTIONS,
           onFromServer: (response) =>
             response._tag === "Exit" ? Queue.offer(exits, response.exit._tag) : Effect.void,
@@ -3178,6 +3204,9 @@ const makeAcpRegistryClient = Effect.fn("test.makeAcpRegistryClient")(function* 
     Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
     Layer.mock(ServerEnvironment.ServerEnvironment)({}),
     Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    Layer.mock(WorkspaceReadAccess.WorkspaceReadAccess)({}),
+    Layer.mock(DiffWalkthroughWriter.DiffWalkthroughWriter)({}),
+    Layer.mock(DiffWalkthroughRunService.DiffWalkthroughRunService)({}),
     ServerSettings.layerTest({}, options.managedPolicy),
     Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
       prepare: ({ agentId }) =>

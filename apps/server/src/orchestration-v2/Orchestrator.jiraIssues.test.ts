@@ -7,6 +7,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  IssueTrackerKind,
+  JIRA_ISSUE_TRACKER_KIND,
   type ThreadJiraIssueLinkSource,
   type ThreadJiraIssueWatch,
 } from "@t3tools/contracts";
@@ -17,7 +19,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { TestClock } from "effect/testing";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import * as EventStore from "./EventStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -573,4 +574,99 @@ it.effect.each(["archive", "settle", "stop"] as const)(
       );
       assert.equal(restart._tag, "OrchestratorDispatchError");
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("decides a tracker-neutral link to a Jira issue as a Jira link", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:jira-neutral");
+    yield* createThread(threadId);
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const jira = IssueTrackerKind.make(JIRA_ISSUE_TRACKER_KIND);
+    const neutralLink = (
+      key: { tracker: IssueTrackerKind; host: string; scope: string; key: string },
+      source: "manual" | "agent",
+      linkedByUserId?: AuthUserId,
+    ) =>
+      orchestrator.dispatch({
+        type: "thread.issue.link",
+        commandId: nextCommandId("neutral-link"),
+        threadId,
+        ...key,
+        projectId: ProjectId.make("project:thread-jira-issues"),
+        url: `https://${key.host}/browse/${key.key}`,
+        displayKey: key.key,
+        title: "Ship the read side",
+        source,
+        ...(linkedByUserId === undefined ? {} : { linkedByUserId }),
+      });
+    const neutralUnlink = (key: {
+      tracker: IssueTrackerKind;
+      host: string;
+      scope: string;
+      key: string;
+    }) =>
+      orchestrator.dispatch({
+        type: "thread.issue.unlink",
+        commandId: nextCommandId("neutral-unlink"),
+        threadId,
+        ...key,
+      });
+    const abc = { tracker: jira, host: "ACME.atlassian.net", scope: "ABC", key: "ABC-7" };
+
+    yield* neutralLink(abc, "manual", ada);
+    const linked = yield* readThread(threadId);
+    assert.deepStrictEqual(yield* linkSummary(threadId), [[site, "ABC-7", "manual"]]);
+    assert.equal(linked.jiraIssues?.[0]?.linkedByUserId, ada);
+    assert.deepStrictEqual(linked.issues ?? [], []);
+    yield* assertForkRowsMatch(threadId);
+
+    // The fork's own link command sees the same link, so one issue is never in both stores.
+    yield* link(threadId, "ABC-7", "agent");
+    yield* neutralLink(abc, "agent");
+    assert.deepStrictEqual(yield* linkSummary(threadId), [[site, "ABC-7", "manual"]]);
+
+    // An unlink leaves the tombstone the branch detector needs, and an agent link revives it.
+    yield* neutralUnlink(abc);
+    assert.deepStrictEqual(yield* linkSummary(threadId), [[site, "ABC-7", "branch-dismissed"]]);
+    yield* link(threadId, "ABC-7", "branch");
+    assert.deepStrictEqual(yield* linkSummary(threadId), [[site, "ABC-7", "branch-dismissed"]]);
+    yield* neutralLink(abc, "agent");
+    assert.deepStrictEqual(yield* linkSummary(threadId), [[site, "ABC-7", "agent"]]);
+    assert.deepStrictEqual((yield* readThread(threadId)).issues ?? [], []);
+    yield* assertForkRowsMatch(threadId);
+
+    // A key Jira could not have issued is refused rather than stored.
+    const refused = yield* neutralLink({ ...abc, key: "not-a-key" }, "manual").pipe(Effect.flip);
+    assert.equal(refused._tag, "OrchestratorDispatchError");
+
+    // Any other tracker keeps its neutral link.
+    const github = {
+      tracker: IssueTrackerKind.make("github"),
+      host: "github.com",
+      scope: "acme/app",
+      key: "7",
+    };
+    yield* neutralLink(github, "manual");
+    const mixed = yield* readThread(threadId);
+    assert.deepStrictEqual(
+      (mixed.issues ?? []).map((entry) => [entry.tracker, entry.key]),
+      [["github", "7"]],
+    );
+    assert.deepStrictEqual(yield* linkSummary(threadId), [[site, "ABC-7", "agent"]]);
+    yield* neutralUnlink(github);
+    assert.deepStrictEqual((yield* readThread(threadId)).issues ?? [], []);
+    assert.deepStrictEqual(yield* linkSummary(threadId), [[site, "ABC-7", "agent"]]);
+
+    // Every Jira change is the fork's existing event, so a rebuild needs no new event type.
+    const sql = yield* SqlClient.SqlClient;
+    const events = yield* sql<{ readonly type: string }>`
+      SELECT DISTINCT event_type AS type FROM orchestration_events
+      WHERE stream_id = ${threadId} AND event_type != 'thread.created'
+      ORDER BY event_type
+    `;
+    assert.deepStrictEqual(
+      events.map((event) => event.type),
+      ["thread.issue-synced", "thread.jira-issues-synced"],
+    );
+  }).pipe(Effect.provide(layerTest)),
 );
