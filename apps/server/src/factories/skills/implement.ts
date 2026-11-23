@@ -35,10 +35,11 @@ Commit your work on the branch, with a message in the project's style. Push, ope
 
 ## Hand back
 
-Reply with:
+Submit your result with t3_submit_output: the branch, the commit SHA (null when you could not commit), whether every check passed, and one or two sentences on what you changed.
 
-- One or two sentences on what you changed.
-- The commit SHA and the base commit it builds on.
+Then reply with:
+
+- The base commit your commit builds on.
 - Each check you ran, its command, and its result.
 - For a check that fails outside your change, its output and how you confirmed it fails on the base.
 - What the task asked for that you left out, and why.

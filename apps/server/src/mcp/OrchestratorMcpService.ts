@@ -2294,6 +2294,7 @@ const make = Effect.gen(function* () {
           ? null
           : pendingTaskApproval(childControls, task.id, childRun),
       waitTimedOut,
+      ...(childRun?.output === undefined ? {} : { output: childRun.output.value }),
     } satisfies OrchestratorMcpDelegateTaskResult;
     const response: OrchestratorMcpDelegateTaskResult =
       endsTaskWait(result) || task.completionDelivery?.state === "disposed"
@@ -3183,7 +3184,7 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       // A Foreman's delegation takes the binding of the role `t3_factory_delegate` names.
-      const delegation = Option.isNone(factories)
+      const delegation: FactoryService.FactoryDelegation = Option.isNone(factories)
         ? input
         : yield* factories.value
             .prepareDelegation({
@@ -3234,6 +3235,9 @@ const make = Effect.gen(function* () {
               parentNodeId,
               task: taskPrompt(delegation),
               ...(input.title === undefined ? {} : { title: input.title }),
+              ...(delegation.outputSchema === undefined
+                ? {}
+                : { outputSchema: delegation.outputSchema }),
               modelSelection: target.modelSelection,
               runtimeMode,
               interactionMode,

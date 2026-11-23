@@ -132,6 +132,7 @@ describe("OrchestratorMcpService", () => {
             ...(followup ? { delegatedTaskId: taskId } : {}),
             ordinal: 1,
             status: "completed",
+            output: { value: { verdict: "approve" }, submittedAt: "2026-10-03T10:09:00.000Z" },
             startedAt: DateTime.makeUnsafe("2026-10-03T10:00:00Z"),
             ...(failedBeforeStart || queued
               ? { ordinal: 3, status: failedBeforeStart ? "failed" : "queued", startedAt: null }
@@ -280,6 +281,8 @@ describe("OrchestratorMcpService", () => {
         }
         assert.equal(result.status, "completed");
         assert.equal(result.summary, "terminal result");
+        // A child asked for a result as data reports it beside its prose.
+        assert.deepStrictEqual(result.output, { verdict: "approve" });
         assert.equal(result.latestTerminalRunId, childRunId);
         assert.equal(result.latestTerminalStatus, "completed");
         assert.equal(result.resultContextTransferId, resultTransferId);

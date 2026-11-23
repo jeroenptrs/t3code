@@ -40,6 +40,16 @@ a pinned cherry-pick. The adapter modules stay as the single import point.
 | [#31129](https://github.com/pingdotgg/t3code/pull/31129) | Open on 2026-11-05 when M4 shipped, so triggers have no delivery mode. Pull it behind an adapter in `apps/server/src/factories/upstream/` and add queue, steer, and restart per trigger.                                  |
 | [#15350](https://github.com/pingdotgg/t3code/pull/15350) | Open on 2026-11-06, by t3dotgg: threads run in Docker sandboxes with their own ports and services. Pull it behind an adapter in `apps/server/src/factories/upstream/` and add `isolation: sandbox` as a per-role binding. |
 
+## Fork changes to upstream code
+
+Typed results for factory children change two upstream files. Offer both
+upstream; when one lands, drop the fork's version and keep its test.
+
+| Change                                                                                                    | Where                                                       | Test                                                                                        |
+| --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `delegated_task.request` takes `outputSchema` and asks the child's first run for it                       | `Orchestrator.ts` `dispatchDelegatedTaskRequest`, contracts | `Orchestrator.control-reads.test.ts`, "wakes the parent once when its delegated task asks…" |
+| `task_status` and `delegate_task` return the child's `output`; `delegateTask` passes `outputSchema` along | `OrchestratorMcpService.ts` `readTask` and `delegateTask`   | `OrchestratorMcpService.test.ts`, "retries terminal acknowledgement…"                       |
+
 ## Fork fixes waiting on upstream
 
 These fork commits fix upstream issues that no pulled PR covers yet.

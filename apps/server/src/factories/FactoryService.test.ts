@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   AuthUserId,
   CommandId,
+  FOREMAN_RESULT_OUTPUT_SCHEMA,
   type FactoryRoleFile,
   type FactorySaveInput,
   makeFactoryId,
@@ -10,6 +11,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RunId,
   RuntimeRequestId,
   type ScheduledTask,
   ScheduledTaskId,
@@ -546,6 +548,7 @@ describe("FactoryService", () => {
         isolation: "worktree",
         skills: [],
         tools: [],
+        outputSchema: null,
       } as const;
       assert.deepStrictEqual([docs?.binding, docs?.body, docs?.skills], [plain, "", []]);
       assert.deepStrictEqual(sorting?.fileBinding, { enabled: false, skills: ["implement"] });
@@ -1019,6 +1022,31 @@ const delegate = (
     }),
   );
 
+/** What the item's Foreman returned as data from run `runId`, as the event stream reports it. */
+const submit = (item: Pick<WorkItem, "foremanThreadId">, runId: string, value: unknown) =>
+  Effect.flatMap(FactoryService.FactoryService, (factories) =>
+    factories.recordForemanResult({
+      threadId: item.foremanThreadId!,
+      runId: RunId.make(runId),
+      value,
+    }),
+  );
+
+/** Gives `threadId` a run with this output in the projection, copied from `fromRunId`. */
+const projectOutput = (fromRunId: string, threadId: ThreadId, runId: string, value: unknown) =>
+  Effect.flatMap(SqlClient.SqlClient, (sql) => {
+    const output = JSON.stringify({ value, submittedAt: "2026-11-01T00:00:00.000Z" });
+    return sql`
+      INSERT INTO orchestration_v2_projection_runs (
+        run_id, thread_id, ordinal, provider, provider_thread_id, status, requested_at,
+        completed_at, payload_json
+      )
+      SELECT ${runId}, ${threadId}, ordinal + 100, provider, provider_thread_id, status,
+        requested_at, completed_at, json_set(payload_json, '$.output', json(${output}))
+      FROM orchestration_v2_projection_runs WHERE run_id = ${fromRunId}
+    `;
+  }).pipe(Effect.orDie);
+
 /** The child thread delegation `commandId` creates, as the orchestrator creates it. */
 const createChild = (commandId: string) =>
   Effect.gen(function* () {
@@ -1380,10 +1408,7 @@ describe("FactoryService work items", () => {
           .pipe(Effect.flip);
         assert.strictEqual(notFailed._tag === "WorkItemError" && notFailed.code, "not_failed");
 
-        yield* factories.advanceWorkItem(item.foremanThreadId!, {
-          workItemId: item.id,
-          stage: "failed",
-        });
+        yield* submit(item, "run-1", { outcome: "failed", reason: "The API is down." });
         assert.strictEqual((yield* factories.read(factoryId)).attention.failedRuns, 1);
         const dismissed = yield* factories.setWorkItemFailureDismissed(userId, {
           workItemId: item.id,
@@ -1460,32 +1485,28 @@ describe("FactoryService work items", () => {
     ),
   );
 
-  it.effect("lets only the item's Foreman end it, once it has delegated", () =>
+  it.effect("applies a Foreman's result once, and only to the item its thread runs", () =>
     withWorkItems(({ factoryId }) =>
       Effect.gen(function* () {
         const factories = yield* FactoryService.FactoryService;
         const item = yield* factories.createWorkItem({ factoryId, title: "Fix", text: "Fix it." });
         const foreman = item.foremanThreadId!;
 
-        const denied = yield* factories
-          .advanceWorkItem(otherThread, { workItemId: item.id, stage: "done" })
-          .pipe(Effect.flip);
-        assert.strictEqual(denied._tag === "WorkItemError" && denied.code, "not_foreman");
-        const refused = yield* factories
-          .advanceWorkItem(foreman, { workItemId: item.id, stage: "done" })
-          .pipe(Effect.flip);
-        assert.deepStrictEqual(
-          refused._tag === "WorkItemTransitionError" && [refused.from, refused.to],
-          ["new", "done"],
-        );
+        // A thread that runs no item, and a value that is not a result, change nothing.
+        yield* submit({ foremanThreadId: otherThread }, "run-x", { outcome: "done", summary: "x" });
+        yield* submit(item, "run-0", { verdict: "approve" });
+        assert.strictEqual((yield* factories.readWorkItem(item.id)).stage, "new");
 
         yield* delegate(item, "implement");
-        const done = yield* factories.advanceWorkItem(foreman, {
-          workItemId: item.id,
-          stage: "done",
-          note: "Merged.",
-        });
+        yield* submit(item, "run-1", { outcome: "done", summary: "Merged as abc1234." });
+        // A replayed submission of the same run is applied once.
+        yield* submit(item, "run-1", { outcome: "done", summary: "Merged as abc1234." });
+        const done = yield* factories.readWorkItem(item.id);
         assert.strictEqual(done.stage, "done");
+        assert.deepStrictEqual(done.foremanResult, {
+          outcome: "done",
+          summary: "Merged as abc1234.",
+        });
         assert.deepStrictEqual(
           done.transitions.map(({ from, to, actor }) => ({ from, to, actor })),
           [
@@ -1493,12 +1514,60 @@ describe("FactoryService work items", () => {
             { from: "working", to: "done", actor: { kind: "foreman", threadId: foreman } },
           ],
         );
-        assert.strictEqual(done.transitions[1]!.note, "Merged.");
+        assert.strictEqual(done.transitions[1]!.note, "Merged as abc1234.");
         assert.deepStrictEqual(
           (yield* factories.listWorkItems({ factoryId, outcome: "done" })).workItems.map(
             (listed) => listed.id,
           ),
           [item.id],
+        );
+
+        // A later result an ended item cannot take is kept on its log, and its stage stays.
+        yield* submit(item, "run-2", { outcome: "failed", reason: "Too late." });
+        const kept = yield* factories.readWorkItem(item.id);
+        assert.strictEqual(kept.stage, "done");
+        assert.deepStrictEqual(kept.foremanResult, { outcome: "failed", reason: "Too late." });
+        assert.include(kept.transitions.at(-1)!.note ?? "", "Too late.");
+      }),
+    ),
+  );
+
+  it.effect("applies a Foreman result the server missed, and reads each child's output", () =>
+    withWorkItems(({ factoryId }) =>
+      Effect.gen(function* () {
+        const factories = yield* FactoryService.FactoryService;
+        const item = yield* factories.createWorkItem({ factoryId, title: "Fix", text: "Fix it." });
+        yield* delegate(item, "implement", { commandId: "delegate-1" });
+        const child = yield* createChild("delegate-1");
+        const implemented = {
+          branch: "t3/fix-login",
+          commit: "abc1234",
+          checksPassed: true,
+          summary: "Fixed the redirect.",
+        };
+        yield* projectOutput(item.foremanRunId!, child, "run-child", implemented);
+        assert.deepStrictEqual((yield* factories.readWorkItem(item.id)).threads, [
+          { threadId: child, role: "implement", output: implemented },
+        ]);
+
+        yield* projectOutput(item.foremanRunId!, item.foremanThreadId!, "run-missed", {
+          outcome: "needs_person",
+          questions: ["Ship the schema change?", "Who reviews the migration?"],
+        });
+        yield* factories.reconcileForemanResults;
+        // Once applied, a second pass finds nothing new.
+        yield* factories.reconcileForemanResults;
+        const waiting = yield* factories.readWorkItem(item.id);
+        assert.strictEqual(waiting.stage, "waiting");
+        assert.deepStrictEqual(waiting.gate, {
+          state: "waiting",
+          question: "1. Ship the schema change?\n2. Who reviews the migration?",
+          resumeStage: "working",
+          askedAt: waiting.gate.state === "waiting" ? waiting.gate.askedAt : "",
+        });
+        assert.lengthOf(
+          waiting.transitions.filter((transition) => transition.to === "waiting"),
+          1,
         );
       }),
     ),
@@ -1512,20 +1581,16 @@ describe("FactoryService work items", () => {
         const foreman = item.foremanThreadId!;
         yield* delegate(item, "implement");
 
-        const gated = yield* factories.gateWorkItem(foreman, {
-          workItemId: item.id,
-          question: "Ship the schema change?",
-          resumeStage: "working",
+        yield* submit(item, "run-1", {
+          outcome: "needs_person",
+          questions: ["Ship the schema change?"],
         });
+        const gated = yield* factories.readWorkItem(item.id);
         assert.strictEqual(gated.stage, "waiting");
-        const held = yield* factories
-          .advanceWorkItem(foreman, { workItemId: item.id, stage: "failed" })
-          .pipe(Effect.flip);
-        assert.strictEqual(held._tag === "WorkItemError" && held.code, "gate_waiting");
-        const notForeman = yield* factories
-          .gateWorkItem(otherThread, { workItemId: item.id, question: "?", resumeStage: "done" })
-          .pipe(Effect.flip);
-        assert.strictEqual(notForeman._tag === "WorkItemError" && notForeman.code, "not_foreman");
+        assert.deepStrictEqual(gated.transitions.at(-1)?.actor, {
+          kind: "foreman",
+          threadId: foreman,
+        });
 
         const answered = yield* factories.answerWorkItemGate(null, {
           workItemId: item.id,
@@ -1547,6 +1612,8 @@ describe("FactoryService work items", () => {
         assert.strictEqual(followUp.threadId, foreman);
         assert.strictEqual(followUp.mode, "auto");
         assert.isUndefined(followUp.freshContext);
+        // The item goes on, so the Foreman owes its result again.
+        assert.deepStrictEqual(followUp.outputSchema, FOREMAN_RESULT_OUTPUT_SCHEMA);
         assert.include(followUp.text, "approved");
         assert.include(followUp.text, "Go ahead.");
 
@@ -1556,18 +1623,16 @@ describe("FactoryService work items", () => {
         assert.strictEqual(again._tag === "WorkItemError" && again.code, "no_gate");
 
         // A rejection drops the item.
-        yield* factories.gateWorkItem(foreman, {
-          workItemId: item.id,
-          question: "Merge it?",
-          resumeStage: "done",
-        });
+        yield* submit(item, "run-2", { outcome: "needs_person", questions: ["Merge it?"] });
         const rejected = yield* factories.answerWorkItemGate(null, {
           workItemId: item.id,
           decision: "rejected",
           note: "",
         });
         assert.strictEqual(rejected.stage, "dropped");
-        assert.include((yield* Ref.get(recorded.sends)).at(-1)!.text, "Stop work on it");
+        const stop = (yield* Ref.get(recorded.sends)).at(-1)!;
+        assert.include(stop.text, "Stop work on it");
+        assert.isUndefined(stop.outputSchema);
       }),
     ),
   );
@@ -1615,6 +1680,7 @@ describe("FactoryService work items", () => {
             isolation: "worktree",
             runtimeMode: "full-access",
             interactionMode: "default",
+            outputSchema: rolePresets.implement.binding.outputSchema,
           });
           yield* delegate(item, "implement", {
             commandId: "delegate-2",
@@ -1635,6 +1701,7 @@ describe("FactoryService work items", () => {
             runtimeMode: "full-access",
             interactionMode: "default",
             target: { providerInstanceId: codex, model: "gpt-6", options: [] },
+            outputSchema: rolePresets.review.binding.outputSchema,
           });
           const children = yield* Effect.forEach(
             ["delegate-1", "delegate-2", "delegate-3"],
@@ -1694,10 +1761,7 @@ describe("FactoryService work items", () => {
           assert.include(disabled.message, "Roles you can delegate to: implement.");
 
           // Once the item ends, a plain delegation comes back as it is and a named one is refused.
-          yield* factories.advanceWorkItem(item.foremanThreadId!, {
-            workItemId: item.id,
-            stage: "dropped",
-          });
+          yield* submit(item, "run-1", { outcome: "dropped", reason: "Not ours." });
           assert.deepStrictEqual(yield* delegate(item, null, { delegation: unowned }), unowned);
           const ended = yield* delegate(item, "implement").pipe(Effect.flip);
           assert.strictEqual(ended._tag === "WorkItemError" && ended.code, "not_foreman");

@@ -84,6 +84,10 @@ export const FactoryRoleDescription = TrimmedNonEmptyString.check(
   Schema.isPattern(/^[^\r\n]*$/),
 );
 
+/** A JSON Schema object, as `outputSchema` on a thread send takes it. */
+export const FactoryOutputSchema = Schema.Record(Schema.String, Schema.Json);
+export type FactoryOutputSchema = typeof FactoryOutputSchema.Type;
+
 /** A role file's frontmatter. A binding the file leaves out takes the role's default. */
 export const FactoryRoleBinding = Schema.Struct({
   /** Absent means enabled. The Foreman ignores it. */
@@ -97,6 +101,11 @@ export const FactoryRoleBinding = Schema.Struct({
   skills: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   /** Tool names the role may call. Empty or absent means no allowlist. */
   tools: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  /**
+   * JSON Schema for the result a child of this role returns as data, which the Foreman reads.
+   * Null asks for none. The Foreman's own result is fixed, so its file cannot set one.
+   */
+  outputSchema: Schema.optionalKey(Schema.NullOr(FactoryOutputSchema)),
 });
 export type FactoryRoleBinding = typeof FactoryRoleBinding.Type;
 
@@ -109,6 +118,7 @@ export const FactoryEffectiveBinding = Schema.Struct({
   isolation: FactoryIsolation,
   skills: Schema.Array(TrimmedNonEmptyString),
   tools: Schema.Array(TrimmedNonEmptyString),
+  outputSchema: Schema.NullOr(FactoryOutputSchema),
 });
 export type FactoryEffectiveBinding = typeof FactoryEffectiveBinding.Type;
 
@@ -532,8 +542,50 @@ export type WorkItemTransition = typeof WorkItemTransition.Type;
 export const WorkItemThread = Schema.Struct({
   threadId: ThreadId,
   role: Schema.NullOr(FactoryRoleName),
+  /** What the thread returned against its role's `outputSchema`. Absent until it submits. */
+  output: Schema.optionalKey(Schema.Json),
 });
 export type WorkItemThread = typeof WorkItemThread.Type;
+
+// Five questions of this length still fit a gate note.
+const ForemanText = TrimmedNonEmptyString.check(Schema.isMaxLength(2_000));
+
+/**
+ * What a run's Foreman returns as data, which ends or holds its item: done, failed or dropped
+ * with why, or held for a person with the questions to answer.
+ */
+export const ForemanResult = Schema.Union([
+  Schema.Struct({ outcome: Schema.Literal("done"), summary: ForemanText }),
+  Schema.Struct({ outcome: Schema.Literals(["failed", "dropped"]), reason: ForemanText }),
+  Schema.Struct({
+    outcome: Schema.Literal("needs_person"),
+    questions: Schema.Array(ForemanText).check(Schema.isMinLength(1), Schema.isMaxLength(5)),
+  }),
+]);
+export type ForemanResult = typeof ForemanResult.Type;
+
+const foremanText: Schema.Json = { type: "string", minLength: 1, maxLength: 2_000 };
+const foremanCase = (outcome: Schema.Json, field: string, value: Schema.Json): Schema.Json => ({
+  type: "object",
+  properties: { outcome, [field]: value },
+  required: ["outcome", field],
+  additionalProperties: false,
+});
+
+/** `ForemanResult` as the JSON Schema each message the server sends a Foreman asks for. */
+export const FOREMAN_RESULT_OUTPUT_SCHEMA: FactoryOutputSchema = {
+  type: "object",
+  oneOf: [
+    foremanCase({ const: "done" }, "summary", foremanText),
+    foremanCase({ enum: ["failed", "dropped"] }, "reason", foremanText),
+    foremanCase({ const: "needs_person" }, "questions", {
+      type: "array",
+      items: foremanText,
+      minItems: 1,
+      maxItems: 5,
+    }),
+  ],
+};
 
 export const WorkItemSummary = Schema.Struct({
   id: WorkItemId,
@@ -552,6 +604,8 @@ export const WorkItemSummary = Schema.Struct({
   failureDismissedAt: Schema.NullOr(IsoDateTime),
   /** Whether a person moved the item to `failed`, so its failure needs no one's attention. */
   failedByUser: Schema.Boolean,
+  /** The Foreman's latest result, which the ledger applied. Null until it submits one. */
+  foremanResult: Schema.NullOr(ForemanResult),
   threads: Schema.Array(WorkItemThread),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -578,7 +632,7 @@ export function canTransitionWorkItem(
 ): boolean {
   switch (from) {
     case "new":
-      return ["working", "waiting", "failed", "dropped"].includes(to);
+      return ["working", "waiting", "done", "failed", "dropped"].includes(to);
     case "working":
       return ["done", "waiting", "failed", "dropped"].includes(to);
     case "waiting":
@@ -638,17 +692,6 @@ export const WorkItemDropInput = Schema.Struct({
 });
 export type WorkItemDropInput = typeof WorkItemDropInput.Type;
 
-/** The stages the Foreman ends an item at. Delegating moves it to `working`. */
-export const WorkItemAdvanceStage = Schema.Literals(["done", "failed", "dropped"]);
-export type WorkItemAdvanceStage = typeof WorkItemAdvanceStage.Type;
-
-export const WorkItemAdvanceInput = Schema.Struct({
-  workItemId: WorkItemId,
-  stage: WorkItemAdvanceStage,
-  note: Schema.optionalKey(WorkItemNote),
-});
-export type WorkItemAdvanceInput = typeof WorkItemAdvanceInput.Type;
-
 /**
  * The Foreman starts one child as one of the factory's enabled roles. The role's binding sets the
  * child's model, modes, checkout, and skills, so the call takes none of them.
@@ -663,13 +706,6 @@ export const WorkItemDelegateInput = Schema.Struct({
   clientRequestId: OrchestratorMcpDelegateTaskInput.fields.clientRequestId,
 });
 export type WorkItemDelegateInput = typeof WorkItemDelegateInput.Type;
-
-export const WorkItemGateInput = Schema.Struct({
-  workItemId: WorkItemId,
-  question: WorkItemNote.check(Schema.isMinLength(1)),
-  resumeStage: WorkItemResumeStage,
-});
-export type WorkItemGateInput = typeof WorkItemGateInput.Type;
 
 /**
  * `not_foreman`: only the item's Foreman may do this. `gate_waiting`: a person's answer moves it.

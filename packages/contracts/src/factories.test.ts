@@ -18,7 +18,7 @@ const waitingFor = (resumeStage: "working" | "done"): WorkItemGate => ({
 });
 
 const allowed: Record<WorkItemStage, ReadonlyArray<WorkItemStage>> = {
-  new: ["working", "waiting", "failed", "dropped"],
+  new: ["working", "waiting", "done", "failed", "dropped"],
   working: ["waiting", "done", "failed", "dropped"],
   waiting: ["failed", "dropped"],
   done: [],

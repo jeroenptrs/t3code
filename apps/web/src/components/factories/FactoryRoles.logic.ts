@@ -124,7 +124,7 @@ export function addRoleSaveInput(
   if (start.kind === "scratch" || start.preset.name === name) {
     return factorySaveInput(factory, { definition });
   }
-  const { model, skills, tools, ...binding } = start.preset.binding;
+  const { model, skills, tools, outputSchema, ...binding } = start.preset.binding;
   return factorySaveInput(factory, {
     definition,
     roles: [
@@ -137,6 +137,7 @@ export function addRoleSaveInput(
             ...(model === null ? {} : { model }),
             ...(skills.length === 0 ? {} : { skills }),
             ...(tools.length === 0 ? {} : { tools }),
+            ...(outputSchema === null ? {} : { outputSchema }),
           },
           body: start.preset.body.trim() === "" ? null : start.preset.body,
         },

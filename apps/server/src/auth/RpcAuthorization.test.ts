@@ -631,6 +631,7 @@ describe("Factories authorization", () => {
     dispatchedAt: null,
     failureDismissedAt: null,
     failedByUser: false,
+    foremanResult: null,
     threads: [],
     createdAt: "2026-11-05T00:00:00.000Z",
     updatedAt: "2026-11-05T00:00:00.000Z",

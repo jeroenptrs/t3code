@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   bindingIssues,
+  outputSchemaIssues,
   parseFactoryJson,
   parseRoleFile,
   renderFactoryJson,
@@ -206,6 +207,29 @@ describe("parseRoleFile", () => {
       body,
       issues: [],
     });
+  });
+});
+
+describe("outputSchemaIssues", () => {
+  it("accepts every preset's schema, so a factory without role files reads clean", () => {
+    for (const [role, preset] of Object.entries(rolePresets)) {
+      expect(outputSchemaIssues(role, preset.binding)).toEqual([]);
+    }
+  });
+
+  it("reports a schema the server cannot check, and any schema on the Foreman", () => {
+    const binding = (outputSchema: Record<string, unknown>) => ({
+      ...rolePresets.review.binding,
+      outputSchema: outputSchema as never,
+    });
+    expect(
+      outputSchemaIssues("review", binding({ $ref: "#/$defs/missing" })).map(
+        (found) => found.field,
+      ),
+    ).toEqual(["outputSchema"]);
+    expect(
+      outputSchemaIssues("foreman", binding({ type: "object" })).map((found) => found.message),
+    ).toEqual([expect.stringContaining("The Foreman always returns")]);
   });
 });
 

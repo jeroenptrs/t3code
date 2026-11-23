@@ -10454,6 +10454,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         text: command.task,
         attachments: [],
         modelSelection: command.modelSelection,
+        ...(command.outputSchema === undefined ? {} : { outputSchema: command.outputSchema }),
         dispatchMode:
           command.workspaceStrategy === undefined
             ? { type: "start_immediately" }
