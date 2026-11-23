@@ -217,8 +217,15 @@ export function FactoryCanvas(props: {
   const gt = useGT();
   const { environmentId } = props;
   const canvas = useAtomValue(factoryCanvasAtom(environmentId)(props.factoryId));
+  const factory = AsyncResult.getOrElse(
+    useAtomValue(
+      factoriesEnvironment.read({ environmentId, input: { factoryId: props.factoryId } }),
+    ),
+    () => null,
+  );
   if (canvas === null) return null;
   const { graph } = canvas;
+  const repositories = factory?.repositories.map((repository) => repository.name) ?? [];
   return (
     <section className="flex flex-col gap-3">
       <svg
@@ -244,6 +251,11 @@ export function FactoryCanvas(props: {
           />
         ))}
       </svg>
+      <p className="text-xs text-muted-foreground">
+        {repositories.length === 0
+          ? gt("The project covers no repositories yet.")
+          : gt("Works in {repositories}", { repositories: repositories.join(", ") })}
+      </p>
     </section>
   );
 }
