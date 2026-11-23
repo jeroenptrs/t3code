@@ -21,6 +21,7 @@ import {
   type WorkItemSummary,
   WorkItemTransitionError,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -282,3 +283,55 @@ export const canDropWorkItem = (item: Pick<WorkItemSummary, "stage">): boolean =
 export const isDismissedFailure = (
   item: Pick<WorkItemSummary, "stage" | "failureDismissedAt">,
 ): boolean => item.stage === "failed" && item.failureDismissedAt !== null;
+
+/** What the built-in review role returns. A custom role with the same schema reads the same. */
+const ReviewResult = Schema.Struct({
+  verdict: Schema.Literals(["approve", "changes"]),
+  findings: Schema.Array(
+    Schema.Struct({
+      summary: Schema.String,
+      file: Schema.optionalKey(Schema.String),
+      line: Schema.optionalKey(Schema.Number),
+      blocking: Schema.Boolean,
+    }),
+  ),
+});
+export type ReviewResult = typeof ReviewResult.Type;
+
+/** What the built-in implement role returns. */
+const ImplementResult = Schema.Struct({
+  branch: Schema.String,
+  commit: Schema.NullOr(Schema.String),
+  checksPassed: Schema.Boolean,
+  summary: Schema.String,
+});
+export type ImplementResult = typeof ImplementResult.Type;
+
+const decodeReview = Schema.decodeUnknownOption(ReviewResult);
+const decodeImplement = Schema.decodeUnknownOption(ImplementResult);
+
+/** The newest child output of this shape, by the order the item's threads started in. */
+const latestOutput = <A>(
+  item: Pick<WorkItemSummary, "threads">,
+  decode: (value: unknown) => Option.Option<A>,
+): A | null => {
+  for (const thread of [...item.threads].reverse()) {
+    if (thread.output === undefined) continue;
+    const decoded = decode(thread.output);
+    if (Option.isSome(decoded)) return decoded.value;
+  }
+  return null;
+};
+
+/** The item's latest review verdict and findings, or null before a reviewer returns one. */
+export const latestReview = (item: Pick<WorkItemSummary, "threads">): ReviewResult | null =>
+  latestOutput(item, decodeReview);
+
+/** The item's latest implementation: its branch, commit, and checks. */
+export const latestImplementation = (
+  item: Pick<WorkItemSummary, "threads">,
+): ImplementResult | null => latestOutput(item, decodeImplement);
+
+/** A short commit, or the branch alone when the implementer could not commit. */
+export const implementationLabel = (result: ImplementResult): string =>
+  result.commit === null ? result.branch : `${result.branch} @ ${result.commit.slice(0, 7)}`;

@@ -7,6 +7,28 @@ export const binding = {
   isolation: "worktree",
   skills: ["review"],
   tools: [],
+  outputSchema: {
+    type: "object",
+    properties: {
+      verdict: { enum: ["approve", "changes"] },
+      findings: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            summary: { type: "string", minLength: 1 },
+            file: { type: "string" },
+            line: { type: "integer", minimum: 1 },
+            blocking: { type: "boolean" },
+          },
+          required: ["summary", "blocking"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["verdict", "findings"],
+    additionalProperties: false,
+  },
 } satisfies FactoryEffectiveBinding;
 
 export const description =

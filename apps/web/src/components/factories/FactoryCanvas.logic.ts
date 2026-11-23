@@ -1,4 +1,8 @@
-import { factoryRoleLabel } from "@t3tools/client-runtime/factories";
+import {
+  factoryRoleLabel,
+  implementationLabel,
+  latestImplementation,
+} from "@t3tools/client-runtime/factories";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 import {
@@ -222,6 +226,15 @@ function outputThreadOf(items: ReadonlyArray<WorkItemSummary>): ThreadId | null 
   return null;
 }
 
+/** The implementation the output node names: the first item's that has one. */
+function outputImplementationOf(items: ReadonlyArray<WorkItemSummary>) {
+  for (const item of items) {
+    const implemented = latestImplementation(item);
+    if (implemented !== null) return implemented;
+  }
+  return null;
+}
+
 /** One pass over the shells, writing into `into` so the selector can compare it with the last. */
 function scanActivity(
   into: OwnedActivity,
@@ -356,13 +369,17 @@ function buildState(
         break;
       case "output": {
         const threadId = outputThreadOf(items);
+        // What the implementer returned beats its thread's branch, which a task can leave wrong.
+        const implemented = outputImplementationOf(items);
         nodes.set(node.id, {
           lit: false,
           threadId,
           detail:
             activity.outputPullRequest !== null
               ? m(msg("PR #{number}", { number: String(activity.outputPullRequest) }))
-              : (activity.outputBranch ?? m(msg("Branch or PR"))),
+              : implemented !== null
+                ? implementationLabel(implemented)
+                : (activity.outputBranch ?? m(msg("Branch or PR"))),
         });
         break;
       }

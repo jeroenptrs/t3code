@@ -512,6 +512,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_work_item_create: tool(["Create", "Creating", "Created", "a work item"], "work-item-create"),
   // A delegation like delegate_task's, so the timeline folds it into the child's card.
   t3_factory_delegate: tool(["Delegate", "Delegating", "Delegated", "a child task"], "delegate"),
+  // Retired by the Foreman's typed result; kept so earlier work logs still read right.
   t3_work_item_advance: tool(
     ["Advance", "Advancing", "Advanced", "a work item"],
     "work-item-advance",
