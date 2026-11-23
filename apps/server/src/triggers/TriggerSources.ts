@@ -31,6 +31,15 @@ import {
   type PullRequestTriggerKey,
 } from "./gitlabTriggerSource.ts";
 import {
+  diffIssue,
+  diffPullRequestEntry,
+  hasEnded,
+  IssueTriggerState,
+  issueTriggerKey,
+  PullRequestTriggerState,
+  pullRequestTriggerKey,
+} from "./neutralTriggerSource.ts";
+import {
   diffJiraIssue,
   diffJiraQueryIssue,
   type JiraQueryRoundTrip,
@@ -41,7 +50,14 @@ import {
 export class TriggerObservationError extends Schema.TaggedError<TriggerObservationError>()(
   "TriggerObservationError",
   {
-    source: Schema.Literals(["jira", "gitlab", "jira_query", "gitlab_projects"]),
+    source: Schema.Literals([
+      "jira",
+      "gitlab",
+      "jira_query",
+      "gitlab_projects",
+      "issues",
+      "pull_requests",
+    ]),
     cause: Schema.Defect(),
   },
 ) {
@@ -116,6 +132,25 @@ export class TriggerSources extends Context.Service<
       }>;
       readonly pipelines: ReadonlyArray<GitLabPipelineState>;
     }) => Effect.Effect<void, TriggerObservationError>;
+    /**
+     * One issues or pull requests poll. The first raises opened only with `start: "current"`; a
+     * scope change re-seeds silently. A listing is capped, so a missing item is no change; ended
+     * items are forgotten after 30 days. `fireCurrent` raises opened for every open item.
+     */
+    readonly observeNeutral: (
+      input: {
+        readonly triggerId: ScheduledTaskId;
+        readonly start: PollTriggerStart;
+        readonly fireCurrent: boolean;
+        readonly scope: string;
+      } & (
+        | { readonly source: "issues"; readonly items: ReadonlyArray<IssueTriggerState> }
+        | {
+            readonly source: "pull_requests";
+            readonly items: ReadonlyArray<PullRequestTriggerState>;
+          }
+      ),
+    ) => Effect.Effect<void, TriggerObservationError>;
     readonly events: Stream.Stream<TriggerEvent>;
   }
 >()("t3/triggers/TriggerSources") {}
@@ -146,13 +181,35 @@ const PipelineState = Schema.fromJsonString(GitLabPipelineState);
 const decodePipelineState = Schema.decodeUnknownOption(PipelineState);
 const encodePipelineState = Schema.encodeSync(PipelineState);
 
+const IssueStateJson = Schema.fromJsonString(IssueTriggerState);
+const PullRequestStateJson = Schema.fromJsonString(PullRequestTriggerState);
+
+/** How each neutral source stores, keys, and diffs one item. */
+const neutralCodecs = {
+  issues: {
+    encode: Schema.encodeSync(IssueStateJson),
+    decode: Schema.decodeUnknownOption(IssueStateJson),
+    key: issueTriggerKey,
+    diff: diffIssue,
+  },
+  pull_requests: {
+    encode: Schema.encodeSync(PullRequestStateJson),
+    decode: Schema.decodeUnknownOption(PullRequestStateJson),
+    key: pullRequestTriggerKey,
+    diff: diffPullRequestEntry,
+  },
+} as const;
+
 const eventItemKey = (event: TriggerEvent) =>
   `${event.type}\u0000${
-    "key" in event.payload
-      ? event.payload.key
-      : "repository" in event.payload
-        ? `${event.payload.repository}\u0000${event.payload.number}`
-        : ""
+    // Keys and numbers repeat across a project's repositories; addresses do not.
+    event.source === "issues" || event.source === "pull_requests"
+      ? event.payload.url
+      : "key" in event.payload
+        ? event.payload.key
+        : "repository" in event.payload
+          ? `${event.payload.repository}\u0000${event.payload.number}`
+          : ""
   }`;
 
 /** The fired events a poll has not already raised for the same item and type. */
@@ -199,7 +256,7 @@ const make = Effect.gen(function* () {
   });
 
   const commit = (
-    source: "jira" | "gitlab" | "jira_query" | "gitlab_projects",
+    source: TriggerObservationError["source"],
     work: Effect.Effect<ReadonlyArray<ReadonlyArray<TriggerEvent>>, SqlError.SqlError>,
   ) =>
     sql.withTransaction(work).pipe(
@@ -548,7 +605,114 @@ const make = Effect.gen(function* () {
     yield* commit("gitlab_projects", work);
   });
 
+  const observeNeutral: TriggerSources["Service"]["observeNeutral"] = Effect.fn(
+    "TriggerSources.observeNeutral",
+  )(function* (input) {
+    yield* Effect.annotateCurrentSpan({
+      "scheduled_task.id": input.triggerId,
+      "trigger.source": input.source,
+      "trigger.observations": input.items.length,
+    });
+    const now = yield* DateTime.now;
+    const occurredAt = DateTime.formatIso(now);
+    const forgetBefore = DateTime.formatIso(DateTime.subtract(now, { days: RETENTION_DAYS }));
+    const marker = `${input.triggerId}\u0000`;
+    const context = { triggerId: input.triggerId, occurredAt };
+    // Untraced: it runs once inside this span. One codec per source keeps each item's own diff.
+    const observe = Effect.fnUntraced(function* <
+      A extends IssueTriggerState | PullRequestTriggerState,
+    >(
+      codec: {
+        readonly encode: (state: A) => string;
+        readonly decode: (json: string) => Option.Option<A>;
+        readonly key: (state: A) => string;
+        readonly diff: (
+          previous: A | null,
+          current: A,
+          context: { readonly triggerId: ScheduledTaskId; readonly occurredAt: string },
+        ) => ReadonlyArray<TriggerEvent>;
+      },
+      items: ReadonlyArray<A>,
+    ) {
+      const rows = yield* sql<{
+        readonly key: string;
+        readonly state_json: string;
+        readonly observed_at: string;
+      }>`
+          SELECT key, state_json, observed_at FROM fork_trigger_observations
+          WHERE source = ${input.source}
+            AND key >= ${marker} AND key < ${`${input.triggerId}\u0001`}
+        `;
+      const stored = new Map(rows.map((row) => [row.key, row]));
+      const storedScope = stored.get(marker)?.state_json;
+      const seeding =
+        storedScope === undefined ? input.start === "changes" : storedScope !== input.scope;
+      const events: Array<TriggerEvent> = [];
+      const writes: Array<readonly [string, string]> = [[marker, input.scope]];
+      for (const item of items) {
+        const key = `${marker}${codec.key(item)}`;
+        const stateJson = codec.encode(item);
+        const previousJson = stored.get(key)?.state_json;
+        if (previousJson === stateJson) continue;
+        writes.push([key, stateJson]);
+        if (seeding) continue;
+        const previous =
+          previousJson === undefined ? null : Option.getOrNull(codec.decode(previousJson));
+        // An undecodable row is re-seeded rather than read as an open.
+        if (previousJson !== undefined && previous === null) continue;
+        events.push(...codec.diff(previous, item, context));
+      }
+      if (input.fireCurrent) {
+        events.push(
+          ...raiseOnce(
+            events,
+            items.flatMap((item) => (hasEnded(item) ? [] : codec.diff(null, item, context))),
+          ),
+        );
+      }
+      // A re-seed drops what the old scope saw; otherwise ended items are forgotten after 30 days.
+      const written = new Set(writes.map(([key]) => key));
+      const forgotten = rows
+        .filter((row) => row.key !== marker && !written.has(row.key))
+        .filter((row) => {
+          if (seeding) return true;
+          if (row.observed_at >= forgetBefore) return false;
+          const state = Option.getOrNull(codec.decode(row.state_json));
+          return state === null || hasEnded(state);
+        })
+        .map((row) => row.key);
+      const inserts: ReadonlyArray<Record<string, string>> = writes.map(([key, stateJson]) => ({
+        source: input.source,
+        key,
+        state_json: stateJson,
+        observed_at: occurredAt,
+      }));
+      if (Arr.isReadonlyArrayNonEmpty(inserts)) {
+        yield* sql`
+            INSERT INTO fork_trigger_observations ${sql.insert(inserts)}
+            ON CONFLICT (source, key) DO UPDATE SET
+              state_json = excluded.state_json,
+              observed_at = excluded.observed_at
+          `;
+      }
+      if (forgotten.length > 0) {
+        yield* sql`
+            DELETE FROM fork_trigger_observations
+            WHERE source = ${input.source} AND key IN ${sql.in(forgotten)}
+          `;
+      }
+      return [events];
+    });
+    yield* commit(
+      input.source,
+      input.source === "issues"
+        ? observe(neutralCodecs.issues, input.items)
+        : observe(neutralCodecs.pull_requests, input.items),
+    );
+  });
+
   return TriggerSources.of({
+    observeNeutral,
     observeJiraIssues,
     jiraQueryObservations,
     observeJiraQuery,

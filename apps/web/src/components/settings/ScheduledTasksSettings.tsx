@@ -110,6 +110,7 @@ import {
   WebhookFiltersField,
 } from "./scheduledTaskFields";
 import { TriggerTemplatesSection } from "./TriggerTemplatesSettings";
+import { NeutralPollTriggerFields } from "./NeutralPollTriggerFields";
 import { GitLabProjectsTriggerFields } from "./GitLabProjectsTriggerFields";
 import { JiraQueryTriggerFields } from "./JiraQueryTriggerFields";
 import {
@@ -121,7 +122,8 @@ import {
   moveDraftToThread,
   JIRA_QUERY_DRAFT_DEFAULTS,
   GITLAB_PROJECTS_DRAFT_DEFAULTS,
-  timeScheduleLabel,
+  isPolledMode,
+  NEUTRAL_POLL_DRAFT_DEFAULTS,
   triggerSourceOfMode,
   triggerSummary,
   isTriggerFilterSource,
@@ -223,6 +225,10 @@ const TRIGGER_SOURCE_DESCRIPTIONS: Record<TriggerFilterSourceKind, string> = {
   slack: "Runs when the Slack integration passes a message to this environment.",
   gitlab_projects:
     "Checks GitLab projects or a group as the host's glab sign-in on this environment and runs when a merge request opens, changes, merges, or closes, or a pipeline finishes. The first check runs for the open merge requests it finds; a later change to the projects only records them.",
+  issues:
+    "Checks the issue trackers this project is connected to, as the Issues page reads them, and runs when an issue opens, closes, or changes state, labels, or assignees. Jira is read as the site's service account.",
+  pull_requests:
+    "Checks the pull requests of this project's repositories, as the Pull requests page reads them, and runs when one opens, changes, merges, closes, or its checks change.",
 };
 
 const EMPTY_DRAFT: DraftState = {
@@ -265,6 +271,7 @@ const EMPTY_DRAFT: DraftState = {
   pollStart: "changes",
   ...JIRA_QUERY_DRAFT_DEFAULTS,
   ...GITLAB_PROJECTS_DRAFT_DEFAULTS,
+  ...NEUTRAL_POLL_DRAFT_DEFAULTS,
   triage: triageDraft(undefined),
 };
 
@@ -752,7 +759,11 @@ function ScheduledTaskRow({
   const remove = useAtomCommand(serverEnvironment.deleteScheduledTask, {
     label: "scheduled task delete",
   });
-  const polled = task.schedule.type === "jira_query" || task.schedule.type === "gitlab_projects";
+  const polled =
+    task.schedule.type === "jira_query" ||
+    task.schedule.type === "gitlab_projects" ||
+    task.schedule.type === "issues" ||
+    task.schedule.type === "pull_requests";
   const act = async (action: "toggle" | "run" | "fire" | "delete") => {
     if (busy || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
     if (action === "delete") {
@@ -2187,9 +2198,14 @@ function ScheduledTaskEditorForm({
                     onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
                   />
                 ) : null}
-                {draft.editingId === null &&
-                (draft.scheduleMode === "jira_query" ||
-                  draft.scheduleMode === "gitlab_projects") ? (
+                {draft.scheduleMode === "issues" || draft.scheduleMode === "pull_requests" ? (
+                  <NeutralPollTriggerFields
+                    kind={draft.scheduleMode}
+                    draft={draft}
+                    onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
+                  />
+                ) : null}
+                {draft.editingId === null && isPolledMode(draft.scheduleMode) ? (
                   <PollStartField
                     value={draft.pollStart}
                     onChange={(pollStart) => setDraft((current) => ({ ...current, pollStart }))}

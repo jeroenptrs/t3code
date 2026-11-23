@@ -181,8 +181,9 @@ pipeline fails or passes.
 
 These events come from the issues and merge requests T3 Code already keeps up
 to date for linked threads, so a change shows up within a few minutes. An issue
-or merge request that no thread links raises no events. For those, use a
-[Jira query](#jira-query), [GitLab projects](#gitlab-projects), or a
+or merge request that no thread links raises no events. For those, use an
+[issues or pull requests](#issues-and-pull-requests),
+[Jira query](#jira-query), [GitLab projects](#gitlab-projects), or
 [webhook](#webhook) source instead. The first time T3 Code sees an issue, it
 only records it. A merge request that is already open the first time counts as
 opened.
@@ -194,6 +195,33 @@ The event types are:
 - GitLab: `merge_request.opened`, `merge_request.updated`,
   `merge_request.merged`, `merge_request.closed`, `pipeline.failed`, and
   `pipeline.passed`.
+
+### Issues and pull requests
+
+**Issues** watches the issues of every tracker the trigger's project is
+connected to, and **Pull requests** watches the pull requests of every
+repository the project covers. They read what the **Issues** and **Pull
+requests** pages read, with the same sign-ins, so GitHub, GitLab, Linear, Jira,
+and the other connected trackers and hosts all work. Jira is always read as the
+Jira identity configured for T3 Code, never as a person's own Jira account.
+
+Optionally enter a search, which each tracker or host matches as free text, and
+for issues, labels an issue must carry. Set the interval the same way as for a
+[Jira query](#jira-query). Each check reads the 100 most recently updated items
+per tracker scope or repository, so an item missing from a check is not a
+change.
+
+The event types are:
+
+- Issues: `issue.opened`, `issue.closed`, `issue.reopened`,
+  `issue.state_changed`, `issue.labels_changed`, `issue.assignee_changed`, and
+  `issue.updated` for any other change, such as a new comment.
+- Pull requests: `pull_request.opened`, `pull_request.updated`,
+  `pull_request.merged`, `pull_request.closed`, `pull_request.reopened`, and
+  `pull_request.checks_changed`.
+
+Use **Jira query** for JQL or a saved Jira filter, and **GitLab projects** for
+GitLab projects outside the project, a whole group, or pipeline events.
 
 ### Jira query
 
@@ -249,10 +277,11 @@ events. If you can add a webhook to the GitLab project, a
 
 ### First check
 
-When you create a Jira query or GitLab projects trigger, **First check acts on**
-sets what its first check does. **Only changes after it**, the default, records
-the issues or merge requests it finds and raises nothing for them. **Everything
-it finds** raises `issue.entered` for each issue in the query, or
+When you create a polled trigger (issues, pull requests, Jira query, or GitLab
+projects), **First check acts on** sets what its first check does. **Only
+changes after it**, the default, records what it finds and raises nothing for
+it. **Everything it finds** raises an opened event for each open issue or pull
+request, `issue.entered` for each issue in a Jira query, or
 `merge_request.opened` for each open merge request, and those events go through
 the trigger's filters like any other. The choice applies to the first check
 only. Changing the query, the projects, or the group later records the new set
@@ -286,7 +315,7 @@ as **Assignee** on an unassigned issue, fails every test, **exists** included.
 Separate **is one of** values with commas. Webhook filters test request values
 instead, as described under [Webhook](#webhook).
 
-The Jira, GitLab, Jira query, and GitLab projects sources also have **Act on**,
+Every source with event types, polled or not, also has **Act on**,
 which picks the event types the trigger runs for. All types are on by default.
 Turning some off saves an **Event type** is one of filter, and an existing
 filter like that opens in **Act on**.

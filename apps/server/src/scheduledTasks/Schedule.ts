@@ -20,19 +20,27 @@ type ClockSchedule = Extract<ScheduledTaskSchedule, { type: "interval" | "fixed_
 const isClockSchedule = (schedule: ScheduledTaskSchedule): schedule is ClockSchedule =>
   schedule.type === "interval" || schedule.type === "fixed_time" || schedule.type === "once";
 
-type PollSchedule = Extract<ScheduledTaskSchedule, { type: "jira_query" | "gitlab_projects" }>;
+const POLL_SCHEDULE_TYPES = ["jira_query", "gitlab_projects", "issues", "pull_requests"] as const;
+type PollSchedule = Extract<ScheduledTaskSchedule, { type: (typeof POLL_SCHEDULE_TYPES)[number] }>;
 
 /** Sources the scheduled task runner polls instead of running their prompt. */
 export const isPollSchedule = <S extends { readonly type: string }>(
   schedule: S,
 ): schedule is Extract<S, { readonly type: PollSchedule["type"] }> =>
-  schedule.type === "jira_query" || schedule.type === "gitlab_projects";
+  (POLL_SCHEDULE_TYPES as ReadonlyArray<string>).includes(schedule.type);
 
 /** What a poll reads. A save that changes it polls at once, and the poll re-seeds silently. */
 export function pollScopeKey(schedule: PollSchedule): string {
-  return schedule.type === "jira_query"
-    ? JSON.stringify([schedule.site, schedule.jql ?? null, schedule.filterId ?? null])
-    : JSON.stringify([schedule.host, schedule.projects.toSorted(), schedule.group ?? null]);
+  switch (schedule.type) {
+    case "jira_query":
+      return JSON.stringify([schedule.site, schedule.jql ?? null, schedule.filterId ?? null]);
+    case "gitlab_projects":
+      return JSON.stringify([schedule.host, schedule.projects.toSorted(), schedule.group ?? null]);
+    case "issues":
+      return JSON.stringify([schedule.query ?? null, schedule.labels?.toSorted() ?? []]);
+    case "pull_requests":
+      return JSON.stringify([schedule.query ?? null]);
+  }
 }
 
 const filtersKey = (schedule: ScheduledTaskSchedule) =>

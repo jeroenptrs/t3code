@@ -151,11 +151,32 @@ source, filters, and a target, presented through the `Trigger` contract in
 `packages/contracts/src/trigger.ts`. It is stored as a scheduled task row, so
 there is no second service or table, and a work item target lives in that row's
 `fork_target_json` (null means the thread target the row's columns describe).
-Polled sources, the Jira query and GitLab projects, run inside the scheduled
-task runner through the `ScheduledTaskPoller` port, so the runner imports no
-Jira or GitLab code. Each poll's observations are deduplicated per trigger in
+Polled sources run inside the scheduled task runner through the
+`ScheduledTaskPoller` port, so the runner imports no tracker or forge code.
+Each poll's observations are deduplicated per trigger in
 `fork_trigger_observations`, and the events a poll raises carry the trigger's
 id, so they run only that trigger and never another trigger over the same item.
+
+- **Issues and pull requests read through the neutral services.** The `issues`
+  and `pull_requests` sources list the trigger's project through `IssueService`
+  and `PullRequestService`, the services the Issues and Pull requests pages and
+  upstream's workflow triggers use. Any tracker or forge the project is
+  connected to works, with the same auth and host config. A listing is capped,
+  so an item a poll does not list is not a change; ended items are forgotten
+  after 30 days.
+- **A poll never reads Jira as a person.** The neutral Jira tracker reads as the
+  `JiraActingUser` when one is set, which only WebSocket handlers do. The
+  poller sets it to none around its listing, so Jira answers as the site's
+  service identity from `T3CODE_JIRA_IDENTITIES`. A test holds this.
+- **Jira query and GitLab projects stay their own sources.** The neutral
+  listing is per project and has no JQL or saved filters, and the neutral pull
+  request service has no group listing, no repositories outside the project,
+  and no pipelines. Both sources already reach their APIs through the neutral
+  connection layer: the Jira query through `JiraApi` with
+  `JiraIdentities.forSite`, the identities the neutral Jira tracker uses, and
+  GitLab projects through `GitLabCli` from `source-control-gitlab`, the neutral
+  GitLab driver's own `glab` connection. Their storage and observation keys are
+  unchanged, so no existing trigger was migrated, stops firing, or fires twice.
 
 ## Experimental dependencies
 
@@ -284,8 +305,8 @@ thread links to, never for a query or a project.
   table stays as storage; the UI and MCP tools present triggers, with the
   schedule as one source beside webhook, Jira query, GitLab projects, Slack,
   and manual.
-- Jira query source: a JQL or saved filter polled on an interval with the
-  user's token. It fires per issue that enters the result set or changes a
+- Jira query source: a JQL or saved filter polled on an interval as the
+  site's service identity. It fires per issue that enters the result set or changes a
   watched field, deduplicated through the trigger observations table.
 - GitLab projects source: a list of projects or groups, polled for merge
   requests and pipelines on the Insights ingestion path, or fed by GitLab's

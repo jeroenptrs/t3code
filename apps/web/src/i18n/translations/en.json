@@ -13037,5 +13037,13 @@
   "390cd0e62326e8bb": "Blocking",
   "ab571ece47715cfe": "Not blocking",
   "5d1a5b5b5dd1fa27": "Implementation",
-  "b74dbfef93591e1e": "No findings"
+  "b74dbfef93591e1e": "No findings",
+  "da293f64231a9233": "Issues",
+  "80a6c805c2f20aad": "Pull requests",
+  "4c62a8ec583cbf93": "Search (optional)",
+  "e45656c4a16e1f5e": "Free text, such as login",
+  "c07c75f32a650579": "Labels it must carry (optional)",
+  "23b465883ba86dba": "bug, agent",
+  "010800e7b2bb4a49": "Check every",
+  "cb20a44dabc40ee5": "minutes"
 }

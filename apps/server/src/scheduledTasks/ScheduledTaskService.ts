@@ -228,6 +228,8 @@ function storedTriggerFilters(
     case "slack":
     case "jira_query":
     case "gitlab_projects":
+    case "issues":
+    case "pull_requests":
       return schedule.filters;
     default:
       return undefined;
@@ -980,7 +982,7 @@ export const layer = Layer.effect(
     const deleteQueryObservations = (id: ScheduledTaskId) =>
       sql`
         DELETE FROM fork_trigger_observations
-        WHERE source IN ('jira_query', 'gitlab_projects')
+        WHERE source IN ('jira_query', 'gitlab_projects', 'issues', 'pull_requests')
           AND key >= ${`${id}\u0000`} AND key < ${`${id}\u0001`}
       `;
 

@@ -5691,5 +5691,13 @@
   "5d1a5b5b5dd1fa27": "Implémentation",
   "b74dbfef93591e1e": "Aucune remarque",
   "f27dfe23ebe57670": "Revue : approuvée",
-  "6ce25c253cc09a3f": "Revue : modifications demandées"
+  "6ce25c253cc09a3f": "Revue : modifications demandées",
+  "4c62a8ec583cbf93": "Recherche (facultatif)",
+  "e45656c4a16e1f5e": "Texte libre, par exemple login",
+  "c07c75f32a650579": "Étiquettes requises (facultatif)",
+  "23b465883ba86dba": "bug, agent",
+  "8646761d1a59996a": "Minutes entre les vérifications",
+  "ac39dff324bc4e45": "Vérifiez toutes les 5 minutes ou plus, en minutes entières.",
+  "883ba0f230de14f3": "Vérifie les outils de suivi auxquels ce projet est connecté. Jira est lu avec le compte de service du site.",
+  "51c99b144c9577d5": "Vérifie les pull requests des dépôts de ce projet."
 }

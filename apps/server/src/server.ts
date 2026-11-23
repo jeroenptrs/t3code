@@ -763,7 +763,7 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   // Fork-only: work item triggers create their items through this sink, which reaches
   // FactoryService once layerMakeRoutes registers it there, by layer memoization.
   Layer.provide(FactoryWorkItemSink.layer),
-  // Fork-only: the scheduled task runner polls Jira query and GitLab projects triggers through
+  // Fork-only: the scheduled task runner polls its polled triggers through
   // this, and is built before layerTriggers, so it gets the poller here. TriggerSources and
   // JiraApi are the same instances layerTriggers and layerJiraService build, by layer memoization.
   Layer.provide(
@@ -777,6 +777,10 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
           GitLabCli.layer.pipe(Layer.provide(ServerSourceControlHost.layer)),
         ),
       ),
+      // Issues and pull requests triggers read through the same services the pages use.
+      Layer.provide(layerIssueService),
+      Layer.provide(layerPullRequestService),
+      Layer.provide(RuntimeLayer.layerProjectService),
     ),
   ),
   // Fork-only: provider sessions get the "jira" MCP capability when Jira is configured,

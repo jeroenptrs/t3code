@@ -679,6 +679,62 @@ function GitLabProjectsRows(props: {
   );
 }
 
+/** What an issues or pull requests trigger asks the project's trackers or hosts, and how often. */
+function NeutralPollRows(props: {
+  readonly kind: "issues" | "pull_requests";
+  readonly schedule: ScheduleDraft;
+  readonly disabled: boolean;
+  readonly onChange: (patch: Partial<ScheduleDraft>) => void;
+}) {
+  const gt = useGT();
+  const minutes = parseJiraPollMinutes(props.schedule.neutralPollMinutes);
+  return (
+    <>
+      <FormField
+        label={gt("Search (optional)")}
+        value={props.schedule.neutralQuery}
+        placeholder={gt("Free text, such as login")}
+        disabled={props.disabled}
+        borderTop
+        onChange={(neutralQuery) => props.onChange({ neutralQuery })}
+      />
+      {props.kind === "issues" ? (
+        <FormField
+          label={gt("Labels it must carry (optional)")}
+          value={props.schedule.neutralLabels}
+          placeholder={gt("bug, agent")}
+          disabled={props.disabled}
+          borderTop
+          onChange={(neutralLabels) => props.onChange({ neutralLabels })}
+        />
+      ) : null}
+      <FormField
+        label={gt("Minutes between checks")}
+        value={props.schedule.neutralPollMinutes}
+        keyboardType="number-pad"
+        disabled={props.disabled}
+        borderTop
+        onChange={(neutralPollMinutes) => props.onChange({ neutralPollMinutes })}
+      />
+      <Text
+        className={
+          minutes >= 5
+            ? "px-4 pb-3 text-sm text-foreground-muted"
+            : "px-4 pb-3 text-sm text-danger-foreground"
+        }
+      >
+        {minutes < 5
+          ? gt("Check every 5 minutes or more, in whole minutes.")
+          : props.kind === "issues"
+            ? gt(
+                "Checks the issue trackers this project is connected to. Jira is read as the site's service account.",
+              )
+            : gt("Checks the pull requests of this project's repositories.")}
+      </Text>
+    </>
+  );
+}
+
 /** The clock-driven kinds the "Schedule" source offers. */
 const TIME_SCHEDULE_MODES: ReadonlyArray<{
   readonly mode: ScheduleDraft["mode"];
@@ -1643,9 +1699,24 @@ function TaskForm({
                   }
                 />
               ) : null}
+              {draft.schedule.mode === "issues" || draft.schedule.mode === "pull_requests" ? (
+                <NeutralPollRows
+                  kind={draft.schedule.mode}
+                  schedule={draft.schedule}
+                  disabled={saving}
+                  onChange={(patch) =>
+                    setDraft((current) => ({
+                      ...current,
+                      schedule: { ...current.schedule, ...patch },
+                    }))
+                  }
+                />
+              ) : null}
               {draft.task === null &&
               (draft.schedule.mode === "jira_query" ||
-                draft.schedule.mode === "gitlab_projects") ? (
+                draft.schedule.mode === "gitlab_projects" ||
+                draft.schedule.mode === "issues" ||
+                draft.schedule.mode === "pull_requests") ? (
                 <SelectRow
                   label="First check acts on"
                   value={POLL_START_LABELS[draft.schedule.pollStart]}
@@ -2308,7 +2379,9 @@ function EnvironmentTasks({
                   attributes: { disabled: !canOperate },
                 },
                 ...((task.schedule.type === "jira_query" ||
-                  task.schedule.type === "gitlab_projects") &&
+                  task.schedule.type === "gitlab_projects" ||
+                  task.schedule.type === "issues" ||
+                  task.schedule.type === "pull_requests") &&
                 task.enabled
                   ? [
                       {

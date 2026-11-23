@@ -13023,5 +13023,13 @@
   "390cd0e62326e8bb": "Bloqueante",
   "ab571ece47715cfe": "No bloqueante",
   "5d1a5b5b5dd1fa27": "Implementación",
-  "b74dbfef93591e1e": "Sin hallazgos"
+  "b74dbfef93591e1e": "Sin hallazgos",
+  "da293f64231a9233": "Issues",
+  "80a6c805c2f20aad": "Pull requests",
+  "4c62a8ec583cbf93": "Búsqueda (opcional)",
+  "e45656c4a16e1f5e": "Texto libre, como login",
+  "c07c75f32a650579": "Etiquetas obligatorias (opcional)",
+  "23b465883ba86dba": "bug, agent",
+  "010800e7b2bb4a49": "Comprobar cada",
+  "cb20a44dabc40ee5": "minutos"
 }

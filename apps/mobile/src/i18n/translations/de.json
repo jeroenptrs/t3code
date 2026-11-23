@@ -5697,5 +5697,13 @@
   "5d1a5b5b5dd1fa27": "Umsetzung",
   "b74dbfef93591e1e": "Keine Befunde",
   "f27dfe23ebe57670": "Review: genehmigt",
-  "6ce25c253cc09a3f": "Review: Änderungen angefordert"
+  "6ce25c253cc09a3f": "Review: Änderungen angefordert",
+  "4c62a8ec583cbf93": "Suche (optional)",
+  "e45656c4a16e1f5e": "Freitext, etwa login",
+  "c07c75f32a650579": "Erforderliche Labels (optional)",
+  "23b465883ba86dba": "bug, agent",
+  "8646761d1a59996a": "Minuten zwischen Prüfungen",
+  "ac39dff324bc4e45": "Prüfe alle 5 Minuten oder seltener, in ganzen Minuten.",
+  "883ba0f230de14f3": "Prüft die Issue-Tracker, mit denen dieses Projekt verbunden ist. Jira wird mit dem Dienstkonto der Site gelesen.",
+  "51c99b144c9577d5": "Prüft die Pull Requests der Repositorys dieses Projekts."
 }
