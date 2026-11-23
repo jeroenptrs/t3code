@@ -18,7 +18,7 @@ import {
   type FactoryIssue,
   type FactoryListResult,
   FactoryName,
-  type FactoryProject,
+  type FactoryRepository,
   type FactoryRole,
   FactoryRoleName,
   type FactoryRolePath,
@@ -80,6 +80,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as ServerActivation from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { projectFolders } from "../workspace/WorkspaceFolders.ts";
 import {
   bindingIssues,
   defaultRolePath,
@@ -90,7 +91,7 @@ import {
   readFactoryFiles,
   renderFactoryJson,
   renderRoleFile,
-  resolveProjects,
+  otherProjectsIssue,
   resolveRoleSkills,
   roleEnabled,
   type RoleFileEntry,
@@ -285,7 +286,6 @@ interface Catalog {
 
 interface OwnedView {
   readonly factory: LoadedFactory;
-  readonly projects: ReadonlyArray<FactoryProject>;
   readonly issues: ReadonlyArray<FactoryIssue>;
   readonly scheduledTaskIds: ReadonlyArray<ScheduledTaskId>;
   readonly threads: ReadonlyArray<FactoryThread>;
@@ -435,6 +435,23 @@ const make = Effect.gen(function* () {
   const factoryDirectory = (project: ProjectRow, name: FactoryName) =>
     path.join(project.workspaceRoot, ...FACTORIES_DIRECTORY, name);
 
+  /**
+   * The project's folder when it is a repository, then what upstream's multi-repo projects say it
+   * covers: the repositories inside it and the folders someone added. Read from disk each time.
+   */
+  const projectRepositories = Effect.fn("FactoryService.projectRepositories")(function* (
+    project: ProjectRow,
+  ) {
+    const rootIsRepository = yield* fileSystem
+      .exists(path.join(project.workspaceRoot, ".git"))
+      .pipe(Effect.orElseSucceed(() => false));
+    const folders = yield* projectFolders(project);
+    return [
+      ...(rootIsRepository ? [{ name: project.title, path: project.workspaceRoot }] : []),
+      ...folders.map((folder) => ({ name: folder.name, path: folder.path })),
+    ] satisfies ReadonlyArray<FactoryRepository>;
+  });
+
   const loadCatalog = Effect.gen(function* () {
     const projects = yield* projectStore.list();
     const providers = yield* providerRegistry.getProviders;
@@ -459,6 +476,7 @@ const make = Effect.gen(function* () {
     const { definition, issues } = files.value;
     const skills = (yield* skillStore.resolve(directory)).map(toFactorySkill);
     const roles = files.value.roles.map((entry) => resolveRole(entry, providers, skills));
+    const projectsIssue = otherProjectsIssue(files.value.listedProjects, project.title);
     return Option.some<LoadedFactory>({
       id: makeFactoryId(project.projectId, name),
       project,
@@ -466,7 +484,11 @@ const make = Effect.gen(function* () {
       definition,
       roles: roles.map((loaded) => loaded.role),
       skills,
-      issues: [...issues, ...roles.flatMap((loaded) => loaded.issues)],
+      issues: [
+        ...issues,
+        ...roles.flatMap((loaded) => loaded.issues),
+        ...(projectsIssue === null ? [] : [projectsIssue]),
+      ],
     });
   });
 
@@ -646,11 +668,9 @@ const make = Effect.gen(function* () {
         if (shell.status === "failed") failedRuns += 1;
         if (shell.pendingRuntimeRequest?.kind === "user_input") questions += 1;
       }
-      const resolved = resolveProjects(factory.definition.projects, catalog.projects);
       return {
         factory,
-        projects: resolved.projects,
-        issues: [...factory.issues, ...resolved.issues],
+        issues: factory.issues,
         scheduledTaskIds,
         threads,
         attention: {
@@ -712,7 +732,7 @@ const make = Effect.gen(function* () {
       projectId: view.factory.project.projectId,
       name: view.factory.name,
       definition: view.factory.definition,
-      projects: view.projects,
+      repositories: yield* projectRepositories(project),
       roles: view.factory.roles,
       rolePresets: ROLE_PRESETS,
       skills: view.factory.skills,
@@ -1183,6 +1203,7 @@ const make = Effect.gen(function* () {
             factoryName: factory.name,
             title: item.title,
             source: item.source,
+            repositories: factory.repositories,
           }),
           attachments: [],
         },

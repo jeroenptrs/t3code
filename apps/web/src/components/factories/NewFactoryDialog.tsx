@@ -1,6 +1,7 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
+import { T, useGT } from "gt-react";
 import { useId, useState } from "react";
 
 import { useProjects } from "../../state/entities";
@@ -31,6 +32,7 @@ export function NewFactoryDialog(props: {
   readonly environmentLabelById: ReadonlyMap<EnvironmentId, string>;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const id = useId();
   const navigate = useNavigate();
   const save = useAtomCommand(factoriesEnvironment.save, {
@@ -70,7 +72,6 @@ export function NewFactoryDialog(props: {
         definition: {
           version: 2,
           name: name.trim(),
-          projects: [],
           roles: { implement: null, review: null },
         },
       },
@@ -81,7 +82,7 @@ export function NewFactoryDialog(props: {
       const factoryError = factoryErrorOf(error);
       setSaveError(
         factoryError?.issues?.[0]?.message ??
-          (error instanceof Error ? error.message : "The factory could not be created."),
+          (error instanceof Error ? error.message : gt("The factory could not be created.")),
       );
       return;
     }
@@ -108,16 +109,22 @@ export function NewFactoryDialog(props: {
           }}
         >
           <DialogHeader>
-            <DialogTitle>New factory</DialogTitle>
+            <DialogTitle>
+              <T>New factory</T>
+            </DialogTitle>
             <DialogDescription>
-              The definition lives in the project under .t3/factories. It starts with the built-in
-              foreman, implement, and review roles.
+              <T>
+                The definition lives in the project under .t3/factories. It starts with the built-in
+                foreman, implement, and review roles.
+              </T>
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
             {targets.length > 1 ? (
               <div className="flex flex-col gap-1.5">
-                <Label>Environment</Label>
+                <Label>
+                  <T>Environment</T>
+                </Label>
                 <Select
                   value={target?.environmentId ?? null}
                   onValueChange={(value) => {
@@ -130,7 +137,7 @@ export function NewFactoryDialog(props: {
                     label: props.environmentLabelById.get(environmentId) ?? environmentId,
                   }))}
                 >
-                  <SelectTrigger aria-label="Environment">
+                  <SelectTrigger aria-label={gt("Environment")}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectPopup>
@@ -144,7 +151,9 @@ export function NewFactoryDialog(props: {
               </div>
             ) : null}
             <div className="flex flex-col gap-1.5">
-              <Label>Project</Label>
+              <Label>
+                <T>Project</T>
+              </Label>
               <Select
                 value={project?.id ?? null}
                 onValueChange={(value) => {
@@ -155,8 +164,8 @@ export function NewFactoryDialog(props: {
                   label: candidate.title,
                 }))}
               >
-                <SelectTrigger aria-label="Project" disabled={projects.length === 0}>
-                  <SelectValue placeholder="No projects here" />
+                <SelectTrigger aria-label={gt("Project")} disabled={projects.length === 0}>
+                  <SelectValue placeholder={gt("No projects here")} />
                 </SelectTrigger>
                 <SelectPopup>
                   {projects.map((candidate) => (
@@ -168,7 +177,9 @@ export function NewFactoryDialog(props: {
               </Select>
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor={`${id}-name`}>Name</Label>
+              <Label htmlFor={`${id}-name`}>
+                <T>Name</T>
+              </Label>
               <Input
                 id={`${id}-name`}
                 value={name}
@@ -190,7 +201,7 @@ export function NewFactoryDialog(props: {
               >
                 {submitted && nameError !== null
                   ? nameError
-                  : "Lowercase letters, digits, and hyphens. It names the folder."}
+                  : gt("Lowercase letters, digits, and hyphens. It names the folder.")}
               </p>
             </div>
             {saveError === null ? null : (
@@ -201,10 +212,10 @@ export function NewFactoryDialog(props: {
           </DialogPanel>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={props.onClose}>
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button type="submit" disabled={saving || project === undefined}>
-              {saving ? "Creating…" : "Create factory"}
+              {saving ? gt("Creating…") : gt("Create factory")}
             </Button>
           </DialogFooter>
         </form>

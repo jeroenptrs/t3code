@@ -236,6 +236,9 @@ describe("FactoryService", () => {
         ".t3/factories/triage/skills/run-checks/SKILL.md": "---\nname: run-checks\n---\n",
         ".t3/factories/triage/skills/review/SKILL.md": "---\nname: review\n---\n",
         ".t3/factories/triage/skills/drafts/notes.md": "Not a skill yet.\n",
+        // The project's folder is a repository and holds another.
+        ".git/HEAD": "ref: refs/heads/main\n",
+        "web/.git/HEAD": "ref: refs/heads/main\n",
       });
       const backend = project("project-backend", "backend", root);
       const factory = yield* FactoryService.FactoryService.use((factories) =>
@@ -287,16 +290,18 @@ describe("FactoryService", () => {
         factoryReview,
         { name: "run-checks", source: "factory", description: "", replaces: null },
       ]);
-      assert.deepStrictEqual(factory.projects, [
-        { name: "backend", projectId: backend.projectId },
-        { name: "mobile", projectId: null },
+      const path = yield* Path.Path;
+      assert.deepStrictEqual(factory.repositories, [
+        { name: "backend", path: root },
+        { name: "web", path: path.join(root, "web") },
       ]);
       assert.deepStrictEqual(
         factory.issues.map((issue) => [issue.code, issue.role, issue.field]),
         [
           ["unknown_skill", "implement", "skills"],
           ["invalid_binding", "review", "description"],
-          ["unknown_project", null, "projects"],
+          // The owning project is implied, so only the other one is reported.
+          ["other_projects", null, "projects"],
         ],
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -432,7 +437,6 @@ describe("FactoryService", () => {
           definition: {
             version: 2,
             name: "triage",
-            projects: [],
             roles: { review: null },
           },
           roles: [
@@ -468,6 +472,8 @@ describe("FactoryService", () => {
         const root = yield* checkout({
           ".t3/factories/triage/factory.json": factoryJson({
             name: "triage",
+            // Only its own project: no issue, and the save drops the field.
+            projects: ["backend"],
             roles: { review: "prompts/review.md" },
           }),
           ".t3/factories/triage/roles/implement.md": "---\nisolation: shared\n---\n",
@@ -483,12 +489,7 @@ describe("FactoryService", () => {
         }).pipe(Effect.provide(layerFor({ projects: [backend] })));
 
         const roles = { review: "prompts/review.md", implement: "roles/implement.md" };
-        assert.deepStrictEqual(factory.definition, {
-          version: 2,
-          name: "triage",
-          projects: [],
-          roles,
-        });
+        assert.deepStrictEqual(factory.definition, { version: 2, name: "triage", roles });
         assert.deepStrictEqual(
           factory.roles.map((role) => [role.role, role.path, role.source, role.enabled]),
           [
@@ -500,7 +501,7 @@ describe("FactoryService", () => {
         assert.deepStrictEqual(factory.issues, []);
         assert.deepStrictEqual(
           JSON.parse(yield* fileSystem.readFileString(`${root}/.t3/factories/triage/factory.json`)),
-          { version: 2, name: "triage", projects: [], roles },
+          { version: 2, name: "triage", roles },
         );
         assert.deepStrictEqual(saved.roles, factory.roles);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -575,7 +576,6 @@ describe("FactoryService", () => {
           definition: {
             version: 2,
             name: "triage",
-            projects: [],
             roles: {
               waiting: null,
               "Bad Name": null,

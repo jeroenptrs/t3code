@@ -1,9 +1,4 @@
-import {
-  ProjectId,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  type ServerProvider,
-} from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -12,7 +7,6 @@ import {
   parseRoleFile,
   renderFactoryJson,
   renderRoleFile,
-  resolveProjects,
 } from "./factoryFiles.ts";
 import { rolePresets } from "./roles/index.ts";
 
@@ -64,17 +58,18 @@ describe("parseFactoryJson", () => {
       definition: {
         version: 2,
         name: "triage",
-        projects: ["backend", "frontend"],
         roles: { foreman: "roles/foreman.md", review: "prompts/reviewer.md", analysis: null },
       },
       issues: [],
+      listedProjects: ["backend", "frontend"],
     });
   });
 
   it("reads missing lists as empty", () => {
     expect(parseFactoryJson("triage", '{ "version": 2, "name": "triage" }')).toEqual({
-      definition: { version: 2, name: "triage", projects: [], roles: {} },
+      definition: { version: 2, name: "triage", roles: {} },
       issues: [],
+      listedProjects: [],
     });
   });
 
@@ -83,7 +78,6 @@ describe("parseFactoryJson", () => {
     expect(parseFactoryJson("triage", text, (role) => role !== "implement").definition).toEqual({
       version: 2,
       name: "triage",
-      projects: [],
       roles: {
         review: "prompts/reviewer.md",
         foreman: "roles/foreman.md",
@@ -132,12 +126,12 @@ describe("parseFactoryJson", () => {
     const definition = {
       version: 2 as const,
       name: "triage",
-      projects: ["backend"],
       roles: { implement: "roles/implement.md", docs: null },
     };
     expect(parseFactoryJson("triage", renderFactoryJson(definition))).toEqual({
       definition,
       issues: [],
+      listedProjects: [],
     });
   });
 });
@@ -248,26 +242,5 @@ describe("bindingIssues", () => {
     expect(
       bindingIssues("implement", binding, [provider]).map((issue) => [issue.code, issue.field]),
     ).toEqual(expected);
-  });
-});
-
-describe("resolveProjects", () => {
-  it("resolves names by title and reports unknown and ambiguous ones", () => {
-    const backend = ProjectId.make("project-backend");
-    const projects = [
-      { projectId: backend, title: "backend" },
-      { projectId: ProjectId.make("project-site-1"), title: "site" },
-      { projectId: ProjectId.make("project-site-2"), title: "site" },
-    ];
-    const resolved = resolveProjects(["backend", "site", "mobile"], projects);
-    expect(resolved.projects).toEqual([
-      { name: "backend", projectId: backend },
-      { name: "site", projectId: null },
-      { name: "mobile", projectId: null },
-    ]);
-    expect(resolved.issues.map((issue) => issue.code)).toEqual([
-      "ambiguous_project",
-      "unknown_project",
-    ]);
   });
 });

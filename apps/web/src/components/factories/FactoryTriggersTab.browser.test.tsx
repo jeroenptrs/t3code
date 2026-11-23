@@ -20,7 +20,7 @@ const factory = {
   id: FactoryId.make("factory:project-api:nightly-triage"),
   projectId,
   name: "nightly-triage",
-  definition: { version: 2, name: "nightly-triage", projects: [], roles: {} },
+  definition: { version: 2, name: "nightly-triage", roles: {} },
   issues: [],
 } as unknown as Factory;
 
